@@ -1,6 +1,6 @@
 import { applyEnsNamePreservation, deriveDisplayValue } from './url-utils.js';
 import { getInternalPageName, parseEnsInput } from './page-urls.js';
-import { cidV0ToV1Base32 } from './cid-utils.js';
+import { cidV0ToV1Base32, ipnsMhToCidV1Base36 } from './cid-utils.js';
 import { isEnsHost } from './origin-utils.js';
 
 // Extract the ENS name from an address bar value, or null if the value isn't
@@ -117,7 +117,18 @@ export const extractEnsResolutionMetadata = (targetUri, ensName) => {
 
   const ipnsMatch = targetUri.match(/^ipns:\/\/([A-Za-z0-9.-]+)/);
   if (ipnsMatch) {
-    knownEnsPairs.push([ipnsMatch[1], ensName]);
+    const ipnsId = ipnsMatch[1];
+    knownEnsPairs.push([ipnsId, ensName]);
+    // Same as IPFS above: Kubo's subdomain gateway rewrites base58btc IPNS
+    // peer-ID multihashes (Ed25519 "12D3Koo...", secp256k1 "16Uiu2H...",
+    // sha2-256 "Qm...") to CIDv1 libp2p-key base36 ("k51qzi..." / "kzwfwjn..."
+    // / "k2k4..."). Call the encoder unconditionally — it returns null for
+    // DNS names ("." isn't in base58btc's alphabet), already-base36 forms
+    // (multihash structure check fails), and any other malformed input. A
+    // prefix allowlist would silently miss secp256k1 peer IDs and re-introduce
+    // the address-bar regression this branch fixes for Ed25519/sha2-256.
+    const cidV1 = ipnsMhToCidV1Base36(ipnsId);
+    if (cidV1) knownEnsPairs.push([cidV1, ensName]);
     // Track IPNS distinctly from IPFS so the protocol icon and transport
     // display reflect the actual contenthash transport (an IPNS-backed
     // ENS name was being mis-displayed as `ipfs://name.eth` otherwise).
