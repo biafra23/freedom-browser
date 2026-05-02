@@ -1,6 +1,6 @@
 const log = require('./logger');
-const { activeBzzBases, activeIpfsBases, activeRadBases } = require('./state');
-const { getIpfsGatewayUrl, getRadicleApiUrl } = require('./service-registry');
+const { activeBzzBases, activeRadBases } = require('./state');
+const { getRadicleApiUrl } = require('./service-registry');
 const { loadSettings } = require('./settings-store');
 const { URL } = require('url');
 
@@ -33,30 +33,9 @@ const sanitizeUrlForLog = (rawUrl) => {
   }
 };
 
-// Validate IPFS CID format (mirrors src/renderer/lib/url-utils.js)
-function isValidCid(str) {
-  if (!str) return false;
-  // CIDv0: Qm + 44 base58 chars
-  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(str)) return true;
-  // CIDv1 base32: baf + 50+ lowercase base32 chars
-  if (/^baf[a-z2-7]{50,}$/i.test(str)) return true;
-  // CIDv1 base58btc: z + 40+ base58 chars
-  if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(str)) return true;
-  return false;
-}
-
-// Validate IPNS name: DNS name (e.g., docs.ipfs.io) or libp2p key (k51..., 12D3...)
-function isValidIpnsName(str) {
-  if (!str) return false;
-  // Only allow alphanumeric, dots, hyphens, underscores (covers DNS names and base36/base58 keys)
-  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$/.test(str);
-}
-
 /**
- * Convert a custom protocol URL (bzz://, ipfs://, ipns://) to a gateway URL
+ * Convert a custom protocol URL to a gateway URL.
  * Uses service registry for dynamic port resolution.
- * Validates that the URL contains a non-empty hash/CID/name before converting,
- * to avoid sending malformed paths to the gateway.
  * @param {string} url - The URL to check/convert
  * @returns {{ converted: boolean, url: string }} Result with converted flag and URL
  */
@@ -65,39 +44,12 @@ function convertProtocolUrl(url) {
     return { converted: false, url };
   }
 
-  // Note: `bzz://` is handled by the custom protocol handler in
-  // `src/main/swarm/bzz-protocol.js`; see README "Swarm Content Retrieval".
-  // Requests for this scheme never reach the webRequest rewriter.
-
-  // Handle ipfs:// protocol
-  if (url.startsWith('ipfs://')) {
-    const afterScheme = url.slice(7).replace(/^\/+/, '');
-    if (!afterScheme) {
-      return { converted: false, url };
-    }
-    const cid = afterScheme.split(/[/?#]/)[0];
-    if (!cid || !isValidCid(cid)) {
-      return { converted: false, url };
-    }
-    const ipfsGatewayUrl = getIpfsGatewayUrl();
-    const gatewayUrl = `${ipfsGatewayUrl}/ipfs/${afterScheme}`;
-    return { converted: true, url: gatewayUrl };
-  }
-
-  // Handle ipns:// protocol
-  if (url.startsWith('ipns://')) {
-    const afterScheme = url.slice(7).replace(/^\/+/, '');
-    if (!afterScheme) {
-      return { converted: false, url };
-    }
-    const name = afterScheme.split(/[/?#]/)[0];
-    if (!name || !isValidIpnsName(name)) {
-      return { converted: false, url };
-    }
-    const ipfsGatewayUrl = getIpfsGatewayUrl();
-    const gatewayUrl = `${ipfsGatewayUrl}/ipns/${afterScheme}`;
-    return { converted: true, url: gatewayUrl };
-  }
+  // Note: `bzz://`, `ipfs://`, and `ipns://` are handled by custom
+  // protocol handlers in `src/main/swarm/bzz-protocol.js` and
+  // `src/main/ipfs/ipfs-protocol.js`; see README "Swarm Content Retrieval"
+  // and "IPFS / IPNS Content Retrieval". Requests for these schemes never
+  // reach the webRequest rewriter — they're dispatched to the protocol
+  // handlers before webRequest sees them.
 
   // Handle rad: and rad:// protocols
   // rad:RID or rad://RID -> http://127.0.0.1:8780/api/v1/repos/RID
@@ -245,21 +197,10 @@ function registerRequestRewriter(targetSession) {
       }
     }
 
-    // Check for IPFS base
-    const ipfsBaseUrl = activeIpfsBases.get(webContentsId);
-    if (ipfsBaseUrl) {
-      const { shouldRewrite } = shouldRewriteRequest(details.url, ipfsBaseUrl);
-      if (shouldRewrite) {
-        const redirectTarget = buildRewriteTarget(details.url, ipfsBaseUrl);
-        if (redirectTarget) {
-          log.info(
-            `[rewrite:ipfs] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(redirectTarget)}`
-          );
-          callback({ redirectURL: redirectTarget });
-          return;
-        }
-      }
-    }
+    // No IPFS rewriter arm — `ipfs://` and `ipns://` are standard schemes
+    // dispatched to `src/main/ipfs/ipfs-protocol.js`, so the page origin is
+    // `ipfs://<cid|name>/` and same-origin sub-resources never reach
+    // webRequest as gateway URLs.
 
     // Check for Radicle base
     const radBaseUrl = activeRadBases.get(webContentsId);

@@ -119,8 +119,6 @@ describe('preload', () => {
       [exposures.electronAPI, 'startSwarmProbe', ['a'.repeat(64)], IPC.BZZ_START_PROBE, [{ hash: 'a'.repeat(64) }]],
       [exposures.electronAPI, 'awaitSwarmProbe', ['probe-1'], IPC.BZZ_AWAIT_PROBE, [{ id: 'probe-1' }]],
       [exposures.electronAPI, 'cancelSwarmProbe', ['probe-1'], IPC.BZZ_CANCEL_PROBE, [{ id: 'probe-1' }]],
-      [exposures.electronAPI, 'setIpfsBase', [21, 'http://127.0.0.1:8080/ipfs/cid/'], IPC.IPFS_SET_BASE, [{ webContentsId: 21, baseUrl: 'http://127.0.0.1:8080/ipfs/cid/' }]],
-      [exposures.electronAPI, 'clearIpfsBase', [21], IPC.IPFS_CLEAR_BASE, [{ webContentsId: 21 }]],
       [exposures.electronAPI, 'setRadBase', [31, 'http://127.0.0.1:8780/api/v1/repos/rid/'], IPC.RAD_SET_BASE, [{ webContentsId: 31, baseUrl: 'http://127.0.0.1:8780/api/v1/repos/rid/' }]],
       [exposures.electronAPI, 'clearRadBase', [31], IPC.RAD_CLEAR_BASE, [{ webContentsId: 31 }]],
       [exposures.electronAPI, 'getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],

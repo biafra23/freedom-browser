@@ -40,7 +40,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
 
 Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`bee-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
 
-When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process rewrites it to the active gateway URL via the registry, and subsequent webview requests are normalized to stay within the active hash/CID/RID base. `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe and served through a custom protocol handler (see next section).
+When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, or rewrites the URL to the active gateway URL via the registry (`rad`). `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the protocol handler — Kubo's path-gateway is fast on the first request, so no warm-up probe is needed.
 
 ---
 
@@ -110,6 +110,61 @@ const bzzRoot =
 ```
 
 Don't hardcode `http://localhost:1633` — Freedom users may have Bee on a different port, and external visitors via a public Swarm gateway certainly do.
+
+---
+
+## IPFS / IPNS Content Retrieval
+
+`ipfs` and `ipns` are registered as privileged standard schemes (`src/main/ipfs/ipfs-protocol.js`), mirroring how `bzz` is wired up. Every `ipfs://<cid|name>/...` and `ipns://<key|name>/...` request — top-level navigation, sub-resources, `fetch`, media `Range`, CSS `url(...)`, service workers — flows through a main-process handler that proxies to the local Kubo gateway and streams the response back. Because `ipfs://<cid>/` (or `ipfs://<name>/`) is the page origin, `window.location.protocol === 'ipfs:'`, same-origin relative paths Just Work, and storage (cookies, localStorage, IndexedDB, service workers) is keyed to the content reference.
+
+The handler issues its upstream fetches at `http://localhost:8080/ipfs/<cid>/...` (note: `localhost`, not `127.0.0.1`) on purpose. Kubo's built-in subdomain gateway only emits its `_redirects`-friendly redirect — `301 Location: http://<cidv1>.ipfs.localhost:8080/...` — when the request hostname is `localhost`. The protocol handler then follows the redirect itself with `redirect: 'follow'` and returns the final body to Chromium. Surfacing the 301 to Chromium would put the page back on the gateway origin, defeating the entire scheme — the integration test in `src/main/__tests__/integration/ipfs-subdomain-gateway.test.js` guards against both halves of this contract.
+
+ENS-named hosts work the same way as for `bzz`: `ipfs://vitalik.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after the address-bar resolution) and proxies the same way. The page's URL/origin stays `ipfs://<name>/` rather than the resolved CID. Cross-transport mismatches (e.g. `ipfs://name.eth` whose contenthash is Swarm or IPNS) return `404` with an explanatory body — the typed scheme is treated as an assertion, matching the `bzz` handler's behaviour. Unlike `bzz`, the IPFS handler doesn't wrap its requests in a retry loop; Kubo doesn't exhibit the cold-content transient-5xx pattern Bee does, and `4xx` / `5xx` responses pass through to the page so SPAs that feature-detect missing endpoints can render their own fallback.
+
+> **Origin model.** Same as `bzz`: `ipfs://vitalik.eth` and `ipfs://<resolved-cid>` are different origins from Chromium's perspective. Pinning storage to the ENS name keeps state stable across contenthash updates.
+
+### CID & IPNS-key canonicalisation
+
+Because `ipfs:` and `ipns:` are standard schemes, Chromium's URL parser treats the host segment as a hostname and lowercases it. The base58btc encodings used by CIDv0 (`Qm...`) and IPNS peer-ID multihashes (`12D3Koo...`, `16Uiu2H...`, `Qm...`) are case-sensitive, so a naïve `ipfs://Qm.../path` would arrive at the protocol handler as `ipfs://qm.../path` — different bytes, and Kubo correctly rejects it with `400 invalid cid: selected encoding not supported`.
+
+The address-bar / load pipeline in `src/renderer/lib/url-utils.js` (`formatIpfsUrl` → `parseIpfsInput`) canonicalises on the way in, before `new URL` sees the input:
+
+- CIDv0 `Qm...` → CIDv1 base32 `bafy...`
+- base58btc IPNS peer ID → libp2p-key base36 (`k51...` for Ed25519, `k2k4...` for sha2-256)
+
+Both target encodings are lowercase, so subsequent host normalisation by Chromium is a no-op. DNSLink names (`docs.ipfs.tech`) and ENS names (`vitalik.eth`) fall through unchanged — they're not base58btc and don't suffer the case issue. The encoders live in `src/renderer/lib/cid-utils.js` (kept inline because the renderer has no bundler).
+
+If you click a `<a href="ipfs://Qm.../">` link inside a page (rather than typing into the address bar), the webview preload intercepts the click in capture phase and reads the raw DOM attribute (`getAttribute('href')`) before Chromium resolves and lowercases the URL. It then sends that original mixed-case href to the host renderer, which routes it through `formatIpfsUrl`, so embedded link clicks canonicalise the same way address-bar input does. Direct sub-resource fetches (`<img src>`, `<script src>`, `fetch`, CSS `url(...)`) bypass that path and go straight to the protocol handler — they get the same canonicalisation in `src/main/ipfs/ipfs-protocol.js`, but lose origin parity (the request URL stays as the gateway-host form).
+
+### Path-gateway URL form (`ipfs://<gateway>/ipfs/<cid>/...`)
+
+Kubo's auto-generated directory listings emit protocol-relative anchors like `<a href="//localhost:8080/ipfs/<cid>">CID</a>`. When the page origin is `ipfs://<cid>/`, Chromium resolves these against the page scheme and ends up with `ipfs://localhost/ipfs/<cid>` — which is no longer a valid IPFS reference (`localhost` isn't a CID).
+
+`parseIpfsInput` (renderer) and `buildGatewayUrl` (main) both recognise this gateway-form path and rewrite it to the canonical `ipfs://<cid>/...` (or `ipns://<key>/...` for cross-namespace cases like `ipfs://localhost/ipns/...`). The rewrite is gated by an `isLikelyContentReference` check on the original host, so the legitimate `ipfs://<cid>/ipfs/<subfile>` shape (a real subdirectory named `ipfs`) is left alone.
+
+For top-level navigation, the renderer rewrite means the address bar and page origin both end up canonical. For sub-resource fetches that go through the protocol handler directly, the bytes load but the URL Chromium associates with the resource stays in the gateway-host form — acceptable for sub-resources since they don't establish their own origin.
+
+### Migrating IPFS sites to the `ipfs://` / `ipns://` scheme
+
+Versions of Freedom before this change loaded `ipfs://<cid>/path` by rewriting it to the path-gateway URL `http://127.0.0.1:8080/ipfs/<cid>/path` and navigating there — Chromium then followed Kubo's subdomain redirect to `http://<cidv1>.ipfs.localhost:8080/path`. Pages saw `window.location.protocol === 'http:'` and a host like `<cidv1>.ipfs.localhost`.
+
+With the custom scheme, pages now see:
+
+- `window.location.protocol === 'ipfs:'` (or `'ipns:'`)
+- `window.location.host === '<cid>'` (or `<name>`, `<key>`)
+- `window.location.pathname === '/path'` (the `/ipfs/<cid>/` prefix is gone — it's encoded in the host)
+
+The Swarm migration guidance in the previous section applies verbatim — same anti-patterns (protocol/pathname sniffing, appending `/ipfs/<cid>/` to `window.location.origin`), same fixes (relative URLs, or use the native scheme directly):
+
+```js
+// ✗ Old pattern — assumes the page is served from the gateway
+const apiBase = window.location.origin + '/ipfs/' + dataCid + '/';
+
+// ✓ New pattern — use the ipfs:// scheme directly
+const apiBase = `ipfs://${dataCid}/`;
+```
+
+Don't hardcode `http://localhost:8080` — Freedom users may have Kubo on a different port, and external visitors via a public IPFS gateway certainly do.
 
 ---
 

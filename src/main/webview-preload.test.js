@@ -277,6 +277,120 @@ describe('webview-preload', () => {
     });
   });
 
+  test('intercepts ipfs/ipns anchor clicks before Chromium lowercases the host', () => {
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/links.html',
+        protocol: 'file:',
+        pathname: '/app/pages/links.html',
+      },
+    });
+    const anchor = {
+      tagName: 'A',
+      getAttribute: jest.fn((name) => {
+        if (name === 'href') return 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        if (name === 'target') return '';
+        return null;
+      }),
+      parentElement: global.document.body,
+    };
+    const event = {
+      target: anchor,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+
+    documentCaptureHandlers.click(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
+      url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+    });
+  });
+
+  test('does not intercept modified clicks or non-self targets', () => {
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
+    const makeAnchor = (target = '') => ({
+      tagName: 'A',
+      getAttribute: jest.fn((name) => {
+        if (name === 'href') return 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        if (name === 'target') return target;
+        return null;
+      }),
+      parentElement: global.document.body,
+    });
+
+    const modified = {
+      target: makeAnchor(),
+      button: 0,
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+    documentCaptureHandlers.click(modified);
+
+    const blank = {
+      target: makeAnchor('_blank'),
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+    documentCaptureHandlers.click(blank);
+
+    expect(modified.preventDefault).not.toHaveBeenCalled();
+    expect(blank.preventDefault).not.toHaveBeenCalled();
+    expect(ipcRenderer.sendToHost).not.toHaveBeenCalledWith(
+      'link:navigate',
+      expect.anything()
+    );
+  });
+
+  test('context menu preserves raw dweb href before anchor.href normalisation', () => {
+    const { documentHandlers, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/links.html',
+        protocol: 'file:',
+        pathname: '/app/pages/links.html',
+      },
+    });
+    const anchor = {
+      tagName: 'A',
+      href: 'ipfs://qmywapjzv5czsna625s3xf2nemtygpphdwez79ojwnpbdg/',
+      getAttribute: jest.fn((name) =>
+        name === 'href' ? 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG' : null
+      ),
+      textContent: 'CIDv0 link',
+      parentElement: global.document.body,
+    };
+
+    documentHandlers.contextmenu({
+      clientX: 1,
+      clientY: 2,
+      target: anchor,
+      preventDefault: jest.fn(),
+    });
+
+    expect(ipcRenderer.sendToHost).toHaveBeenCalledWith(
+      'context-menu',
+      expect.objectContaining({
+        linkUrl: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        linkText: 'CIDv0 link',
+      })
+    );
+  });
+
   test('detects video and audio media sources in the context menu handler', () => {
     const { documentHandlers, ipcRenderer } = loadWebviewPreloadModule({
       location: {

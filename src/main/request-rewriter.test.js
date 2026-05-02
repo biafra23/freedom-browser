@@ -11,7 +11,6 @@ const { formatRadicleUrl, deriveRadBaseFromUrl, deriveDisplayValue } = require('
 // Mock service-registry so convertProtocolUrl can resolve gateway URLs
 jest.mock('./service-registry', () => ({
   getBeeApiUrl: () => 'http://127.0.0.1:1633',
-  getIpfsGatewayUrl: () => 'http://127.0.0.1:8080',
   getRadicleApiUrl: () => 'http://127.0.0.1:8780',
 }));
 
@@ -48,9 +47,11 @@ describe('request-rewriter', () => {
       });
     });
 
-    // Note: `bzz://` is handled by the custom protocol handler in
-    // src/main/swarm/bzz-protocol.js, not by convertProtocolUrl, so
-    // convertProtocolUrl leaves it alone for any webRequest passes.
+    // Note: `bzz://`, `ipfs://`, and `ipns://` are all handled by custom
+    // protocol handlers in src/main/swarm/bzz-protocol.js and
+    // src/main/ipfs/ipfs-protocol.js, not by convertProtocolUrl. Requests
+    // for these schemes never reach the webRequest rewriter — they're
+    // dispatched to the protocol handlers before webRequest sees them.
     test('leaves bzz:// URLs alone (handled by bzz protocol handler)', () => {
       expect(convertProtocolUrl(`bzz://${VALID_HASH}`)).toEqual({
         converted: false,
@@ -66,57 +67,35 @@ describe('request-rewriter', () => {
       });
     });
 
-    // ipfs:// tests
-    test('converts valid ipfs:// URL with CIDv0', () => {
+    test('leaves ipfs:// URLs alone (handled by ipfs protocol handler)', () => {
       const cid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
-      const result = convertProtocolUrl(`ipfs://${cid}`);
-      expect(result).toEqual({ converted: true, url: `http://127.0.0.1:8080/ipfs/${cid}` });
-    });
-
-    test('converts valid ipfs:// URL with path', () => {
-      const cid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
-      const result = convertProtocolUrl(`ipfs://${cid}/file.txt`);
-      expect(result).toEqual({
-        converted: true,
-        url: `http://127.0.0.1:8080/ipfs/${cid}/file.txt`,
-      });
-    });
-
-    test('rejects ipfs:// with invalid CID', () => {
-      expect(convertProtocolUrl('ipfs://notacid')).toEqual({
+      expect(convertProtocolUrl(`ipfs://${cid}`)).toEqual({
         converted: false,
-        url: 'ipfs://notacid',
+        url: `ipfs://${cid}`,
+      });
+      expect(convertProtocolUrl(`ipfs://${cid}/file.txt`)).toEqual({
+        converted: false,
+        url: `ipfs://${cid}/file.txt`,
+      });
+      expect(convertProtocolUrl('ipfs://vitalik.eth/page.html')).toEqual({
+        converted: false,
+        url: 'ipfs://vitalik.eth/page.html',
       });
     });
 
-    test('rejects ipfs:// with empty CID', () => {
-      expect(convertProtocolUrl('ipfs://')).toEqual({ converted: false, url: 'ipfs://' });
-    });
-
-    test('rejects ipfs:/// with no CID', () => {
-      expect(convertProtocolUrl('ipfs:///')).toEqual({ converted: false, url: 'ipfs:///' });
-    });
-
-    // ipns:// tests
-    test('converts valid ipns:// URL', () => {
-      const result = convertProtocolUrl('ipns://example.eth');
-      expect(result).toEqual({ converted: true, url: 'http://127.0.0.1:8080/ipns/example.eth' });
-    });
-
-    test('converts valid ipns:// URL with path', () => {
-      const result = convertProtocolUrl('ipns://example.eth/page.html');
-      expect(result).toEqual({
-        converted: true,
-        url: 'http://127.0.0.1:8080/ipns/example.eth/page.html',
+    test('leaves ipns:// URLs alone (handled by ipns protocol handler)', () => {
+      expect(convertProtocolUrl('ipns://example.eth')).toEqual({
+        converted: false,
+        url: 'ipns://example.eth',
       });
-    });
-
-    test('rejects ipns:// with empty name', () => {
-      expect(convertProtocolUrl('ipns://')).toEqual({ converted: false, url: 'ipns://' });
-    });
-
-    test('rejects ipns:/// with no name', () => {
-      expect(convertProtocolUrl('ipns:///')).toEqual({ converted: false, url: 'ipns:///' });
+      expect(convertProtocolUrl('ipns://example.eth/page.html')).toEqual({
+        converted: false,
+        url: 'ipns://example.eth/page.html',
+      });
+      expect(convertProtocolUrl('ipns://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8')).toEqual({
+        converted: false,
+        url: 'ipns://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8',
+      });
     });
   });
 

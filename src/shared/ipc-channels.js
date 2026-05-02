@@ -53,9 +53,6 @@ module.exports = {
   BZZ_CANCEL_PROBE: 'bzz:cancel-probe',
 
   // IPFS routing
-  IPFS_SET_BASE: 'ipfs:set-base',
-  IPFS_CLEAR_BASE: 'ipfs:clear-base',
-
   // Radicle routing
   RAD_SET_BASE: 'rad:set-base',
   RAD_CLEAR_BASE: 'rad:clear-base',

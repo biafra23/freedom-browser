@@ -42,7 +42,6 @@ const createTab = (id, url, overrides = {}) => {
     hasNavigatedDuringCurrentLoad: false,
     isWebviewLoading: false,
     currentBzzBase: null,
-    currentIpfsBase: null,
     currentRadBase: null,
     addressBarSnapshot: '',
     cachedWebContentsId: null,
@@ -269,8 +268,6 @@ const loadNavigationModule = async (options = {}) => {
     addHistory: jest.fn().mockResolvedValue(undefined),
     setBzzBase: jest.fn(),
     clearBzzBase: jest.fn(),
-    setIpfsBase: jest.fn(),
-    clearIpfsBase: jest.fn(),
     setRadBase: jest.fn(),
     clearRadBase: jest.fn(),
     startSwarmProbe: jest.fn((hash) => {
@@ -1329,6 +1326,23 @@ describe('navigation', () => {
 
       expect(ctx.activeRef.tab.webview.loadURL).toHaveBeenCalledWith(
         'file:///app/pages/settings.html'
+      );
+    });
+
+    test('ipc-message link:navigate routes raw mixed-case ipfs href through loadTarget', async () => {
+      const ctx = await setupEnsDispatch();
+      const rawHref = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
+      ctx.tabsMocks.webviewEventHandler('ipc-message', {
+        tabId: ctx.activeRef.tab.id,
+        channel: 'link:navigate',
+        args: [{ url: rawHref }],
+      });
+      await flushMicrotasks();
+
+      expect(ctx.urlUtilsMocks.formatIpfsUrl).toHaveBeenCalledWith(
+        rawHref,
+        ctx.state.ipfsRoutePrefix
       );
     });
   });

@@ -4,7 +4,7 @@ const log = require('./logger');
 const { ipcMain, app, dialog, clipboard, nativeImage } = require('electron');
 const { URL } = require('url');
 const path = require('path');
-const { activeBzzBases, activeIpfsBases, activeRadBases } = require('./state');
+const { activeBzzBases, activeRadBases } = require('./state');
 const { loadSettings } = require('./settings-store');
 const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
@@ -156,37 +156,6 @@ function registerBaseIpcHandlers(callbacks = {}) {
     }
     const cancelled = cancelSwarmProbe(id);
     return success({ cancelled });
-  });
-
-  ipcMain.handle(IPC.IPFS_SET_BASE, (_event, payload = {}) => {
-    const { webContentsId, baseUrl } = payload;
-    if (!validateWebContentsId(webContentsId)) {
-      return failure('INVALID_WEB_CONTENTS_ID', 'Invalid webContentsId', { webContentsId });
-    }
-    if (!baseUrl) {
-      return failure('INVALID_BASE_URL', 'Missing baseUrl');
-    }
-    if (!isAllowedBaseUrl(baseUrl)) {
-      log.warn('[ipc] Rejecting non-local ipfs base URL');
-      return failure('INVALID_BASE_URL', 'Base URL must be localhost or 127.0.0.1', { baseUrl });
-    }
-    try {
-      const normalized = new URL(baseUrl);
-      activeIpfsBases.set(webContentsId, normalized);
-      return success();
-    } catch (err) {
-      log.error('Invalid IPFS base URL received from renderer', err);
-      return failure('INVALID_BASE_URL', 'Invalid baseUrl', { baseUrl });
-    }
-  });
-
-  ipcMain.handle(IPC.IPFS_CLEAR_BASE, (_event, payload = {}) => {
-    const { webContentsId } = payload;
-    if (!validateWebContentsId(webContentsId)) {
-      return failure('INVALID_WEB_CONTENTS_ID', 'Invalid webContentsId', { webContentsId });
-    }
-    activeIpfsBases.delete(webContentsId);
-    return success();
   });
 
   ipcMain.handle(IPC.RAD_SET_BASE, (_event, payload = {}) => {

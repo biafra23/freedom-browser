@@ -1,13 +1,23 @@
 /**
- * Integration test: Kubo's subdomain gateway behaviour on `localhost`.
+ * Integration test: Kubo's subdomain gateway behaviour on `localhost`,
+ * plus the ipfs-protocol handler's contract for consuming the redirect
+ * inside the main process.
  *
  * Freedom routes IPFS content through `http://localhost:<port>/ipfs/<CID>` and
  * relies on Kubo redirecting to `http://<cidv1>.ipfs.localhost:<port>/` so that
  * `_redirects` files (e.g. SPA fallbacks on ENS-hosted sites) work correctly.
  *
- * That redirect behaviour is load-bearing for the fix — it comes from Kubo's
- * built-in `PublicGateways` default for the `localhost` hostname. This test
- * guards against a Kubo upgrade silently breaking the assumption.
+ * That redirect behaviour is load-bearing for the `ipfs:` standard scheme —
+ * the protocol handler in `src/main/ipfs/ipfs-protocol.js` MUST follow the
+ * redirect itself. Surfacing the 301 to Chromium would put the page back
+ * on the gateway origin (the exact bug `ipfs:` as a standard scheme fixes).
+ *
+ * Two assertions in one test process:
+ *   1. Kubo's redirect contract — guards against Kubo silently dropping
+ *      the `localhost` subdomain rewrite on an upgrade.
+ *   2. The handler returns a 200 with the file body even though Kubo
+ *      replied 301 — guards against the handler regressing to
+ *      `redirect: 'manual'` and surfacing the redirect.
  */
 
 const { spawn, execSync } = require('child_process');
@@ -163,8 +173,9 @@ describe('Kubo subdomain gateway redirect', () => {
       const cid = added.Hash;
       expect(cid).toMatch(/^Qm/); // CIDv0 (cid-version=0)
 
-      // Hitting the path gateway on hostname `localhost` must redirect to the
-      // subdomain gateway form. This is what makes `_redirects` work.
+      // (1) Kubo redirect contract: hitting the path gateway on hostname
+      // `localhost` must redirect to the subdomain gateway form. This is
+      // what makes `_redirects` work.
       const res = await headRequest('localhost', TEST_GATEWAY_PORT, `/ipfs/${cid}/`);
       expect(res.statusCode).toBe(301);
       expect(res.headers.location).toMatch(
@@ -175,6 +186,39 @@ describe('Kubo subdomain gateway redirect', () => {
       // subdomain form (Kubo only applies subdomain rewriting for `localhost`).
       const resLoopback = await headRequest('127.0.0.1', TEST_GATEWAY_PORT, `/ipfs/${cid}/`);
       expect(resLoopback.statusCode).toBe(200);
+
+      // (2) Protocol-handler contract: handleRequest must follow the
+      // redirect itself and return a 200 with the file body. If this
+      // regresses to 301 + Location header, the page would land on the
+      // gateway origin (`http://<cidv1>.ipfs.localhost:<port>`) and the
+      // whole `ipfs:` standard scheme migration would fall over. Mock the
+      // service registry to point at the test daemon's gateway port; the
+      // handler reads the URL via `getIpfsGatewayUrl`.
+      jest.resetModules();
+      jest.doMock('../../service-registry', () => ({
+        getIpfsGatewayUrl: () => `http://localhost:${TEST_GATEWAY_PORT}`,
+      }));
+      jest.doMock('../../ens-resolver', () => ({ resolveEnsContent: async () => null }));
+      jest.doMock('../../logger', () => ({
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        debug: () => {},
+      }));
+      const { handleRequest } = require('../../ipfs/ipfs-protocol');
+
+      const handlerReq = {
+        url: `ipfs://${cid}/`,
+        method: 'GET',
+        headers: new Headers(),
+        body: null,
+        signal: new AbortController().signal,
+      };
+      const handlerRes = await handleRequest('ipfs', handlerReq);
+      expect(handlerRes.status).toBe(200);
+      expect(handlerRes.headers.get('location')).toBeNull();
+      const body = await handlerRes.text();
+      expect(body).toBe('<!doctype html><title>hi</title>');
     },
     120000
   );

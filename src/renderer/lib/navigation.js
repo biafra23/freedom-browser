@@ -22,7 +22,6 @@ import {
   formatRadicleUrl,
   deriveDisplayValue,
   deriveBzzBaseFromUrl,
-  deriveIpfsBaseFromUrl,
   deriveRadBaseFromUrl,
   buildEnsDisplayUri,
   isEnsBackedDisplay,
@@ -447,29 +446,6 @@ const syncBzzBase = (nextBase) => {
     })
     .catch((err) => {
       console.error('Failed to sync bzz base', err);
-    });
-};
-
-const syncIpfsBase = (nextBase) => {
-  const navState = getNavState();
-  if (!electronAPI || (!electronAPI.setIpfsBase && !electronAPI.clearIpfsBase)) {
-    return;
-  }
-  if (navState.currentIpfsBase === nextBase) {
-    return;
-  }
-  navState.currentIpfsBase = nextBase || null;
-  ensureWebContentsId()
-    .then((id) => {
-      if (!id) return;
-      if (navState.currentIpfsBase) {
-        electronAPI.setIpfsBase?.(id, navState.currentIpfsBase);
-      } else {
-        electronAPI.clearIpfsBase?.(id);
-      }
-    })
-    .catch((err) => {
-      console.error('Failed to sync ipfs base', err);
     });
 };
 
@@ -999,20 +975,20 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           buildEnsDisplayUri(result.protocol, ens.name, ens.suffix)
           || `ens://${ens.name}${ens.suffix || ''}`;
 
-        // For Swarm-backed ENS we want Chromium to load `bzz://<name>/...`
-        // directly: the bzz protocol handler resolves the ENS host on
-        // every request (cache hit since we just populated the cache via
-        // resolveEns), so DevTools, `window.location`, storage origin, and
-        // subresource fetches all see the ENS name rather than the
-        // resolved hash. The probe still needs the actual hash to gate
-        // navigation on Bee warmth, so we pass it separately.
-        // IPFS/IPNS don't have a custom protocol handler yet, so they
-        // continue to load via the gateway URL (DevTools shows the gateway
-        // URL there — separate from this fix).
-        const innerOptions =
-          result.protocol === 'bzz'
-            ? { bzzLoadUrl: transportDisplay, swarmHash: result.decoded }
-            : {};
+        // For ENS-backed dweb sites we want Chromium to load
+        // `<scheme>://<name>/...` directly: the protocol handler resolves
+        // the ENS host on every request (cache hit since we just populated
+        // the cache via resolveEns), so DevTools, `window.location`,
+        // storage origin, and subresource fetches all see the ENS name
+        // rather than the resolved CID/hash. For Swarm the probe still
+        // needs the actual hash to gate navigation on Bee warmth, so we
+        // pass it separately as `swarmHash`.
+        let innerOptions = {};
+        if (result.protocol === 'bzz') {
+          innerOptions = { bzzLoadUrl: transportDisplay, swarmHash: result.decoded };
+        } else if (result.protocol === 'ipfs' || result.protocol === 'ipns') {
+          innerOptions = { ipfsLoadUrl: transportDisplay };
+        }
 
         // Pass captured webview to ensure we load in the correct tab
         loadTarget(targetUri, displayOverride || transportDisplay, capturedWebview, innerOptions);
@@ -1043,7 +1019,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
       webview.loadURL(disabledUrl);
       syncRadBase(null);
       syncBzzBase(null);
-      syncIpfsBase(null);
       return;
     }
     const radicleTarget = formatRadicleUrl(value, state.radicleBase);
@@ -1066,7 +1041,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
       // rad-browser.html handles its own API calls, no base sync needed
       syncRadBase(null);
       syncBzzBase(null);
-      syncIpfsBase(null);
       return;
     }
     // Invalid Radicle ID — show error page
@@ -1081,7 +1055,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     webview.loadURL(errorUrl.toString());
     syncRadBase(null);
     syncBzzBase(null);
-    syncIpfsBase(null);
     return;
   }
 
@@ -1109,15 +1082,22 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
   if (ipfsTarget) {
     const cidMatch = ipfsTarget.displayValue.match(/^ipfs:\/\/([A-Za-z0-9]+)/);
     const ipnsMatch = ipfsTarget.displayValue.match(/^ipns:\/\/([A-Za-z0-9.-]+)/);
+    // Load via the native `ipfs:`/`ipns:` schemes so the main-process
+    // protocol handler dispatches sub-resource fetches (CSS, JS, images,
+    // service workers) and the page's URL/origin stays
+    // `ipfs://<cid|name>/` rather than the Kubo gateway origin. ENS-host
+    // targets carry an explicit `ipfsLoadUrl` from the resolver so
+    // Chromium loads `ipfs://<name>/...` even though we resolved to a CID.
+    // See README "IPFS / IPNS Content Retrieval".
+    const ipfsLoadUrl = options.ipfsLoadUrl || ipfsTarget.displayValue;
     const ipfsDisplayValue = commitDwebNavigationPrefix({
       target: ipfsTarget,
-      expectedNavUrl: ipfsTarget.targetUrl,
+      expectedNavUrl: ipfsLoadUrl,
       hashKeys: [cidMatch?.[1], ipnsMatch?.[1]],
     });
     pushDebug(`[AddressBar] Loading IPFS target, set to: ${ipfsDisplayValue}`);
-    webview.loadURL(ipfsTarget.targetUrl);
-    pushDebug(`Loading ${ipfsTarget.displayValue} via ${ipfsTarget.targetUrl}`);
-    syncIpfsBase(ipfsTarget.baseUrl || null);
+    webview.loadURL(ipfsLoadUrl);
+    pushDebug(`Loading ${ipfsTarget.displayValue} via ${ipfsLoadUrl}`);
     syncBzzBase(null);
     syncRadBase(null);
     return;
@@ -1138,7 +1118,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     });
     pushDebug(`[AddressBar] Loading target, set to: ${displayValue}`);
     syncBzzBase(target.baseUrl || null);
-    syncIpfsBase(null);
     syncRadBase(null);
 
     // Augment with optional ENS-transport overrides. `swarmHash` lets the
@@ -1166,7 +1145,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     webview.loadURL(value);
     pushDebug(`Loading ${value}`);
     syncBzzBase(null);
-    syncIpfsBase(null);
     syncRadBase(null);
     return;
   }
@@ -1212,7 +1190,6 @@ export const loadHomePage = () => {
     return;
   }
   syncBzzBase(null);
-  syncIpfsBase(null);
   syncRadBase(null);
   addressInput.value = '';
   updateProtocolIcon();
@@ -1400,12 +1377,12 @@ const handleNavigationEvent = (event) => {
         pushDebug(`[AddressBar] Skipped update (already ${derived})`);
       }
 
-      // Sync bases for all protocols
+      // Sync bases for protocols still using the rewriter (bzz, rad).
+      // `ipfs:`/`ipns:` are standard schemes with main-process protocol
+      // handlers, so the renderer doesn't track an IPFS base anymore.
       const bzzBase = deriveBzzBaseFromUrl(event.url);
-      const ipfsBase = deriveIpfsBaseFromUrl(event.url);
       const radBase = deriveRadBaseFromUrl(event.url);
       syncBzzBase(bzzBase);
-      syncIpfsBase(ipfsBase);
       syncRadBase(radBase);
     }
 
@@ -1747,6 +1724,12 @@ export const initNavigation = () => {
           }
         } else if (data.channel === 'ens:open-settings') {
           loadTarget('freedom://settings', null, webview);
+        } else if (data.channel === 'link:navigate') {
+          const url = data.args?.[0]?.url;
+          if (url) {
+            pushDebug(`Preload intercepted dweb link navigation: ${url}`);
+            loadTarget(url, null, webview);
+          }
         }
         break;
       }
@@ -1800,12 +1783,11 @@ export const initNavigation = () => {
           }
           // Update bookmarks bar visibility based on current page
           updateBookmarkBarState(url);
-          // Sync bases for the switched-to tab
+          // Sync bases for the switched-to tab. `ipfs:`/`ipns:` use a
+          // standard-scheme protocol handler in the main process, so the
+          // renderer doesn't track an IPFS base anymore.
           if (tabNavState.currentBzzBase) {
             syncBzzBase(tabNavState.currentBzzBase);
-          }
-          if (tabNavState.currentIpfsBase) {
-            syncIpfsBase(tabNavState.currentIpfsBase);
           }
           if (tabNavState.currentRadBase) {
             syncRadBase(tabNavState.currentRadBase);

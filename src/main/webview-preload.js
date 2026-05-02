@@ -71,6 +71,47 @@ const guardInternalSubscription = (name, channel) => (callback) => {
   return unsubscribe;
 };
 
+const findClosestAnchor = (start) => {
+  let element = start;
+  while (element && element !== document.body) {
+    if (element.tagName === 'A') return element;
+    element = element.parentElement;
+  }
+  return null;
+};
+
+const getRawDwebHref = (anchor) => {
+  const rawHref = anchor?.getAttribute?.('href')?.trim();
+  if (!rawHref) return null;
+  if (/^(ipfs|ipns):\/\//i.test(rawHref)) return rawHref;
+  return null;
+};
+
+// Intercept dweb links before Chromium resolves the anchor href. `ipfs:` and
+// `ipns:` are standard schemes, so the browser lowercases the host segment
+// before will-navigate fires; that destroys CIDv0/base58 IPNS keys. The raw
+// DOM attribute still has the original case, so route it through the host
+// renderer's loadTarget/formatIpfsUrl pipeline while the bytes are recoverable.
+document.addEventListener(
+  'click',
+  (event) => {
+    if (event.defaultPrevented) return;
+    if (event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    const anchor = findClosestAnchor(event.target);
+    const href = getRawDwebHref(anchor);
+    if (!href) return;
+
+    const target = anchor.getAttribute?.('target') || '';
+    if (target && !/^_?self$/i.test(target)) return;
+
+    event.preventDefault();
+    ipcRenderer.sendToHost('link:navigate', { url: href });
+  },
+  true
+);
+
 // Expose APIs to internal pages (guarded for safety)
 contextBridge.exposeInMainWorld('freedomAPI', {
   // History
@@ -210,7 +251,7 @@ document.addEventListener(
     while (element && element !== document.body) {
       // Check for links
       if (element.tagName === 'A' && element.href) {
-        context.linkUrl = element.href;
+        context.linkUrl = getRawDwebHref(element) || element.href;
         context.linkText = element.textContent?.trim() || '';
       }
 

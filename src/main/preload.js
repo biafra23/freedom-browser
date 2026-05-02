@@ -28,9 +28,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startSwarmProbe: (hash) => ipcRenderer.invoke('bzz:start-probe', { hash }),
   awaitSwarmProbe: (id) => ipcRenderer.invoke('bzz:await-probe', { id }),
   cancelSwarmProbe: (id) => ipcRenderer.invoke('bzz:cancel-probe', { id }),
-  setIpfsBase: (webContentsId, baseUrl) =>
-    ipcRenderer.invoke('ipfs:set-base', { webContentsId, baseUrl }),
-  clearIpfsBase: (webContentsId) => ipcRenderer.invoke('ipfs:clear-base', { webContentsId }),
   setRadBase: (webContentsId, baseUrl) =>
     ipcRenderer.invoke('rad:set-base', { webContentsId, baseUrl }),
   clearRadBase: (webContentsId) => ipcRenderer.invoke('rad:clear-base', { webContentsId }),
