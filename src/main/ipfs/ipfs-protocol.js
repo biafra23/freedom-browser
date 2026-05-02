@@ -146,7 +146,11 @@ async function buildGatewayUrl(namespace, sourceUrl) {
   // IPNS key survives intact and can be canonicalised below.
   if (!isLikelyContentReference(host)) {
     const gatewayMatch = pathname.match(/^\/(ipfs|ipns)\/([^/]+)(.*)$/);
-    if (gatewayMatch) {
+    // Guarded by looksLikeContentKey so a DNSLink site that publishes a
+    // literal `/ipfs/<text>` path (e.g. `ipns://docs.ipfs.tech/ipfs/coverage`)
+    // isn't mis-rewritten — the embedded segment must actually look like
+    // a CID or IPNS peer ID for the rewrite to fire.
+    if (gatewayMatch && looksLikeContentKey(gatewayMatch[2])) {
       effectiveNs = gatewayMatch[1];
       let embeddedRef = gatewayMatch[2];
       if (effectiveNs === 'ipfs') {
@@ -164,6 +168,30 @@ async function buildGatewayUrl(namespace, sourceUrl) {
   const gw = getIpfsGatewayUrl();
 
   if (effectiveNs === 'ipfs' && CID_RE.test(host)) {
+    // CIDv0 hosts are case-sensitive base58btc. Sub-resource requests
+    // (`<img src="ipfs://Qm.../">`, `fetch('ipfs://Qm.../')`, etc.) bypass
+    // the renderer's formatIpfsUrl pipeline and arrive here with the host
+    // already lowercased by Chromium's standard-scheme URL parser. If the
+    // CIDv0 was originally mixed-case we can recover by re-encoding as
+    // CIDv1 base32; if it was already lowercase the original bytes are
+    // gone and we surface a clear 400 instead of forwarding an invalid
+    // reference to Kubo (which 400s with a less helpful message).
+    if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(host)) {
+      const canonical = cidV0ToV1Base32(host);
+      if (canonical) {
+        host = canonical;
+      } else {
+        return {
+          ok: false,
+          status: 400,
+          message:
+            `lowercased CIDv0 host "${host}" is not a valid IPFS reference. ` +
+            `Chromium's standard-scheme URL parser lowercased the host segment ` +
+            `and destroyed the case-sensitive base58btc encoding. Publish the ` +
+            `resource with its CIDv1 base32 (bafy...) form for sub-resource use.`,
+        };
+      }
+    }
     return {
       ok: true,
       url: `${gw}/ipfs/${host}${pathname}${parsed.search}`,
@@ -171,6 +199,26 @@ async function buildGatewayUrl(namespace, sourceUrl) {
   }
 
   if (effectiveNs === 'ipns' && !isEnsHost(host) && IPNS_HOST_RE.test(host)) {
+    // base58btc IPNS peer-ID hosts (`12D3Koo...`, `16Uiu2H...`, `Qm...`)
+    // are case-sensitive; same recovery / rejection rule as CIDv0 above.
+    // Already-canonical libp2p-key base36 (`k51...`) and DNSLink names
+    // are lowercase and pass through unchanged.
+    if (/^(12D3|16Uiu2H|Qm)/i.test(host)) {
+      const canonical = ipnsMhToCidV1Base36(host);
+      if (canonical) {
+        host = canonical;
+      } else {
+        return {
+          ok: false,
+          status: 400,
+          message:
+            `lowercased base58btc IPNS host "${host}" is not a valid IPNS reference. ` +
+            `Chromium's standard-scheme URL parser lowercased the host segment ` +
+            `and destroyed the case-sensitive encoding. Publish the resource with ` +
+            `its libp2p-key base36 (k51.../k2k4...) form for sub-resource use.`,
+        };
+      }
+    }
     return {
       ok: true,
       url: `${gw}/ipns/${host}${pathname}${parsed.search}`,
@@ -188,16 +236,40 @@ async function buildGatewayUrl(namespace, sourceUrl) {
 // sync intentionally; if you change one, change the other. (Not extracted
 // to a shared module because the regexes are tiny and duplicating them
 // avoids dragging more cross-context plumbing in.)
+//
+// Returns true only for hosts that are themselves a piece of content:
+//  - CIDv0 / CIDv1 base32 / CIDv1 base58btc
+//  - libp2p-key base36 / base58btc IPNS peer IDs
+//  - ENS names (`.eth`/`.box`) — resolved by ens-resolver, treated as
+//    content for path-disambiguation purposes
+//
+// Returns false for everything else, including public IPFS gateway hosts
+// (`dweb.link`, `ipfs.io`, `cf-ipfs.com`, `localhost`, IPv4/IPv6 literals,
+// generic DNSLink-capable domains). That asymmetry lets gateway-form path
+// rewriting fire for `ipfs://dweb.link/ipfs/<cid>/...` while still keeping
+// the legitimate `ipfs://<cid>/ipfs/<subdir>` shape intact (the host CID
+// is recognised, so the path stays as-is).
 function isLikelyContentReference(host) {
   if (typeof host !== 'string' || !host) return false;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
-  if (host.includes(':')) return false;
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(host)) return true;
   if (/^baf[a-z2-7]{50,}$/i.test(host)) return true;
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(host)) return true;
   if (/^k[a-z0-9]{40,}$/i.test(host)) return true;
   if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(host)) return true;
-  if (host.includes('.')) return true;
+  if (/\.(eth|box)$/i.test(host)) return true;
+  return false;
+}
+
+// Stricter than isLikelyContentReference (no ENS) — used to validate the
+// embedded ref of a gateway-form path before rewriting. See the matching
+// comment in src/renderer/lib/url-utils.js for the full rationale.
+function looksLikeContentKey(ref) {
+  if (typeof ref !== 'string' || !ref) return false;
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
+  if (/^baf[a-z2-7]{50,}$/i.test(ref)) return true;
+  if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(ref)) return true;
+  if (/^k[a-z0-9]{40,}$/i.test(ref)) return true;
+  if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(ref)) return true;
   return false;
 }
 

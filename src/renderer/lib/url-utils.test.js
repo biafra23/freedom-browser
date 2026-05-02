@@ -475,15 +475,35 @@ describe('url-utils', () => {
         expect(result.tail).toBe('/readme');
       });
 
+      test.each([
+        ['dweb.link', 'dweb.link'],
+        ['ipfs.io', 'ipfs.io'],
+        ['cf-ipfs.com', 'cf-ipfs.com'],
+        ['gateway.pinata.cloud', 'gateway.pinata.cloud'],
+      ])(
+        'rewrites ipfs://<%s>/ipfs/<cid> public-gateway URLs to canonical ipfs://<cid>',
+        (_label, gatewayHost) => {
+          const result = parseIpfsInput(
+            `ipfs://${gatewayHost}/ipfs/${CIDV1}/img.png`,
+            IPFS_ROUTE_PREFIX
+          );
+          expect(result.cid).toBe(CIDV1);
+          expect(result.tail).toBe('/img.png');
+          expect(result.protocol).toBe('ipfs');
+          expect(result.displayValue).toBe(`ipfs://${CIDV1}/img.png`);
+        }
+      );
+
       test('rewrites cross-namespace ipfs://localhost/ipns/<key> to ipns://<key>', () => {
+        const ipnsKey = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
         const result = parseIpfsInput(
-          'ipfs://localhost/ipns/docs.ipfs.tech/install',
+          `ipfs://localhost/ipns/${ipnsKey}/install`,
           IPFS_ROUTE_PREFIX
         );
-        expect(result.cid).toBe('docs.ipfs.tech');
+        expect(result.cid).toBe(ipnsKey);
         expect(result.protocol).toBe('ipns');
         expect(result.tail).toBe('/install');
-        expect(result.baseUrl).toBe('http://127.0.0.1:8080/ipns/docs.ipfs.tech/');
+        expect(result.baseUrl).toBe(`http://127.0.0.1:8080/ipns/${ipnsKey}/`);
       });
 
       test('preserves host when host IS a valid CID (legitimate /ipfs/ subdir)', () => {

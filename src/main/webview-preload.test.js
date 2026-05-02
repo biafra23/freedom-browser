@@ -310,11 +310,11 @@ describe('webview-preload', () => {
     expect(event.preventDefault).toHaveBeenCalled();
     expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
       url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      disposition: 'currentTab',
     });
   });
 
-  test('does not intercept modified clicks or non-self targets', () => {
-    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
+  test('intercepts modified clicks and target=_blank with newTab disposition', () => {
     const makeAnchor = (target = '') => ({
       tagName: 'A',
       getAttribute: jest.fn((name) => {
@@ -325,20 +325,46 @@ describe('webview-preload', () => {
       parentElement: global.document.body,
     });
 
-    const modified = {
-      target: makeAnchor(),
-      button: 0,
-      metaKey: true,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      defaultPrevented: false,
-      preventDefault: jest.fn(),
-    };
-    documentCaptureHandlers.click(modified);
+    const cases = [
+      { label: 'cmd-click', overrides: { metaKey: true } },
+      { label: 'ctrl-click', overrides: { ctrlKey: true } },
+      { label: 'shift-click', overrides: { shiftKey: true } },
+      { label: 'middle-click', overrides: { button: 1 } },
+      { label: 'target=_blank', overrides: {}, target: '_blank' },
+    ];
 
-    const blank = {
-      target: makeAnchor('_blank'),
+    for (const { label, overrides, target = '' } of cases) {
+      const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
+      const event = {
+        target: makeAnchor(target),
+        button: 0,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        defaultPrevented: false,
+        preventDefault: jest.fn(),
+        ...overrides,
+      };
+      documentCaptureHandlers.click(event);
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
+        url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        disposition: 'newTab',
+      });
+      // sanity: each case is a separate fresh load; assertion above pins it
+      void label;
+    }
+  });
+
+  test('ignores non-dweb anchor clicks', () => {
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
+    const event = {
+      target: {
+        tagName: 'A',
+        getAttribute: jest.fn((name) => (name === 'href' ? 'https://example.com/' : null)),
+        parentElement: global.document.body,
+      },
       button: 0,
       metaKey: false,
       ctrlKey: false,
@@ -347,14 +373,9 @@ describe('webview-preload', () => {
       defaultPrevented: false,
       preventDefault: jest.fn(),
     };
-    documentCaptureHandlers.click(blank);
-
-    expect(modified.preventDefault).not.toHaveBeenCalled();
-    expect(blank.preventDefault).not.toHaveBeenCalled();
-    expect(ipcRenderer.sendToHost).not.toHaveBeenCalledWith(
-      'link:navigate',
-      expect.anything()
-    );
+    documentCaptureHandlers.click(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(ipcRenderer.sendToHost).not.toHaveBeenCalledWith('link:navigate', expect.anything());
   });
 
   test('context menu preserves raw dweb href before anchor.href normalisation', () => {

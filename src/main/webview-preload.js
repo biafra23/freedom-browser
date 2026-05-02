@@ -89,25 +89,45 @@ const getRawDwebHref = (anchor) => {
 
 // Intercept dweb links before Chromium resolves the anchor href. `ipfs:` and
 // `ipns:` are standard schemes, so the browser lowercases the host segment
-// before will-navigate fires; that destroys CIDv0/base58 IPNS keys. The raw
-// DOM attribute still has the original case, so route it through the host
-// renderer's loadTarget/formatIpfsUrl pipeline while the bytes are recoverable.
+// before will-navigate fires (and before setWindowOpenHandler fires for
+// _blank / Cmd+Click new windows); that destroys CIDv0/base58 IPNS keys.
+// The raw DOM attribute still has the original case, so route it through the
+// host renderer's loadTarget/formatIpfsUrl pipeline while the bytes are
+// recoverable. Same-tab and new-tab dispositions are both handled here so
+// the new-window code path (Chromium → setWindowOpenHandler → tab:new-with-url
+// in the main process) never gets the lowercased URL — see
+// `src/main/webcontents-setup.js#setWindowOpenHandler`.
 document.addEventListener(
   'click',
   (event) => {
     if (event.defaultPrevented) return;
-    if (event.button !== 0) return;
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    // Primary (left) and auxiliary (middle) clicks. Right clicks are owned
+    // by the contextmenu listener; other buttons fall through to default
+    // browser handling.
+    if (event.button !== 0 && event.button !== 1) return;
 
     const anchor = findClosestAnchor(event.target);
     const href = getRawDwebHref(anchor);
     if (!href) return;
 
+    // Mirror Chromium's link disposition heuristic: middle-click,
+    // ctrl/cmd-click, shift-click, or `target="_blank"` open in a new tab;
+    // everything else navigates the current tab. (We don't distinguish
+    // foreground vs background tab here — same as freedom's existing
+    // `tab:new-with-url` flow which always opens foreground.)
     const target = anchor.getAttribute?.('target') || '';
-    if (target && !/^_?self$/i.test(target)) return;
+    const wantsNewTab =
+      event.button === 1 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      /^_blank$/i.test(target);
 
     event.preventDefault();
-    ipcRenderer.sendToHost('link:navigate', { url: href });
+    ipcRenderer.sendToHost('link:navigate', {
+      url: href,
+      disposition: wantsNewTab ? 'newTab' : 'currentTab',
+    });
   },
   true
 );

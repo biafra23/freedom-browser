@@ -96,6 +96,7 @@ const loadNavigationModule = async (options = {}) => {
   const tabsRef = { list: [] };
   const tabsMocks = {
     webviewEventHandler: null,
+    createTab: jest.fn(),
     getActiveWebview: jest.fn(() => activeRef.tab?.webview || null),
     getActiveTab: jest.fn(() => activeRef.tab || null),
     getActiveTabState: jest.fn(() => activeRef.tab?.navigationState || null),
@@ -1336,7 +1337,7 @@ describe('navigation', () => {
       ctx.tabsMocks.webviewEventHandler('ipc-message', {
         tabId: ctx.activeRef.tab.id,
         channel: 'link:navigate',
-        args: [{ url: rawHref }],
+        args: [{ url: rawHref, disposition: 'currentTab' }],
       });
       await flushMicrotasks();
 
@@ -1344,6 +1345,22 @@ describe('navigation', () => {
         rawHref,
         ctx.state.ipfsRoutePrefix
       );
+      expect(ctx.tabsMocks.createTab).not.toHaveBeenCalled();
+    });
+
+    test('ipc-message link:navigate with disposition newTab opens via createTab', async () => {
+      const ctx = await setupEnsDispatch();
+      const rawHref = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
+      ctx.tabsMocks.webviewEventHandler('ipc-message', {
+        tabId: ctx.activeRef.tab.id,
+        channel: 'link:navigate',
+        args: [{ url: rawHref, disposition: 'newTab' }],
+      });
+      await flushMicrotasks();
+
+      expect(ctx.tabsMocks.createTab).toHaveBeenCalledWith(rawHref);
+      expect(ctx.urlUtilsMocks.formatIpfsUrl).not.toHaveBeenCalled();
     });
   });
 

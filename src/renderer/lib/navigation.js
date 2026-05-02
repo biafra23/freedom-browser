@@ -28,6 +28,7 @@ import {
   isSupportedEnsTransport,
 } from './url-utils.js';
 import {
+  createTab,
   getActiveWebview,
   getActiveTab,
   getActiveTabState,
@@ -1725,10 +1726,21 @@ export const initNavigation = () => {
         } else if (data.channel === 'ens:open-settings') {
           loadTarget('freedom://settings', null, webview);
         } else if (data.channel === 'link:navigate') {
-          const url = data.args?.[0]?.url;
+          const payload = data.args?.[0] || {};
+          const url = payload.url;
           if (url) {
-            pushDebug(`Preload intercepted dweb link navigation: ${url}`);
-            loadTarget(url, null, webview);
+            const disposition = payload.disposition === 'newTab' ? 'newTab' : 'currentTab';
+            pushDebug(`Preload intercepted dweb link navigation: ${url} (${disposition})`);
+            if (disposition === 'newTab') {
+              // Mirrors the Chromium → setWindowOpenHandler →
+              // tab:new-with-url path, but with the raw mixed-case href
+              // intact. createTab routes through loadTarget which calls
+              // formatIpfsUrl, so CIDv0/base58 IPNS hosts get canonicalised
+              // exactly the same way as a same-tab navigation.
+              createTab(url);
+            } else {
+              loadTarget(url, null, webview);
+            }
           }
         }
         break;

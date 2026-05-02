@@ -433,20 +433,43 @@ export const deriveDisplayValue = (
 // here at worst leaves a redundant gateway-form URL untouched, while a
 // false negative would silently rewrite the legitimate
 // `ipfs://<cid>/ipfs/<subfile>` shape and load the wrong content.
+// Returns true only for hosts that are themselves a piece of content:
+//  - CIDv0 / CIDv1 base32 / CIDv1 base58btc
+//  - libp2p-key base36 / base58btc IPNS peer IDs
+//  - ENS names (.eth/.box) — resolved by ens-resolver, treated as content
+//    for path-disambiguation purposes
+//
+// Returns false for public IPFS gateway hosts (`dweb.link`, `ipfs.io`,
+// `cf-ipfs.com`, `localhost`, IPv4/IPv6 literals, generic DNSLink-capable
+// domains). That asymmetry lets gateway-form path rewriting fire for
+// `ipfs://dweb.link/ipfs/<cid>/...` while still keeping the legitimate
+// `ipfs://<cid>/ipfs/<subdir>` shape intact (the host CID is recognised,
+// so the path stays as-is).
 const isLikelyContentReference = (host) => {
   if (typeof host !== 'string' || !host) return false;
-  // IPv4 / IPv6 literals — never a content ref, always a gateway host.
-  // Checked before the dot-bearing branch so `127.0.0.1` doesn't get
-  // misclassified as DNSLink. (`hostname` from URL parsing is unbracketed
-  // for IPv6, so `::1` and `2001:db8::1` both contain `:`.)
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
-  if (host.includes(':')) return false;
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(host)) return true; // CIDv0
   if (/^baf[a-z2-7]{50,}$/i.test(host)) return true; // CIDv1 base32
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(host)) return true; // CIDv1 base58btc
   if (/^k[a-z0-9]{40,}$/i.test(host)) return true; // libp2p-key base36
   if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(host)) return true; // base58 IPNS peer IDs
-  if (host.includes('.')) return true; // DNSLink / ENS / FQDN
+  if (/\.(eth|box)$/i.test(host)) return true; // ENS
+  return false;
+};
+
+// Stricter than isLikelyContentReference (no ENS): used to validate the
+// embedded ref of a gateway-form path before rewriting. Without this guard,
+// `ipns://docs.ipfs.tech/ipfs/coverage` would be mis-rewritten as a
+// cross-namespace gateway URL with `coverage` as the CID, when in fact
+// it's a literal `/ipfs/coverage` path within the DNSLink site. ENS names
+// are excluded because their gateway-form embedded representation is
+// vanishingly rare and ambiguous with arbitrary DNSLink subpaths.
+const looksLikeContentKey = (ref) => {
+  if (typeof ref !== 'string' || !ref) return false;
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
+  if (/^baf[a-z2-7]{50,}$/i.test(ref)) return true;
+  if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(ref)) return true;
+  if (/^k[a-z0-9]{40,}$/i.test(ref)) return true;
+  if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(ref)) return true;
   return false;
 };
 
@@ -506,7 +529,11 @@ export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
   // redirected to the embedded reference.
   if (!isLikelyContentReference(cid)) {
     const gatewayMatch = path.match(/^\/(ipfs|ipns)\/([^/]+)(.*)$/);
-    if (gatewayMatch) {
+    // Guarded by looksLikeContentKey so a DNSLink site that publishes a
+    // literal `/ipfs/<text>` path (e.g. `ipns://docs.ipfs.tech/ipfs/coverage`)
+    // isn't mis-rewritten — the embedded segment must actually look like
+    // a CID or IPNS peer ID for the rewrite to fire.
+    if (gatewayMatch && looksLikeContentKey(gatewayMatch[2])) {
       isIpns = gatewayMatch[1] === 'ipns';
       cid = gatewayMatch[2];
       path = gatewayMatch[3] || '';
