@@ -229,7 +229,7 @@ describe('navigation-utils', () => {
       ]);
     });
 
-    test('records both base58 multihash and base36 CIDv1 for IPNS contenthashes', async () => {
+    test('records both base58 multihash and base36 CIDv1 for Ed25519 IPNS peer IDs', async () => {
       const { extractEnsResolutionMetadata } = await loadNavigationUtils();
 
       // The ENS resolver decodes jalil.eth's IPNS contenthash to this base58
@@ -243,6 +243,26 @@ describe('navigation-utils', () => {
       expect(knownEnsPairs).toEqual([
         ['12D3KooWAsDaZWCkCEUN3myg49NoCMmrYYivmJVwjg7DVJBvWdaX', 'jalil.eth'],
         ['k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4', 'jalil.eth'],
+      ]);
+    });
+
+    test('records both base58 multihash and base36 CIDv1 for secp256k1 IPNS peer IDs', async () => {
+      // Regression test for the prefix-allowlist bug: secp256k1 peer IDs
+      // (`16Uiu2H...`) are valid IPNS names that Kubo also redirects to the
+      // base36 subdomain form. The peer ID below is derived from the
+      // canonical secp256k1 public key in the libp2p/specs peer-ids.md test
+      // vectors (08021221037777e994e452c21604f91de093ce415f5432f701dd8cd1a7a6fea0e630bfca99).
+      const { extractEnsResolutionMetadata } = await loadNavigationUtils();
+
+      const { knownEnsPairs, resolvedProtocol } = extractEnsResolutionMetadata(
+        'ipns://16Uiu2HAmLhLvBoYaoZfaMUKuibM6ac163GwKY74c5kiSLg5KvLpY',
+        'secp.eth'
+      );
+
+      expect(resolvedProtocol).toBe('ipns');
+      expect(knownEnsPairs).toEqual([
+        ['16Uiu2HAmLhLvBoYaoZfaMUKuibM6ac163GwKY74c5kiSLg5KvLpY', 'secp.eth'],
+        ['kzwfwjn5ji4put13uvtwtc7azzwk42cq2o8ctfnxa6q8n90e72o3pjqbrp3lpcp', 'secp.eth'],
       ]);
     });
 
