@@ -137,6 +137,23 @@ export const ipnsMhToCidV1Base36 = (mhBase58) => {
  * already-lowercased `z...` bytes, or anything that doesn't decode as a
  * valid CIDv1 structure.
  */
+// LEB128 unsigned varint reader — see the shared file for the rationale
+// (multi-byte codec / multihash-code varints in the wild — `dag-json`,
+// `blake2b-256`, etc.).
+const readUvarint = (bytes, offset) => {
+  let value = 0;
+  let shift = 0;
+  let pos = offset;
+  while (pos < bytes.length) {
+    const byte = bytes[pos++];
+    value |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return { value, length: pos - offset };
+    shift += 7;
+    if (shift >= 35) return null;
+  }
+  return null;
+};
+
 export const cidV1B58btcToBase32 = (cid) => {
   if (typeof cid !== 'string') return null;
   if (!/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(cid)) return null;
@@ -146,11 +163,19 @@ export const cidV1B58btcToBase32 = (cid) => {
   if (!/[A-HJ-NP-Z]/.test(cid)) return null;
   const bytes = base58Decode(cid.slice(1));
   if (!bytes || bytes.length < 4) return null;
+  // CIDv1 = version varint (always 0x01) + codec varint + multihash
+  // (code varint + length varint + digest bytes). Codec, mh-code, and
+  // length can each be multi-byte varints; single-byte assumptions
+  // false-reject e.g. dag-json (codec 0x0129) and blake2b-256 (mh-code
+  // 0xb220).
   if (bytes[0] !== 0x01) return null;
-  if (bytes[1] >= 0x80) return null;
-  if (bytes[2] >= 0x80) return null;
-  const digestLen = bytes[3];
-  if (digestLen >= 0x80) return null;
-  if (bytes.length !== 4 + digestLen) return null;
+  const codec = readUvarint(bytes, 1);
+  if (!codec) return null;
+  const mhCode = readUvarint(bytes, 1 + codec.length);
+  if (!mhCode) return null;
+  const mhLen = readUvarint(bytes, 1 + codec.length + mhCode.length);
+  if (!mhLen) return null;
+  const expectedTotal = 1 + codec.length + mhCode.length + mhLen.length + mhLen.value;
+  if (bytes.length !== expectedTotal) return null;
   return 'b' + base32Encode(bytes);
 };

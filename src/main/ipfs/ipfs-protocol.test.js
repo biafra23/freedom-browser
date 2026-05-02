@@ -35,6 +35,13 @@ const CIDV1_BASE58 = 'zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA';
 // scheme hosts, so re-encoding to lowercase-canonical base32 is the only
 // way to round-trip cleanly).
 const CIDV1_BASE58_AS_BASE32 = 'bafkreidon73zkcrwdb5iafqtijxildoonbwnpv7dyd6ef3qdgads2jc4su';
+// CIDv1 base58btc with a multi-byte varint codec (dag-json = 0x0129,
+// encoded as varint `0xa9 0x02`). Confirms the handler canonicalises
+// codecs that don't fit in a single varint byte. Reference value
+// generated with `multiformats`: CID.createV1(0x0129, sha256.digest('hello world')).
+const CIDV1_BASE58_DAGJSON = 'z4EBG9jCb6wv7WCTz9NvmkQ5czYGEUZQgWFijgDTUqbD7aftapg';
+const CIDV1_BASE58_DAGJSON_AS_BASE32 =
+  'baguqeeraxfgspomtju7arjjokll5u7nl7lcij37dpjjyb3uqrd32zyxpzxuq';
 const IPNS_KEY_BASE36 = 'k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8';
 const IPNS_KEY_BASE58_ED25519 = '12D3KooWGuQafLgPqRRRkRSUNqZNQwL2gMZcQ27GiNpoVxz3vMWj';
 
@@ -50,6 +57,14 @@ describe('buildGatewayUrl(ipfs)', () => {
     // to base32 so Chromium's host-lowercasing doesn't corrupt it on
     // subsequent sub-resource fetches that bypass the renderer.
     ['CIDv1 base58btc (z…) → base32', CIDV1_BASE58, CIDV1_BASE58_AS_BASE32],
+    // Multi-byte-varint codec (dag-json) — verifies that the handler
+    // doesn't false-reject CIDs with codec/multihash codes larger than
+    // 0x7f (ie. anything not fitting in a single varint byte).
+    [
+      'CIDv1 base58btc dag-json (multi-byte varint) → base32',
+      CIDV1_BASE58_DAGJSON,
+      CIDV1_BASE58_DAGJSON_AS_BASE32,
+    ],
   ])('converts ipfs://<%s>/path to the Kubo gateway URL', async (_label, host, expected) => {
     await expect(buildGatewayUrl('ipfs', `ipfs://${host}/index.html`)).resolves.toEqual({
       ok: true,

@@ -160,36 +160,61 @@ const ipnsMhToCidV1Base36 = (mhBase58) => {
  *  - bytes that don't form a valid CIDv1 structure (version 0x01, single-
  *    byte varint codec, plausible multihash header).
  */
+// Read an unsigned LEB128 varint at `offset`. Returns `{ value, length }`
+// on success or `null` on premature EOF / overlong encoding. We cap at
+// 5 bytes (35 bits) which is comfortably above any multicodec / multihash
+// code in the registry (largest currently-allocated entries fit in 14
+// bits) and well below the 53-bit safe-integer limit.
+const readUvarint = (bytes, offset) => {
+  let value = 0;
+  let shift = 0;
+  let pos = offset;
+  while (pos < bytes.length) {
+    const byte = bytes[pos++];
+    value |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return { value, length: pos - offset };
+    shift += 7;
+    if (shift >= 35) return null;
+  }
+  return null;
+};
+
 const cidV1B58btcToBase32 = (cid) => {
   if (typeof cid !== 'string') return null;
   // Case-sensitive base58btc body, no `/i` flag.
   if (!/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(cid)) return null;
   // Detect-and-reject lowercased input. The decoded-bytes sanity check
   // alone isn't enough — lowercased base58 can decode into garbage that
-  // happens to look like a valid CIDv1 structure (CIDv1+raw is just two
-  // single-byte varint headers, only ~1/256 chance of accidentally
-  // mismatching when the input is lowercased mid-flight). This input-
-  // shape check is deterministic: real `z...` CIDs of 40+ chars contain
-  // mixed case (~24 upper + 25 lower + 9 digits in the alphabet, so for
-  // a 32-byte SHA-256 multihash → ~44-char body the probability of zero
-  // uppercase letters is ≈ (33/58)^44 ≈ 6×10⁻¹²). All-lowercase input
-  // therefore signals that something upstream lowercased the host (most
-  // commonly Chromium's standard-scheme URL parser); the original bytes
-  // are unrecoverable and the caller should surface a 400 rather than
+  // happens to look like a valid CIDv1 structure (just three varint
+  // headers, only ~1/256 chance of mismatching when the input is
+  // lowercased mid-flight). This input-shape check is deterministic:
+  // real `z...` CIDs of 40+ chars contain mixed case (~24 upper + 25
+  // lower + 9 digits in the alphabet, so for a 32-byte SHA-256
+  // multihash → ~44-char body the probability of zero uppercase letters
+  // is ≈ (33/58)^44 ≈ 6×10⁻¹²). All-lowercase input therefore signals
+  // that something upstream lowercased the host (most commonly
+  // Chromium's standard-scheme URL parser); the original bytes are
+  // unrecoverable and the caller should surface a 400 rather than
   // re-encode to the wrong content.
   if (!/[A-HJ-NP-Z]/.test(cid)) return null;
   const bytes = base58Decode(cid.slice(1));
   if (!bytes || bytes.length < 4) return null;
-  // CIDv1 sanity: version byte 0x01, single-byte varint codec, single-
-  // byte varint multihash code, single-byte digest length matching the
-  // remaining bytes. Defence in depth — the input-shape check above is
-  // already the primary corruption guard.
+  // CIDv1 layout: version varint (always 0x01) + codec varint +
+  // multihash (code varint + digest-length varint + digest bytes).
+  // Codec, mh-code, and digest-length CAN be multi-byte varints — eg.
+  // dag-json is 0x0129 (varint `0xa9 0x02`), blake2b-256 multihash code
+  // is 0xb220 (`0xa0 0xe4 0x02`). Single-byte assumptions here would
+  // false-reject those layouts (and they're not vanishingly rare —
+  // dag-json and dag-cbor in particular are widely used).
   if (bytes[0] !== 0x01) return null;
-  if (bytes[1] >= 0x80) return null;
-  if (bytes[2] >= 0x80) return null;
-  const digestLen = bytes[3];
-  if (digestLen >= 0x80) return null;
-  if (bytes.length !== 4 + digestLen) return null;
+  const codec = readUvarint(bytes, 1);
+  if (!codec) return null;
+  const mhCode = readUvarint(bytes, 1 + codec.length);
+  if (!mhCode) return null;
+  const mhLen = readUvarint(bytes, 1 + codec.length + mhCode.length);
+  if (!mhLen) return null;
+  const expectedTotal = 1 + codec.length + mhCode.length + mhLen.length + mhLen.value;
+  if (bytes.length !== expectedTotal) return null;
   return 'b' + base32Encode(bytes);
 };
 

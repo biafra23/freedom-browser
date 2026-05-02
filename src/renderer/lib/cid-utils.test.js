@@ -36,17 +36,32 @@ describe('cidV1B58btcToBase32', () => {
   // Reference values cross-checked against multiformats:
   //   CID.parse('z...', base58btc).toString(base32)
   test('converts canonical CIDv1 base58btc CIDs to base32 (lowercase, prefix b)', () => {
-    // raw codec (0x55)
+    // raw codec (0x55) — single-byte
     expect(cidV1B58btcToBase32('zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA')).toBe(
       'bafkreidon73zkcrwdb5iafqtijxildoonbwnpv7dyd6ef3qdgads2jc4su'
     );
-    // dag-pb codec (0x70)
+    // dag-pb codec (0x70) — single-byte
     expect(cidV1B58btcToBase32('zdj7Wm8AnNCTyaUbqz1afY6jSGdNi2DKwowmcwMFvbz3vL2Ce')).toBe(
       'bafybeihjgbfpb6h5y66ampe35j6wrvogbykwbpfqnyittz42v46btbt2r4'
     );
-    // libp2p-key codec (0x72) — IPNS keys can also use the z form
+    // libp2p-key codec (0x72) — single-byte; IPNS keys can also use the z form
     expect(cidV1B58btcToBase32('z5AanNVJCxnFtEfSEgTFFAm3Ju15ppwZfW3wTJTuoBL6FvHj7kmuKn7')).toBe(
       'bafzaajaiaejcad4ww6rlktrbqfhuhkjx72e6ryft3oo5cxhssz4yrpxsaqiie2aa'
+    );
+  });
+
+  test('handles CIDs with multi-byte varint codec / multihash code', () => {
+    // dag-json codec 0x0129 — codec varint is 2 bytes (0xa9 0x02). A
+    // single-byte assumption would false-reject this layout (and dag-json
+    // is widely used in practice). Reference value cross-checked against
+    // multiformats: CID.createV1(0x0129, sha256.digest('hello world')).
+    expect(cidV1B58btcToBase32('z4EBG9jCb6wv7WCTz9NvmkQ5czYGEUZQgWFijgDTUqbD7aftapg')).toBe(
+      'baguqeeraxfgspomtju7arjjokll5u7nl7lcij37dpjjyb3uqrd32zyxpzxuq'
+    );
+    // blake2b-256 multihash code 0xb220 — mh-code varint is 3 bytes
+    // (0xa0 0xe4 0x02). Reference value: CID.createV1(0x55, blake2b256.digest('hello world')).
+    expect(cidV1B58btcToBase32('zCT5htkeAKK1CMxFpvErEwHxFfzgzsMmWZaxxiFzpY8FSzJviw6Q')).toBe(
+      'bafk2bzacec4u2j5zsngt4cfffzjnpwt5vp5mjbhp4n5fhahoscepplhc57g6s'
     );
   });
 
@@ -157,6 +172,11 @@ describe('renderer ↔ shared parity', () => {
     'zb2rhe5p4gxftawva4exq5hjwser2owdys9skaqrrvqpn93ba',
     'zdj7Wm8AnNCTyaUbqz1afY6jSGdNi2DKwowmcwMFvbz3vL2Ce',
     'z5AanNVJCxnFtEfSEgTFFAm3Ju15ppwZfW3wTJTuoBL6FvHj7kmuKn7',
+    // Multi-byte varint codec / multihash code — see the multi-byte
+    // varint test above for codec (0x0129 dag-json) and mh-code (0xb220
+    // blake2b-256) layouts.
+    'z4EBG9jCb6wv7WCTz9NvmkQ5czYGEUZQgWFijgDTUqbD7aftapg',
+    'zCT5htkeAKK1CMxFpvErEwHxFfzgzsMmWZaxxiFzpY8FSzJviw6Q',
     'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
     'bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm',
     'ZB2RHE5P4GXFTAWVA4EXQ5HJWSER2OWDYS9SKAQRRVQPN93BA',
