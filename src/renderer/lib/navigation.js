@@ -1661,6 +1661,20 @@ export const initNavigation = () => {
         break;
 
       case 'did-fail-load':
+        // Defensive twin of the per-tab gate in `tabs.js`. Chromium fires
+        // `did-fail-load` for **any** frame, including third-party iframes
+        // and ad-tech pixels. Replacing the main page with `error.html`
+        // for a sub-frame failure is wrong (it hijacks the user's
+        // top-level navigation on top of a perfectly-loaded main page);
+        // tabs.js already filters these out, but keeping the check here
+        // too means a future caller of this handler can't reintroduce the
+        // bug by accident.
+        if (data.event?.isMainFrame === false) {
+          pushDebug(
+            `Sub-frame did-fail-load ignored: ${data.event?.errorDescription || data.event?.errorCode} (${data.event?.validatedURL || 'unknown url'})`
+          );
+          break;
+        }
         if (webview) webview.classList.remove('hidden');
         setLoading(false);
         navState.isWebviewLoading = false;

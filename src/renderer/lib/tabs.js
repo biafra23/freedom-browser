@@ -321,6 +321,20 @@ const createWebview = (tabId, initialUrl) => {
       }
     },
     'did-fail-load': (event) => {
+      // Chromium fires `did-fail-load` for **any** frame, including hidden
+      // sub-frames (verify-API attestation iframes, ad-tech cookie-sync
+      // pixels, third-party widgets, etc.). Without this guard, every
+      // failed sub-resource iframe load would clear the main-frame loading
+      // state and — via the navigation-side handler — replace the entire
+      // page with `pages/error.html`. That breaks WalletConnect-using
+      // dapps and any site with heavy ad-tech under Freedom.
+      //
+      // Treat undefined as main-frame for backward compatibility with
+      // tests that don't synthesize the field; production Electron always
+      // sets it.
+      if (event.isMainFrame === false) {
+        return;
+      }
       const tab = tabState.tabs.find((t) => t.id === tabId);
       if (tab) {
         // When the main process intercepts a `will-navigate` for a custom

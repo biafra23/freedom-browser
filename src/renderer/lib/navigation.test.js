@@ -587,6 +587,22 @@ describe('navigation', () => {
       'file:///app/pages/error.html?error=ERR_NAME_NOT_RESOLVED&url=https%3A%2F%2Fbad.example'
     );
 
+    // Defensive twin of the per-tab gate in `tabs.js`: a sub-frame
+    // failure (third-party iframe, ad-tech pixel, etc.) must NOT
+    // replace the main page with `error.html`. Without this guard,
+    // any WalletConnect / heavy-ad-tech site hijacks itself on top of
+    // a successful main-frame load.
+    ctx.activeRef.tab.webview.loadURL.mockClear();
+    ctx.tabsMocks.webviewEventHandler('did-fail-load', {
+      event: {
+        errorCode: -310,
+        errorDescription: 'ERR_BLOCKED_BY_RESPONSE',
+        validatedURL: 'https://verify.walletconnect.com/attestation/abc',
+        isMainFrame: false,
+      },
+    });
+    expect(ctx.activeRef.tab.webview.loadURL).not.toHaveBeenCalled();
+
     ctx.tabsMocks.webviewEventHandler('certificate-error', {
       event: { error: 'CERT_INVALID' },
     });

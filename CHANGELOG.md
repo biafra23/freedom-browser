@@ -19,6 +19,7 @@ All notable changes to Freedom will be documented in this file.
 - The protocol icon updates to the right transport (Swarm/IPFS/IPNS) as soon as the scheme is known, rather than waiting until the page finishes loading. This also fixes the IPFS icon never showing for ENS names.
 - The tab loading spinner now stays on while ENS resolves a page-link click, instead of being torn down by the phantom abort that follows the custom-protocol intercept.
 - Cross-tab UI contamination during ENS resolution: spinner state, modal alert popups, and the resolved URL all stay scoped to the originating tab. Switching to another tab while a background lookup is in flight no longer drops that tab's spinner, surfaces an unrelated alert, or clobbers the foreground tab's address bar.
+- Sub-frame load failures (third-party iframes, ad-tech cookie-sync pixels, WalletConnect verify-API attestation iframes, etc.) no longer hijack the main page with the "Content Unavailable" error page. The renderer's `did-fail-load` handler now checks `isMainFrame` and ignores sub-frame failures the way Chromium itself does, so heavy-ad-tech sites (e.g. `https://www.spiegel.de/`) and WalletConnect-using dapps (e.g. `ipfs://ens.eth/`) no longer self-destruct ~2–10 s after loading. The error page itself also uses scheme-aware copy for non-dweb URLs ("Couldn't load this page" / hostname-specific message) instead of unconditionally referencing "the decentralized network", which was misleading for plain HTTPS failures.
 
 ## [0.7.0] - 2026-04-19
 
