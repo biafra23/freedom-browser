@@ -138,4 +138,59 @@ const ipnsMhToCidV1Base36 = (mhBase58) => {
   return 'k' + base36Encode(v1);
 };
 
-module.exports = { cidV0ToV1Base32, ipnsMhToCidV1Base36 };
+/**
+ * Convert a CIDv1 base58btc CID ("z..." multibase prefix) to the equivalent
+ * CIDv1 base32 form ("b..." prefix), which is lowercase and therefore safe
+ * for the standard-scheme URL parser.
+ *
+ * Base58btc encoding is case-sensitive; once Chromium lowercases the host
+ * segment of `ipfs://<z-cid>/...` the original bytes are destroyed
+ * (lowercased letters decode to different base58 values). This converter
+ * runs *before* Chromium parses the URL — case-preserving address-bar
+ * input goes through src/renderer/lib/url-utils.js#parseIpfsInput, raw
+ * anchor hrefs are intercepted by src/main/webview-preload.js. After
+ * conversion the resulting `b...` form decodes case-insensitively (RFC
+ * 4648 base32) so subsequent normalisation is a no-op.
+ *
+ * Returns null on:
+ *  - non-string input,
+ *  - input not matching the case-sensitive `z...` prefix shape (lowercased
+ *    inputs that were once mixed-case are unrecoverable; caller should
+ *    surface a 400 rather than re-encode wrong bytes),
+ *  - bytes that don't form a valid CIDv1 structure (version 0x01, single-
+ *    byte varint codec, plausible multihash header).
+ */
+const cidV1B58btcToBase32 = (cid) => {
+  if (typeof cid !== 'string') return null;
+  // Case-sensitive base58btc body, no `/i` flag.
+  if (!/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(cid)) return null;
+  // Detect-and-reject lowercased input. The decoded-bytes sanity check
+  // alone isn't enough — lowercased base58 can decode into garbage that
+  // happens to look like a valid CIDv1 structure (CIDv1+raw is just two
+  // single-byte varint headers, only ~1/256 chance of accidentally
+  // mismatching when the input is lowercased mid-flight). This input-
+  // shape check is deterministic: real `z...` CIDs of 40+ chars contain
+  // mixed case (~24 upper + 25 lower + 9 digits in the alphabet, so for
+  // a 32-byte SHA-256 multihash → ~44-char body the probability of zero
+  // uppercase letters is ≈ (33/58)^44 ≈ 6×10⁻¹²). All-lowercase input
+  // therefore signals that something upstream lowercased the host (most
+  // commonly Chromium's standard-scheme URL parser); the original bytes
+  // are unrecoverable and the caller should surface a 400 rather than
+  // re-encode to the wrong content.
+  if (!/[A-HJ-NP-Z]/.test(cid)) return null;
+  const bytes = base58Decode(cid.slice(1));
+  if (!bytes || bytes.length < 4) return null;
+  // CIDv1 sanity: version byte 0x01, single-byte varint codec, single-
+  // byte varint multihash code, single-byte digest length matching the
+  // remaining bytes. Defence in depth — the input-shape check above is
+  // already the primary corruption guard.
+  if (bytes[0] !== 0x01) return null;
+  if (bytes[1] >= 0x80) return null;
+  if (bytes[2] >= 0x80) return null;
+  const digestLen = bytes[3];
+  if (digestLen >= 0x80) return null;
+  if (bytes.length !== 4 + digestLen) return null;
+  return 'b' + base32Encode(bytes);
+};
+
+module.exports = { cidV0ToV1Base32, ipnsMhToCidV1Base36, cidV1B58btcToBase32 };

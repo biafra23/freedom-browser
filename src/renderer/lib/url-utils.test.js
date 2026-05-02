@@ -528,13 +528,86 @@ describe('url-utils', () => {
         expect(result.protocol).toBe('ipns');
       });
 
-      test('preserves host when host looks like a DNSLink/ENS name', () => {
+      test('preserves host when outer host is a DNSLink target (not a known gateway)', () => {
+        // `docs.ipfs.tech` isn't in the gateway allowlist — it's a
+        // DNSLink content host that genuinely serves a `/ipfs/coverage`
+        // path. Rewrites must not fire here even though the embedded
+        // `coverage` is a non-CID-shaped string. See the matching gate
+        // in `isKnownGatewayHost`.
         const result = parseIpfsInput(
           'ipns://docs.ipfs.tech/ipfs/coverage',
           IPFS_ROUTE_PREFIX
         );
         expect(result.cid).toBe('docs.ipfs.tech');
         expect(result.tail).toBe('/ipfs/coverage');
+      });
+
+      test('rewrites ipfs://dweb.link/ipns/<dnslink-name>/path to ipns://<dnslink-name>/path', () => {
+        // P3 from the round-3 review: with the outer host being a
+        // recognised public gateway, the `/ipns/<dnslink-name>` shape
+        // is unambiguously the gateway-form for a DNSLink target.
+        const result = parseIpfsInput(
+          'ipfs://dweb.link/ipns/docs.ipfs.tech/install',
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe('docs.ipfs.tech');
+        expect(result.protocol).toBe('ipns');
+        expect(result.tail).toBe('/install');
+        expect(result.displayValue).toBe('ipns://docs.ipfs.tech/install');
+      });
+
+      test('does NOT rewrite for unknown self-hosted gateways', () => {
+        // Conservative allowlist — a private gateway hostname can't be
+        // distinguished from a DNSLink content host by URL shape alone.
+        // Authors of self-hosted gateways can publish canonical
+        // `ipfs://<cid>/...` URLs directly. This test pins that the
+        // gate isn't reverted to the over-permissive
+        // "any-non-content-host" heuristic.
+        const result = parseIpfsInput(
+          `ipfs://my-gateway.example/ipfs/${CIDV1}/page`,
+          IPFS_ROUTE_PREFIX
+        );
+        // The outer host stays as the (invalid) "cid", which the main-
+        // process protocol handler then 400s when Kubo rejects it.
+        expect(result.cid).toBe('my-gateway.example');
+      });
+    });
+
+    describe('CIDv1 base58btc (z…) canonicalisation', () => {
+      // `z…` CIDs use base58btc encoding which, like CIDv0, is case-
+      // sensitive. Convert to base32 (lowercase) so Chromium's standard-
+      // scheme URL parser doesn't corrupt the bytes during host
+      // normalisation.
+      const Z_CID_DAGPB = 'zdj7Wm8AnNCTyaUbqz1afY6jSGdNi2DKwowmcwMFvbz3vL2Ce';
+      const Z_CID_DAGPB_AS_B32 =
+        'bafybeihjgbfpb6h5y66ampe35j6wrvogbykwbpfqnyittz42v46btbt2r4';
+
+      test('canonicalises z… (base58btc) to base32 lowercase', () => {
+        const result = parseIpfsInput(`ipfs://${Z_CID_DAGPB}/img.png`, IPFS_ROUTE_PREFIX);
+        expect(result.cid).toBe(Z_CID_DAGPB_AS_B32);
+        expect(result.tail).toBe('/img.png');
+        expect(result.displayValue).toBe(`ipfs://${Z_CID_DAGPB_AS_B32}/img.png`);
+      });
+
+      test('canonicalises z… inside gateway-form path too', () => {
+        const result = parseIpfsInput(
+          `ipfs://localhost/ipfs/${Z_CID_DAGPB}/file`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(Z_CID_DAGPB_AS_B32);
+        expect(result.tail).toBe('/file');
+      });
+
+      test('lowercased z… is not silently re-encoded (caller surfaces 400)', () => {
+        // The renderer-side canonicaliser returns null for already-
+        // lowercased input rather than producing wrong content. The cid
+        // stays as the lowercased form; the main-process handler then
+        // 400s with an actionable message.
+        const result = parseIpfsInput(
+          `ipfs://${Z_CID_DAGPB.toLowerCase()}/img.png`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(Z_CID_DAGPB.toLowerCase());
       });
     });
   });

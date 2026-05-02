@@ -126,3 +126,31 @@ export const ipnsMhToCidV1Base36 = (mhBase58) => {
   v1.set(mh, 2);
   return 'k' + base36Encode(v1);
 };
+
+/**
+ * Convert a CIDv1 base58btc CID ("z..." multibase prefix) to the equivalent
+ * CIDv1 base32 form ("b..." prefix), which is lowercase and therefore safe
+ * for the standard-scheme URL parser. See the shared file for the full
+ * rationale; in short, base58btc is case-sensitive and Chromium lowercases
+ * standard-scheme hosts, so `z...` CIDv1s need to be re-encoded before
+ * the URL hits Chromium's parser. Returns null for non-string input,
+ * already-lowercased `z...` bytes, or anything that doesn't decode as a
+ * valid CIDv1 structure.
+ */
+export const cidV1B58btcToBase32 = (cid) => {
+  if (typeof cid !== 'string') return null;
+  if (!/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(cid)) return null;
+  // Reject all-lowercase input — see the shared file for the rationale
+  // (lowercased base58 can decode into valid-looking-but-wrong CID bytes,
+  // so detect at the input-shape layer where it's deterministic).
+  if (!/[A-HJ-NP-Z]/.test(cid)) return null;
+  const bytes = base58Decode(cid.slice(1));
+  if (!bytes || bytes.length < 4) return null;
+  if (bytes[0] !== 0x01) return null;
+  if (bytes[1] >= 0x80) return null;
+  if (bytes[2] >= 0x80) return null;
+  const digestLen = bytes[3];
+  if (digestLen >= 0x80) return null;
+  if (bytes.length !== 4 + digestLen) return null;
+  return 'b' + base32Encode(bytes);
+};

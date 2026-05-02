@@ -325,15 +325,21 @@ describe('webview-preload', () => {
       parentElement: global.document.body,
     });
 
+    // Each case names which DOM event fires for that activation in real
+    // Chromium. Middle-click goes through `auxclick`, NOT `click` —
+    // modern Chromium only dispatches `click` for the primary button
+    // (UI Events spec). A previous implementation listened only to
+    // `click` and checked `event.button === 1` inside, which is dead
+    // code for real middle-clicks; fixed by registering both listeners.
     const cases = [
-      { label: 'cmd-click', overrides: { metaKey: true } },
-      { label: 'ctrl-click', overrides: { ctrlKey: true } },
-      { label: 'shift-click', overrides: { shiftKey: true } },
-      { label: 'middle-click', overrides: { button: 1 } },
-      { label: 'target=_blank', overrides: {}, target: '_blank' },
+      { label: 'cmd-click', dispatchEvent: 'click', overrides: { metaKey: true } },
+      { label: 'ctrl-click', dispatchEvent: 'click', overrides: { ctrlKey: true } },
+      { label: 'shift-click', dispatchEvent: 'click', overrides: { shiftKey: true } },
+      { label: 'middle-click', dispatchEvent: 'auxclick', overrides: { button: 1 } },
+      { label: 'target=_blank', dispatchEvent: 'click', overrides: {}, target: '_blank' },
     ];
 
-    for (const { label, overrides, target = '' } of cases) {
+    for (const { label, dispatchEvent, overrides, target = '' } of cases) {
       const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
       const event = {
         target: makeAnchor(target),
@@ -346,13 +352,12 @@ describe('webview-preload', () => {
         preventDefault: jest.fn(),
         ...overrides,
       };
-      documentCaptureHandlers.click(event);
+      documentCaptureHandlers[dispatchEvent](event);
       expect(event.preventDefault).toHaveBeenCalled();
       expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
         url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
         disposition: 'newTab',
       });
-      // sanity: each case is a separate fresh load; assertion above pins it
       void label;
     }
   });

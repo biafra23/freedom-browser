@@ -1,4 +1,4 @@
-import { cidV0ToV1Base32, ipnsMhToCidV1Base36 } from './cid-utils.js';
+import { cidV0ToV1Base32, cidV1B58btcToBase32, ipnsMhToCidV1Base36 } from './cid-utils.js';
 const shared = require('../../shared/cid-utils');
 
 describe('cidV0ToV1Base32', () => {
@@ -29,6 +29,49 @@ describe('cidV0ToV1Base32', () => {
     // no way to round-trip. We pass through unchanged so the caller can
     // emit an upstream error rather than silently producing a wrong CID.
     expect(cidV0ToV1Base32('qmywapjzv5czsna625s3xf2nemtygpphdwez79ojwnpbdg')).toBeNull();
+  });
+});
+
+describe('cidV1B58btcToBase32', () => {
+  // Reference values cross-checked against multiformats:
+  //   CID.parse('z...', base58btc).toString(base32)
+  test('converts canonical CIDv1 base58btc CIDs to base32 (lowercase, prefix b)', () => {
+    // raw codec (0x55)
+    expect(cidV1B58btcToBase32('zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA')).toBe(
+      'bafkreidon73zkcrwdb5iafqtijxildoonbwnpv7dyd6ef3qdgads2jc4su'
+    );
+    // dag-pb codec (0x70)
+    expect(cidV1B58btcToBase32('zdj7Wm8AnNCTyaUbqz1afY6jSGdNi2DKwowmcwMFvbz3vL2Ce')).toBe(
+      'bafybeihjgbfpb6h5y66ampe35j6wrvogbykwbpfqnyittz42v46btbt2r4'
+    );
+    // libp2p-key codec (0x72) — IPNS keys can also use the z form
+    expect(cidV1B58btcToBase32('z5AanNVJCxnFtEfSEgTFFAm3Ju15ppwZfW3wTJTuoBL6FvHj7kmuKn7')).toBe(
+      'bafzaajaiaejcad4ww6rlktrbqfhuhkjx72e6ryft3oo5cxhssz4yrpxsaqiie2aa'
+    );
+  });
+
+  test('returns null for already-lowercased z... (cannot be recovered)', () => {
+    // Lowercased base58btc decodes into different bytes — sometimes
+    // valid-looking CID structure by chance. The detector lives at the
+    // input-shape layer rather than the decoded-bytes layer so the
+    // rejection is deterministic.
+    expect(cidV1B58btcToBase32('zb2rhe5p4gxftawva4exq5hjwser2owdys9skaqrrvqpn93ba')).toBeNull();
+    expect(cidV1B58btcToBase32('zdj7wm8annctyaubqz1afy6jsgdni2dkwowmcwmfvbz3vl2ce')).toBeNull();
+  });
+
+  test('returns null for non-z input (CIDv0, base32 CIDv1, garbage)', () => {
+    expect(cidV1B58btcToBase32(null)).toBeNull();
+    expect(cidV1B58btcToBase32(undefined)).toBeNull();
+    expect(cidV1B58btcToBase32('')).toBeNull();
+    // CIDv0 (Qm... prefix) — handled by cidV0ToV1Base32 instead.
+    expect(cidV1B58btcToBase32('QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG')).toBeNull();
+    // CIDv1 base32 — already lowercase-canonical.
+    expect(cidV1B58btcToBase32('bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm')).toBeNull();
+    // Too short to be a real CID.
+    expect(cidV1B58btcToBase32('zHello')).toBeNull();
+    // Uppercase Z prefix — base58btc multibase prefix is lowercase z;
+    // uppercase Z denotes z-base-32 (rarely used, not handled here).
+    expect(cidV1B58btcToBase32('ZB2RHE5P4GXFTAWVA4EXQ5HJWSER2OWDYS9SKAQRRVQPN93BA')).toBeNull();
   });
 });
 
@@ -105,6 +148,20 @@ describe('renderer ↔ shared parity', () => {
     'vitalik.eth',
   ];
 
+  const CIDV1_B58_INPUTS = [
+    null,
+    undefined,
+    '',
+    'zHello',
+    'zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA',
+    'zb2rhe5p4gxftawva4exq5hjwser2owdys9skaqrrvqpn93ba',
+    'zdj7Wm8AnNCTyaUbqz1afY6jSGdNi2DKwowmcwMFvbz3vL2Ce',
+    'z5AanNVJCxnFtEfSEgTFFAm3Ju15ppwZfW3wTJTuoBL6FvHj7kmuKn7',
+    'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+    'bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm',
+    'ZB2RHE5P4GXFTAWVA4EXQ5HJWSER2OWDYS9SKAQRRVQPN93BA',
+  ];
+
   test('cidV0ToV1Base32 matches shared for every input', () => {
     for (const input of CID_INPUTS) {
       expect(cidV0ToV1Base32(input)).toBe(shared.cidV0ToV1Base32(input));
@@ -114,6 +171,12 @@ describe('renderer ↔ shared parity', () => {
   test('ipnsMhToCidV1Base36 matches shared for every input', () => {
     for (const input of IPNS_INPUTS) {
       expect(ipnsMhToCidV1Base36(input)).toBe(shared.ipnsMhToCidV1Base36(input));
+    }
+  });
+
+  test('cidV1B58btcToBase32 matches shared for every input', () => {
+    for (const input of CIDV1_B58_INPUTS) {
+      expect(cidV1B58btcToBase32(input)).toBe(shared.cidV1B58btcToBase32(input));
     }
   });
 });

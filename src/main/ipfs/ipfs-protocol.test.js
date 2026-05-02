@@ -29,6 +29,12 @@ const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 const CIDV0_AS_BASE32 = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
 const CIDV1_BASE32 = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 const CIDV1_BASE58 = 'zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA';
+// Canonical CIDv1 base32 (`bafk…` raw) form of `CIDV1_BASE58`; used to
+// assert that the handler converts mixed-case `z…` hosts before forwarding
+// to Kubo (base58btc is case-sensitive and Chromium lowercases standard-
+// scheme hosts, so re-encoding to lowercase-canonical base32 is the only
+// way to round-trip cleanly).
+const CIDV1_BASE58_AS_BASE32 = 'bafkreidon73zkcrwdb5iafqtijxildoonbwnpv7dyd6ef3qdgads2jc4su';
 const IPNS_KEY_BASE36 = 'k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8';
 const IPNS_KEY_BASE58_ED25519 = '12D3KooWGuQafLgPqRRRkRSUNqZNQwL2gMZcQ27GiNpoVxz3vMWj';
 
@@ -38,14 +44,33 @@ describe('buildGatewayUrl(ipfs)', () => {
   });
 
   test.each([
+    // CIDv1 base32 is already lowercase-canonical and passes through.
     ['CIDv1 base32 (baf…)', CIDV1_BASE32, CIDV1_BASE32],
-    ['CIDv1 base58btc (z…)', CIDV1_BASE58, CIDV1_BASE58],
+    // CIDv1 base58btc (`z…`) is case-sensitive — the handler converts it
+    // to base32 so Chromium's host-lowercasing doesn't corrupt it on
+    // subsequent sub-resource fetches that bypass the renderer.
+    ['CIDv1 base58btc (z…) → base32', CIDV1_BASE58, CIDV1_BASE58_AS_BASE32],
   ])('converts ipfs://<%s>/path to the Kubo gateway URL', async (_label, host, expected) => {
     await expect(buildGatewayUrl('ipfs', `ipfs://${host}/index.html`)).resolves.toEqual({
       ok: true,
       url: `http://localhost:8080/ipfs/${expected}/index.html`,
     });
     expect(mockResolveEnsContent).not.toHaveBeenCalled();
+  });
+
+  test('rejects a lowercased CIDv1 base58btc (z…) host with a clear 400', async () => {
+    // Same Chromium-normalisation story as the CIDv0 case below — base58btc
+    // is case-sensitive, and once the host segment has been lowercased the
+    // original bytes are unrecoverable. Surface a 400 with an actionable
+    // message rather than forwarding garbage to Kubo.
+    const result = await buildGatewayUrl(
+      'ipfs',
+      `ipfs://${CIDV1_BASE58.toLowerCase()}/page`
+    );
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(400);
+    expect(result.message).toMatch(/lowercased CIDv1 base58btc/);
+    expect(result.message).toMatch(/CIDv1 base32/);
   });
 
   // Inputs that arrive *via the JS surface* (eg. unit tests, internal IPC)
@@ -142,16 +167,31 @@ describe('buildGatewayUrl(ipfs)', () => {
       });
     });
 
-    test('does NOT rewrite when the embedded ref is not a CID/IPNS-key shape', async () => {
+    test('does NOT rewrite when outer host is a DNSLink target (not a known gateway)', async () => {
       // A DNSLink site that genuinely publishes a literal `/ipfs/coverage`
-      // path is more plausible than a cross-namespace gateway-form URL with
-      // `coverage` as the CID. The ambiguity is resolved by requiring the
-      // embedded segment to actually look like a content key.
+      // path is more plausible than a cross-namespace gateway-form URL
+      // with `coverage` as the CID. The disambiguation is on the OUTER
+      // host: only known public gateways / loopback hosts trigger the
+      // rewrite. `docs.ipfs.tech` isn't in the gateway list so the path
+      // passes through unchanged for Kubo to resolve as a DNSLink path.
       await expect(
         buildGatewayUrl('ipns', 'ipns://docs.ipfs.tech/ipfs/coverage')
       ).resolves.toEqual({
         ok: true,
         url: 'http://localhost:8080/ipns/docs.ipfs.tech/ipfs/coverage',
+      });
+    });
+
+    test('rewrites ipfs://<gw>/ipns/<dnslink-name>/path → IPNS branch with DNSLink host', async () => {
+      // P3 from the round-3 review: with the outer host being a known
+      // public gateway, the `/ipns/<dnslink-name>` shape is unambiguously
+      // the gateway-form for a DNSLink target, not a literal `/ipns/`
+      // path on a content host.
+      await expect(
+        buildGatewayUrl('ipfs', 'ipfs://dweb.link/ipns/docs.ipfs.tech/install')
+      ).resolves.toEqual({
+        ok: true,
+        url: 'http://localhost:8080/ipns/docs.ipfs.tech/install',
       });
     });
 
@@ -165,6 +205,19 @@ describe('buildGatewayUrl(ipfs)', () => {
       });
     });
 
+    test('canonicalises an embedded CIDv1 base58btc (z…) ref to base32', async () => {
+      // The renderer-side pipeline strips this case before we see it for
+      // top-level navigation, but sub-resource <img>/<fetch> can land
+      // here with the `z…` form intact (case-preserved by the path
+      // segment of the standard-scheme URL).
+      await expect(
+        buildGatewayUrl('ipfs', `ipfs://localhost/ipfs/${CIDV1_BASE58}/img.png`)
+      ).resolves.toEqual({
+        ok: true,
+        url: `http://localhost:8080/ipfs/${CIDV1_BASE58_AS_BASE32}/img.png`,
+      });
+    });
+
     test('preserves a CID host when path also begins with /ipfs/ (legitimate subdir)', async () => {
       await expect(
         buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE32}/ipfs/somefile`)
@@ -174,7 +227,17 @@ describe('buildGatewayUrl(ipfs)', () => {
       });
     });
 
-    test('still 400s when the gateway-form embeds garbage', async () => {
+    test('does NOT rewrite for unknown self-hosted gateways (conservative allowlist)', async () => {
+      // Self-hosted private gateways aren't in the allowlist — the
+      // alternative (rewriting any non-CID host) over-fires on DNSLink
+      // sites. Authors of self-hosted gateways can publish canonical
+      // `ipfs://<cid>/...` URLs directly.
+      await expect(
+        buildGatewayUrl('ipfs', `ipfs://my-gateway.example/ipfs/${CIDV1_BASE32}`)
+      ).resolves.toBeNull();
+    });
+
+    test('still 400s when the gateway-form embeds garbage under /ipfs/', async () => {
       await expect(
         buildGatewayUrl('ipfs', 'ipfs://localhost/ipfs/not-a-cid/file')
       ).resolves.toBeNull();
@@ -342,6 +405,28 @@ describe('buildGatewayUrl(ipns)', () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased base58btc IPNS/);
+    expect(result.message).toMatch(/libp2p-key base36/);
+  });
+
+  test('canonicalises a properly-cased CIDv1 base58btc (z…) IPNS host to base32', async () => {
+    // IPNS keys can be published as CIDv1 base58btc with the libp2p-key
+    // codec. Same Chromium-lowercasing problem as the IPFS z… case.
+    await expect(
+      buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58}/install`)
+    ).resolves.toEqual({
+      ok: true,
+      url: `http://localhost:8080/ipns/${CIDV1_BASE58_AS_BASE32}/install`,
+    });
+  });
+
+  test('rejects a lowercased CIDv1 base58btc (z…) IPNS host with a clear 400', async () => {
+    const result = await buildGatewayUrl(
+      'ipns',
+      `ipns://${CIDV1_BASE58.toLowerCase()}/install`
+    );
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(400);
+    expect(result.message).toMatch(/lowercased CIDv1 base58btc IPNS/);
     expect(result.message).toMatch(/libp2p-key base36/);
   });
 

@@ -1,5 +1,5 @@
 import { isEnsHost } from './origin-utils.js';
-import { cidV0ToV1Base32, ipnsMhToCidV1Base36 } from './cid-utils.js';
+import { cidV0ToV1Base32, cidV1B58btcToBase32, ipnsMhToCidV1Base36 } from './cid-utils.js';
 
 export const ensureTrailingSlash = (value = '') => (value.endsWith('/') ? value : `${value}/`);
 
@@ -424,45 +424,13 @@ export const deriveDisplayValue = (
  * @param {string} ipfsRoutePrefix - Gateway prefix like "http://127.0.0.1:8080/ipfs/"
  * @returns {object|null} Parsed result with cid, tail, baseUrl, displayValue
  */
-// Quick, conservative check used to gate the gateway-form rewrite below.
-// Anything that looks like a real content reference (CIDv0/v1, libp2p-key,
-// base58 IPNS peer ID, or DNSLink/ENS-style domain) is left alone; only
-// "gateway hostnames" like `localhost`, `127.0.0.1`, IPv6 literals, or
-// `dweb.link` fall through and let the rewrite happen. Erring on the
-// side of "looks like a reference" is intentional — a false positive
-// here at worst leaves a redundant gateway-form URL untouched, while a
-// false negative would silently rewrite the legitimate
-// `ipfs://<cid>/ipfs/<subfile>` shape and load the wrong content.
-// Returns true only for hosts that are themselves a piece of content:
-//  - CIDv0 / CIDv1 base32 / CIDv1 base58btc
-//  - libp2p-key base36 / base58btc IPNS peer IDs
-//  - ENS names (.eth/.box) — resolved by ens-resolver, treated as content
-//    for path-disambiguation purposes
+// Mirrored in src/main/ipfs/ipfs-protocol.js — keep in sync.
 //
-// Returns false for public IPFS gateway hosts (`dweb.link`, `ipfs.io`,
-// `cf-ipfs.com`, `localhost`, IPv4/IPv6 literals, generic DNSLink-capable
-// domains). That asymmetry lets gateway-form path rewriting fire for
-// `ipfs://dweb.link/ipfs/<cid>/...` while still keeping the legitimate
-// `ipfs://<cid>/ipfs/<subdir>` shape intact (the host CID is recognised,
-// so the path stays as-is).
-const isLikelyContentReference = (host) => {
-  if (typeof host !== 'string' || !host) return false;
-  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(host)) return true; // CIDv0
-  if (/^baf[a-z2-7]{50,}$/i.test(host)) return true; // CIDv1 base32
-  if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(host)) return true; // CIDv1 base58btc
-  if (/^k[a-z0-9]{40,}$/i.test(host)) return true; // libp2p-key base36
-  if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(host)) return true; // base58 IPNS peer IDs
-  if (/\.(eth|box)$/i.test(host)) return true; // ENS
-  return false;
-};
-
-// Stricter than isLikelyContentReference (no ENS): used to validate the
-// embedded ref of a gateway-form path before rewriting. Without this guard,
-// `ipns://docs.ipfs.tech/ipfs/coverage` would be mis-rewritten as a
-// cross-namespace gateway URL with `coverage` as the CID, when in fact
-// it's a literal `/ipfs/coverage` path within the DNSLink site. ENS names
-// are excluded because their gateway-form embedded representation is
-// vanishingly rare and ambiguous with arbitrary DNSLink subpaths.
+// Returns true for the embedded ref of a gateway-form path that we'll
+// rewrite to the canonical `<scheme>://<ref>/...` form. Stricter than
+// the full IPNS-host shape: ENS names are excluded here because their
+// gateway-form embedded representation is vanishingly rare and ambiguous
+// with arbitrary DNSLink subpaths.
 const looksLikeContentKey = (ref) => {
   if (typeof ref !== 'string' || !ref) return false;
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
@@ -470,6 +438,46 @@ const looksLikeContentKey = (ref) => {
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(ref)) return true;
   if (/^k[a-z0-9]{40,}$/i.test(ref)) return true;
   if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(ref)) return true;
+  return false;
+};
+
+// Hostname-shaped string with at least one dot — used to recognise
+// DNSLink targets in the embedded ref of `ipfs://<gateway>/ipns/<name>/...`
+// gateway-form URLs. Only meaningful when the surrounding namespace is
+// `ipns` (DNSLink doesn't apply under `/ipfs/`).
+const isLikelyDnsLinkName = (ref) => {
+  if (typeof ref !== 'string' || !ref) return false;
+  if (ref.length > 253) return false;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(ref);
+};
+
+// Hosts we recognise as IPFS gateways for the gateway-form rewrite.
+// Conservative allowlist — see the matching `KNOWN_GATEWAY_HOSTS` in
+// src/main/ipfs/ipfs-protocol.js for the full rationale.
+const KNOWN_GATEWAY_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '[::1]',
+  '::1',
+  'dweb.link',
+  'ipfs.io',
+  'gateway.ipfs.io',
+  'cf-ipfs.com',
+  'cloudflare-ipfs.com',
+  'gateway.pinata.cloud',
+  'nftstorage.link',
+  'w3s.link',
+  '4everland.io',
+  'ipfs.fleek.co',
+  'dweb.eu.org',
+]);
+
+const isKnownGatewayHost = (host) => {
+  if (typeof host !== 'string' || !host) return false;
+  const lower = host.toLowerCase();
+  if (KNOWN_GATEWAY_HOSTS.has(lower)) return true;
+  if (lower.endsWith('.localhost')) return true;
   return false;
 };
 
@@ -514,46 +522,55 @@ export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
   }
 
   // Gateway-form rewrite. When the path looks like a path-gateway URL
-  // (`/ipfs/<cid>/...` or `/ipns/<key>/...`) and the host doesn't look
-  // like a real content reference, the embedded reference is the actual
-  // content target and the host is just whatever gateway hostname some
-  // tool hard-coded into a protocol-relative URL. The most common source
-  // is Kubo's auto-generated directory listings: those emit
+  // (`/ipfs/<cid>/...` or `/ipns/<key>/...`) and the OUTER host is a
+  // recognised public-gateway / loopback hostname, the embedded
+  // reference is the actual content target. The most common source is
+  // Kubo's auto-generated directory listings: those emit
   // `<a href="//localhost:8080/ipfs/<cid>">` which Chromium resolves
   // against the page's `ipfs:` scheme to `ipfs://localhost/ipfs/<cid>`.
   // Without this rewrite, every link in a Kubo dir listing 404s.
   //
-  // Guarded by isLikelyContentReference so the legitimate (and rare)
-  // `ipfs://<cid>/ipfs/<subfile>` shape — a real subdirectory named
-  // `ipfs` — keeps loading from the host CID rather than being silently
-  // redirected to the embedded reference.
-  if (!isLikelyContentReference(cid)) {
+  // The gate is an explicit known-gateway allowlist (mirrors
+  // src/main/ipfs/ipfs-protocol.js) — earlier versions used a negative
+  // "host doesn't look like a content reference" check, which over-fired
+  // for DNSLink hosts (e.g. `ipns://docs.ipfs.tech/ipfs/coverage` would
+  // try to rewrite even though `docs.ipfs.tech` is the actual content
+  // host). For `/ipns/`, the embedded ref is also allowed to be a
+  // DNSLink-shaped name so `ipfs://dweb.link/ipns/docs.ipfs.tech/install`
+  // rewrites to `ipns://docs.ipfs.tech/install`.
+  if (isKnownGatewayHost(cid)) {
     const gatewayMatch = path.match(/^\/(ipfs|ipns)\/([^/]+)(.*)$/);
-    // Guarded by looksLikeContentKey so a DNSLink site that publishes a
-    // literal `/ipfs/<text>` path (e.g. `ipns://docs.ipfs.tech/ipfs/coverage`)
-    // isn't mis-rewritten — the embedded segment must actually look like
-    // a CID or IPNS peer ID for the rewrite to fire.
-    if (gatewayMatch && looksLikeContentKey(gatewayMatch[2])) {
-      isIpns = gatewayMatch[1] === 'ipns';
-      cid = gatewayMatch[2];
-      path = gatewayMatch[3] || '';
+    if (gatewayMatch) {
+      const innerNs = gatewayMatch[1];
+      const ref = gatewayMatch[2];
+      const refOk =
+        looksLikeContentKey(ref) || (innerNs === 'ipns' && isLikelyDnsLinkName(ref));
+      if (refOk) {
+        isIpns = innerNs === 'ipns';
+        cid = ref;
+        path = gatewayMatch[3] || '';
+      }
     }
   }
 
   // Canonicalise the CID/key to a lowercase form before we hand it to
   // anything that might re-parse it as a hostname. `ipfs:`/`ipns:` are
   // standard schemes (see src/main/index.js), so Chromium's URL parser
-  // lowercases the host, which destroys base58btc-encoded CIDv0 ("Qm...")
-  // and base58btc IPNS peer-ID multihashes ("12D3...", "16Uiu2H...",
-  // "Qm..."). Converting CIDv0 -> CIDv1 base32 and base58 IPNS keys ->
-  // libp2p-key base36 keeps the round-trip intact and makes the address
-  // bar / load URL match what Kubo accepts. DNSLink and ENS hosts fall
-  // through unchanged (the converters return null for non-base58 input).
+  // lowercases the host, which destroys base58btc-encoded CIDv0 ("Qm..."),
+  // CIDv1 base58btc ("z..."), and base58btc IPNS peer-ID multihashes
+  // ("12D3...", "16Uiu2H...", "Qm..."). Converting CIDv0 / CIDv1-base58btc
+  // → CIDv1 base32 and base58 IPNS peer IDs → libp2p-key base36 keeps the
+  // round-trip intact. DNSLink and ENS hosts fall through unchanged.
   if (isIpns) {
     const ipnsBase36 = ipnsMhToCidV1Base36(cid);
-    if (ipnsBase36) cid = ipnsBase36;
+    if (ipnsBase36) {
+      cid = ipnsBase36;
+    } else {
+      const zToBase32 = cidV1B58btcToBase32(cid);
+      if (zToBase32) cid = zToBase32;
+    }
   } else {
-    const ipfsBase32 = cidV0ToV1Base32(cid);
+    const ipfsBase32 = cidV0ToV1Base32(cid) || cidV1B58btcToBase32(cid);
     if (ipfsBase32) cid = ipfsBase32;
   }
 
