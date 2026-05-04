@@ -22,7 +22,6 @@ import {
   formatRadicleUrl,
   deriveDisplayValue,
   deriveBzzBaseFromUrl,
-  deriveIpfsBaseFromUrl,
   deriveRadBaseFromUrl,
   buildEnsDisplayUri,
   isEnsBackedDisplay,
@@ -32,6 +31,7 @@ import {
   getActiveWebview,
   getActiveTab,
   getActiveTabState,
+  openInNewTabWithTarget,
   setWebviewEventHandler,
   updateActiveTabTitle,
   updateTabFavicon,
@@ -447,29 +447,6 @@ const syncBzzBase = (nextBase) => {
     })
     .catch((err) => {
       console.error('Failed to sync bzz base', err);
-    });
-};
-
-const syncIpfsBase = (nextBase) => {
-  const navState = getNavState();
-  if (!electronAPI || (!electronAPI.setIpfsBase && !electronAPI.clearIpfsBase)) {
-    return;
-  }
-  if (navState.currentIpfsBase === nextBase) {
-    return;
-  }
-  navState.currentIpfsBase = nextBase || null;
-  ensureWebContentsId()
-    .then((id) => {
-      if (!id) return;
-      if (navState.currentIpfsBase) {
-        electronAPI.setIpfsBase?.(id, navState.currentIpfsBase);
-      } else {
-        electronAPI.clearIpfsBase?.(id);
-      }
-    })
-    .catch((err) => {
-      console.error('Failed to sync ipfs base', err);
     });
 };
 
@@ -999,20 +976,20 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           buildEnsDisplayUri(result.protocol, ens.name, ens.suffix)
           || `ens://${ens.name}${ens.suffix || ''}`;
 
-        // For Swarm-backed ENS we want Chromium to load `bzz://<name>/...`
-        // directly: the bzz protocol handler resolves the ENS host on
-        // every request (cache hit since we just populated the cache via
-        // resolveEns), so DevTools, `window.location`, storage origin, and
-        // subresource fetches all see the ENS name rather than the
-        // resolved hash. The probe still needs the actual hash to gate
-        // navigation on Bee warmth, so we pass it separately.
-        // IPFS/IPNS don't have a custom protocol handler yet, so they
-        // continue to load via the gateway URL (DevTools shows the gateway
-        // URL there — separate from this fix).
-        const innerOptions =
-          result.protocol === 'bzz'
-            ? { bzzLoadUrl: transportDisplay, swarmHash: result.decoded }
-            : {};
+        // For ENS-backed dweb sites we want Chromium to load
+        // `<scheme>://<name>/...` directly: the protocol handler resolves
+        // the ENS host on every request (cache hit since we just populated
+        // the cache via resolveEns), so DevTools, `window.location`,
+        // storage origin, and subresource fetches all see the ENS name
+        // rather than the resolved CID/hash. For Swarm the probe still
+        // needs the actual hash to gate navigation on Bee warmth, so we
+        // pass it separately as `swarmHash`.
+        let innerOptions = {};
+        if (result.protocol === 'bzz') {
+          innerOptions = { bzzLoadUrl: transportDisplay, swarmHash: result.decoded };
+        } else if (result.protocol === 'ipfs' || result.protocol === 'ipns') {
+          innerOptions = { ipfsLoadUrl: transportDisplay };
+        }
 
         // Pass captured webview to ensure we load in the correct tab
         loadTarget(targetUri, displayOverride || transportDisplay, capturedWebview, innerOptions);
@@ -1043,7 +1020,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
       webview.loadURL(disabledUrl);
       syncRadBase(null);
       syncBzzBase(null);
-      syncIpfsBase(null);
       return;
     }
     const radicleTarget = formatRadicleUrl(value, state.radicleBase);
@@ -1066,7 +1042,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
       // rad-browser.html handles its own API calls, no base sync needed
       syncRadBase(null);
       syncBzzBase(null);
-      syncIpfsBase(null);
       return;
     }
     // Invalid Radicle ID — show error page
@@ -1081,7 +1056,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     webview.loadURL(errorUrl.toString());
     syncRadBase(null);
     syncBzzBase(null);
-    syncIpfsBase(null);
     return;
   }
 
@@ -1109,15 +1083,22 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
   if (ipfsTarget) {
     const cidMatch = ipfsTarget.displayValue.match(/^ipfs:\/\/([A-Za-z0-9]+)/);
     const ipnsMatch = ipfsTarget.displayValue.match(/^ipns:\/\/([A-Za-z0-9.-]+)/);
+    // Load via the native `ipfs:`/`ipns:` schemes so the main-process
+    // protocol handler dispatches sub-resource fetches (CSS, JS, images,
+    // service workers) and the page's URL/origin stays
+    // `ipfs://<cid|name>/` rather than the Kubo gateway origin. ENS-host
+    // targets carry an explicit `ipfsLoadUrl` from the resolver so
+    // Chromium loads `ipfs://<name>/...` even though we resolved to a CID.
+    // See README "IPFS / IPNS Content Retrieval".
+    const ipfsLoadUrl = options.ipfsLoadUrl || ipfsTarget.displayValue;
     const ipfsDisplayValue = commitDwebNavigationPrefix({
       target: ipfsTarget,
-      expectedNavUrl: ipfsTarget.targetUrl,
+      expectedNavUrl: ipfsLoadUrl,
       hashKeys: [cidMatch?.[1], ipnsMatch?.[1]],
     });
     pushDebug(`[AddressBar] Loading IPFS target, set to: ${ipfsDisplayValue}`);
-    webview.loadURL(ipfsTarget.targetUrl);
-    pushDebug(`Loading ${ipfsTarget.displayValue} via ${ipfsTarget.targetUrl}`);
-    syncIpfsBase(ipfsTarget.baseUrl || null);
+    webview.loadURL(ipfsLoadUrl);
+    pushDebug(`Loading ${ipfsTarget.displayValue} via ${ipfsLoadUrl}`);
     syncBzzBase(null);
     syncRadBase(null);
     return;
@@ -1138,7 +1119,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     });
     pushDebug(`[AddressBar] Loading target, set to: ${displayValue}`);
     syncBzzBase(target.baseUrl || null);
-    syncIpfsBase(null);
     syncRadBase(null);
 
     // Augment with optional ENS-transport overrides. `swarmHash` lets the
@@ -1166,7 +1146,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     webview.loadURL(value);
     pushDebug(`Loading ${value}`);
     syncBzzBase(null);
-    syncIpfsBase(null);
     syncRadBase(null);
     return;
   }
@@ -1212,7 +1191,6 @@ export const loadHomePage = () => {
     return;
   }
   syncBzzBase(null);
-  syncIpfsBase(null);
   syncRadBase(null);
   addressInput.value = '';
   updateProtocolIcon();
@@ -1400,12 +1378,12 @@ const handleNavigationEvent = (event) => {
         pushDebug(`[AddressBar] Skipped update (already ${derived})`);
       }
 
-      // Sync bases for all protocols
+      // Sync bases for protocols still using the rewriter (bzz, rad).
+      // `ipfs:`/`ipns:` are standard schemes with main-process protocol
+      // handlers, so the renderer doesn't track an IPFS base anymore.
       const bzzBase = deriveBzzBaseFromUrl(event.url);
-      const ipfsBase = deriveIpfsBaseFromUrl(event.url);
       const radBase = deriveRadBaseFromUrl(event.url);
       syncBzzBase(bzzBase);
-      syncIpfsBase(ipfsBase);
       syncRadBase(radBase);
     }
 
@@ -1683,6 +1661,20 @@ export const initNavigation = () => {
         break;
 
       case 'did-fail-load':
+        // Defensive twin of the per-tab gate in `tabs.js`. Chromium fires
+        // `did-fail-load` for **any** frame, including third-party iframes
+        // and ad-tech pixels. Replacing the main page with `error.html`
+        // for a sub-frame failure is wrong (it hijacks the user's
+        // top-level navigation on top of a perfectly-loaded main page);
+        // tabs.js already filters these out, but keeping the check here
+        // too means a future caller of this handler can't reintroduce the
+        // bug by accident.
+        if (data.event?.isMainFrame === false) {
+          pushDebug(
+            `Sub-frame did-fail-load ignored: ${data.event?.errorDescription || data.event?.errorCode} (${data.event?.validatedURL || 'unknown url'})`
+          );
+          break;
+        }
         if (webview) webview.classList.remove('hidden');
         setLoading(false);
         navState.isWebviewLoading = false;
@@ -1747,6 +1739,36 @@ export const initNavigation = () => {
           }
         } else if (data.channel === 'ens:open-settings') {
           loadTarget('freedom://settings', null, webview);
+        } else if (data.channel === 'link:navigate') {
+          const payload = data.args?.[0] || {};
+          const url = payload.url;
+          if (url) {
+            const disposition = payload.disposition === 'newTab' ? 'newTab' : 'currentTab';
+            const rawTarget = typeof payload.target === 'string' ? payload.target : '';
+            // Mirrors webcontents-setup.js: only names without a
+            // leading underscore are tracked as named targets. `_blank`,
+            // `_self`, `_parent`, `_top` go through the disposition
+            // path unchanged.
+            const namedTarget = rawTarget && !rawTarget.startsWith('_') ? rawTarget : null;
+            pushDebug(
+              `Preload intercepted dweb link navigation: ${url} (${disposition}` +
+                (namedTarget ? `, target=${namedTarget}` : '') +
+                ')'
+            );
+            if (disposition === 'newTab') {
+              // Mirrors the Chromium → setWindowOpenHandler →
+              // tab:new-with-url path, but with the raw mixed-case href
+              // intact. openInNewTabWithTarget routes through createTab
+              // (and from there loadTarget → formatIpfsUrl), so
+              // CIDv0/base58 IPNS hosts get canonicalised exactly the
+              // same way as a same-tab navigation, AND named targets
+              // reuse their existing tab instead of always opening a
+              // new one.
+              openInNewTabWithTarget(url, namedTarget);
+            } else {
+              loadTarget(url, null, webview);
+            }
+          }
         }
         break;
       }
@@ -1800,12 +1822,11 @@ export const initNavigation = () => {
           }
           // Update bookmarks bar visibility based on current page
           updateBookmarkBarState(url);
-          // Sync bases for the switched-to tab
+          // Sync bases for the switched-to tab. `ipfs:`/`ipns:` use a
+          // standard-scheme protocol handler in the main process, so the
+          // renderer doesn't track an IPFS base anymore.
           if (tabNavState.currentBzzBase) {
             syncBzzBase(tabNavState.currentBzzBase);
-          }
-          if (tabNavState.currentIpfsBase) {
-            syncIpfsBase(tabNavState.currentIpfsBase);
           }
           if (tabNavState.currentRadBase) {
             syncRadBase(tabNavState.currentRadBase);

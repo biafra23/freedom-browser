@@ -339,52 +339,12 @@ describe('url-utils', () => {
       ).toBe('ipns://docs.ipfs.tech/index.html');
     });
 
-    test('converts ipfs subdomain-gateway url to ipfs://', () => {
-      const url =
-        'http://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm.ipfs.localhost:8080/readme';
-      expect(
-        deriveDisplayValue(url, BZZ_ROUTE_PREFIX, HOME_URL, IPFS_ROUTE_PREFIX, IPNS_ROUTE_PREFIX)
-      ).toBe('ipfs://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm/readme');
-    });
-
-    test('strips trailing slash on subdomain-gateway root', () => {
-      const url =
-        'http://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm.ipfs.localhost:8080/';
-      expect(
-        deriveDisplayValue(url, BZZ_ROUTE_PREFIX, HOME_URL, IPFS_ROUTE_PREFIX, IPNS_ROUTE_PREFIX)
-      ).toBe('ipfs://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm');
-    });
-
-    test('converts ipns subdomain-gateway url to ipns://', () => {
-      const url = 'http://k51qzi5uqu5dlvj.ipns.localhost:8080/foo';
-      expect(
-        deriveDisplayValue(url, BZZ_ROUTE_PREFIX, HOME_URL, IPFS_ROUTE_PREFIX, IPNS_ROUTE_PREFIX)
-      ).toBe('ipns://k51qzi5uqu5dlvj/foo');
-    });
-
-    test('reverses inline-DNSLink dashes back to dots on ipns subdomain', () => {
-      // Kubo's InlineDNSLink rule maps "docs.ipfs.tech" → "docs-ipfs-tech".
-      const url = 'http://docs-ipfs-tech.ipns.localhost:8080/install';
-      expect(
-        deriveDisplayValue(url, BZZ_ROUTE_PREFIX, HOME_URL, IPFS_ROUTE_PREFIX, IPNS_ROUTE_PREFIX)
-      ).toBe('ipns://docs.ipfs.tech/install');
-    });
-
-    test('reverses inline-DNSLink escaped dashes (-- → -)', () => {
-      // "foo-bar.baz" inlines to "foo--bar-baz" (dashes doubled first, then dots → dashes).
-      const url = 'http://foo--bar-baz.ipns.localhost:8080/';
-      expect(
-        deriveDisplayValue(url, BZZ_ROUTE_PREFIX, HOME_URL, IPFS_ROUTE_PREFIX, IPNS_ROUTE_PREFIX)
-      ).toBe('ipns://foo-bar.baz');
-    });
-
-    test('preserves dotted DNS name on ipns multi-label subdomain', () => {
-      // Kubo with InlineDNSLink disabled (default) keeps dots in the subdomain.
-      const url = 'http://docs.ipfs.tech.ipns.localhost:8080/install';
-      expect(
-        deriveDisplayValue(url, BZZ_ROUTE_PREFIX, HOME_URL, IPFS_ROUTE_PREFIX, IPNS_ROUTE_PREFIX)
-      ).toBe('ipns://docs.ipfs.tech/install');
-    });
+    // The Kubo subdomain-gateway form (`<cid>.ipfs.localhost`,
+    // `<key>.ipns.localhost`, including inline-DNSLink dash encoding) is no
+    // longer recognised by `deriveDisplayValue`. Chromium never sees those
+    // URLs since `ipfs:`/`ipns:` are standard schemes and the protocol
+    // handler in `src/main/ipfs/ipfs-protocol.js` follows Kubo's redirect
+    // internally — so the display-recovery branch had no live caller.
   });
 
   // ============ IPFS Tests ============
@@ -398,6 +358,23 @@ describe('url-utils', () => {
     test('validates CIDv1 base32 (bafy...)', () => {
       expect(isValidCid('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi')).toBe(true);
       expect(isValidCid('bafkreifjjcie6lypi6ny7amxnfftagclbuxndqonfipmb64f2km2devei4')).toBe(true);
+    });
+
+    test('validates CIDv1 base32 with non-baf codec prefixes (bag.../bafz...)', () => {
+      // dag-json → `bagu…`. Cross-checked with `multiformats`:
+      // `CID.createV1(0x0129, sha256.digest('hello world')).toString()`.
+      // Earlier `^baf...` regex false-rejected these; the relaxed
+      // `^ba...` form covers all CIDv1 base32 codec prefixes.
+      expect(
+        isValidCid('baguqeeraxfgspomtju7arjjokll5u7nl7lcij37dpjjyb3uqrd32zyxpzxuq')
+      ).toBe(true);
+      // libp2p-key codec via base32: `bafzbei…` is also `baf` so still
+      // works, but `bafk2bzace…` (blake2b-256 multihash) is a real
+      // shape too. Cross-checked with `multiformats`:
+      // `CID.createV1(0x55, blake2b256.digest(bytes)).toString()`.
+      expect(
+        isValidCid('bafk2bzacec4u2j5zsngt4cfffzjnpwt5vp5mjbhp4n5fhahoscepplhc57g6s')
+      ).toBe(true);
     });
 
     test('rejects invalid CIDs', () => {
@@ -417,43 +394,44 @@ describe('url-utils', () => {
   });
 
   describe('parseIpfsInput', () => {
-    test('parses raw CID', () => {
-      const result = parseIpfsInput(
-        'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
-        IPFS_ROUTE_PREFIX
-      );
+    // Canonical CIDv1 base32 corresponding to the CIDv0 below — kept inline so
+    // the assertions are obviously self-consistent. Cross-checked with
+    // multiformats: CID.parse(CIDV0).toV1().toString().
+    const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+    const CIDV1 = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
+
+    test('canonicalises raw CIDv0 to CIDv1 base32', () => {
+      const result = parseIpfsInput(CIDV0, IPFS_ROUTE_PREFIX);
       expect(result).toEqual({
-        cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        cid: CIDV1,
         tail: '',
-        baseUrl: 'http://127.0.0.1:8080/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/',
+        baseUrl: `http://127.0.0.1:8080/ipfs/${CIDV1}/`,
         protocol: 'ipfs',
-        displayValue: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        displayValue: `ipfs://${CIDV1}`,
       });
     });
 
-    test('parses CID with path', () => {
-      const result = parseIpfsInput(
-        'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme',
-        IPFS_ROUTE_PREFIX
-      );
-      expect(result.cid).toBe('QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG');
-      expect(result.tail).toBe('/readme');
-      expect(result.displayValue).toBe(
-        'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme'
-      );
+    test('passes CIDv1 base32 through unchanged', () => {
+      const result = parseIpfsInput(CIDV1, IPFS_ROUTE_PREFIX);
+      expect(result.cid).toBe(CIDV1);
+      expect(result.displayValue).toBe(`ipfs://${CIDV1}`);
     });
 
-    test('parses ipfs:// scheme', () => {
-      const result = parseIpfsInput(
-        'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/path',
-        IPFS_ROUTE_PREFIX
-      );
-      expect(result.cid).toBe('QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG');
+    test('canonicalises CIDv0 with path', () => {
+      const result = parseIpfsInput(`${CIDV0}/readme`, IPFS_ROUTE_PREFIX);
+      expect(result.cid).toBe(CIDV1);
+      expect(result.tail).toBe('/readme');
+      expect(result.displayValue).toBe(`ipfs://${CIDV1}/readme`);
+    });
+
+    test('canonicalises CIDv0 carried over from ipfs:// scheme input', () => {
+      const result = parseIpfsInput(`ipfs://${CIDV0}/path`, IPFS_ROUTE_PREFIX);
+      expect(result.cid).toBe(CIDV1);
       expect(result.tail).toBe('/path');
       expect(result.protocol).toBe('ipfs');
     });
 
-    test('parses ipns:// scheme', () => {
+    test('parses ipns:// scheme with DNSLink name (preserved as-is)', () => {
       const result = parseIpfsInput('ipns://docs.ipfs.tech/index.html', IPFS_ROUTE_PREFIX);
       expect(result.cid).toBe('docs.ipfs.tech');
       expect(result.tail).toBe('/index.html');
@@ -461,17 +439,235 @@ describe('url-utils', () => {
       expect(result.baseUrl).toBe('http://127.0.0.1:8080/ipns/docs.ipfs.tech/');
     });
 
-    test('parses CID with query and fragment', () => {
-      const result = parseIpfsInput(
-        'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/page?v=1#section',
-        IPFS_ROUTE_PREFIX
-      );
+    test('canonicalises base58 IPNS peer IDs to libp2p-key base36', () => {
+      // Ed25519 peer ID — the canonical CIDv1 libp2p-key form is lowercase
+      // base36, which round-trips through the standard-scheme URL parser
+      // without being mangled by hostname lowercasing.
+      const peerId = '12D3KooWAsDaZWCkCEUN3myg49NoCMmrYYivmJVwjg7DVJBvWdaX';
+      const expected = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
+      const result = parseIpfsInput(`ipns://${peerId}/foo`, IPFS_ROUTE_PREFIX);
+      expect(result.cid).toBe(expected);
+      expect(result.displayValue).toBe(`ipns://${expected}/foo`);
+    });
+
+    test('canonicalises CIDv0 with query and fragment intact', () => {
+      const result = parseIpfsInput(`${CIDV0}/page?v=1#section`, IPFS_ROUTE_PREFIX);
+      expect(result.cid).toBe(CIDV1);
       expect(result.tail).toBe('/page?v=1#section');
     });
 
     test('returns null for empty input', () => {
       expect(parseIpfsInput('', IPFS_ROUTE_PREFIX)).toBeNull();
       expect(parseIpfsInput('ipfs://', IPFS_ROUTE_PREFIX)).toBeNull();
+    });
+
+    describe('gateway-form rewrite', () => {
+      // Kubo's directory listings emit links like
+      //   <a href="//localhost:8080/ipfs/<cid>">CID</a>
+      // which Chromium resolves against the page origin `ipfs://<cid>/` to
+      //   ipfs://localhost/ipfs/<cid>
+      // (port stripped because Chromium doesn't treat 8080 as default for
+      // `ipfs:`). Without rewriting, the protocol handler would try to
+      // load CID `localhost` from Kubo and 400. The fix: when host is
+      // *not* a real reference and path starts with /ipfs|/ipns, take
+      // the embedded ref as the actual content.
+
+      test('rewrites ipfs://localhost/ipfs/<cidv1> to ipfs://<cidv1>', () => {
+        const result = parseIpfsInput(
+          `ipfs://localhost/ipfs/${CIDV1}/sub/page.html`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/sub/page.html');
+        expect(result.protocol).toBe('ipfs');
+        expect(result.displayValue).toBe(`ipfs://${CIDV1}/sub/page.html`);
+      });
+
+      test('rewrites ipfs://<gateway>/ipfs/<cidv0> AND canonicalises to base32', () => {
+        const result = parseIpfsInput(
+          `ipfs://127.0.0.1/ipfs/${CIDV0}/readme`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/readme');
+      });
+
+      test.each([
+        ['dweb.link', 'dweb.link'],
+        ['ipfs.io', 'ipfs.io'],
+        ['cf-ipfs.com', 'cf-ipfs.com'],
+        ['gateway.pinata.cloud', 'gateway.pinata.cloud'],
+      ])(
+        'rewrites ipfs://<%s>/ipfs/<cid> public-gateway URLs to canonical ipfs://<cid>',
+        (_label, gatewayHost) => {
+          const result = parseIpfsInput(
+            `ipfs://${gatewayHost}/ipfs/${CIDV1}/img.png`,
+            IPFS_ROUTE_PREFIX
+          );
+          expect(result.cid).toBe(CIDV1);
+          expect(result.tail).toBe('/img.png');
+          expect(result.protocol).toBe('ipfs');
+          expect(result.displayValue).toBe(`ipfs://${CIDV1}/img.png`);
+        }
+      );
+
+      test('rewrites cross-namespace ipfs://localhost/ipns/<key> to ipns://<key>', () => {
+        const ipnsKey = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
+        const result = parseIpfsInput(
+          `ipfs://localhost/ipns/${ipnsKey}/install`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(ipnsKey);
+        expect(result.protocol).toBe('ipns');
+        expect(result.tail).toBe('/install');
+        expect(result.baseUrl).toBe(`http://127.0.0.1:8080/ipns/${ipnsKey}/`);
+      });
+
+      test('preserves host when host IS a valid CID (legitimate /ipfs/ subdir)', () => {
+        // `ipfs://<cid>/ipfs/<sub>` could be a real subdirectory named
+        // `ipfs`. Don't silently redirect — load from the host CID.
+        const result = parseIpfsInput(
+          `ipfs://${CIDV1}/ipfs/somefile.txt`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/ipfs/somefile.txt');
+      });
+
+      test('preserves host when host is a base58 IPNS peer ID', () => {
+        const peerId = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
+        const result = parseIpfsInput(
+          `ipns://${peerId}/ipfs/somefile`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(peerId);
+        expect(result.tail).toBe('/ipfs/somefile');
+        expect(result.protocol).toBe('ipns');
+      });
+
+      test('preserves host when outer host is a DNSLink target (not a known gateway)', () => {
+        // `docs.ipfs.tech` isn't in the gateway allowlist — it's a
+        // DNSLink content host that genuinely serves a `/ipfs/coverage`
+        // path. Rewrites must not fire here even though the embedded
+        // `coverage` is a non-CID-shaped string. See the matching gate
+        // in `isKnownGatewayHost`.
+        const result = parseIpfsInput(
+          'ipns://docs.ipfs.tech/ipfs/coverage',
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe('docs.ipfs.tech');
+        expect(result.tail).toBe('/ipfs/coverage');
+      });
+
+      test('rewrites ipfs://dweb.link/ipns/<dnslink-name>/path to ipns://<dnslink-name>/path', () => {
+        // P3 from the round-3 review: with the outer host being a
+        // recognised public gateway, the `/ipns/<dnslink-name>` shape
+        // is unambiguously the gateway-form for a DNSLink target.
+        const result = parseIpfsInput(
+          'ipfs://dweb.link/ipns/docs.ipfs.tech/install',
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe('docs.ipfs.tech');
+        expect(result.protocol).toBe('ipns');
+        expect(result.tail).toBe('/install');
+        expect(result.displayValue).toBe('ipns://docs.ipfs.tech/install');
+      });
+
+      test('rewrites ipfs://localhost:<port>/ipfs/<cidv1> (port stripped before gateway check)', () => {
+        // P2 from the round-4 review: Kubo's directory listings emit
+        // `<a href="//localhost:8080/ipfs/<cid>">` which Chromium
+        // resolves against the page's `ipfs://` origin to
+        // `ipfs://localhost:8080/ipfs/<cid>` (port preserved because
+        // `ipfs:` doesn't have a default port). Without port stripping
+        // before the allowlist check, the embedded CID never gets
+        // hoisted out and the address bar permanently shows the
+        // gateway-origin form. parseIpfsInput is byte-level on purpose
+        // (preserves base58btc case), so a dedicated `stripPort` does
+        // the work `new URL().hostname` would do for `new URL`-friendly
+        // inputs.
+        const result = parseIpfsInput(
+          `ipfs://localhost:8080/ipfs/${CIDV1}/img.png`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/img.png');
+        expect(result.protocol).toBe('ipfs');
+        expect(result.displayValue).toBe(`ipfs://${CIDV1}/img.png`);
+      });
+
+      test('rewrites ipfs://localhost:<port>/ipns/<key> (port stripped, cross-namespace)', () => {
+        const ipnsKey = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
+        const result = parseIpfsInput(
+          `ipfs://localhost:8080/ipns/${ipnsKey}/install`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(ipnsKey);
+        expect(result.protocol).toBe('ipns');
+        expect(result.tail).toBe('/install');
+      });
+
+      test('rewrites ipfs://127.0.0.1:<port>/ipfs/<cidv1> (loopback IP with port)', () => {
+        const result = parseIpfsInput(
+          `ipfs://127.0.0.1:8080/ipfs/${CIDV1}/page`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/page');
+      });
+
+      test('does NOT rewrite for unknown self-hosted gateways', () => {
+        // Conservative allowlist — a private gateway hostname can't be
+        // distinguished from a DNSLink content host by URL shape alone.
+        // Authors of self-hosted gateways can publish canonical
+        // `ipfs://<cid>/...` URLs directly. This test pins that the
+        // gate isn't reverted to the over-permissive
+        // "any-non-content-host" heuristic.
+        const result = parseIpfsInput(
+          `ipfs://my-gateway.example/ipfs/${CIDV1}/page`,
+          IPFS_ROUTE_PREFIX
+        );
+        // The outer host stays as the (invalid) "cid", which the main-
+        // process protocol handler then 400s when Kubo rejects it.
+        expect(result.cid).toBe('my-gateway.example');
+      });
+    });
+
+    describe('CIDv1 base58btc (z…) canonicalisation', () => {
+      // `z…` CIDs use base58btc encoding which, like CIDv0, is case-
+      // sensitive. Convert to base32 (lowercase) so Chromium's standard-
+      // scheme URL parser doesn't corrupt the bytes during host
+      // normalisation.
+      const Z_CID_DAGPB = 'zdj7Wm8AnNCTyaUbqz1afY6jSGdNi2DKwowmcwMFvbz3vL2Ce';
+      const Z_CID_DAGPB_AS_B32 =
+        'bafybeihjgbfpb6h5y66ampe35j6wrvogbykwbpfqnyittz42v46btbt2r4';
+
+      test('canonicalises z… (base58btc) to base32 lowercase', () => {
+        const result = parseIpfsInput(`ipfs://${Z_CID_DAGPB}/img.png`, IPFS_ROUTE_PREFIX);
+        expect(result.cid).toBe(Z_CID_DAGPB_AS_B32);
+        expect(result.tail).toBe('/img.png');
+        expect(result.displayValue).toBe(`ipfs://${Z_CID_DAGPB_AS_B32}/img.png`);
+      });
+
+      test('canonicalises z… inside gateway-form path too', () => {
+        const result = parseIpfsInput(
+          `ipfs://localhost/ipfs/${Z_CID_DAGPB}/file`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(Z_CID_DAGPB_AS_B32);
+        expect(result.tail).toBe('/file');
+      });
+
+      test('lowercased z… is not silently re-encoded (caller surfaces 400)', () => {
+        // The renderer-side canonicaliser returns null for already-
+        // lowercased input rather than producing wrong content. The cid
+        // stays as the lowercased form; the main-process handler then
+        // 400s with an actionable message.
+        const result = parseIpfsInput(
+          `ipfs://${Z_CID_DAGPB.toLowerCase()}/img.png`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(Z_CID_DAGPB.toLowerCase());
+      });
     });
   });
 
@@ -504,46 +700,48 @@ describe('url-utils', () => {
       expect(deriveIpfsBaseFromUrl(url)).toBe('http://127.0.0.1:8080/ipfs/QmTest/');
     });
 
-    test('extracts origin from ipfs subdomain-gateway url', () => {
-      const url =
-        'http://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm.ipfs.localhost:8080/readme';
-      expect(deriveIpfsBaseFromUrl(url)).toBe(
-        'http://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm.ipfs.localhost:8080/'
-      );
-    });
-
-    test('extracts origin from ipns subdomain-gateway url', () => {
-      const url = 'http://k51qzi5uqu5dlvj.ipns.localhost:8080/install';
-      expect(deriveIpfsBaseFromUrl(url)).toBe(
-        'http://k51qzi5uqu5dlvj.ipns.localhost:8080/'
-      );
+    test('returns null for the legacy Kubo subdomain-gateway form', () => {
+      // Chromium no longer encounters `<cid>.ipfs.localhost` URLs because
+      // the ipfs protocol handler follows Kubo's redirect internally.
+      expect(
+        deriveIpfsBaseFromUrl(
+          'http://bafybeigh3oq6pwrkspwgj4jcguizd7muxw4zdyq6cckqi5vl72yixnzpvm.ipfs.localhost:8080/readme'
+        )
+      ).toBeNull();
+      expect(deriveIpfsBaseFromUrl('http://k51qzi5uqu5dlvj.ipns.localhost:8080/install')).toBeNull();
     });
   });
 
   describe('formatIpfsUrl', () => {
-    test('formats ipfs:// protocol', () => {
-      const input = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
-      const result = formatIpfsUrl(input, IPFS_ROUTE_PREFIX);
+    const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+    const CIDV1 = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
+
+    test('formats ipfs:// protocol — CIDv0 input is canonicalised to CIDv1 base32', () => {
+      // Regression: when `ipfs:` is registered as a standard scheme,
+      // `new URL('ipfs://Qm.../')` lowercases the host and destroys the
+      // base58btc-encoded bytes, so Kubo returns
+      //   `400 invalid cid: selected encoding not supported`.
+      // formatIpfsUrl must therefore avoid `new URL` for the ipfs:/ipns:
+      // branches and canonicalise CIDv0 -> CIDv1 base32 before handing
+      // the URL to Chromium.
+      const result = formatIpfsUrl(`ipfs://${CIDV0}`, IPFS_ROUTE_PREFIX);
       expect(result).toEqual({
-        targetUrl: 'http://127.0.0.1:8080/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/',
-        displayValue: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
-        baseUrl: 'http://127.0.0.1:8080/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/',
+        targetUrl: `http://127.0.0.1:8080/ipfs/${CIDV1}/`,
+        displayValue: `ipfs://${CIDV1}`,
+        baseUrl: `http://127.0.0.1:8080/ipfs/${CIDV1}/`,
         protocol: 'ipfs',
       });
     });
 
-    test('formats ipfs:// with path', () => {
-      const input = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme';
-      const result = formatIpfsUrl(input, IPFS_ROUTE_PREFIX);
+    test('formats ipfs:// with path — CIDv0 host canonicalised, path preserved', () => {
+      const result = formatIpfsUrl(`ipfs://${CIDV0}/frontend/index.html`, IPFS_ROUTE_PREFIX);
       expect(result.targetUrl).toBe(
-        'http://127.0.0.1:8080/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme'
+        `http://127.0.0.1:8080/ipfs/${CIDV1}/frontend/index.html`
       );
-      expect(result.displayValue).toBe(
-        'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme'
-      );
+      expect(result.displayValue).toBe(`ipfs://${CIDV1}/frontend/index.html`);
     });
 
-    test('formats ipns:// protocol', () => {
+    test('formats ipns:// DNSLink name (preserved verbatim)', () => {
       const input = 'ipns://docs.ipfs.tech';
       const result = formatIpfsUrl(input, IPFS_ROUTE_PREFIX);
       expect(result.targetUrl).toBe('http://127.0.0.1:8080/ipns/docs.ipfs.tech/');
@@ -551,24 +749,32 @@ describe('url-utils', () => {
       expect(result.protocol).toBe('ipns');
     });
 
-    test('formats raw CIDv0', () => {
-      const input = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
-      const result = formatIpfsUrl(input, IPFS_ROUTE_PREFIX);
-      expect(result.targetUrl).toBe(
-        'http://127.0.0.1:8080/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/'
-      );
-      expect(result.displayValue).toBe('ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG');
+    test('formats ipns:// ENS name (preserved verbatim — resolver lives in main proc)', () => {
+      const result = formatIpfsUrl('ipns://vitalik.eth/blog', IPFS_ROUTE_PREFIX);
+      expect(result.displayValue).toBe('ipns://vitalik.eth/blog');
+      expect(result.protocol).toBe('ipns');
     });
 
-    test('formats raw CIDv1', () => {
+    test('formats ipns:// base58 peer ID — canonicalised to libp2p-key base36', () => {
+      const peerId = '12D3KooWAsDaZWCkCEUN3myg49NoCMmrYYivmJVwjg7DVJBvWdaX';
+      const base36 = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
+      const result = formatIpfsUrl(`ipns://${peerId}/`, IPFS_ROUTE_PREFIX);
+      expect(result.displayValue).toBe(`ipns://${base36}/`);
+      expect(result.targetUrl).toBe(`http://127.0.0.1:8080/ipns/${base36}/`);
+      expect(result.protocol).toBe('ipns');
+    });
+
+    test('formats raw CIDv0 (no scheme) — also canonicalised', () => {
+      const result = formatIpfsUrl(CIDV0, IPFS_ROUTE_PREFIX);
+      expect(result.targetUrl).toBe(`http://127.0.0.1:8080/ipfs/${CIDV1}/`);
+      expect(result.displayValue).toBe(`ipfs://${CIDV1}`);
+    });
+
+    test('formats raw CIDv1 base32 — passed through unchanged', () => {
       const input = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
       const result = formatIpfsUrl(input, IPFS_ROUTE_PREFIX);
-      expect(result.targetUrl).toBe(
-        'http://127.0.0.1:8080/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/'
-      );
-      expect(result.displayValue).toBe(
-        'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
-      );
+      expect(result.targetUrl).toBe(`http://127.0.0.1:8080/ipfs/${input}/`);
+      expect(result.displayValue).toBe(`ipfs://${input}`);
     });
 
     test('returns null for empty input', () => {

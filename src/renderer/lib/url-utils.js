@@ -1,4 +1,5 @@
 import { isEnsHost } from './origin-utils.js';
+import { cidV0ToV1Base32, cidV1B58btcToBase32, ipnsMhToCidV1Base36 } from './cid-utils.js';
 
 export const ensureTrailingSlash = (value = '') => (value.endsWith('/') ? value : `${value}/`);
 
@@ -27,22 +28,25 @@ const isValidSwarmHash = (str) => /^[a-fA-F0-9]{64}([a-fA-F0-9]{64})?$/.test(str
 
 // Check if a string looks like a valid IPFS CID
 // CIDv0: Starts with Qm, 46 characters, base58
-// CIDv1: Starts with bafy (bafyb...), variable length, base32
+// CIDv1 base32: starts with `b` (multibase) followed by 50+ base32 chars.
+//   The 2nd char is always `a` (version byte 0x01 contributes the first
+//   5-bit chunk = 0). The 3rd char varies with the codec varint:
+//   `bafy…`/`bafk…` for dag-pb / raw, `bagu…` for dag-json (multi-byte
+//   codec varint 0xa9 0x02), `bah…` for codecs whose varint top 2 bits
+//   are 0b11, etc. An earlier regex hard-coded `baf` and false-rejected
+//   every non-`baf` codec, breaking dag-json / blake2b CIDs end-to-end.
+// CIDv1 base58btc: starts with z
 export const isValidCid = (str) => {
   if (!str || typeof str !== 'string') return false;
 
-  // CIDv0: Qm followed by 44 base58 characters (total 46)
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(str)) {
     return true;
   }
 
-  // CIDv1 with base32 (most common): starts with bafy, bafk, etc.
-  // Typically 59 characters for raw/dag-pb, but can vary
-  if (/^baf[a-z2-7]{50,}$/i.test(str)) {
+  if (/^ba[a-z2-7]{49,}$/i.test(str)) {
     return true;
   }
 
-  // CIDv1 with base58btc: starts with z
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(str)) {
     return true;
   }
@@ -407,22 +411,6 @@ export const deriveDisplayValue = (
     return decoded ? `ipns://${decoded}` : '';
   }
 
-  // Subdomain-gateway form (http://<cid>.ipfs.localhost:8080/path).
-  // Cheap substring check avoids a full URL parse on every unrelated navigation.
-  if (url.includes('.ipfs.localhost') || url.includes('.ipns.localhost')) {
-    try {
-      const parsed = new URL(url);
-      const sub = matchIpfsSubdomain(parsed);
-      if (sub) {
-        return `${sub.namespace}://${sub.cid}${decodeAndTrim(
-          parsed.pathname + parsed.search + parsed.hash
-        )}`;
-      }
-    } catch {
-      // Not a valid URL; fall through
-    }
-  }
-
   if (radicleApiPrefix && url.startsWith(radicleApiPrefix)) {
     const decoded = decodeAndTrim(url.slice(radicleApiPrefix.length));
     return decoded ? `rad://${decoded}` : '';
@@ -439,13 +427,93 @@ export const deriveDisplayValue = (
  * @param {string} ipfsRoutePrefix - Gateway prefix like "http://127.0.0.1:8080/ipfs/"
  * @returns {object|null} Parsed result with cid, tail, baseUrl, displayValue
  */
+// Mirrored in src/main/ipfs/ipfs-protocol.js — keep in sync.
+//
+// Returns true for the embedded ref of a gateway-form path that we'll
+// rewrite to the canonical `<scheme>://<ref>/...` form. Stricter than
+// the full IPNS-host shape: ENS names are excluded here because their
+// gateway-form embedded representation is vanishingly rare and ambiguous
+// with arbitrary DNSLink subpaths.
+const looksLikeContentKey = (ref) => {
+  if (typeof ref !== 'string' || !ref) return false;
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
+  // `ba…` covers all CIDv1 base32 codecs: `bafy…`/`bafk…` (dag-pb / raw),
+  // `bagu…` (dag-json), `bah…` and others — see the `isValidCid` comment.
+  if (/^ba[a-z2-7]{49,}$/i.test(ref)) return true;
+  if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(ref)) return true;
+  if (/^k[a-z0-9]{40,}$/i.test(ref)) return true;
+  if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(ref)) return true;
+  return false;
+};
+
+// Hostname-shaped string with at least one dot — used to recognise
+// DNSLink targets in the embedded ref of `ipfs://<gateway>/ipns/<name>/...`
+// gateway-form URLs. Only meaningful when the surrounding namespace is
+// `ipns` (DNSLink doesn't apply under `/ipfs/`).
+const isLikelyDnsLinkName = (ref) => {
+  if (typeof ref !== 'string' || !ref) return false;
+  if (ref.length > 253) return false;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(ref);
+};
+
+// Hosts we recognise as IPFS gateways for the gateway-form rewrite.
+// Conservative allowlist — see the matching `KNOWN_GATEWAY_HOSTS` in
+// src/main/ipfs/ipfs-protocol.js for the full rationale.
+const KNOWN_GATEWAY_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '[::1]',
+  '::1',
+  'dweb.link',
+  'ipfs.io',
+  'gateway.ipfs.io',
+  'cf-ipfs.com',
+  'cloudflare-ipfs.com',
+  'gateway.pinata.cloud',
+  'nftstorage.link',
+  'w3s.link',
+  '4everland.io',
+  'ipfs.fleek.co',
+  'dweb.eu.org',
+]);
+
+// Strip a trailing `:<port>` from a host slot to compare against the
+// gateway allowlist. `parseIpfsInput` is intentionally byte-level (it
+// avoids `new URL()` so base58btc hosts survive Chromium's standard-
+// scheme lowercasing — see the comment in `parseIpfsInput`), so port
+// handling has to be done here too. Kubo emits protocol-relative anchors
+// like `<a href="//localhost:8080/ipfs/<cid>">`, which Chromium resolves
+// against the page's `ipfs://` origin to `ipfs://localhost:8080/ipfs/<cid>`;
+// without stripping the port the allowlist comparison would miss and the
+// rewrite would fall through, leaving the address bar permanently on
+// the gateway-origin form. `[::1]:8080` and bare `[::1]` are handled by
+// looking for a closing bracket first.
+const stripPort = (host) => {
+  if (typeof host !== 'string' || !host) return host;
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colon = host.indexOf(':');
+  return colon === -1 ? host : host.slice(0, colon);
+};
+
+const isKnownGatewayHost = (host) => {
+  if (typeof host !== 'string' || !host) return false;
+  const lower = stripPort(host).toLowerCase();
+  if (KNOWN_GATEWAY_HOSTS.has(lower)) return true;
+  if (lower.endsWith('.localhost')) return true;
+  return false;
+};
+
 export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
   // Remove ipfs:// or ipns:// scheme
   let withoutScheme = rawInput
     .replace(/^ipfs:\/\//i, '')
     .replace(/^ipns:\/\//i, '')
     .replace(/^\/+/, '');
-  const isIpns = /^ipns:\/\//i.test(rawInput);
+  let isIpns = /^ipns:\/\//i.test(rawInput);
 
   if (!withoutScheme) {
     return null;
@@ -479,6 +547,59 @@ export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
     return null;
   }
 
+  // Gateway-form rewrite. When the path looks like a path-gateway URL
+  // (`/ipfs/<cid>/...` or `/ipns/<key>/...`) and the OUTER host is a
+  // recognised public-gateway / loopback hostname, the embedded
+  // reference is the actual content target. The most common source is
+  // Kubo's auto-generated directory listings: those emit
+  // `<a href="//localhost:8080/ipfs/<cid>">` which Chromium resolves
+  // against the page's `ipfs:` scheme to `ipfs://localhost/ipfs/<cid>`.
+  // Without this rewrite, every link in a Kubo dir listing 404s.
+  //
+  // The gate is an explicit known-gateway allowlist (mirrors
+  // src/main/ipfs/ipfs-protocol.js) — earlier versions used a negative
+  // "host doesn't look like a content reference" check, which over-fired
+  // for DNSLink hosts (e.g. `ipns://docs.ipfs.tech/ipfs/coverage` would
+  // try to rewrite even though `docs.ipfs.tech` is the actual content
+  // host). For `/ipns/`, the embedded ref is also allowed to be a
+  // DNSLink-shaped name so `ipfs://dweb.link/ipns/docs.ipfs.tech/install`
+  // rewrites to `ipns://docs.ipfs.tech/install`.
+  if (isKnownGatewayHost(cid)) {
+    const gatewayMatch = path.match(/^\/(ipfs|ipns)\/([^/]+)(.*)$/);
+    if (gatewayMatch) {
+      const innerNs = gatewayMatch[1];
+      const ref = gatewayMatch[2];
+      const refOk =
+        looksLikeContentKey(ref) || (innerNs === 'ipns' && isLikelyDnsLinkName(ref));
+      if (refOk) {
+        isIpns = innerNs === 'ipns';
+        cid = ref;
+        path = gatewayMatch[3] || '';
+      }
+    }
+  }
+
+  // Canonicalise the CID/key to a lowercase form before we hand it to
+  // anything that might re-parse it as a hostname. `ipfs:`/`ipns:` are
+  // standard schemes (see src/main/index.js), so Chromium's URL parser
+  // lowercases the host, which destroys base58btc-encoded CIDv0 ("Qm..."),
+  // CIDv1 base58btc ("z..."), and base58btc IPNS peer-ID multihashes
+  // ("12D3...", "16Uiu2H...", "Qm..."). Converting CIDv0 / CIDv1-base58btc
+  // → CIDv1 base32 and base58 IPNS peer IDs → libp2p-key base36 keeps the
+  // round-trip intact. DNSLink and ENS hosts fall through unchanged.
+  if (isIpns) {
+    const ipnsBase36 = ipnsMhToCidV1Base36(cid);
+    if (ipnsBase36) {
+      cid = ipnsBase36;
+    } else {
+      const zToBase32 = cidV1B58btcToBase32(cid);
+      if (zToBase32) cid = zToBase32;
+    }
+  } else {
+    const ipfsBase32 = cidV0ToV1Base32(cid) || cidV1B58btcToBase32(cid);
+    if (ipfsBase32) cid = ipfsBase32;
+  }
+
   const tail = `${path}${query}${fragment}`;
   const protocol = isIpns ? 'ipns' : 'ipfs';
   // For IPNS, use ipns route prefix instead
@@ -495,36 +616,12 @@ export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
 };
 
 /**
- * Recognise a Kubo subdomain-gateway URL and extract the CID/name + namespace.
- * Matches hostnames like:
- *   - "<cid>.ipfs.localhost"              (CIDv1 base32 or libp2p base36)
- *   - "<name>.ipns.localhost"             (IPNS key)
- *   - "<dns.name>.ipns.localhost"         (DNSLink, dots preserved)
- *   - "<dns-name>.ipns.localhost"         (DNSLink, dots inlined to dashes)
- * Reverses Kubo's inline-DNSLink rule (. → -, - → --) for IPNS labels
- * containing dashes so `docs-ipfs-tech.ipns.localhost` round-trips back to
- * `ipns://docs.ipfs.tech`.
- * @param {URL} parsed
- * @returns {{cid: string, namespace: 'ipfs'|'ipns'}|null}
- */
-const matchIpfsSubdomain = (parsed) => {
-  if (!parsed) return null;
-  const hostname = parsed.hostname.toLowerCase();
-  const m = hostname.match(/^([a-z0-9][a-z0-9.-]*)\.(ipfs|ipns)\.localhost$/);
-  if (!m) return null;
-  let label = m[1];
-  if (m[2] === 'ipns' && label.includes('-')) {
-    // Greedy `--?` matches `--` in preference to `-`, so the callback cleanly
-    // reverses Kubo's rule (. → -, - → --) in a single pass.
-    label = label.replace(/--?/g, (match) => (match === '--' ? '-' : '.'));
-  }
-  return { cid: label, namespace: m[2] };
-};
-
-/**
  * Derive IPFS base URL from a gateway URL.
- * Accepts both path-gateway form ("http://localhost:8080/ipfs/CID/path")
- * and subdomain-gateway form ("http://CID.ipfs.localhost:8080/path").
+ * Accepts the path-gateway form ("http://localhost:8080/ipfs/CID/path").
+ * The subdomain-gateway form is no longer recognised here — Chromium never
+ * sees `<cid>.ipfs.localhost` URLs since `ipfs:`/`ipns:` are standard
+ * schemes and the protocol handler in `src/main/ipfs/ipfs-protocol.js`
+ * follows Kubo's redirect internally.
  * @param {string|URL} input
  * @returns {string|null} Base URL with trailing slash
  */
@@ -534,10 +631,6 @@ export const deriveIpfsBaseFromUrl = (input) => {
   }
   try {
     const parsed = typeof input === 'string' ? new URL(input) : input;
-    const sub = matchIpfsSubdomain(parsed);
-    if (sub) {
-      return ensureTrailingSlash(parsed.origin);
-    }
     const segments = parsed.pathname.split('/').filter(Boolean);
     if (segments.length >= 2) {
       const prefix = segments[0].toLowerCase();
@@ -566,38 +659,29 @@ export const formatIpfsUrl = (input, ipfsRoutePrefix) => {
     return null;
   }
 
+  // Handle ipfs:// and ipns:// via the case-preserving string parser
+  // *before* `new URL` gets a chance to lowercase the host. Because these
+  // schemes are now registered standard schemes, `new URL('ipfs://Qm.../')`
+  // yields `hostname === 'qm...'`, which destroys base58btc CIDv0 and
+  // IPNS peer-ID multihashes. parseIpfsInput preserves case and then
+  // canonicalises CIDv0 -> CIDv1 base32 / base58 IPNS -> libp2p-key
+  // base36, both lowercase encodings that round-trip cleanly through
+  // Chromium's URL parser.
+  if (/^ipfs:\/\//i.test(raw) || /^ipns:\/\//i.test(raw)) {
+    const parsed = parseIpfsInput(raw, ipfsRoutePrefix);
+    if (!parsed) {
+      return null;
+    }
+    return {
+      targetUrl: composeTargetUrl(parsed.baseUrl, parsed.tail || ''),
+      displayValue: parsed.displayValue,
+      baseUrl: parsed.baseUrl,
+      protocol: parsed.protocol,
+    };
+  }
+
   try {
     const asUrl = new URL(raw);
-
-    // Handle ipfs:// protocol
-    if (asUrl.protocol === 'ipfs:') {
-      const cidInput = `${asUrl.hostname}${asUrl.pathname}${asUrl.search}${asUrl.hash}`;
-      const parsed = parseIpfsInput(cidInput, ipfsRoutePrefix);
-      if (!parsed) {
-        return null;
-      }
-      return {
-        targetUrl: composeTargetUrl(parsed.baseUrl, parsed.tail || ''),
-        displayValue: parsed.displayValue,
-        baseUrl: parsed.baseUrl,
-        protocol: 'ipfs',
-      };
-    }
-
-    // Handle ipns:// protocol
-    if (asUrl.protocol === 'ipns:') {
-      const nameInput = `ipns://${asUrl.hostname}${asUrl.pathname}${asUrl.search}${asUrl.hash}`;
-      const parsed = parseIpfsInput(nameInput, ipfsRoutePrefix);
-      if (!parsed) {
-        return null;
-      }
-      return {
-        targetUrl: composeTargetUrl(parsed.baseUrl, parsed.tail || ''),
-        displayValue: parsed.displayValue,
-        baseUrl: parsed.baseUrl,
-        protocol: 'ipns',
-      };
-    }
 
     // Check if it's already a gateway URL
     const derivedBase = deriveIpfsBaseFromUrl(asUrl);

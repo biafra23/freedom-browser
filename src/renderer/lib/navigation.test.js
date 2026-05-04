@@ -42,7 +42,6 @@ const createTab = (id, url, overrides = {}) => {
     hasNavigatedDuringCurrentLoad: false,
     isWebviewLoading: false,
     currentBzzBase: null,
-    currentIpfsBase: null,
     currentRadBase: null,
     addressBarSnapshot: '',
     cachedWebContentsId: null,
@@ -97,6 +96,8 @@ const loadNavigationModule = async (options = {}) => {
   const tabsRef = { list: [] };
   const tabsMocks = {
     webviewEventHandler: null,
+    createTab: jest.fn(),
+    openInNewTabWithTarget: jest.fn(),
     getActiveWebview: jest.fn(() => activeRef.tab?.webview || null),
     getActiveTab: jest.fn(() => activeRef.tab || null),
     getActiveTabState: jest.fn(() => activeRef.tab?.navigationState || null),
@@ -269,8 +270,6 @@ const loadNavigationModule = async (options = {}) => {
     addHistory: jest.fn().mockResolvedValue(undefined),
     setBzzBase: jest.fn(),
     clearBzzBase: jest.fn(),
-    setIpfsBase: jest.fn(),
-    clearIpfsBase: jest.fn(),
     setRadBase: jest.fn(),
     clearRadBase: jest.fn(),
     startSwarmProbe: jest.fn((hash) => {
@@ -588,6 +587,22 @@ describe('navigation', () => {
     expect(ctx.activeRef.tab.webview.loadURL).toHaveBeenCalledWith(
       'file:///app/pages/error.html?error=ERR_NAME_NOT_RESOLVED&url=https%3A%2F%2Fbad.example'
     );
+
+    // Defensive twin of the per-tab gate in `tabs.js`: a sub-frame
+    // failure (third-party iframe, ad-tech pixel, etc.) must NOT
+    // replace the main page with `error.html`. Without this guard,
+    // any WalletConnect / heavy-ad-tech site hijacks itself on top of
+    // a successful main-frame load.
+    ctx.activeRef.tab.webview.loadURL.mockClear();
+    ctx.tabsMocks.webviewEventHandler('did-fail-load', {
+      event: {
+        errorCode: -310,
+        errorDescription: 'ERR_BLOCKED_BY_RESPONSE',
+        validatedURL: 'https://verify.walletconnect.com/attestation/abc',
+        isMainFrame: false,
+      },
+    });
+    expect(ctx.activeRef.tab.webview.loadURL).not.toHaveBeenCalled();
 
     ctx.tabsMocks.webviewEventHandler('certificate-error', {
       event: { error: 'CERT_INVALID' },
@@ -1330,6 +1345,78 @@ describe('navigation', () => {
       expect(ctx.activeRef.tab.webview.loadURL).toHaveBeenCalledWith(
         'file:///app/pages/settings.html'
       );
+    });
+
+    test('ipc-message link:navigate routes raw mixed-case ipfs href through loadTarget', async () => {
+      const ctx = await setupEnsDispatch();
+      const rawHref = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
+      ctx.tabsMocks.webviewEventHandler('ipc-message', {
+        tabId: ctx.activeRef.tab.id,
+        channel: 'link:navigate',
+        args: [{ url: rawHref, disposition: 'currentTab' }],
+      });
+      await flushMicrotasks();
+
+      expect(ctx.urlUtilsMocks.formatIpfsUrl).toHaveBeenCalledWith(
+        rawHref,
+        ctx.state.ipfsRoutePrefix
+      );
+      expect(ctx.tabsMocks.createTab).not.toHaveBeenCalled();
+    });
+
+    test('ipc-message link:navigate with disposition newTab opens via openInNewTabWithTarget', async () => {
+      const ctx = await setupEnsDispatch();
+      const rawHref = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
+      ctx.tabsMocks.webviewEventHandler('ipc-message', {
+        tabId: ctx.activeRef.tab.id,
+        channel: 'link:navigate',
+        args: [{ url: rawHref, disposition: 'newTab', target: null }],
+      });
+      await flushMicrotasks();
+
+      expect(ctx.tabsMocks.openInNewTabWithTarget).toHaveBeenCalledWith(rawHref, null);
+      expect(ctx.tabsMocks.createTab).not.toHaveBeenCalled();
+      expect(ctx.urlUtilsMocks.formatIpfsUrl).not.toHaveBeenCalled();
+    });
+
+    test('ipc-message link:navigate with named target forwards the target name for tab reuse', async () => {
+      // P3 from the round-4 review: a `<a target="docs" href="ipfs://...">`
+      // click should route through the same named-target tab-reuse path
+      // that `setWindowOpenHandler → tab:new-with-url` uses for non-dweb
+      // links. Passing the target through to `openInNewTabWithTarget`
+      // preserves the reuse semantics that earlier versions silently
+      // dropped on the dweb-link interceptor path.
+      const ctx = await setupEnsDispatch();
+      const rawHref = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
+      ctx.tabsMocks.webviewEventHandler('ipc-message', {
+        tabId: ctx.activeRef.tab.id,
+        channel: 'link:navigate',
+        args: [{ url: rawHref, disposition: 'newTab', target: 'docs' }],
+      });
+      await flushMicrotasks();
+
+      expect(ctx.tabsMocks.openInNewTabWithTarget).toHaveBeenCalledWith(rawHref, 'docs');
+    });
+
+    test('ipc-message link:navigate with target=_blank does not register as a named tab', async () => {
+      // `_blank`/`_self`/`_parent`/`_top` are special — they mean
+      // "default new-tab disposition", not "reuse a named tab". The
+      // renderer mirrors webcontents-setup.js' `!frameName.startsWith('_')`
+      // gate so the named-target map only ever holds real names.
+      const ctx = await setupEnsDispatch();
+      const rawHref = 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+
+      ctx.tabsMocks.webviewEventHandler('ipc-message', {
+        tabId: ctx.activeRef.tab.id,
+        channel: 'link:navigate',
+        args: [{ url: rawHref, disposition: 'newTab', target: '_blank' }],
+      });
+      await flushMicrotasks();
+
+      expect(ctx.tabsMocks.openInNewTabWithTarget).toHaveBeenCalledWith(rawHref, null);
     });
   });
 

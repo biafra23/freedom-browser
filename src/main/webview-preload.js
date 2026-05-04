@@ -71,6 +71,89 @@ const guardInternalSubscription = (name, channel) => (callback) => {
   return unsubscribe;
 };
 
+const findClosestAnchor = (start) => {
+  let element = start;
+  while (element && element !== document.body) {
+    if (element.tagName === 'A') return element;
+    element = element.parentElement;
+  }
+  return null;
+};
+
+const getRawDwebHref = (anchor) => {
+  const rawHref = anchor?.getAttribute?.('href')?.trim();
+  if (!rawHref) return null;
+  if (/^(ipfs|ipns):\/\//i.test(rawHref)) return rawHref;
+  return null;
+};
+
+// Intercept dweb links before Chromium resolves the anchor href. `ipfs:` and
+// `ipns:` are standard schemes, so the browser lowercases the host segment
+// before will-navigate fires (and before setWindowOpenHandler fires for
+// _blank / Cmd+Click new windows); that destroys CIDv0/CIDv1-base58btc/
+// base58 IPNS keys. The raw DOM attribute still has the original case, so
+// route it through the host renderer's loadTarget/formatIpfsUrl pipeline
+// while the bytes are recoverable. Same-tab and new-tab dispositions are
+// both handled here so the new-window code path (Chromium →
+// setWindowOpenHandler → tab:new-with-url in the main process) never gets
+// the lowercased URL — see `src/main/webcontents-setup.js#setWindowOpenHandler`.
+//
+// Two listeners — one each for `click` (primary button) and `auxclick`
+// (non-primary, i.e. middle/right). Per the UI Events spec, modern
+// Chromium dispatches `click` only for the primary button; middle-click
+// link activations arrive via `auxclick` exclusively. A previous version
+// only listened to `click` and relied on `event.button === 1` inside that
+// handler, which never fired for real middle-clicks (it only matched
+// dispatched-from-script synthetic events used by the unit tests).
+const handleDwebLinkActivation = (event) => {
+  if (event.defaultPrevented) return;
+  // Primary (0, click) or middle (1, auxclick) — that's the only
+  // intersection our two listeners care about. Right-click (2) is owned
+  // by the contextmenu listener.
+  if (event.button !== 0 && event.button !== 1) return;
+
+  const anchor = findClosestAnchor(event.target);
+  const href = getRawDwebHref(anchor);
+  if (!href) return;
+
+  // Mirror Chromium's link disposition heuristic: middle-click,
+  // ctrl/cmd-click, shift-click, or `target="_blank"` open in a new tab;
+  // a named `target` (anything not starting with `_`) reuses an existing
+  // tab with that name (or opens a new one if none exists); everything
+  // else navigates the current tab. (We don't distinguish foreground vs
+  // background tab here — same as freedom's existing `tab:new-with-url`
+  // flow which always opens foreground.)
+  //
+  // The target attribute is forwarded so the host renderer can route
+  // through the same named-tab reuse path that Chromium's
+  // setWindowOpenHandler → tab:new-with-url uses for non-dweb links.
+  // Without this, a named target on a dweb link would silently fall
+  // into the unconditional newTab branch and lose its tab-reuse
+  // semantics. (`_blank` / `_self` / `_parent` / `_top` are passed
+  // through too but the renderer only treats names without a leading
+  // underscore as named targets, mirroring webcontents-setup.js.)
+  const target = anchor.getAttribute?.('target') || '';
+  const isBlank = /^_blank$/i.test(target);
+  const isNamedTarget = target && !target.startsWith('_');
+  const wantsNewTab =
+    event.button === 1 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    isBlank ||
+    isNamedTarget;
+
+  event.preventDefault();
+  ipcRenderer.sendToHost('link:navigate', {
+    url: href,
+    disposition: wantsNewTab ? 'newTab' : 'currentTab',
+    target: target || null,
+  });
+};
+
+document.addEventListener('click', handleDwebLinkActivation, true);
+document.addEventListener('auxclick', handleDwebLinkActivation, true);
+
 // Expose APIs to internal pages (guarded for safety)
 contextBridge.exposeInMainWorld('freedomAPI', {
   // History
@@ -210,7 +293,7 @@ document.addEventListener(
     while (element && element !== document.body) {
       // Check for links
       if (element.tagName === 'A' && element.href) {
-        context.linkUrl = element.href;
+        context.linkUrl = getRawDwebHref(element) || element.href;
         context.linkText = element.textContent?.trim() || '';
       }
 

@@ -50,7 +50,6 @@ export const state = {
   hasNavigatedDuringCurrentLoad: false,
   isWebviewLoading: false,
   currentBzzBase: null,
-  currentIpfsBase: null,
   knownEnsNames: new Map(), // Maps hash/CID -> ENS name
   ensProtocols: new Map(), // Maps ENS name -> resolved protocol (swarm/ipfs/ipns)
   ensTrustByName: new Map(), // Maps ENS name -> trust object from last resolution

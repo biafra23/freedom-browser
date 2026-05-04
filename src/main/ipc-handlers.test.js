@@ -65,7 +65,6 @@ function loadIpcHandlersModule(options = {}) {
   const state = require('./state');
 
   state.activeBzzBases.clear();
-  state.activeIpfsBases.clear();
   state.activeRadBases.clear();
 
   return {
@@ -88,7 +87,7 @@ describe('ipc-handlers', () => {
     jest.restoreAllMocks();
   });
 
-  test('registers and validates base-url handlers for bzz, ipfs, and radicle', async () => {
+  test('registers and validates base-url handlers for bzz and radicle', async () => {
     const ctx = loadIpcHandlersModule({
       settings: { enableRadicleIntegration: false },
     });
@@ -136,21 +135,6 @@ describe('ipc-handlers', () => {
       })
     ).resolves.toEqual(success());
     expect(ctx.state.activeBzzBases.has(5)).toBe(false);
-
-    await expect(
-      ctx.ipcMain.invoke(IPC.IPFS_SET_BASE, {
-        webContentsId: 8,
-        baseUrl: 'http://localhost:8080/ipfs/cid/',
-      })
-    ).resolves.toEqual(success());
-    expect(ctx.state.activeIpfsBases.get(8)?.toString()).toBe('http://localhost:8080/ipfs/cid/');
-
-    await expect(
-      ctx.ipcMain.invoke(IPC.IPFS_CLEAR_BASE, {
-        webContentsId: 8,
-      })
-    ).resolves.toEqual(success());
-    expect(ctx.state.activeIpfsBases.has(8)).toBe(false);
 
     await expect(
       ctx.ipcMain.invoke(IPC.RAD_SET_BASE, {

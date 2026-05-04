@@ -1,6 +1,6 @@
 const log = require('./logger');
 const { BrowserWindow, app } = require('electron');
-const { activeBzzBases, activeIpfsBases, activeRadBases } = require('./state');
+const { activeBzzBases, activeRadBases } = require('./state');
 
 const sanitizeUrlForLog = (rawUrl) => {
   if (!rawUrl || typeof rawUrl !== 'string') return 'unknown';
@@ -35,7 +35,6 @@ function registerWebContentsHandlers() {
   app.on('web-contents-created', (_event, contents) => {
     contents.once('destroyed', () => {
       activeBzzBases.delete(contents.id);
-      activeIpfsBases.delete(contents.id);
       activeRadBases.delete(contents.id);
     });
 

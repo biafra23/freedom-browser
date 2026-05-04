@@ -63,7 +63,6 @@ function loadWebContentsSetupModule(options = {}) {
   const state = require('./state');
 
   state.activeBzzBases.clear();
-  state.activeIpfsBases.clear();
   state.activeRadBases.clear();
 
   return {
@@ -89,7 +88,6 @@ describe('webcontents-setup', () => {
     });
 
     ctx.state.activeBzzBases.set(contents.id, new URL('http://127.0.0.1:1633/bzz/hash/'));
-    ctx.state.activeIpfsBases.set(contents.id, new URL('http://127.0.0.1:8080/ipfs/cid/'));
     ctx.state.activeRadBases.set(contents.id, new URL('http://127.0.0.1:8780/api/v1/repos/rid/'));
 
     ctx.mod.registerWebContentsHandlers();
@@ -105,7 +103,6 @@ describe('webcontents-setup', () => {
 
     contents.emit('destroyed');
     expect(ctx.state.activeBzzBases.has(contents.id)).toBe(false);
-    expect(ctx.state.activeIpfsBases.has(contents.id)).toBe(false);
     expect(ctx.state.activeRadBases.has(contents.id)).toBe(false);
   });
 

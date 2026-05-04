@@ -1,17 +1,28 @@
 /**
- * CID and IPNS-key canonicalisation utilities (ESM, renderer).
+ * CID and IPNS-key canonicalisation utilities (CommonJS, main process).
  *
- * ESM mirror of `src/shared/cid-utils.js`. The shared file is CommonJS and
- * cannot be imported directly by the renderer (script type="module"
- * context with no Node require). Both implementations MUST stay in sync;
- * drift is guarded against by the parity assertion in
- * `src/renderer/lib/cid-utils.test.js`. Same pattern as
- * `src/renderer/lib/origin-utils.js` ↔ `src/shared/origin-utils.js`.
+ * `src/renderer/lib/cid-utils.js` is the ESM mirror of this file — the two
+ * implementations MUST stay in sync, guarded by the parity assertion in
+ * `src/renderer/lib/cid-utils.test.js`. Renderer pages load as
+ * `<script type="module">` and can't `require()` from node_modules or
+ * import a CommonJS file directly, hence the duplication (same pattern as
+ * `src/shared/origin-utils.js` ↔ `src/renderer/lib/origin-utils.js`).
  *
- * See the shared file for the full rationale; in short: standard-scheme
- * URL parsing in Chromium lowercases the host, which destroys base58btc
- * encodings (CIDv0, base58 IPNS peer IDs). Canonicalising to CIDv1 base32
- * / libp2p-key base36 sidesteps the issue.
+ * Why this exists:
+ * `ipfs:` and `ipns:` are registered as privileged standard schemes (see
+ * `src/main/index.js`), so Chromium's URL parser treats the host segment
+ * as a real hostname and lowercases it. CIDv0 ("Qm..." base58btc) and
+ * IPNS peer-ID multihashes (base58btc — "12D3Koo...", "16Uiu2H...",
+ * "Qm...") are case-sensitive: lowercasing them changes the underlying
+ * bytes and Kubo rejects the request with `400 invalid cid: selected
+ * encoding not supported`. Converting on the way in to the lowercase
+ * canonical CIDv1 forms — base32 ("bafy...") for IPFS, libp2p-key base36
+ * ("k51..." / "k2k4...") for IPNS — sidesteps the entire normalisation
+ * problem because both target encodings are case-insensitive lowercase.
+ *
+ * Used by `src/renderer/lib/url-utils.js` (address-bar input) and
+ * `src/main/ipfs/ipfs-protocol.js` (gateway-form path rewriting for
+ * sub-resource requests that bypass the renderer).
  */
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -65,13 +76,13 @@ const base32Encode = (bytes) => {
 };
 
 /**
- * Convert a CIDv0 ("Qm..." base58btc of a sha2-256 dag-pb multihash)
- * to the CIDv1 base32 form ("bafybei..."), which is lowercase and
- * therefore safe for the standard-scheme URL parser. Returns null on any
- * malformed input (including an already-lowercased "qm..." since that no
- * longer round-trips through base58btc).
+ * Convert a CIDv0 ("Qm..." base58btc of a sha2-256 dag-pb multihash) to
+ * the CIDv1 base32 form ("bafybei..."), which is lowercase and therefore
+ * safe for the standard-scheme URL parser. Returns null on any malformed
+ * input (including an already-lowercased "qm..." since that no longer
+ * round-trips through base58btc).
  */
-export const cidV0ToV1Base32 = (cidV0) => {
+const cidV0ToV1Base32 = (cidV0) => {
   if (typeof cidV0 !== 'string') return null;
   if (!/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(cidV0)) return null;
   const mh = base58Decode(cidV0);
@@ -109,7 +120,7 @@ const base36Encode = (bytes) => {
  * isn't in the base58 alphabet) and ENS names like "vitalik.eth" — both
  * intentionally fall through unchanged.
  */
-export const ipnsMhToCidV1Base36 = (mhBase58) => {
+const ipnsMhToCidV1Base36 = (mhBase58) => {
   if (typeof mhBase58 !== 'string') return null;
   const mh = base58Decode(mhBase58);
   // Multihash = 1-byte code + 1-byte digest length + digest. We only accept
@@ -130,16 +141,30 @@ export const ipnsMhToCidV1Base36 = (mhBase58) => {
 /**
  * Convert a CIDv1 base58btc CID ("z..." multibase prefix) to the equivalent
  * CIDv1 base32 form ("b..." prefix), which is lowercase and therefore safe
- * for the standard-scheme URL parser. See the shared file for the full
- * rationale; in short, base58btc is case-sensitive and Chromium lowercases
- * standard-scheme hosts, so `z...` CIDv1s need to be re-encoded before
- * the URL hits Chromium's parser. Returns null for non-string input,
- * already-lowercased `z...` bytes, or anything that doesn't decode as a
- * valid CIDv1 structure.
+ * for the standard-scheme URL parser.
+ *
+ * Base58btc encoding is case-sensitive; once Chromium lowercases the host
+ * segment of `ipfs://<z-cid>/...` the original bytes are destroyed
+ * (lowercased letters decode to different base58 values). This converter
+ * runs *before* Chromium parses the URL — case-preserving address-bar
+ * input goes through src/renderer/lib/url-utils.js#parseIpfsInput, raw
+ * anchor hrefs are intercepted by src/main/webview-preload.js. After
+ * conversion the resulting `b...` form decodes case-insensitively (RFC
+ * 4648 base32) so subsequent normalisation is a no-op.
+ *
+ * Returns null on:
+ *  - non-string input,
+ *  - input not matching the case-sensitive `z...` prefix shape (lowercased
+ *    inputs that were once mixed-case are unrecoverable; caller should
+ *    surface a 400 rather than re-encode wrong bytes),
+ *  - bytes that don't form a valid CIDv1 structure (version 0x01, single-
+ *    byte varint codec, plausible multihash header).
  */
-// LEB128 unsigned varint reader — see the shared file for the rationale
-// (multi-byte codec / multihash-code varints in the wild — `dag-json`,
-// `blake2b-256`, etc.).
+// Read an unsigned LEB128 varint at `offset`. Returns `{ value, length }`
+// on success or `null` on premature EOF / overlong encoding. We cap at
+// 5 bytes (35 bits) which is comfortably above any multicodec / multihash
+// code in the registry (largest currently-allocated entries fit in 14
+// bits) and well below the 53-bit safe-integer limit.
 const readUvarint = (bytes, offset) => {
   let value = 0;
   let shift = 0;
@@ -154,20 +179,33 @@ const readUvarint = (bytes, offset) => {
   return null;
 };
 
-export const cidV1B58btcToBase32 = (cid) => {
+const cidV1B58btcToBase32 = (cid) => {
   if (typeof cid !== 'string') return null;
+  // Case-sensitive base58btc body, no `/i` flag.
   if (!/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(cid)) return null;
-  // Reject all-lowercase input — see the shared file for the rationale
-  // (lowercased base58 can decode into valid-looking-but-wrong CID bytes,
-  // so detect at the input-shape layer where it's deterministic).
+  // Detect-and-reject lowercased input. The decoded-bytes sanity check
+  // alone isn't enough — lowercased base58 can decode into garbage that
+  // happens to look like a valid CIDv1 structure (just three varint
+  // headers, only ~1/256 chance of mismatching when the input is
+  // lowercased mid-flight). This input-shape check is deterministic:
+  // real `z...` CIDs of 40+ chars contain mixed case (~24 upper + 25
+  // lower + 9 digits in the alphabet, so for a 32-byte SHA-256
+  // multihash → ~44-char body the probability of zero uppercase letters
+  // is ≈ (33/58)^44 ≈ 6×10⁻¹²). All-lowercase input therefore signals
+  // that something upstream lowercased the host (most commonly
+  // Chromium's standard-scheme URL parser); the original bytes are
+  // unrecoverable and the caller should surface a 400 rather than
+  // re-encode to the wrong content.
   if (!/[A-HJ-NP-Z]/.test(cid)) return null;
   const bytes = base58Decode(cid.slice(1));
   if (!bytes || bytes.length < 4) return null;
-  // CIDv1 = version varint (always 0x01) + codec varint + multihash
-  // (code varint + length varint + digest bytes). Codec, mh-code, and
-  // length can each be multi-byte varints; single-byte assumptions
-  // false-reject e.g. dag-json (codec 0x0129) and blake2b-256 (mh-code
-  // 0xb220).
+  // CIDv1 layout: version varint (always 0x01) + codec varint +
+  // multihash (code varint + digest-length varint + digest bytes).
+  // Codec, mh-code, and digest-length CAN be multi-byte varints — eg.
+  // dag-json is 0x0129 (varint `0xa9 0x02`), blake2b-256 multihash code
+  // is 0xb220 (`0xa0 0xe4 0x02`). Single-byte assumptions here would
+  // false-reject those layouts (and they're not vanishingly rare —
+  // dag-json and dag-cbor in particular are widely used).
   if (bytes[0] !== 0x01) return null;
   const codec = readUvarint(bytes, 1);
   if (!codec) return null;
@@ -179,3 +217,5 @@ export const cidV1B58btcToBase32 = (cid) => {
   if (bytes.length !== expectedTotal) return null;
   return 'b' + base32Encode(bytes);
 };
+
+module.exports = { cidV0ToV1Base32, ipnsMhToCidV1Base36, cidV1B58btcToBase32 };

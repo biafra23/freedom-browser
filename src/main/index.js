@@ -41,22 +41,25 @@ const path = require('path');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
 const { registerRequestRewriter } = require('./request-rewriter');
 const { registerBzzProtocol } = require('./swarm/bzz-protocol');
+const { registerIpfsProtocol, registerIpnsProtocol } = require('./ipfs/ipfs-protocol');
 
-// Register `bzz:` as a privileged standard scheme. Must run before
-// `app.whenReady()` — see https://www.electronjs.org/docs/latest/api/protocol.
-// See README "Swarm Content Retrieval" for why this exists.
+// Register `bzz:`, `ipfs:`, and `ipns:` as privileged standard schemes.
+// Must run before `app.whenReady()` —
+// see https://www.electronjs.org/docs/latest/api/protocol.
+// See README "Swarm Content Retrieval" and "IPFS / IPNS Content Retrieval"
+// for why these exist.
+const DWEB_PROTOCOL_PRIVILEGES = {
+  standard: true,
+  secure: true,
+  supportFetchAPI: true,
+  corsEnabled: true,
+  stream: true,
+  allowServiceWorkers: true,
+};
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'bzz',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true,
-      allowServiceWorkers: true,
-    },
-  },
+  { scheme: 'bzz', privileges: DWEB_PROTOCOL_PRIVILEGES },
+  { scheme: 'ipfs', privileges: DWEB_PROTOCOL_PRIVILEGES },
+  { scheme: 'ipns', privileges: DWEB_PROTOCOL_PRIVILEGES },
 ]);
 const { registerSettingsIpc, loadSettings } = require('./settings-store');
 const { registerBookmarksIpc } = require('./bookmarks-store');
@@ -139,6 +142,8 @@ async function bootstrap() {
   registerSwarmProviderIpc();
   registerFeedStoreIpc();
   registerBzzProtocol(defaultSession);
+  registerIpfsProtocol(defaultSession);
+  registerIpnsProtocol(defaultSession);
   registerRequestRewriter(defaultSession);
   allowInteractivePermissions(defaultSession);
   registerWebContentsHandlers();

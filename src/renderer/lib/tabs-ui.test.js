@@ -420,6 +420,34 @@ describe('tabs ui behavior', () => {
     }
   });
 
+  test('ignores sub-frame did-fail-load (third-party iframe / pixel failure)', async () => {
+    // Regression: Chromium fires `did-fail-load` for ANY frame, including
+    // hidden third-party iframes (WalletConnect verify attestation) and
+    // ad-tech cookie-sync pixels. Without an `isMainFrame` gate, those
+    // failures clear the main-frame loading state and (via the
+    // navigation-side handler) replace the entire page with `error.html`
+    // — hijacking the user's perfectly-loaded top-level page on top of
+    // an unrelated sub-resource error.
+    const { mod } = await loadTabsModule();
+    const onWebviewEvent = jest.fn();
+    mod.setWebviewEventHandler(onWebviewEvent);
+    await mod.initTabs();
+
+    const activeTab = mod.getActiveTab();
+    const { webview } = activeTab;
+    activeTab.isLoading = true;
+
+    webview.dispatch('did-fail-load', {
+      errorCode: -310,
+      errorDescription: 'ERR_BLOCKED_BY_RESPONSE',
+      validatedURL: 'https://verify.walletconnect.com/attestation/abc',
+      isMainFrame: false,
+    });
+
+    expect(activeTab.isLoading).toBe(true);
+    expect(onWebviewEvent).not.toHaveBeenCalledWith('did-fail-load', expect.anything());
+  });
+
   test('manual stop-button abort still clears the spinner', async () => {
     // Counter-regression: the suppression above must not swallow
     // legitimate aborts (e.g. user hitting the stop button), which also

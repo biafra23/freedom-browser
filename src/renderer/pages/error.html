@@ -207,9 +207,33 @@
         }
       }
 
+      // Format a host for display in the generic title (truncate very long
+      // ad-tech / tracking hosts).
+      function hostFor(rawUrl) {
+        try {
+          const parsed = new URL(rawUrl, window.location.href);
+          return parsed.host || null;
+        } catch (e) {
+          return null;
+        }
+      }
+
       async function displayError() {
         const parts = [];
         if (protocolUrl) parts.push(protocolUrl);
+
+        // Generic copy for non-dweb URLs (http/https, file:, anything we
+        // don't recognize as a content-addressed scheme). The default
+        // "Content Unavailable / decentralized network" copy is misleading
+        // when a plain HTTPS request fails — it implies the user is on a
+        // peer-to-peer page when they aren't.
+        if (!protocol) {
+          const host = hostFor(url);
+          titleEl.textContent = "Couldn't load this page";
+          descriptionEl.textContent = host
+            ? `${host} didn't respond, or the response was blocked. Check the URL and try again.`
+            : "The server didn't respond, or the response was blocked. Check the URL and try again.";
+        }
 
         if (error === 'swarm_content_not_found') {
           // The Bee HTTP API is reachable, but the requested content didn't

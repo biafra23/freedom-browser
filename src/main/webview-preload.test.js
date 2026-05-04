@@ -277,6 +277,197 @@ describe('webview-preload', () => {
     });
   });
 
+  test('intercepts ipfs/ipns anchor clicks before Chromium lowercases the host', () => {
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/links.html',
+        protocol: 'file:',
+        pathname: '/app/pages/links.html',
+      },
+    });
+    const anchor = {
+      tagName: 'A',
+      getAttribute: jest.fn((name) => {
+        if (name === 'href') return 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        if (name === 'target') return '';
+        return null;
+      }),
+      parentElement: global.document.body,
+    };
+    const event = {
+      target: anchor,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+
+    documentCaptureHandlers.click(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
+      url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      disposition: 'currentTab',
+      target: null,
+    });
+  });
+
+  test('forwards a named target so the renderer can reuse the named tab', () => {
+    // P3 from the round-4 review: without forwarding `target`, a
+    // `<a target="docs" href="ipfs://...">` click hits the unconditional
+    // newTab branch in the renderer and silently loses the named-tab
+    // reuse semantics that `setWindowOpenHandler → tab:new-with-url`
+    // path applies for non-dweb links. Forwarding the attribute lets
+    // `link:navigate` route through the same `openInNewTabWithTarget`
+    // helper.
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/links.html',
+        protocol: 'file:',
+        pathname: '/app/pages/links.html',
+      },
+    });
+    const anchor = {
+      tagName: 'A',
+      getAttribute: jest.fn((name) => {
+        if (name === 'href') return 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        if (name === 'target') return 'docs';
+        return null;
+      }),
+      parentElement: global.document.body,
+    };
+    const event = {
+      target: anchor,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+
+    documentCaptureHandlers.click(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    // Named target → newTab disposition (Chromium's window.open semantics
+    // for any non-empty `target` other than the current frame), with the
+    // target name forwarded so the renderer's named-target reuse path
+    // can fire.
+    expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
+      url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      disposition: 'newTab',
+      target: 'docs',
+    });
+  });
+
+  test('intercepts modified clicks and target=_blank with newTab disposition', () => {
+    const makeAnchor = (target = '') => ({
+      tagName: 'A',
+      getAttribute: jest.fn((name) => {
+        if (name === 'href') return 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        if (name === 'target') return target;
+        return null;
+      }),
+      parentElement: global.document.body,
+    });
+
+    // Each case names which DOM event fires for that activation in real
+    // Chromium. Middle-click goes through `auxclick`, NOT `click` —
+    // modern Chromium only dispatches `click` for the primary button
+    // (UI Events spec). A previous implementation listened only to
+    // `click` and checked `event.button === 1` inside, which is dead
+    // code for real middle-clicks; fixed by registering both listeners.
+    const cases = [
+      { label: 'cmd-click', dispatchEvent: 'click', overrides: { metaKey: true } },
+      { label: 'ctrl-click', dispatchEvent: 'click', overrides: { ctrlKey: true } },
+      { label: 'shift-click', dispatchEvent: 'click', overrides: { shiftKey: true } },
+      { label: 'middle-click', dispatchEvent: 'auxclick', overrides: { button: 1 } },
+      { label: 'target=_blank', dispatchEvent: 'click', overrides: {}, target: '_blank' },
+    ];
+
+    for (const { label, dispatchEvent, overrides, target = '' } of cases) {
+      const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
+      const event = {
+        target: makeAnchor(target),
+        button: 0,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        defaultPrevented: false,
+        preventDefault: jest.fn(),
+        ...overrides,
+      };
+      documentCaptureHandlers[dispatchEvent](event);
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
+        url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        disposition: 'newTab',
+        target: target || null,
+      });
+      void label;
+    }
+  });
+
+  test('ignores non-dweb anchor clicks', () => {
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule();
+    const event = {
+      target: {
+        tagName: 'A',
+        getAttribute: jest.fn((name) => (name === 'href' ? 'https://example.com/' : null)),
+        parentElement: global.document.body,
+      },
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+    documentCaptureHandlers.click(event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(ipcRenderer.sendToHost).not.toHaveBeenCalledWith('link:navigate', expect.anything());
+  });
+
+  test('context menu preserves raw dweb href before anchor.href normalisation', () => {
+    const { documentHandlers, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/links.html',
+        protocol: 'file:',
+        pathname: '/app/pages/links.html',
+      },
+    });
+    const anchor = {
+      tagName: 'A',
+      href: 'ipfs://qmywapjzv5czsna625s3xf2nemtygpphdwez79ojwnpbdg/',
+      getAttribute: jest.fn((name) =>
+        name === 'href' ? 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG' : null
+      ),
+      textContent: 'CIDv0 link',
+      parentElement: global.document.body,
+    };
+
+    documentHandlers.contextmenu({
+      clientX: 1,
+      clientY: 2,
+      target: anchor,
+      preventDefault: jest.fn(),
+    });
+
+    expect(ipcRenderer.sendToHost).toHaveBeenCalledWith(
+      'context-menu',
+      expect.objectContaining({
+        linkUrl: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        linkText: 'CIDv0 link',
+      })
+    );
+  });
+
   test('detects video and audio media sources in the context menu handler', () => {
     const { documentHandlers, ipcRenderer } = loadWebviewPreloadModule({
       location: {

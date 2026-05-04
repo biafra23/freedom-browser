@@ -1,7 +1,7 @@
 const log = require('./logger');
 const { net } = require('electron');
-const { convertProtocolUrl, sanitizeUrlForLog } = require('./request-rewriter');
-const { getBeeApiUrl } = require('./service-registry');
+const { sanitizeUrlForLog } = require('./request-rewriter');
+const { getBeeApiUrl, getIpfsGatewayUrl } = require('./service-registry');
 
 // Hygiene timeout — not trust-critical. A misbehaving gateway shouldn't
 // hold a socket open forever for speculative content the user may never
@@ -31,12 +31,13 @@ function prefetchGatewayUrl(uri) {
     if (uri.startsWith('ipns://')) return NOOP_HANDLE;
     if (!uri.startsWith('bzz://') && !uri.startsWith('ipfs://')) return NOOP_HANDLE;
 
-    // bzz:// is now served by the custom protocol handler in
-    // src/main/swarm/bzz-protocol.js, so convertProtocolUrl no longer
-    // rewrites it. The prefetch fires from the main process directly via
-    // net.request, which doesn't go through the protocol handler, so we
-    // build the Bee gateway URL ourselves — same shape the bzz-protocol
-    // handler ultimately proxies to.
+    // `bzz://` and `ipfs://` are now served by custom protocol handlers
+    // in src/main/swarm/bzz-protocol.js and src/main/ipfs/ipfs-protocol.js,
+    // so the request-rewriter no longer translates them. The prefetch
+    // fires from the main process directly via net.request — bypassing
+    // the protocol handlers — to warm the local gateway's cache. We build
+    // the gateway URLs ourselves; the same gateways the protocol handlers
+    // ultimately proxy to.
     let url;
     if (uri.startsWith('bzz://')) {
       const afterScheme = uri.slice(6).replace(/^\/+/, '');
@@ -46,9 +47,18 @@ function prefetchGatewayUrl(uri) {
       }
       url = `${getBeeApiUrl()}/bzz/${afterScheme}`;
     } else {
-      const { converted, url: convertedUrl } = convertProtocolUrl(uri);
-      if (!converted) return NOOP_HANDLE;
-      url = convertedUrl;
+      const afterScheme = uri.slice(7).replace(/^\/+/, '');
+      const cid = afterScheme.split(/[/?#]/)[0];
+      // CIDv1 base32 covers all codecs (`bafy…`, `bagu…`, `bah…`, …) —
+      // see the `CID_RE` comment in `src/main/ipfs/ipfs-protocol.js` for
+      // the codec-varint → 3rd-char mapping.
+      if (
+        !cid ||
+        !/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|ba[a-z2-7]{49,}|z[1-9A-HJ-NP-Za-km-z]{40,})$/i.test(cid)
+      ) {
+        return NOOP_HANDLE;
+      }
+      url = `${getIpfsGatewayUrl()}/ipfs/${afterScheme}`;
     }
 
     let aborted = false;
