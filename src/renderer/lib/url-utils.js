@@ -28,22 +28,25 @@ const isValidSwarmHash = (str) => /^[a-fA-F0-9]{64}([a-fA-F0-9]{64})?$/.test(str
 
 // Check if a string looks like a valid IPFS CID
 // CIDv0: Starts with Qm, 46 characters, base58
-// CIDv1: Starts with bafy (bafyb...), variable length, base32
+// CIDv1 base32: starts with `b` (multibase) followed by 50+ base32 chars.
+//   The 2nd char is always `a` (version byte 0x01 contributes the first
+//   5-bit chunk = 0). The 3rd char varies with the codec varint:
+//   `bafy…`/`bafk…` for dag-pb / raw, `bagu…` for dag-json (multi-byte
+//   codec varint 0xa9 0x02), `bah…` for codecs whose varint top 2 bits
+//   are 0b11, etc. An earlier regex hard-coded `baf` and false-rejected
+//   every non-`baf` codec, breaking dag-json / blake2b CIDs end-to-end.
+// CIDv1 base58btc: starts with z
 export const isValidCid = (str) => {
   if (!str || typeof str !== 'string') return false;
 
-  // CIDv0: Qm followed by 44 base58 characters (total 46)
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(str)) {
     return true;
   }
 
-  // CIDv1 with base32 (most common): starts with bafy, bafk, etc.
-  // Typically 59 characters for raw/dag-pb, but can vary
-  if (/^baf[a-z2-7]{50,}$/i.test(str)) {
+  if (/^ba[a-z2-7]{49,}$/i.test(str)) {
     return true;
   }
 
-  // CIDv1 with base58btc: starts with z
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/.test(str)) {
     return true;
   }
@@ -434,7 +437,9 @@ export const deriveDisplayValue = (
 const looksLikeContentKey = (ref) => {
   if (typeof ref !== 'string' || !ref) return false;
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
-  if (/^baf[a-z2-7]{50,}$/i.test(ref)) return true;
+  // `ba…` covers all CIDv1 base32 codecs: `bafy…`/`bafk…` (dag-pb / raw),
+  // `bagu…` (dag-json), `bah…` and others — see the `isValidCid` comment.
+  if (/^ba[a-z2-7]{49,}$/i.test(ref)) return true;
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(ref)) return true;
   if (/^k[a-z0-9]{40,}$/i.test(ref)) return true;
   if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(ref)) return true;
@@ -473,9 +478,30 @@ const KNOWN_GATEWAY_HOSTS = new Set([
   'dweb.eu.org',
 ]);
 
+// Strip a trailing `:<port>` from a host slot to compare against the
+// gateway allowlist. `parseIpfsInput` is intentionally byte-level (it
+// avoids `new URL()` so base58btc hosts survive Chromium's standard-
+// scheme lowercasing — see the comment in `parseIpfsInput`), so port
+// handling has to be done here too. Kubo emits protocol-relative anchors
+// like `<a href="//localhost:8080/ipfs/<cid>">`, which Chromium resolves
+// against the page's `ipfs://` origin to `ipfs://localhost:8080/ipfs/<cid>`;
+// without stripping the port the allowlist comparison would miss and the
+// rewrite would fall through, leaving the address bar permanently on
+// the gateway-origin form. `[::1]:8080` and bare `[::1]` are handled by
+// looking for a closing bracket first.
+const stripPort = (host) => {
+  if (typeof host !== 'string' || !host) return host;
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colon = host.indexOf(':');
+  return colon === -1 ? host : host.slice(0, colon);
+};
+
 const isKnownGatewayHost = (host) => {
   if (typeof host !== 'string' || !host) return false;
-  const lower = host.toLowerCase();
+  const lower = stripPort(host).toLowerCase();
   if (KNOWN_GATEWAY_HOSTS.has(lower)) return true;
   if (lower.endsWith('.localhost')) return true;
   return false;

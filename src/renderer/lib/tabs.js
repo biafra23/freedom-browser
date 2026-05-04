@@ -1104,6 +1104,69 @@ export const switchTab = (tabId, options = {}) => {
   pushDebug(`Switched to tab ${tabId}`);
 };
 
+/**
+ * Open a URL in a new tab, honouring named-target tab reuse.
+ *
+ * If `targetName` is a non-empty string and a tab is already mapped to
+ * that name (via a previous call from this function or the
+ * `setWindowOpenHandler` → `tab:new-with-url` IPC path), the existing
+ * tab is switched to and re-navigated to the new URL. Otherwise a new
+ * tab is created and (if the target name is named, i.e. not `_blank`
+ * passed through verbatim) registered under that name.
+ *
+ * Used by both the main-process `tab:new-with-url` IPC handler (for
+ * `setWindowOpenHandler`-routed http(s) windows) and the renderer's
+ * `link:navigate` handler (for dweb-link clicks intercepted in
+ * `webview-preload.js`). Centralising the named-target logic here
+ * keeps both paths consistent — without it, `target="docs"` on a
+ * `<a href="ipfs://...">` would silently lose its tab-reuse semantics
+ * because dweb clicks bypass `setWindowOpenHandler` (so the click can
+ * be intercepted before Chromium lowercases the host).
+ *
+ * @param {string} url - target URL
+ * @param {string|null} targetName - HTML `target` attribute, if any
+ * @returns {object|null} the (possibly new) tab, or null on noop
+ */
+export const openInNewTabWithTarget = (url, targetName) => {
+  if (!url) return null;
+
+  if (targetName && namedTargets.has(targetName)) {
+    const existingTabId = namedTargets.get(targetName);
+    const existingTab = tabState.tabs.find((t) => t.id === existingTabId);
+    if (existingTab) {
+      pushDebug(`Reusing tab ${existingTabId} for target "${targetName}": ${url}`);
+      switchTab(existingTabId);
+      setTimeout(() => {
+        if (onLoadTarget) {
+          onLoadTarget(url);
+        }
+      }, 50);
+      return existingTab;
+    }
+    namedTargets.delete(targetName);
+  }
+
+  pushDebug(
+    `Opening new tab with URL: ${url}${targetName ? ` (target: ${targetName})` : ''}`
+  );
+
+  // Pass the target URL through to createTab (not homeUrl). createTab
+  // already does the right thing for both shapes: direct URLs load
+  // straight into the webview (no home-page flash), and dweb URLs
+  // (ens://, bzz://, ipfs://, ipns://, etc.) keep the webview on
+  // homeUrl while routing through `onLoadTarget` for resolution.
+  // Critically, this also makes `tab.url` reflect the actual target,
+  // so the `tab-switched` handler can derive a meaningful address bar
+  // value immediately instead of leaving it empty until ENS resolves.
+  const newTab = createTab(url);
+
+  if (targetName && newTab) {
+    namedTargets.set(targetName, newTab.id);
+  }
+
+  return newTab;
+};
+
 // Initialize tabs module
 export const initTabs = async () => {
   // Initialize DOM elements
@@ -1184,40 +1247,7 @@ export const initTabs = async () => {
 
   electronAPI?.onNewTabWithUrl?.((url, targetName) => {
     if (url) {
-      // Check if we should reuse an existing tab with this target name
-      if (targetName && namedTargets.has(targetName)) {
-        const existingTabId = namedTargets.get(targetName);
-        const existingTab = tabState.tabs.find((t) => t.id === existingTabId);
-        if (existingTab) {
-          pushDebug(`Reusing tab ${existingTabId} for target "${targetName}": ${url}`);
-          switchTab(existingTabId);
-          // Navigate the existing tab to the new URL
-          setTimeout(() => {
-            if (onLoadTarget) {
-              onLoadTarget(url);
-            }
-          }, 50);
-          return;
-        }
-        // Tab no longer exists, clean up stale entry
-        namedTargets.delete(targetName);
-      }
-
-      pushDebug(`Opening new tab with URL: ${url}${targetName ? ` (target: ${targetName})` : ''}`);
-
-      // Pass the target URL through to createTab (not homeUrl). createTab
-      // already does the right thing for both shapes: direct URLs load
-      // straight into the webview (no home-page flash), and dweb URLs
-      // (ens://, bzz://, ipfs://, ipns://, etc.) keep the webview on
-      // homeUrl while routing through `onLoadTarget` for resolution.
-      // Critically, this also makes `tab.url` reflect the actual target,
-      // so the `tab-switched` handler can derive a meaningful address bar
-      // value immediately instead of leaving it empty until ENS resolves.
-      const newTab = createTab(url);
-
-      if (targetName && newTab) {
-        namedTargets.set(targetName, newTab.id);
-      }
+      openInNewTabWithTarget(url, targetName || null);
     }
   });
 

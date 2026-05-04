@@ -53,8 +53,26 @@
  *    typing `ipfs://name.eth` whose contenthash is `bzz` (or `ipns`) is
  *    treated as user intent and we don't silently switch transports. Same
  *    rule the bzz handler enforces.
+ *  - Per-attempt deadline (`ATTEMPT_TIMEOUT_MS`). Even though there's no
+ *    retry loop, an unbounded fetch lets a stalled Kubo (crashed mid-
+ *    response, paused worker, debugger breakpoint on the gateway) hang
+ *    every page load indefinitely. Mirrors the per-attempt bound in
+ *    `bzz-protocol.js`.
+ *
+ * Why `electron.net.fetch` and not Node's global `fetch`:
+ *
+ * The handler issues `http://localhost:<port>/ipfs/<cid>/` so Kubo emits
+ * its subdomain-gateway redirect to `http://<cidv1>.ipfs.localhost:<port>/`,
+ * and `redirect: 'follow'` consumes that redirect inside the handler.
+ * Node's `globalThis.fetch` resolves DNS via the OS resolver chain, and on
+ * macOS that chain doesn't honor RFC 6761 for `*.localhost` — getaddrinfo
+ * returns `ENOTFOUND`, the redirect never resolves, and every IPFS load
+ * fails. Electron's `net` module uses Chromium's network stack, which
+ * resolves `*.localhost` to loopback per the RFC. Tests still inject
+ * `fetchImpl` for stubs; production uses `net.fetch`.
  */
 
+const { net } = require('electron');
 const log = require('../logger');
 const { getIpfsGatewayUrl } = require('../service-registry');
 const { resolveEnsContent } = require('../ens-resolver');
@@ -65,16 +83,35 @@ const {
   ipnsMhToCidV1Base36,
 } = require('../../shared/cid-utils');
 
-// CIDv0 (Qm + 44 base58), CIDv1 base32 (baf...), CIDv1 base58btc (z...).
-// Mirrors the validation in src/main/request-rewriter.js' isValidCid and
-// the renderer's url-utils.js — keep all three in sync.
-const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z2-7]{50,}|z[1-9A-HJ-NP-Za-km-z]{40,})$/i;
+// CIDv0 (Qm + 44 base58), CIDv1 base32 (b + base32 chars), CIDv1 base58btc (z…).
+// Mirrors the validation in `src/main/ens-prefetch.js` and the renderer's
+// `url-utils.js` — keep all in sync.
+//
+// CIDv1 base32 always starts with `b` (the base32-lower multibase prefix).
+// The 2nd char is always `a` because the version byte (0x01) contributes
+// 0b00000 = 0 = `a` to the first 5-bit base32 chunk. The 3rd char varies
+// with the codec — `bafy…` (dag-pb), `bafk…` (raw / sha-256), `bafzbei…`
+// (libp2p-key), `bagu…` (dag-json — the dag-json codec varint 0x0129
+// encodes as 0xa9 0x02, whose top 2 bits push the 3rd 5-bit chunk to
+// `g`), `bah…` for other codecs whose varint top 2 bits are 0b11, and
+// so on. The earlier regex hard-coded `baf` and false-rejected every
+// non-`baf` codec at the protocol-handler layer (the renderer
+// canonicalised correctly, but the lowercase-canonical form was then
+// rejected here as "invalid ipfs reference").
+const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|ba[a-z2-7]{49,}|z[1-9A-HJ-NP-Za-km-z]{40,})$/i;
 
 // IPNS host: libp2p key (k51..., 12D3..., Qm...) or DNSLink name. Same
 // shape Kubo accepts on /ipns/<host>. ENS hosts (.eth/.box) match this
 // pattern too — the buildGatewayUrl branch order routes them to the ENS
 // resolver instead of the raw IPNS branch.
 const IPNS_HOST_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$/;
+
+// Per-attempt deadline. Kubo can accept a TCP connection and then stall
+// (crash mid-response, paused worker, debugger breakpoint on the
+// gateway), and without an upper bound the protocol-handler call hangs
+// the page load indefinitely. Mirrors the bzz handler's per-attempt
+// timeout. Single-shot — no retry loop here, see file header.
+const ATTEMPT_TIMEOUT_MS = 30_000;
 
 // Request headers we should not forward to Kubo — either Chromium-injected
 // privileged-scheme noise or headers that refer to the ipfs:// origin and
@@ -197,12 +234,17 @@ async function buildGatewayUrl(namespace, sourceUrl) {
     // CIDv0 / CIDv1-base58btc hosts are case-sensitive. Sub-resource
     // requests (`<img src="ipfs://Qm.../">`, `<img src="ipfs://z.../">`,
     // `fetch('ipfs://...')`, etc.) bypass the renderer's formatIpfsUrl
-    // pipeline and arrive here with the host already lowercased by
-    // Chromium's standard-scheme URL parser. If the original was
-    // mixed-case we can re-encode to lowercase-canonical CIDv1 base32; if
-    // it was already lowercase the original bytes are gone and we
-    // surface a clear 400 instead of forwarding an invalid reference to
-    // Kubo (whose 400 message is less actionable). CIDv1 base32 (`baf…`)
+    // pipeline; by the time the handler sees the URL, Chromium's
+    // standard-scheme parser has already lowercased the host. The
+    // canonicalisers below (`cidV0ToV1Base32`, `cidV1B58btcToBase32`)
+    // detect the lowercased shape and refuse to re-encode (the original
+    // bytes are unrecoverable), so this branch effectively just produces
+    // the actionable 400. The "we can re-encode" framing applied to an
+    // earlier draft that called these helpers from the JS surface with
+    // mixed-case input still intact — it doesn't apply once Chromium
+    // has parsed the URL. Keeping the structure for the JS-surface case
+    // (eg. unit tests, internal IPC) so input that *does* arrive mixed-
+    // case still canonicalises rather than 400ing. CIDv1 base32 (`baf…`)
     // is already lowercase-canonical and falls through unchanged.
     if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(host)) {
       const canonical = cidV0ToV1Base32(host);
@@ -304,7 +346,9 @@ async function buildGatewayUrl(namespace, sourceUrl) {
 function looksLikeContentKey(ref) {
   if (typeof ref !== 'string' || !ref) return false;
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
-  if (/^baf[a-z2-7]{50,}$/i.test(ref)) return true;
+  // `ba…` covers all CIDv1 base32 codecs: `bafy…`/`bafk…` (dag-pb / raw),
+  // `bagu…` (dag-json), `bah…` and others — see the CID_RE comment.
+  if (/^ba[a-z2-7]{49,}$/i.test(ref)) return true;
   if (/^z[1-9A-HJ-NP-Za-km-z]{40,}$/i.test(ref)) return true;
   if (/^k[a-z0-9]{40,}$/i.test(ref)) return true;
   if (/^(12D3|16Uiu2H)[a-zA-Z0-9]{30,}$/i.test(ref)) return true;
@@ -433,10 +477,18 @@ function jsonErrorResponse(status, message) {
 }
 
 /**
- * Core handler, exported for testability. `fetchImpl` defaults to global
- * fetch but tests can inject a stub.
+ * Core handler, exported for testability. `fetchImpl` defaults to
+ * Electron's `net.fetch` (Chromium network stack — RFC 6761 *.localhost
+ * resolution, mandatory for the Kubo subdomain-redirect contract on
+ * macOS where the OS resolver returns ENOTFOUND for `*.localhost`); tests
+ * inject a stub. `attemptTimeoutMs` is exposed so tests can exercise
+ * the stalled-fetch path without burning a real 30-second deadline.
  */
-async function handleRequest(namespace, request, { fetchImpl = fetch } = {}) {
+async function handleRequest(
+  namespace,
+  request,
+  { fetchImpl = net.fetch, attemptTimeoutMs = ATTEMPT_TIMEOUT_MS } = {}
+) {
   const built = await buildGatewayUrl(namespace, request.url);
   if (!built) {
     return jsonErrorResponse(400, `invalid ${namespace} reference`);
@@ -449,10 +501,24 @@ async function handleRequest(namespace, request, { fetchImpl = fetch } = {}) {
   const headers = sanitizeRequestHeaders(request.headers);
   const method = request.method || 'GET';
   const body = method === 'GET' || method === 'HEAD' ? undefined : request.body;
+
+  // Per-attempt AbortController, linked to the upstream request signal so
+  // a webview cancellation still aborts the in-flight fetch, but with its
+  // own timeout so a stalled Kubo response can't hang the page load
+  // indefinitely. Mirrors the bzz handler's pattern.
+  const attemptCtl = new AbortController();
+  const upstream = request.signal;
+  const relayAbort = () => attemptCtl.abort();
+  if (upstream) {
+    if (upstream.aborted) attemptCtl.abort();
+    else upstream.addEventListener('abort', relayAbort, { once: true });
+  }
+  const timer = setTimeout(() => attemptCtl.abort(), attemptTimeoutMs);
+
   // `redirect: 'follow'` is load-bearing here — see the file header. Kubo's
   // localhost path → subdomain redirect must be consumed inside this handler;
   // surfacing it to Chromium would re-introduce the gateway-origin bug.
-  const init = { method, headers, signal: request.signal, redirect: 'follow' };
+  const init = { method, headers, signal: attemptCtl.signal, redirect: 'follow' };
   if (body) {
     init.body = body;
     init.duplex = 'half';
@@ -461,6 +527,16 @@ async function handleRequest(namespace, request, { fetchImpl = fetch } = {}) {
   try {
     return await fetchImpl(built.url, init);
   } catch (err) {
+    // Translate our attempt-level abort into a 504 with a useful message
+    // (rather than letting the raw AbortError surface as a 502). If the
+    // upstream signal is what aborted, the caller already cancelled the
+    // request and there's nothing useful to return.
+    if (attemptCtl.signal.aborted && !upstream?.aborted) {
+      log.warn(
+        `[${namespace}-protocol] fetch timed out after ${attemptTimeoutMs}ms for ${built.url}`
+      );
+      return jsonErrorResponse(504, 'kubo gateway timeout');
+    }
     const code = err?.cause?.code || err?.code || '';
     const isConnRefused =
       code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ENOTFOUND';
@@ -472,6 +548,9 @@ async function handleRequest(namespace, request, { fetchImpl = fetch } = {}) {
       isConnRefused ? 503 : 502,
       isConnRefused ? 'kubo gateway unreachable' : 'kubo gateway error'
     );
+  } finally {
+    clearTimeout(timer);
+    if (upstream) upstream.removeEventListener('abort', relayAbort);
   }
 }
 
@@ -508,4 +587,5 @@ module.exports = {
   handleRequest,
   buildGatewayUrl,
   sanitizeRequestHeaders,
+  ATTEMPT_TIMEOUT_MS,
 };

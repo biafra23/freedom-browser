@@ -49,9 +49,12 @@ function prefetchGatewayUrl(uri) {
     } else {
       const afterScheme = uri.slice(7).replace(/^\/+/, '');
       const cid = afterScheme.split(/[/?#]/)[0];
+      // CIDv1 base32 covers all codecs (`bafy…`, `bagu…`, `bah…`, …) —
+      // see the `CID_RE` comment in `src/main/ipfs/ipfs-protocol.js` for
+      // the codec-varint → 3rd-char mapping.
       if (
         !cid ||
-        !/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z2-7]{50,}|z[1-9A-HJ-NP-Za-km-z]{40,})$/i.test(cid)
+        !/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|ba[a-z2-7]{49,}|z[1-9A-HJ-NP-Za-km-z]{40,})$/i.test(cid)
       ) {
         return NOOP_HANDLE;
       }

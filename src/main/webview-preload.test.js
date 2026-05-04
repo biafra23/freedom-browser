@@ -311,6 +311,56 @@ describe('webview-preload', () => {
     expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
       url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
       disposition: 'currentTab',
+      target: null,
+    });
+  });
+
+  test('forwards a named target so the renderer can reuse the named tab', () => {
+    // P3 from the round-4 review: without forwarding `target`, a
+    // `<a target="docs" href="ipfs://...">` click hits the unconditional
+    // newTab branch in the renderer and silently loses the named-tab
+    // reuse semantics that `setWindowOpenHandler → tab:new-with-url`
+    // path applies for non-dweb links. Forwarding the attribute lets
+    // `link:navigate` route through the same `openInNewTabWithTarget`
+    // helper.
+    const { documentCaptureHandlers, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/links.html',
+        protocol: 'file:',
+        pathname: '/app/pages/links.html',
+      },
+    });
+    const anchor = {
+      tagName: 'A',
+      getAttribute: jest.fn((name) => {
+        if (name === 'href') return 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+        if (name === 'target') return 'docs';
+        return null;
+      }),
+      parentElement: global.document.body,
+    };
+    const event = {
+      target: anchor,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault: jest.fn(),
+    };
+
+    documentCaptureHandlers.click(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    // Named target → newTab disposition (Chromium's window.open semantics
+    // for any non-empty `target` other than the current frame), with the
+    // target name forwarded so the renderer's named-target reuse path
+    // can fire.
+    expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
+      url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      disposition: 'newTab',
+      target: 'docs',
     });
   });
 
@@ -357,6 +407,7 @@ describe('webview-preload', () => {
       expect(ipcRenderer.sendToHost).toHaveBeenCalledWith('link:navigate', {
         url: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
         disposition: 'newTab',
+        target: target || null,
       });
       void label;
     }

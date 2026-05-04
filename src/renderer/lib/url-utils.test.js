@@ -360,6 +360,23 @@ describe('url-utils', () => {
       expect(isValidCid('bafkreifjjcie6lypi6ny7amxnfftagclbuxndqonfipmb64f2km2devei4')).toBe(true);
     });
 
+    test('validates CIDv1 base32 with non-baf codec prefixes (bag.../bafz...)', () => {
+      // dag-json → `bagu…`. Cross-checked with `multiformats`:
+      // `CID.createV1(0x0129, sha256.digest('hello world')).toString()`.
+      // Earlier `^baf...` regex false-rejected these; the relaxed
+      // `^ba...` form covers all CIDv1 base32 codec prefixes.
+      expect(
+        isValidCid('baguqeeraxfgspomtju7arjjokll5u7nl7lcij37dpjjyb3uqrd32zyxpzxuq')
+      ).toBe(true);
+      // libp2p-key codec via base32: `bafzbei…` is also `baf` so still
+      // works, but `bafk2bzace…` (blake2b-256 multihash) is a real
+      // shape too. Cross-checked with `multiformats`:
+      // `CID.createV1(0x55, blake2b256.digest(bytes)).toString()`.
+      expect(
+        isValidCid('bafk2bzacec4u2j5zsngt4cfffzjnpwt5vp5mjbhp4n5fhahoscepplhc57g6s')
+      ).toBe(true);
+    });
+
     test('rejects invalid CIDs', () => {
       expect(isValidCid('')).toBe(false);
       expect(isValidCid(null)).toBe(false);
@@ -554,6 +571,48 @@ describe('url-utils', () => {
         expect(result.protocol).toBe('ipns');
         expect(result.tail).toBe('/install');
         expect(result.displayValue).toBe('ipns://docs.ipfs.tech/install');
+      });
+
+      test('rewrites ipfs://localhost:<port>/ipfs/<cidv1> (port stripped before gateway check)', () => {
+        // P2 from the round-4 review: Kubo's directory listings emit
+        // `<a href="//localhost:8080/ipfs/<cid>">` which Chromium
+        // resolves against the page's `ipfs://` origin to
+        // `ipfs://localhost:8080/ipfs/<cid>` (port preserved because
+        // `ipfs:` doesn't have a default port). Without port stripping
+        // before the allowlist check, the embedded CID never gets
+        // hoisted out and the address bar permanently shows the
+        // gateway-origin form. parseIpfsInput is byte-level on purpose
+        // (preserves base58btc case), so a dedicated `stripPort` does
+        // the work `new URL().hostname` would do for `new URL`-friendly
+        // inputs.
+        const result = parseIpfsInput(
+          `ipfs://localhost:8080/ipfs/${CIDV1}/img.png`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/img.png');
+        expect(result.protocol).toBe('ipfs');
+        expect(result.displayValue).toBe(`ipfs://${CIDV1}/img.png`);
+      });
+
+      test('rewrites ipfs://localhost:<port>/ipns/<key> (port stripped, cross-namespace)', () => {
+        const ipnsKey = 'k51qzi5uqu5dgkkr5wjh0m796f9u3tou74wn2q2u3shgh6yn52ce4hitig3if4';
+        const result = parseIpfsInput(
+          `ipfs://localhost:8080/ipns/${ipnsKey}/install`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(ipnsKey);
+        expect(result.protocol).toBe('ipns');
+        expect(result.tail).toBe('/install');
+      });
+
+      test('rewrites ipfs://127.0.0.1:<port>/ipfs/<cidv1> (loopback IP with port)', () => {
+        const result = parseIpfsInput(
+          `ipfs://127.0.0.1:8080/ipfs/${CIDV1}/page`,
+          IPFS_ROUTE_PREFIX
+        );
+        expect(result.cid).toBe(CIDV1);
+        expect(result.tail).toBe('/page');
       });
 
       test('does NOT rewrite for unknown self-hosted gateways', () => {

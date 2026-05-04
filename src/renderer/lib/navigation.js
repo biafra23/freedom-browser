@@ -28,10 +28,10 @@ import {
   isSupportedEnsTransport,
 } from './url-utils.js';
 import {
-  createTab,
   getActiveWebview,
   getActiveTab,
   getActiveTabState,
+  openInNewTabWithTarget,
   setWebviewEventHandler,
   updateActiveTabTitle,
   updateTabFavicon,
@@ -1744,14 +1744,27 @@ export const initNavigation = () => {
           const url = payload.url;
           if (url) {
             const disposition = payload.disposition === 'newTab' ? 'newTab' : 'currentTab';
-            pushDebug(`Preload intercepted dweb link navigation: ${url} (${disposition})`);
+            const rawTarget = typeof payload.target === 'string' ? payload.target : '';
+            // Mirrors webcontents-setup.js: only names without a
+            // leading underscore are tracked as named targets. `_blank`,
+            // `_self`, `_parent`, `_top` go through the disposition
+            // path unchanged.
+            const namedTarget = rawTarget && !rawTarget.startsWith('_') ? rawTarget : null;
+            pushDebug(
+              `Preload intercepted dweb link navigation: ${url} (${disposition}` +
+                (namedTarget ? `, target=${namedTarget}` : '') +
+                ')'
+            );
             if (disposition === 'newTab') {
               // Mirrors the Chromium → setWindowOpenHandler →
               // tab:new-with-url path, but with the raw mixed-case href
-              // intact. createTab routes through loadTarget which calls
-              // formatIpfsUrl, so CIDv0/base58 IPNS hosts get canonicalised
-              // exactly the same way as a same-tab navigation.
-              createTab(url);
+              // intact. openInNewTabWithTarget routes through createTab
+              // (and from there loadTarget → formatIpfsUrl), so
+              // CIDv0/base58 IPNS hosts get canonicalised exactly the
+              // same way as a same-tab navigation, AND named targets
+              // reuse their existing tab instead of always opening a
+              // new one.
+              openInNewTabWithTarget(url, namedTarget);
             } else {
               loadTarget(url, null, webview);
             }

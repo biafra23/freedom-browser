@@ -118,21 +118,36 @@ const handleDwebLinkActivation = (event) => {
 
   // Mirror Chromium's link disposition heuristic: middle-click,
   // ctrl/cmd-click, shift-click, or `target="_blank"` open in a new tab;
-  // everything else navigates the current tab. (We don't distinguish
-  // foreground vs background tab here — same as freedom's existing
-  // `tab:new-with-url` flow which always opens foreground.)
+  // a named `target` (anything not starting with `_`) reuses an existing
+  // tab with that name (or opens a new one if none exists); everything
+  // else navigates the current tab. (We don't distinguish foreground vs
+  // background tab here — same as freedom's existing `tab:new-with-url`
+  // flow which always opens foreground.)
+  //
+  // The target attribute is forwarded so the host renderer can route
+  // through the same named-tab reuse path that Chromium's
+  // setWindowOpenHandler → tab:new-with-url uses for non-dweb links.
+  // Without this, a named target on a dweb link would silently fall
+  // into the unconditional newTab branch and lose its tab-reuse
+  // semantics. (`_blank` / `_self` / `_parent` / `_top` are passed
+  // through too but the renderer only treats names without a leading
+  // underscore as named targets, mirroring webcontents-setup.js.)
   const target = anchor.getAttribute?.('target') || '';
+  const isBlank = /^_blank$/i.test(target);
+  const isNamedTarget = target && !target.startsWith('_');
   const wantsNewTab =
     event.button === 1 ||
     event.metaKey ||
     event.ctrlKey ||
     event.shiftKey ||
-    /^_blank$/i.test(target);
+    isBlank ||
+    isNamedTarget;
 
   event.preventDefault();
   ipcRenderer.sendToHost('link:navigate', {
     url: href,
     disposition: wantsNewTab ? 'newTab' : 'currentTab',
+    target: target || null,
   });
 };
 

@@ -1,3 +1,12 @@
+jest.mock('electron', () => ({
+  // Production uses `net.fetch` (Chromium network stack) so `*.localhost`
+  // resolves per RFC 6761 — the OS resolver on macOS doesn't, so the
+  // Kubo subdomain-redirect contract relies on this. Tests inject
+  // `fetchImpl` explicitly so the default is never exercised here, but
+  // we still need to satisfy the require.
+  net: { fetch: jest.fn() },
+}));
+
 jest.mock('../service-registry', () => ({
   getIpfsGatewayUrl: jest.fn(() => 'http://localhost:8080'),
 }));
@@ -71,6 +80,23 @@ describe('buildGatewayUrl(ipfs)', () => {
       url: `http://localhost:8080/ipfs/${expected}/index.html`,
     });
     expect(mockResolveEnsContent).not.toHaveBeenCalled();
+  });
+
+  test('passes a CIDv1 base32 dag-json (bag…) host through unchanged', async () => {
+    // Regression for the `CID_RE` over-restriction: the regex used to
+    // hard-code `baf` as the CIDv1 base32 prefix and false-rejected
+    // every non-`baf` codec (dag-json `bagu…`, codecs producing
+    // `bah…`, etc.) — the renderer canonicalised correctly to the
+    // `bagu…` lowercase form, but `buildGatewayUrl` then 400'd it as
+    // an "invalid ipfs reference". CIDv1 base32 always starts with
+    // `b` + `a` (version 0x01 contributes the first 5-bit chunk = 0
+    // → `a`); the 3rd char varies with the codec varint.
+    await expect(
+      buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE58_DAGJSON_AS_BASE32}/index.html`)
+    ).resolves.toEqual({
+      ok: true,
+      url: `http://localhost:8080/ipfs/${CIDV1_BASE58_DAGJSON_AS_BASE32}/index.html`,
+    });
   });
 
   test('rejects a lowercased CIDv1 base58btc (z…) host with a clear 400', async () => {
@@ -677,6 +703,77 @@ describe('handleRequest', () => {
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.message).toBe('kubo gateway error');
+  });
+
+  test('returns 504 when Kubo accepts the connection but never responds', async () => {
+    // P2 from the round-4 review: without a per-attempt timeout, a
+    // stalled gateway hangs the page load indefinitely. The fetch is
+    // resolved by the abort signal, so the test settles deterministically
+    // without burning the configured timeout.
+    const fetchImpl = jest.fn(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const fail = () => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          };
+          if (init.signal.aborted) {
+            fail();
+            return;
+          }
+          init.signal.addEventListener('abort', fail, { once: true });
+        })
+    );
+
+    const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV0}/x`), {
+      fetchImpl,
+      attemptTimeoutMs: 10,
+    });
+    expect(res.status).toBe(504);
+    const body = await res.json();
+    expect(body.message).toBe('kubo gateway timeout');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('upstream abort does not produce a 504 (caller cancelled)', async () => {
+    // Distinguishes "we timed out" from "the webview cancelled". Caller
+    // cancellation should bubble out as a normal abort error rather than
+    // a manufactured 504. The fetch mock honours both already-aborted
+    // signals at entry and abort events fired after entry.
+    const upstream = new AbortController();
+    const fetchImpl = jest.fn(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const fail = () => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          };
+          if (init.signal.aborted) {
+            fail();
+            return;
+          }
+          init.signal.addEventListener('abort', fail, { once: true });
+        })
+    );
+
+    upstream.abort();
+    const res = await handleRequest(
+      'ipfs',
+      {
+        url: `ipfs://${CIDV0}/x`,
+        method: 'GET',
+        headers: new Headers(),
+        body: null,
+        signal: upstream.signal,
+      },
+      { fetchImpl, attemptTimeoutMs: 10_000 }
+    );
+    // Upstream abort surfaces the AbortError through the catch-all 502
+    // path rather than the timeout path — webview cancellations don't
+    // need to look like server timeouts.
+    expect(res.status).toBe(502);
   });
 
   test('forwards POST body and uses duplex: half', async () => {

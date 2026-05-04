@@ -205,6 +205,18 @@ describe('Kubo subdomain gateway redirect', () => {
         error: () => {},
         debug: () => {},
       }));
+      // Production resolves Kubo's `<cid>.ipfs.localhost` redirect via
+      // Electron's `net.fetch` (Chromium's network stack — RFC 6761
+      // *.localhost resolution) because Node's getaddrinfo on macOS
+      // returns ENOTFOUND for those hosts. Jest doesn't run inside an
+      // Electron context so `require('electron').net.fetch` isn't
+      // available; bind to Node's global fetch here. On Linux CI, Node's
+      // resolver does honour *.localhost so this still validates the
+      // redirect-follow contract; the macOS-specific resolution path is
+      // covered by the production net.fetch wiring + manual smoke test.
+      jest.doMock('electron', () => ({
+        net: { fetch: globalThis.fetch.bind(globalThis) },
+      }));
       const { handleRequest } = require('../../ipfs/ipfs-protocol');
 
       const handlerReq = {
