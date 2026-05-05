@@ -178,7 +178,7 @@
   "dependencies": {
     "@adraffy/ens-normalize": "^1.10.1",
     "@ensdomains/content-hash": "^3.0.0",
-    "@ethersphere/bee-js": "^11.1.1",
+    "@ethersphere/bee-js": "^12.1.0",
     "@metamask/browser-passworder": "^6.0.0",
     "@scure/bip39": "^2.0.1",
     "better-sqlite3": "^12.6.2",
@@ -187,11 +187,6 @@
     "ethers": "^6.16.0",
     "micro-key-producer": "^0.8.2",
     "qrcode": "^1.5.4"
-  },
-  "overrides": {
-    "@ethersphere/bee-js": {
-      "axios": "^0.31.0"
-    }
   },
   "title": "Freedom",
   "displayName": "Freedom"
