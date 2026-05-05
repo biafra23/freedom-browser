@@ -21,6 +21,10 @@ All notable changes to Freedom will be documented in this file.
 
 ### Fixed
 
+- Cleaned up three sources of console noise on `npm start`:
+  - New tabs opened to a dweb URL (`bzz://`, `ipfs://`, `ipns://`, `ens://`, `rad://`, `freedom://`) no longer log `Error … GUEST_VIEW_MANAGER_CALL: Error: (-3) loading file:///…/home.html` once per tab. The webview was being pointed at `home.html` synchronously and then redirected to the real target ~50 ms later, leaving Chromium to abort the first load (`net::ERR_ABORTED`) and Electron to log the rejected promise. New dweb tabs now hold on `about:blank` until the resolution pipeline navigates them.
+  - Bee no longer logs `[node/multiresolver] resolver on endpoint failed … endpoint=https://cloudflare-eth.com` on every boot. Bee's built-in ENS resolver is unused (Freedom resolves ENS itself before invoking Bee), but configuring an endpoint is mandatory. Switched the placeholder from `cloudflare-eth.com` (deprecated for years, intermittent failures) to `ethereum.publicnode.com`, which is already the lead provider in the renderer's ENS quorum.
+  - The `[ens] <kind> cache hit for <name>` line is now logged at `debug` rather than `info`, so the 20+ per page hits no longer dominate the console. Useful for development; leave the renderer at `info` and it disappears.
 - The address bar reflects the in-flight target immediately when an ENS link is clicked or typed, instead of staying on the previous page's URL (or empty for new tabs) for the whole resolution roundtrip.
 - The protocol icon updates to the right transport (Swarm/IPFS/IPNS) as soon as the scheme is known, rather than waiting until the page finishes loading. This also fixes the IPFS icon never showing for ENS names.
 - The tab loading spinner now stays on while ENS resolves a page-link click, instead of being torn down by the phantom abort that follows the custom-protocol intercept.

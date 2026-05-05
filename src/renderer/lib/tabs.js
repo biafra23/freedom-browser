@@ -801,7 +801,13 @@ const renderTabs = () => {
 export const createTab = (url = null) => {
   const tabId = tabState.nextTabId++;
   const isDirectUrl = !url || url.startsWith('http://') || url.startsWith('https://');
-  const webviewUrl = isDirectUrl ? (url || homeUrl) : homeUrl;
+  // For dweb URLs (bzz://, ipfs://, ens://, …) we resolve via onLoadTarget
+  // 50 ms after the tab is created. Pointing the webview at homeUrl in the
+  // meantime triggers a real load that the dweb navigation immediately
+  // aborts (errno -3 / net::ERR_ABORTED), and Electron logs the rejected
+  // GUEST_VIEW_MANAGER_CALL promise. about:blank loads synchronously and
+  // produces no log noise.
+  const webviewUrl = isDirectUrl ? (url || homeUrl) : 'about:blank';
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {

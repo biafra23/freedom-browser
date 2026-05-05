@@ -159,7 +159,7 @@ mainnet: true
 full-node: false
 cors-allowed-origins: "*"
 skip-postage-snapshot: true
-resolver-options: https://cloudflare-eth.com
+resolver-options: https://ethereum.publicnode.com
 storage-incentives-enable: false
 data-dir: ${dataDir}
 password: ${password}

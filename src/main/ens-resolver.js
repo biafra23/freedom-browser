@@ -1284,7 +1284,7 @@ async function resolveWithCache(name, cache, doResolve, label) {
 
   const cached = cache.get(normalized);
   if (cached && Date.now() < cached.expiresAt) {
-    log.info(`[ens] ${label} cache hit for ${normalized}`);
+    log.debug(`[ens] ${label} cache hit for ${normalized}`);
     return cached.result;
   }
 
