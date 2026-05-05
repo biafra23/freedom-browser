@@ -28,7 +28,9 @@ Rationale:
 - Gives a clear target for last-minute build/changelog fixups without polluting feature history.
 - The artifacts you build, upload, and tag all come from this branch, so a broken build can be fixed here before anything lands on `main`.
 
-## 1. Bump the version
+## 1. Promote the dev version
+
+Between releases, `main` carries a `<next>-dev` version (see Step 9). On the release branch, strip that suffix so the build advertises the real release number.
 
 Update the version string in exactly these two files:
 
@@ -36,6 +38,8 @@ Update the version string in exactly these two files:
 - `package-lock.json` — the two top-level `"version"` entries (root object and the `""` package entry). Ignore any `0.X.Y` strings inside transitive dependency version ranges (e.g. `iconv-lite`).
 
 No other source file hard-codes the version — the renderer, `electron-builder`, and `electron-updater` all read it from `package.json` at runtime/build time.
+
+If the release version differs from the in-flight `<next>-dev` (for example, the cycle was opened as `0.7.1-dev` but is being shipped as `0.8.0`), set the new version directly here — the dev suffix exists to make local builds self-identify, not to commit you to a specific number.
 
 Commit style (matches prior releases):
 
@@ -150,3 +154,26 @@ The `--no-ff` is deliberate — it preserves the release branch as a visible bub
 - Confirm the GitHub release page lists the correct artifacts and release notes.
 - Keep the `release/<version>` branch around (do not delete) — it matches the historical pattern and is the natural base for a `hotfix/<version>.<patch>` branch later if needed.
 - Any build-only fixes that land after the version bump should be committed on the release branch with `fix(build): ...` messages, same as the `0.6.2` cycle did.
+
+## 9. Open the next dev cycle on `main`
+
+Immediately after the merge, bump `main` to the next dev version so local/CI builds and the About dialog stop advertising the just-shipped release.
+
+Default to a patch bump — e.g. after shipping `0.7.0`, set `main` to `0.7.1-dev`. If the next cycle later turns out to be a minor or major (or you decide upfront), re-bump to `0.8.0-dev` / `1.0.0-dev`; nothing downstream depends on the suffix's exact `MINOR.PATCH`.
+
+Update the same two files as Step 1:
+
+- `package.json` — top-level `"version"`.
+- `package-lock.json` — both top-level `"version"` entries.
+
+Commit on `main` (not on the release branch):
+
+```
+chore(release): open <next>-dev cycle
+```
+
+Why a `-dev` suffix rather than a bare `<next>`:
+
+- The About dialog (`app.getVersion()`) and the updater User-Agent in `src/main/updater.js` are the only surfaces that show the version. With the suffix, a screenshot or bug report from a local build self-identifies as unreleased, instead of falsely claiming the previous release.
+- Per semver, `<next>-dev` sorts strictly below `<next>`, so the eventual release will always look like an upgrade to a dev install (never a downgrade).
+- Note: a `-dev` suffix does **not** rescue dev installs from missing a hotfix on the previous line. By semver, `0.8.0-dev > 0.7.1` (major/minor/patch dominate; pre-release tags only break ties within the same triple). This is acceptable here because dev builds are run by developers from source, not via `electron-updater`. If you ever hand pre-release builds to non-developer testers, revisit this.
