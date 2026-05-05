@@ -50,7 +50,28 @@ const test = base.extend({
   // plain factory.
   // eslint-disable-next-line no-empty-pattern
   electronApp: async ({}, use) => {
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freedom-live-e2e-'));
+    // One temp root per run, with four subdirs:
+    //   - userData/     → settings, bookmarks, history (FREEDOM_TEST_USER_DATA)
+    //   - bee-data/     → Bee's identity, swarm key, peerstore (FREEDOM_BEE_DATA)
+    //   - ipfs-data/    → Kubo's repo, identity, peerstore (FREEDOM_IPFS_DATA)
+    //   - identity/     → vault meta + node-identity files (FREEDOM_IDENTITY_DATA)
+    // All four overrides matter: in dev mode these directories default
+    // to `<repoRoot>/bee-data`, `<repoRoot>/ipfs-data`, and
+    // `<repoRoot>/identity-data` — pointing them at empty temp dirs is
+    // what keeps a live run from clobbering the developer's persistent
+    // state. The identity override is the most subtle of the three:
+    // without it `hasVault()` would still find the developer's local
+    // vault, set the node managers into injected-identity mode, and
+    // Bee/IPFS would hang waiting for keys the temp data dirs don't
+    // have.
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'freedom-live-e2e-'));
+    const userDataDir = path.join(tmpRoot, 'userData');
+    const beeDataDir = path.join(tmpRoot, 'bee-data');
+    const ipfsDataDir = path.join(tmpRoot, 'ipfs-data');
+    const identityDataDir = path.join(tmpRoot, 'identity');
+    for (const dir of [userDataDir, beeDataDir, ipfsDataDir, identityDataDir]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
     const app = await electron.launch({
       args: ['.'],
@@ -61,6 +82,9 @@ const test = base.extend({
         // the production code paths (actual Bee spawn, live ENS, real
         // protocol handlers).
         FREEDOM_TEST_USER_DATA: userDataDir,
+        FREEDOM_BEE_DATA: beeDataDir,
+        FREEDOM_IPFS_DATA: ipfsDataDir,
+        FREEDOM_IDENTITY_DATA: identityDataDir,
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
         LANG: 'en_US.UTF-8',
       },
@@ -75,7 +99,7 @@ const test = base.extend({
       // Window may already be closed by the spec.
     }
     try {
-      fs.rmSync(userDataDir, { recursive: true, force: true });
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
     } catch {
       // Best-effort cleanup; leftover dirs in /tmp are harmless.
     }

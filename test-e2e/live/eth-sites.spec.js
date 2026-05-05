@@ -23,10 +23,13 @@ const {
 } = require('../live-fixtures');
 
 const PEER_TARGET = 20;
-// Cold-start observations: a freshly-spawned Bee in DHT client mode
-// usually crosses 20 peers in 30–120 s; IPFS (Kubo) typically does so
-// in 10–60 s. 7 min keeps headroom for slow home connections without
-// making the test feel infinite.
+// Each live run starts with a *fresh* Bee/IPFS data dir
+// (FREEDOM_BEE_DATA / FREEDOM_IPFS_DATA point at a per-run temp dir,
+// see live-fixtures.js), so peerstores are empty and gossip starts
+// from the hardcoded bootstrap nodes every time. Bee in DHT client
+// mode typically crosses 20 peers in 30–180 s on a warm bootstrap
+// network; IPFS (Kubo) usually in 10–60 s. 7 min keeps headroom for
+// slow home connections without making the test feel infinite.
 const PEER_TIMEOUT_MS = 7 * 60_000;
 const NAVIGATION_TIMEOUT_MS = 90_000;
 const PAGE_RENDER_TIMEOUT_MS = 60_000;
@@ -127,60 +130,70 @@ const waitForWebviewCondition = (window, snippet, message) =>
     })
     .toBeTruthy();
 
-test('cold-start: Bee + IPFS reach >20 peers, meinhard.eth & vitalik.eth render', async ({
-  window,
-}) => {
+// Binary preconditions are evaluated at describe-load (before any
+// fixture runs). The previous in-test `test.skip` / `expect` form let
+// Playwright launch Electron *first* and only then notice the missing
+// binary — meaning a CI box without Bee/IPFS would still spawn the
+// app, attempt to start the production node managers against a missing
+// binary, and only fail/skip after that side-effect. Now the binary
+// check happens before `electronApp` is ever requested.
+test.describe('live cold-start sites', () => {
   test.skip(
     !HAS_BEE_BINARY,
     `Live E2E needs the Bee binary at ${BEE_BINARY_PATH}. Run \`npm run bee:download\` to fetch it.`
   );
-  // IPFS is required (not skipped) per test design — failing here gives
-  // a much clearer signal than timing out on "Connected Peers" never
-  // updating below.
-  expect(
-    HAS_IPFS_BINARY,
-    `Live E2E requires the IPFS binary at ${IPFS_BINARY_PATH}. Run \`npm run ipfs:download\` to fetch it.`
-  ).toBe(true);
+  // IPFS is required (not skipped) per test design — throw at module
+  // load so the runner reports a clear setup error instead of letting
+  // the app launch and time out on "Connected Peers" never updating.
+  if (!HAS_IPFS_BINARY) {
+    throw new Error(
+      `Live E2E requires the IPFS binary at ${IPFS_BINARY_PATH}. Run \`npm run ipfs:download\` to fetch it.`
+    );
+  }
 
-  const beeMenuButton = window.locator('#bee-menu-button');
-  const beeDropdown = window.locator('#bee-menu-dropdown');
-  const beePeersCount = window.locator('#bee-peers-count');
-  const ipfsPeersCount = window.locator('#ipfs-peers-count');
-
-  // (1) Open the Nodes menu — kicks off bee/ipfs/radicle status
-  // polling in the renderer. Both peer counters live inside this
-  // single dropdown so we only need one open/close cycle.
-  await beeMenuButton.click();
-  await expect(beeDropdown).toHaveClass(/open/);
-
-  // (2) Wait for both networks to come up. Run sequentially: in
-  // practice IPFS gossips faster than Bee, so by the time Bee crosses
-  // 20 peers IPFS is usually already there and the second poll
-  // returns on its first sample.
-  await waitForPeers(beePeersCount, 'Swarm');
-  await waitForPeers(ipfsPeersCount, 'IPFS');
-
-  // (3) Close the menu before driving the address bar. Polling stops
-  // and the visible counters reset to 0 — that's expected.
-  await beeMenuButton.click();
-  await expect(beeDropdown).not.toHaveClass(/open/);
-
-  // (4) meinhard.eth — Swarm-hosted; address bar must end up on bzz://.
-  await navigateTo(window, 'meinhard.eth', 'bzz');
-  await waitForWebviewCondition(
+  test('cold-start: Bee + IPFS reach >20 peers, meinhard.eth & vitalik.eth render', async ({
     window,
-    PLAY_BUTTON_SNIFFER,
-    'Waiting for a play-button-shaped element on meinhard.eth'
-  );
+  }) => {
+    const beeMenuButton = window.locator('#bee-menu-button');
+    const beeDropdown = window.locator('#bee-menu-dropdown');
+    const beePeersCount = window.locator('#bee-peers-count');
+    const ipfsPeersCount = window.locator('#ipfs-peers-count');
 
-  // (5) vitalik.eth — IPFS-hosted blog; address bar must end up on
-  // ipfs://. The page is content-heavy so the H1 is a stable
-  // structural marker that the page actually rendered (vs an error
-  // page).
-  await navigateTo(window, 'vitalik.eth', 'ipfs');
-  await waitForWebviewCondition(
-    window,
-    VITALIK_H1_SNIFFER,
-    'Waiting for an <h1> mentioning "Vitalik" on vitalik.eth'
-  );
+    // (1) Open the Nodes menu — kicks off bee/ipfs/radicle status
+    // polling in the renderer. Both peer counters live inside this
+    // single dropdown so we only need one open/close cycle.
+    await beeMenuButton.click();
+    await expect(beeDropdown).toHaveClass(/open/);
+
+    // (2) Wait for both networks to come up. Run sequentially: in
+    // practice IPFS gossips faster than Bee, so by the time Bee crosses
+    // 20 peers IPFS is usually already there and the second poll
+    // returns on its first sample.
+    await waitForPeers(beePeersCount, 'Swarm');
+    await waitForPeers(ipfsPeersCount, 'IPFS');
+
+    // (3) Close the menu before driving the address bar. Polling stops
+    // and the visible counters reset to 0 — that's expected.
+    await beeMenuButton.click();
+    await expect(beeDropdown).not.toHaveClass(/open/);
+
+    // (4) meinhard.eth — Swarm-hosted; address bar must end up on bzz://.
+    await navigateTo(window, 'meinhard.eth', 'bzz');
+    await waitForWebviewCondition(
+      window,
+      PLAY_BUTTON_SNIFFER,
+      'Waiting for a play-button-shaped element on meinhard.eth'
+    );
+
+    // (5) vitalik.eth — IPFS-hosted blog; address bar must end up on
+    // ipfs://. The page is content-heavy so the H1 is a stable
+    // structural marker that the page actually rendered (vs an error
+    // page).
+    await navigateTo(window, 'vitalik.eth', 'ipfs');
+    await waitForWebviewCondition(
+      window,
+      VITALIK_H1_SNIFFER,
+      'Waiting for an <h1> mentioning "Vitalik" on vitalik.eth'
+    );
+  });
 });

@@ -74,6 +74,18 @@ function getBeeBinaryPath() {
 }
 
 function getBeeDataPath() {
+  // Explicit override for tests / advanced users — keeps a live E2E
+  // run from clobbering the developer's persistent dev `bee-data/`.
+  // Honoured in both dev and packaged modes; only set this when you
+  // want a throwaway repo (and you're prepared for Bee to re-init
+  // identity, swarm key, peerstore, etc.).
+  if (process.env.FREEDOM_BEE_DATA) {
+    const overrideDir = process.env.FREEDOM_BEE_DATA;
+    if (!fs.existsSync(overrideDir)) {
+      fs.mkdirSync(overrideDir, { recursive: true });
+    }
+    return overrideDir;
+  }
   if (!app.isPackaged) {
     // In dev, bee-data is at project root (../../ from src/main)
     const devDataDir = path.join(__dirname, '..', '..', 'bee-data');

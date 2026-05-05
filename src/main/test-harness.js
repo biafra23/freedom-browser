@@ -116,6 +116,31 @@ function registerStubProtocols(targetSession) {
   }
 }
 
+// Block all real http(s) traffic in test mode so a spec that
+// accidentally exercises a code path which navigates to a real URL
+// (typing `example.com` into the address bar, an embedded analytics
+// beacon, an ENS RPC fallback, etc.) doesn't reach out to the
+// internet. The redirect target is a tiny `data:` URL so the navigation
+// completes successfully from Chromium's perspective and no error
+// page or did-fail-load handler fires — specs are then free to assert
+// on chrome state (address bar value, tab count) without racing
+// against a network round-trip that may or may not return.
+function blockExternalNetworks(targetSession) {
+  if (!targetSession?.webRequest?.onBeforeRequest) {
+    log.warn('[test-harness] session.webRequest.onBeforeRequest unavailable — skipping http(s) blocker');
+    return;
+  }
+  const stubBody = '<!doctype html><title>test-harness</title><h1>http(s) blocked in test mode</h1>';
+  const redirectURL = `data:text/html;charset=utf-8,${encodeURIComponent(stubBody)}`;
+  targetSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*'] },
+    (details, callback) => {
+      log.info(`[test-harness] redirected ${details.url} → data: stub (test mode)`);
+      callback({ redirectURL });
+    }
+  );
+}
+
 // Replace a previously-registered ipcMain.handle entry. ipcMain.handle
 // throws if the channel is already registered, so removal must happen
 // before re-registration. Safe to call when the channel was never
@@ -189,21 +214,60 @@ function overrideProbeIpc() {
 // Bee / IPFS / Radicle managers are still loaded so their `getStatus`
 // handlers respond, but we replace start/stop with no-ops so a stray
 // click in a spec can't spawn the real binaries against the test
-// `userData` directory.
+// `userData` directory. The fake status is also tracked in-memory so
+// the corresponding `*_GET_STATUS` handler reports it (otherwise the
+// real manager would still reply with "stopped" and the renderer
+// would think the toggle silently failed).
+//
+// Stub responses match the production IPC shape `{ status, error }`
+// — the renderer destructures these fields directly
+// (`src/renderer/lib/bee-ui.js`, `src/renderer/lib/ipfs-ui.js`).
+const stubNodeStatus = { bee: 'running', ipfs: 'running', radicle: 'running' };
+
 function overrideNodeIpc() {
-  for (const channel of [
-    IPC.BEE_START,
-    IPC.BEE_STOP,
-    IPC.IPFS_START,
-    IPC.IPFS_STOP,
-    IPC.RADICLE_START,
-    IPC.RADICLE_STOP,
-  ]) {
-    replaceHandler(channel, async () => {
-      log.info(`[test-harness] ignored ${channel} (test mode)`);
-      return { success: true, testMode: true };
-    });
-  }
+  const setStatus = (service, status) => {
+    stubNodeStatus[service] = status;
+    return { status, error: null };
+  };
+
+  replaceHandler(IPC.BEE_START, async () => {
+    log.info('[test-harness] ignored bee:start (test mode)');
+    return setStatus('bee', 'running');
+  });
+  replaceHandler(IPC.BEE_STOP, async () => {
+    log.info('[test-harness] ignored bee:stop (test mode)');
+    return setStatus('bee', 'stopped');
+  });
+  replaceHandler(IPC.BEE_GET_STATUS, async () => ({
+    status: stubNodeStatus.bee,
+    error: null,
+  }));
+
+  replaceHandler(IPC.IPFS_START, async () => {
+    log.info('[test-harness] ignored ipfs:start (test mode)');
+    return setStatus('ipfs', 'running');
+  });
+  replaceHandler(IPC.IPFS_STOP, async () => {
+    log.info('[test-harness] ignored ipfs:stop (test mode)');
+    return setStatus('ipfs', 'stopped');
+  });
+  replaceHandler(IPC.IPFS_GET_STATUS, async () => ({
+    status: stubNodeStatus.ipfs,
+    error: null,
+  }));
+
+  replaceHandler(IPC.RADICLE_START, async () => {
+    log.info('[test-harness] ignored radicle:start (test mode)');
+    return setStatus('radicle', 'running');
+  });
+  replaceHandler(IPC.RADICLE_STOP, async () => {
+    log.info('[test-harness] ignored radicle:stop (test mode)');
+    return setStatus('radicle', 'stopped');
+  });
+  replaceHandler(IPC.RADICLE_GET_STATUS, async () => ({
+    status: stubNodeStatus.radicle,
+    error: null,
+  }));
 }
 
 function seedRegistry() {
@@ -298,6 +362,7 @@ function installTestHarness({ defaultSession }) {
   log.info('[test-harness] FREEDOM_TEST_MODE=1 — installing harness');
   resetFixtures();
   registerStubProtocols(defaultSession);
+  blockExternalNetworks(defaultSession);
   overrideEnsIpc();
   overrideProbeIpc();
   overrideNodeIpc();
