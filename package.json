@@ -188,6 +188,11 @@
     "micro-key-producer": "^0.8.2",
     "qrcode": "^1.5.4"
   },
+  "overrides": {
+    "@metamask/utils": {
+      "uuid": "^14.0.0"
+    }
+  },
   "title": "Freedom",
   "displayName": "Freedom"
 }
