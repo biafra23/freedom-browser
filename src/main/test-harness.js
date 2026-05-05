@@ -101,11 +101,29 @@ function makeProtocolHandler(scheme) {
   };
 }
 
+function makeHttpStubHandler(scheme) {
+  return async (request) => {
+    log.info(`[test-harness] stubbed ${scheme}: ${request.url}`);
+    const body =
+      `<!doctype html>` +
+      `<title>test-harness ${scheme} stub</title>` +
+      `<h1>${scheme}:// blocked in test mode</h1>` +
+      `<p data-test="harness-http-stub-url">${request.url}</p>`;
+    return new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  };
+}
+
 function registerStubProtocols(targetSession) {
   if (!targetSession?.protocol?.handle) {
     log.warn('[test-harness] session.protocol.handle unavailable — skipping protocol stubs');
     return;
   }
+  // bzz/ipfs/ipns: harness owns these outright (custom standard schemes
+  // we register in production too — see src/main/swarm/bzz-protocol.js
+  // etc.). Specs drive content via setContentFixture().
   for (const scheme of ['bzz', 'ipfs', 'ipns']) {
     try {
       targetSession.protocol.handle(scheme, makeProtocolHandler(scheme));
@@ -114,31 +132,25 @@ function registerStubProtocols(targetSession) {
       log.error(`[test-harness] failed to register stub ${scheme}: handler`, err);
     }
   }
-}
-
-// Block all real http(s) traffic in test mode so a spec that
-// accidentally exercises a code path which navigates to a real URL
-// (typing `example.com` into the address bar, an embedded analytics
-// beacon, an ENS RPC fallback, etc.) doesn't reach out to the
-// internet. The redirect target is a tiny `data:` URL so the navigation
-// completes successfully from Chromium's perspective and no error
-// page or did-fail-load handler fires — specs are then free to assert
-// on chrome state (address bar value, tab count) without racing
-// against a network round-trip that may or may not return.
-function blockExternalNetworks(targetSession) {
-  if (!targetSession?.webRequest?.onBeforeRequest) {
-    log.warn('[test-harness] session.webRequest.onBeforeRequest unavailable — skipping http(s) blocker');
-    return;
-  }
-  const stubBody = '<!doctype html><title>test-harness</title><h1>http(s) blocked in test mode</h1>';
-  const redirectURL = `data:text/html;charset=utf-8,${encodeURIComponent(stubBody)}`;
-  targetSession.webRequest.onBeforeRequest(
-    { urls: ['http://*/*', 'https://*/*'] },
-    (details, callback) => {
-      log.info(`[test-harness] redirected ${details.url} → data: stub (test mode)`);
-      callback({ redirectURL });
+  // http/https: harness owns these too while in test mode, so a spec
+  // that exercises a path which calls `webview.loadURL('https://...')`
+  // (typing `example.com`, an embedded analytics beacon, an ENS RPC
+  // fallback, …) doesn't reach the network. Using `protocol.handle`
+  // instead of `webRequest.onBeforeRequest` redirects means we own the
+  // scheme — the request never enters Chromium's network stack at all,
+  // no DNS lookup, no TCP/TLS handshake. Electron 30+ allows
+  // overriding built-in standard schemes; previous handlers are
+  // replaced. The webview tag in tabs.js doesn't set a `partition`
+  // attribute, which per Electron's <webview> docs means it uses the
+  // app default session — i.e. this same one we're attaching to.
+  for (const scheme of ['http', 'https']) {
+    try {
+      targetSession.protocol.handle(scheme, makeHttpStubHandler(scheme));
+      log.info(`[test-harness] registered stub ${scheme}: handler (owns scheme)`);
+    } catch (err) {
+      log.error(`[test-harness] failed to register stub ${scheme}: handler`, err);
     }
-  );
+  }
 }
 
 // Replace a previously-registered ipcMain.handle entry. ipcMain.handle
@@ -362,7 +374,6 @@ function installTestHarness({ defaultSession }) {
   log.info('[test-harness] FREEDOM_TEST_MODE=1 — installing harness');
   resetFixtures();
   registerStubProtocols(defaultSession);
-  blockExternalNetworks(defaultSession);
   overrideEnsIpc();
   overrideProbeIpc();
   overrideNodeIpc();
