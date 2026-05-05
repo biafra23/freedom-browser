@@ -797,17 +797,27 @@ const renderTabs = () => {
   });
 };
 
+// URL schemes that need to flow through the navigation pipeline
+// (loadTarget) for resolution, probing, or sidebar routing rather than
+// being loaded directly as a webview src. Anything not in this set —
+// http(s)://, file:// (including the production `homeUrl`), about:blank,
+// etc. — is loaded directly. Keep in sync with the branches inside
+// `loadTarget` (navigation.js).
+const INDIRECT_URL_RE = /^(bzz|ipfs|ipns|ens|rad|freedom|ethereum|view-source):/i;
+
 // Create a new tab
 export const createTab = (url = null) => {
   const tabId = tabState.nextTabId++;
-  const isDirectUrl = !url || url.startsWith('http://') || url.startsWith('https://');
-  // For dweb URLs (bzz://, ipfs://, ens://, …) we resolve via onLoadTarget
-  // 50 ms after the tab is created. Pointing the webview at homeUrl in the
-  // meantime triggers a real load that the dweb navigation immediately
-  // aborts (errno -3 / net::ERR_ABORTED), and Electron logs the rejected
-  // GUEST_VIEW_MANAGER_CALL promise. about:blank loads synchronously and
-  // produces no log noise.
-  const webviewUrl = isDirectUrl ? (url || homeUrl) : 'about:blank';
+  // Defer dweb / freedom / wallet schemes through onLoadTarget; pointing
+  // the webview at homeUrl in the meantime triggers a real load that the
+  // resolution pipeline aborts ~50 ms later (errno -3 / net::ERR_ABORTED),
+  // and Electron logs the rejected GUEST_VIEW_MANAGER_CALL promise.
+  // about:blank loads synchronously and produces no log noise.
+  // Direct URLs (http(s), file://, about:blank, the production
+  // file:///…/pages/home.html `homeUrl`) load straight into the webview —
+  // loadTarget does not handle them.
+  const useResolutionPipeline = typeof url === 'string' && INDIRECT_URL_RE.test(url);
+  const webviewUrl = useResolutionPipeline ? 'about:blank' : (url || homeUrl);
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {
@@ -827,7 +837,7 @@ export const createTab = (url = null) => {
 
   // For protocol URLs (ens://, bzz://, ipfs://, etc.), route through the
   // URL resolution pipeline instead of setting webview src directly
-  if (!isDirectUrl && url) {
+  if (useResolutionPipeline) {
     setTimeout(() => { if (onLoadTarget) onLoadTarget(url); }, 50);
   }
 
