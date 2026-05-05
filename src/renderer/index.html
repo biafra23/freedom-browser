@@ -25,10 +25,10 @@
     <div class="title-bar">
       <div class="title-bar-spacer"></div>
       <div class="tab-bar">
-        <div class="tabs-container" id="tab-bar">
+        <div class="tabs-container" id="tab-bar" data-test="tab-bar">
           <!-- Tabs inserted dynamically -->
         </div>
-        <button id="new-tab-btn" class="new-tab-btn" type="button" aria-label="New Tab">
+        <button id="new-tab-btn" class="new-tab-btn" type="button" aria-label="New Tab" data-test="new-tab-btn">
           <svg
             width="12"
             height="12"
@@ -270,6 +270,7 @@
               type="text"
               placeholder="Enter hash, ID or URL"
               spellcheck="false"
+              data-test="address-input"
             />
             <button
               id="github-bridge-btn"
@@ -295,6 +296,7 @@
               class="icon-btn input-action-btn hidden"
               type="button"
               aria-label="Bookmark this page"
+              data-test="add-bookmark-btn"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -688,7 +690,7 @@
         </div>
       </div>
     </header>
-    <nav class="bookmarks" aria-label="Bookmarks" id="bookmarks-bar"></nav>
+    <nav class="bookmarks" aria-label="Bookmarks" id="bookmarks-bar" data-test="bookmarks-bar"></nav>
     <section class="app-body">
       <main class="content">
         <div id="webview-container" class="webview-container">

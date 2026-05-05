@@ -10,6 +10,19 @@ if (!app.isPackaged) {
 app.name = appName;
 app.setName(appName);
 
+// E2E test mode (Playwright). `FREEDOM_TEST_MODE=1` activates the
+// fixture-driven harness in src/main/test-harness.js (stubbed protocols,
+// no real Bee/IPFS spawn). `FREEDOM_TEST_USER_DATA` redirects userData
+// to a per-run temp dir so each spec gets a clean settings/bookmarks/
+// history store — honoured independently of FREEDOM_TEST_MODE so the
+// live-network E2E suite can also opt into a clean userData without
+// activating the harness. Both must be applied before any other module
+// touches userData.
+if (process.env.FREEDOM_TEST_USER_DATA) {
+  app.setPath('userData', process.env.FREEDOM_TEST_USER_DATA);
+}
+const TEST_MODE = process.env.FREEDOM_TEST_MODE === '1';
+
 const { version } = require('../../package.json');
 const iconPath = app.isPackaged
   ? require('path').join(process.resourcesPath, 'assets', 'icon.png')
@@ -88,6 +101,7 @@ const { migrateUserData } = require('./migrate-user-data');
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
 const { registerWebContentsHandlers } = require('./webcontents-setup');
+const { installTestHarness } = require('./test-harness');
 
 app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
 
@@ -141,13 +155,26 @@ async function bootstrap() {
   registerSwarmPermissionsIpc();
   registerSwarmProviderIpc();
   registerFeedStoreIpc();
-  registerBzzProtocol(defaultSession);
-  registerIpfsProtocol(defaultSession);
-  registerIpnsProtocol(defaultSession);
+  if (!TEST_MODE) {
+    // Skip registering the real bzz/ipfs/ipns handlers in test mode —
+    // installTestHarness() registers fixture-driven stubs on the same
+    // schemes below. Electron only allows one handler per scheme per
+    // session, so the harness must own them outright in test mode.
+    registerBzzProtocol(defaultSession);
+    registerIpfsProtocol(defaultSession);
+    registerIpnsProtocol(defaultSession);
+  }
   registerRequestRewriter(defaultSession);
   allowInteractivePermissions(defaultSession);
   registerWebContentsHandlers();
   setupApplicationMenu();
+
+  // Test harness is installed AFTER all production IPC + protocol
+  // registrations, so it can override (via removeHandler + re-register)
+  // the channels it needs to stub — ENS resolution, the bzz: probe,
+  // and bee/ipfs/radicle start/stop. No-op when FREEDOM_TEST_MODE is
+  // unset, so the production path is unaffected.
+  installTestHarness({ defaultSession });
 
   // If a vault exists, flag the node managers so bee/ipfs/radicle start with
   // the user's derived keys. Without a vault, nodes start with their own
@@ -166,20 +193,30 @@ async function bootstrap() {
 
   const settings = loadSettings();
 
-  if (settings.startBeeAtLaunch) {
-    startBee();
-  }
-  if (settings.startIpfsAtLaunch) {
-    startIpfs();
-  }
-  if (settings.enableRadicleIntegration && settings.startRadicleAtLaunch) {
-    startRadicle();
+  // In test mode the harness has already seeded service-registry with
+  // fake endpoints. Spawning real Bee / IPFS / Radicle binaries against
+  // a temp userData would fail port checks, take seconds, and defeat
+  // the purpose of fixture-driven tests.
+  if (!TEST_MODE) {
+    if (settings.startBeeAtLaunch) {
+      startBee();
+    }
+    if (settings.startIpfsAtLaunch) {
+      startIpfs();
+    }
+    if (settings.enableRadicleIntegration && settings.startRadicleAtLaunch) {
+      startRadicle();
+    }
   }
 
   const mainWindow = createMainWindow();
 
-  // Initialize auto-updater (pass menu update callback)
-  initUpdater(mainWindow, setupApplicationMenu);
+  // Initialize auto-updater (pass menu update callback). Skipped in
+  // test mode so specs don't trigger background network checks against
+  // freedom.baby.
+  if (!TEST_MODE) {
+    initUpdater(mainWindow, setupApplicationMenu);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -25,3 +25,5 @@ CLAUDE.md
 .codex
 identity-data/
 research/
+playwright-report/
+test-results/
