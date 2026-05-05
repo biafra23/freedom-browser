@@ -797,27 +797,33 @@ const renderTabs = () => {
   });
 };
 
-// URL schemes that need to flow through the navigation pipeline
-// (loadTarget) for resolution, probing, or sidebar routing rather than
-// being loaded directly as a webview src. Anything not in this set —
-// http(s)://, file:// (including the production `homeUrl`), about:blank,
-// etc. — is loaded directly. Keep in sync with the branches inside
-// `loadTarget` (navigation.js).
-const INDIRECT_URL_RE = /^(bzz|ipfs|ipns|ens|rad|freedom|ethereum|view-source):/i;
+// URLs `createTab` is allowed to load directly as the initial webview
+// `src`. Everything else — dweb schemes, hostile `file://`/`data:`/
+// `javascript:`, anything we don't recognise — is parked on
+// `about:blank` and dispatched to `loadTarget`, which routes the
+// schemes it understands and silently drops the rest. This narrow
+// allowlist is what keeps `createTab('file:///etc/passwd')` (e.g. from
+// a malicious `tab:new-with-url` IPC or `setWindowOpenHandler` flow)
+// from turning into a direct local-file navigation.
+const isDirectLoadUrl = (url) => {
+  if (!url) return true;
+  if (url === 'about:blank') return true;
+  if (url === homeUrl) return true;
+  return /^https?:\/\//i.test(url);
+};
 
 // Create a new tab
 export const createTab = (url = null) => {
   const tabId = tabState.nextTabId++;
-  // Defer dweb / freedom / wallet schemes through onLoadTarget; pointing
-  // the webview at homeUrl in the meantime triggers a real load that the
-  // resolution pipeline aborts ~50 ms later (errno -3 / net::ERR_ABORTED),
-  // and Electron logs the rejected GUEST_VIEW_MANAGER_CALL promise.
-  // about:blank loads synchronously and produces no log noise.
-  // Direct URLs (http(s), file://, about:blank, the production
-  // file:///…/pages/home.html `homeUrl`) load straight into the webview —
-  // loadTarget does not handle them.
-  const useResolutionPipeline = typeof url === 'string' && INDIRECT_URL_RE.test(url);
-  const webviewUrl = useResolutionPipeline ? 'about:blank' : (url || homeUrl);
+  // Direct loads: empty/null (use homeUrl), http(s), about:blank, and
+  // the app's own `homeUrl` (production: file:///…/pages/home.html).
+  // Anything else parks on about:blank while `onLoadTarget` resolves
+  // it — this keeps dweb URLs working (their resolution pipeline takes
+  // ~50 ms) without producing the GUEST_VIEW_MANAGER_CALL log noise
+  // that pointing the webview at homeUrl first did, and prevents
+  // hostile schemes from ever becoming a direct webview navigation.
+  const isDirect = isDirectLoadUrl(url);
+  const webviewUrl = isDirect ? (url || homeUrl) : 'about:blank';
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {
@@ -835,9 +841,13 @@ export const createTab = (url = null) => {
   // Switch to the new tab
   switchTab(tabId, { isNewTab: true });
 
-  // For protocol URLs (ens://, bzz://, ipfs://, etc.), route through the
-  // URL resolution pipeline instead of setting webview src directly
-  if (useResolutionPipeline) {
+  // Anything that isn't a direct-load URL flows through the resolution
+  // pipeline. For routed schemes (bzz://, ipfs://, ens://, rad:,
+  // freedom://, ethereum:, view-source:, bare ENS names) loadTarget
+  // performs the real navigation; for unrecognised inputs (file://,
+  // data:, javascript:, etc.) it falls through to a debug-log no-op,
+  // leaving the tab on about:blank.
+  if (!isDirect) {
     setTimeout(() => { if (onLoadTarget) onLoadTarget(url); }, 50);
   }
 

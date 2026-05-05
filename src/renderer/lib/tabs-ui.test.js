@@ -264,7 +264,10 @@ describe('tabs ui behavior', () => {
     // only routes view-source/ethereum/freedom/ENS/IPFS/IPNS/rad/bzz/http
     // — `file://` falls through to "Ignoring empty input or invalid URL"
     // and the tab stays on about:blank forever. The fix is an explicit
-    // allowlist of indirect schemes that loadTarget actually handles.
+    // allowlist of *direct-load-safe* URLs (homeUrl + http(s) +
+    // about:blank); everything else (dweb schemes AND hostile schemes)
+    // parks on about:blank and is dispatched to loadTarget, which routes
+    // what it can and silently drops the rest.
     const productionHomeUrl = 'file:///app/pages/home.html';
     const { mod, createdWebviews } = await loadTabsModule({ homeUrl: productionHomeUrl });
     const onLoadTarget = jest.fn();
@@ -284,6 +287,51 @@ describe('tabs ui behavior', () => {
       // No deferred onLoadTarget dispatch for direct URLs.
       jest.runAllTimers();
       expect(onLoadTarget).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('createTab never loads hostile schemes directly into the webview', async () => {
+    // Security regression: after tightening the indirect-protocol
+    // allowlist to fix the GUEST_VIEW_MANAGER_CALL noise, the inverse
+    // (everything-not-in-the-allowlist loads directly) made arbitrary
+    // `file:///etc/passwd`, `data:`, `javascript:`, etc. URLs into
+    // direct webview navigations. That path is reachable from main-
+    // process IPC (`tab:new-with-url` via `setWindowOpenHandler`) and
+    // any caller of `createTab(url)`. The fix flips the rule: only
+    // direct-load known-safe URLs (!url, http(s), about:blank,
+    // homeUrl); park everything else on about:blank and dispatch
+    // through loadTarget, which silently drops what it can't route.
+    const productionHomeUrl = 'file:///app/pages/home.html';
+    const { mod, createdWebviews } = await loadTabsModule({
+      homeUrl: productionHomeUrl,
+    });
+    const onLoadTarget = jest.fn();
+    mod.setLoadTargetHandler(onLoadTarget);
+
+    jest.useFakeTimers();
+    try {
+      await mod.initTabs();
+      const hostileTargets = [
+        'file:///etc/passwd',
+        'file:///app/pages/settings.html',
+        'data:text/html,<script>alert(1)</script>',
+        'javascript:alert(1)',
+        'blob:https://example.com/abc',
+        'chrome://settings',
+      ];
+      const baseCount = createdWebviews.length;
+      for (const url of hostileTargets) {
+        mod.createTab(url);
+      }
+      for (let i = 0; i < hostileTargets.length; i++) {
+        const src = createdWebviews[baseCount + i].getAttribute('src');
+        expect(src).toBe('about:blank');
+        expect(src).not.toBe(hostileTargets[i]);
+      }
+      jest.runAllTimers();
+      expect(onLoadTarget.mock.calls.map((call) => call[0])).toEqual(hostileTargets);
     } finally {
       jest.useRealTimers();
     }
