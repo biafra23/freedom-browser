@@ -6,6 +6,7 @@ import { updateGithubBridgeIcon } from './github-bridge-ui.js';
 import {
   applyEnsSuffix,
   buildRadicleDisabledUrl,
+  buildTrustRows,
   buildViewSourceNavigation,
   deriveDisplayAddress,
   deriveSwitchedTabDisplay,
@@ -230,17 +231,6 @@ const storeEnsResolutionMetadata = (targetUri, ensName, { trackProtocol = true }
 // Track certificate status for current page
 let currentPageSecure = false;
 
-// One-sentence status shown at the top of the popover, below the ENS
-// name. Tinted by CSS to match the shield colour for the same level
-// (.trust-popover[data-trust='X'] .trust-popover-status) so the panel
-// reinforces the address-bar shield's signal.
-const TRUST_STATUS_SENTENCE = {
-  verified: 'ENS resolution verified',
-  'user-configured': 'Resolved with your configured RPC',
-  unverified: 'ENS resolution not verified',
-  conflict: 'Verification failed: RPCs disagree',
-};
-
 // Screen-reader label for the shield button, keyed on trust level. Updated
 // alongside the data-trust attribute so assistive tech announces the state.
 const TRUST_ARIA_LABEL = {
@@ -248,25 +238,6 @@ const TRUST_ARIA_LABEL = {
   'user-configured': 'ENS resolution trust: user-configured',
   unverified: 'ENS resolution trust: unverified',
   conflict: 'ENS resolution trust: conflict',
-};
-
-// Friendly names for the network row, keyed by the resolved URI's
-// protocol scheme. Anything not in the table is uppercased.
-const TRUST_NETWORK_NAME = {
-  ipfs: 'IPFS',
-  bzz: 'Swarm',
-  rad: 'Radicle',
-  http: 'HTTP',
-  https: 'HTTPS',
-};
-
-// Hash-row label, keyed by protocol scheme. "CID" is IPFS-specific;
-// other networks get a more generic label that still describes the
-// underlying content reference accurately.
-const TRUST_HASH_LABEL = {
-  ipfs: 'CID',
-  bzz: 'Hash',
-  rad: 'Radicle URN',
 };
 
 // Shrink a long value to fit on a single line in the popover by
@@ -332,17 +303,14 @@ const resetTrustTooltip = () => {
   }
 };
 
-// Build display text for the popover. The resolver's trust shape has
-// `agreed` and `queried` hostname arrays; we surface counts in the summary
-// and full lists in the sections below.
+// Toggle popover visibility and the matching aria-expanded state on the
+// shield. All popover-content building lives in `toggleTrustPopover` —
+// this helper only flips chrome and resets the floating-tooltip state so
+// a pending "Copy"/"Copied" hint can't outlive the open it belongs to.
 const setTrustPopoverOpen = (open) => {
   if (!trustPopover || !trustShield) return;
   trustPopover.hidden = !open;
   trustShield.setAttribute('aria-expanded', open ? 'true' : 'false');
-  // Cancel any pending tooltip timers and reset its text/visibility on
-  // every open/close transition so it never lingers at a stale cursor
-  // position or in a stale "Copied" state when the popover is
-  // dismissed and re-opened.
   resetTrustTooltip();
 };
 
@@ -377,13 +345,22 @@ const toggleTrustPopover = () => {
 
   if (title) title.textContent = name;
 
+  // Pure helper computes status sentence + the two row arrays. Keeps
+  // the level/scheme/proto branching unit-testable and out of the DOM
+  // build path below.
+  const { status, trustRows, contentRows } = buildTrustRows({
+    trust,
+    level,
+    uri: state.ensUriByName.get(name) || '',
+    proto: state.ensProtocols.get(name),
+  });
+
   if (statusEl) {
-    const sentence = TRUST_STATUS_SENTENCE[level];
-    if (!sentence) {
+    if (status === null) {
       console.warn('[trust] unknown trust level:', level);
       statusEl.textContent = '';
     } else {
-      statusEl.textContent = sentence;
+      statusEl.textContent = status;
     }
   }
 
@@ -497,80 +474,8 @@ const toggleTrustPopover = () => {
     return div;
   };
 
-  // ── Trust group: RPCs that contributed to the verification, plus
-  // the Ethereum block at which the lookup was anchored.
-  const trustRows = [];
-  const agreed = trust.agreed || [];
-  const queried = trust.queried || [];
-  // Show the quorum summary only when more than one RPC was queried —
-  // otherwise the "x of y" is degenerate ("1 of 1") and just adds
-  // noise on user-configured / unverified rows.
-  if (queried.length > 1) {
-    trustRows.push({
-      label: 'RPC Quorum',
-      display: `${agreed.length}/${queried.length}`,
-      copy: '',
-    });
-  }
-  if (level === 'user-configured' && agreed.length > 0) {
-    // For user-configured the single RPC is the user's own choice,
-    // so we label it "Your RPC:" rather than "RPC 1:" — it conveys
-    // why there's only one and that no quorum check ran.
-    trustRows.push({ label: 'Your RPC', display: agreed[0], copy: agreed[0] });
-  } else {
-    agreed.forEach((host, idx) => {
-      trustRows.push({ label: `RPC ${idx + 1}`, display: host, copy: host });
-    });
-  }
-  // Dissenting RPCs — only present in conflict cases. Number them
-  // when there's more than one so they don't all read identically.
-  const dissented = trust.dissented || [];
-  if (dissented.length === 1) {
-    trustRows.push({
-      label: 'Dissenting RPC',
-      display: dissented[0],
-      copy: dissented[0],
-    });
-  } else {
-    dissented.forEach((host, idx) => {
-      trustRows.push({
-        label: `Dissenting RPC ${idx + 1}`,
-        display: host,
-        copy: host,
-      });
-    });
-  }
-  if (trust.block?.number) {
-    const num = String(trust.block.number);
-    trustRows.push({ label: 'Block', display: num, copy: num });
-  }
   if (trustFieldsEl) {
     trustFieldsEl.replaceChildren(...trustRows.map(buildRow));
-  }
-
-  // ── Content group: which network the resolved content lives on,
-  // and the network-specific content reference (CID, Swarm hash, …).
-  // Parse the resolved URI to split scheme from body. The copy value
-  // for the hash row is the body alone (matching what's shown), not
-  // the full scheme://body URI.
-  const uri = state.ensUriByName.get(name) || '';
-  const protoFromState = state.ensProtocols.get(name);
-  const uriMatch = uri.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
-  const scheme = uriMatch
-    ? uriMatch[1].toLowerCase()
-    : (protoFromState || '').toLowerCase();
-  const body = uriMatch ? uriMatch[2] : '';
-  const networkName = scheme
-    ? TRUST_NETWORK_NAME[scheme] || scheme.toUpperCase()
-    : '';
-  const hashLabel = TRUST_HASH_LABEL[scheme] || 'Content Hash';
-
-  const contentRows = [];
-  if (networkName) {
-    contentRows.push({ label: 'Network', display: networkName, copy: '' });
-  }
-  if (body) {
-    contentRows.push({ label: hashLabel, display: body, copy: body, autoFit: body });
   }
   if (contentFieldsEl) {
     contentFieldsEl.replaceChildren(...contentRows.map(buildRow));
@@ -1544,7 +1449,7 @@ const handleNavigationEvent = (event) => {
       electronAPI?.setWindowTitle?.(displayUrl);
       updateNavigationState();
       updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+      updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
       return;
@@ -1584,7 +1489,7 @@ const handleNavigationEvent = (event) => {
       navState.hasNavigatedDuringCurrentLoad = true;
       updateNavigationState();
       updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+      updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
       return;
@@ -2116,7 +2021,7 @@ export const initNavigation = () => {
         }
         updateNavigationState();
         updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+        updateGithubBridgeIcon();
         updateProtocolIcon();
         break;
     }

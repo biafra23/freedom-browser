@@ -303,13 +303,12 @@
   display: none !important;
 }
 
-/* When the shield is visible (ENS pages), the protocol icon moves into
-   the trust popover — hide it in the address bar so we don't show two
-   icons side by side. The direct-child combinator scopes this to the
-   address-bar protocol icon and leaves the popover-nested copy alone.
+/* When the shield is visible (ENS pages), hide the address-bar protocol
+   icon entirely — the popover surfaces the network as a "Network: IPFS /
+   Swarm" text row, so a duplicate SVG next to the shield would be noise.
    The address-input padding then mirrors the non-ENS layout, accounting
    for just the shield. */
-.address-wrapper:has(.trust-shield:not([hidden])) > .protocol-icon {
+.address-wrapper:has(.trust-shield:not([hidden])) .protocol-icon {
   display: none;
 }
 

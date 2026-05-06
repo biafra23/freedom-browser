@@ -308,6 +308,7 @@ const loadNavigationModule = async (options = {}) => {
   const trustPopoverStatus = createElement('div');
   const trustPopoverTrustFields = createElement('div');
   const trustPopoverContentFields = createElement('div');
+  const trustPopoverTooltip = createElement('div');
   const document = createDocument({
     elementsById: {
       'address-input': addressInput,
@@ -323,6 +324,7 @@ const loadNavigationModule = async (options = {}) => {
       'trust-popover-status': trustPopoverStatus,
       'trust-popover-trust-fields': trustPopoverTrustFields,
       'trust-popover-content-fields': trustPopoverContentFields,
+      'trust-popover-tooltip': trustPopoverTooltip,
     },
   });
 
