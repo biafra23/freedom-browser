@@ -21,6 +21,148 @@ export const resolveTrustBadge = ({ value = '', ensTrustByName = new Map() } = {
   return { level: trust.level, name: ensName, trust };
 };
 
+// One-sentence status shown at the top of the trust popover, below the ENS
+// name. Keyed on trust level. Lookup misses (unknown level) yield `null`
+// from `buildTrustRows({...}).status` and the caller decides how to handle.
+const TRUST_STATUS_SENTENCE = {
+  verified: 'ENS resolution verified',
+  'user-configured': 'Resolved with your configured RPC',
+  unverified: 'ENS resolution not verified',
+  conflict: 'Verification failed: RPCs disagree',
+};
+
+// Friendly names for the network row, keyed by the URI's protocol scheme
+// (the `bzz` / `ipfs` / `ipns` prefix from the resolved contenthash URI).
+// Anything not in the table is shown uppercased.
+const TRUST_NETWORK_NAME = {
+  ipfs: 'IPFS',
+  bzz: 'Swarm',
+};
+
+// Hash-row label, keyed by URI scheme. "CID" is IPFS-specific; others
+// fall through to the more generic "Content Hash" so the row still
+// describes the underlying reference accurately.
+const TRUST_HASH_LABEL = {
+  ipfs: 'CID',
+  bzz: 'Hash',
+};
+
+// `state.ensProtocols` stores the resolver's friendly names (`'swarm'`,
+// `'ipfs'`, `'ipns'`) while URI schemes use `'bzz'` / `'ipfs'` / `'ipns'`.
+// Normalize so both paths feed the lookup tables with the same key. This
+// only matters when the URI itself is missing — the URI-parse path
+// already produces `'bzz'` directly.
+const protoToScheme = (proto) => (proto === 'swarm' ? 'bzz' : proto);
+
+// Pure helper that turns a `(trust, level, uri, proto)` tuple into the
+// data the popover renders: a status sentence and two ordered arrays of
+// row descriptors for the trust and content sections. Each row is
+// `{ label, display, copy, autoFit? }` — `copy` is the empty string for
+// non-clickable summary rows, `autoFit` carries the value to feed
+// `fitFieldValueToWidth` for middle-truncation. The DOM build step in
+// navigation.js consumes these arrays without re-deriving anything.
+export const buildTrustRows = ({
+  trust = {},
+  level = '',
+  uri = '',
+  proto = '',
+} = {}) => {
+  const status = TRUST_STATUS_SENTENCE[level] || null;
+
+  const agreed = Array.isArray(trust.agreed) ? trust.agreed : [];
+  const queried = Array.isArray(trust.queried) ? trust.queried : [];
+  const dissented = Array.isArray(trust.dissented) ? trust.dissented : [];
+  const blockNumber = trust.block?.number;
+
+  const trustRows = [];
+
+  // Quorum summary is meaningful only when more than one RPC was queried;
+  // otherwise "1 of 1" is degenerate and just adds noise on the
+  // user-configured / unverified rows.
+  if (queried.length > 1) {
+    trustRows.push({
+      label: 'RPC Quorum',
+      display: `${agreed.length}/${queried.length}`,
+      copy: '',
+    });
+  }
+
+  if (level === 'user-configured' && agreed.length > 0) {
+    // For user-configured the single RPC is the user's own choice, so
+    // we label it "Your RPC:" rather than "RPC 1:" — it conveys why
+    // there's only one and that no quorum check ran.
+    trustRows.push({
+      label: 'Your RPC',
+      display: agreed[0],
+      copy: agreed[0],
+      autoFit: agreed[0],
+    });
+  } else {
+    agreed.forEach((host, idx) => {
+      trustRows.push({
+        label: `RPC ${idx + 1}`,
+        display: host,
+        copy: host,
+        autoFit: host,
+      });
+    });
+  }
+
+  // Dissenting RPCs only appear in conflict cases. Number them when
+  // there's more than one so they don't all read identically.
+  if (dissented.length === 1) {
+    trustRows.push({
+      label: 'Dissenting RPC',
+      display: dissented[0],
+      copy: dissented[0],
+      autoFit: dissented[0],
+    });
+  } else {
+    dissented.forEach((host, idx) => {
+      trustRows.push({
+        label: `Dissenting RPC ${idx + 1}`,
+        display: host,
+        copy: host,
+        autoFit: host,
+      });
+    });
+  }
+
+  if (blockNumber !== undefined && blockNumber !== null && blockNumber !== '') {
+    const num = String(blockNumber);
+    trustRows.push({ label: 'Block', display: num, copy: num });
+  }
+
+  // Parse the resolved URI to split scheme from body. The copy value
+  // for the hash row is the body alone (matching what's shown), not
+  // the full `scheme://body` URI.
+  const uriMatch = uri.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
+  const scheme = uriMatch
+    ? uriMatch[1].toLowerCase()
+    : protoToScheme((proto || '').toLowerCase());
+  const body = uriMatch ? uriMatch[2] : '';
+
+  const networkName = scheme
+    ? TRUST_NETWORK_NAME[scheme] || scheme.toUpperCase()
+    : '';
+  const hashLabel = TRUST_HASH_LABEL[scheme] || 'Content Hash';
+
+  const contentRows = [];
+  if (networkName) {
+    contentRows.push({ label: 'Network', display: networkName, copy: '' });
+  }
+  if (body) {
+    contentRows.push({
+      label: hashLabel,
+      display: body,
+      copy: body,
+      autoFit: body,
+    });
+  }
+
+  return { status, trustRows, contentRows };
+};
+
 export const resolveProtocolIconType = ({
   value = '',
   ensProtocols = new Map(),
@@ -40,7 +182,11 @@ export const resolveProtocolIconType = ({
   if (normalizedValue.startsWith('rad://')) {
     return enableRadicleIntegration ? 'radicle' : 'http';
   }
-  if (normalizedValue.startsWith('freedom://')) return null;
+  // Internal pages aren't network-served, but we still surface the
+  // neutral globe (same icon `rad://` falls back to when its integration
+  // is disabled) so the address bar always carries some leading mark
+  // and never reuses the trust shield from a previous ENS page.
+  if (normalizedValue.startsWith('freedom://')) return 'http';
 
   // Bare ENS / legacy `ens://` falls back to the cached resolved protocol.
   const ensName = extractEnsName(normalizedValue);

@@ -38,6 +38,7 @@ import {
   hardReloadPage,
   onSettingsChanged,
   setOnHistoryRecorded,
+  closeTrustPopover,
 } from './lib/navigation.js';
 import {
   initAutocomplete,
@@ -89,9 +90,16 @@ setOnHistoryRecorded(refreshAutocompleteCache);
 setOnOpenHistory(() => loadTarget('freedom://history'));
 setOnNewTab(() => createTab());
 setOnOpenRadicleUrl((url) => loadTarget(url));
-setOnMenuOpening(hideAutocomplete);
-setOnTabContextMenuOpening(hideAutocomplete);
-setOnBookmarkContextMenuOpening(hideAutocomplete);
+// When any popover/menu opens, dismiss other transient surfaces so we
+// don't end up with the autocomplete dropdown or the ENS trust popover
+// stacked on top of the nodes/main menu.
+const onAnyMenuOpening = () => {
+  hideAutocomplete();
+  closeTrustPopover();
+};
+setOnMenuOpening(onAnyMenuOpening);
+setOnTabContextMenuOpening(onAnyMenuOpening);
+setOnBookmarkContextMenuOpening(onAnyMenuOpening);
 
 // Initialize platform-specific UI adjustments
 async function initPlatformUI() {

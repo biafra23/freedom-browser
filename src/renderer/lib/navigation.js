@@ -6,6 +6,7 @@ import { updateGithubBridgeIcon } from './github-bridge-ui.js';
 import {
   applyEnsSuffix,
   buildRadicleDisabledUrl,
+  buildTrustRows,
   buildViewSourceNavigation,
   deriveDisplayAddress,
   deriveSwitchedTabDisplay,
@@ -230,21 +231,6 @@ const storeEnsResolutionMetadata = (targetUri, ensName, { trackProtocol = true }
 // Track certificate status for current page
 let currentPageSecure = false;
 
-// Copy map for the trust popover — each level gets a short, user-facing
-// sentence. Phrased as cross-check language ("RPCs agreed") rather than
-// "trusted" / "safe", per the threat model discussion.
-const TRUST_SUMMARY = {
-  verified: (trust) => {
-    const agreed = (trust.agreed || []).length;
-    return agreed > 0
-      ? `Verified: quorum reached with ${agreed} matching public RPC responses.`
-      : 'Verified.';
-  },
-  'user-configured': () => 'Resolved via your configured RPC. Single source — no cross-check performed.',
-  unverified: () => 'Only one RPC answered in time. The browser could not cross-check this resolution.',
-  conflict: () => 'RPC servers disagreed. Navigation was blocked.',
-};
-
 // Screen-reader label for the shield button, keyed on trust level. Updated
 // alongside the data-trust attribute so assistive tech announces the state.
 const TRUST_ARIA_LABEL = {
@@ -254,13 +240,99 @@ const TRUST_ARIA_LABEL = {
   conflict: 'ENS resolution trust: conflict',
 };
 
-// Build display text for the popover. The resolver's trust shape has
-// `agreed` and `queried` hostname arrays; we surface counts in the summary
-// and full lists in the sections below.
+// Shrink a long value to fit on a single line in the popover by
+// symmetric middle-truncation. Binary-searches the largest head/tail
+// length whose rendered width still fits inside the row's clientWidth.
+// Operates on the field row's scrollWidth vs clientWidth (the row has
+// overflow:hidden), so the row must already be in the laid-out DOM
+// (i.e. called after the popover is un-hidden). Only the value span
+// is mutated — the label span is left intact.
+const fitFieldValueToWidth = (fieldDiv, fullValue) => {
+  const valueSpan = fieldDiv.querySelector('.trust-popover-field-value');
+  if (!valueSpan) return;
+
+  valueSpan.textContent = fullValue;
+  if (fieldDiv.scrollWidth <= fieldDiv.clientWidth) return;
+
+  let lo = 1;
+  let hi = Math.floor(fullValue.length / 2);
+  let best = 0;
+  while (lo <= hi) {
+    const k = Math.floor((lo + hi) / 2);
+    valueSpan.textContent = `${fullValue.slice(0, k)}…${fullValue.slice(fullValue.length - k)}`;
+    if (fieldDiv.scrollWidth <= fieldDiv.clientWidth) {
+      best = k;
+      lo = k + 1;
+    } else {
+      hi = k - 1;
+    }
+  }
+
+  if (best > 0) {
+    valueSpan.textContent = `${fullValue.slice(0, best)}…${fullValue.slice(fullValue.length - best)}`;
+  } else {
+    // Even a 1+1 middle-truncation overflows; fall back to the full
+    // value and let the row's text-overflow:ellipsis trim the end
+    // rather than rendering a misleading "…x" head.
+    valueSpan.textContent = fullValue;
+  }
+};
+
+// Tooltip state for the "Copy" hover hint and "Copied" post-click
+// confirmation. Module-level (rather than per-popover-open closure)
+// so setTrustPopoverOpen can cancel pending timers cleanly when the
+// popover closes — otherwise a stale "Copied" timer could fire and
+// poke at the tooltip after a fresh open.
+let trustTooltipShowTimer = null;
+let trustTooltipCopiedTimer = null;
+let trustTooltipCopiedActive = false;
+
+const TRUST_TOOLTIP_HOVER_DELAY_MS = 250;
+const TRUST_TOOLTIP_COPIED_HOLD_MS = 1200;
+
+const resetTrustTooltip = () => {
+  clearTimeout(trustTooltipShowTimer);
+  clearTimeout(trustTooltipCopiedTimer);
+  trustTooltipShowTimer = null;
+  trustTooltipCopiedTimer = null;
+  trustTooltipCopiedActive = false;
+  const tooltip = document.getElementById('trust-popover-tooltip');
+  if (tooltip) {
+    tooltip.hidden = true;
+    tooltip.textContent = 'Copy';
+  }
+};
+
+// Identity of the ENS resolution currently rendered into the popover —
+// `{ name, trust }` while open, `null` while closed. Used by the
+// stale-popover guard in `updateProtocolIcon` so we can dismiss the
+// popover when the address bar moves to a different ENS name, a non-ENS
+// URL, an internal page, or a different tab. Comparing the trust
+// reference (and not just the name) also catches the rarer case where
+// a fresh resolution replaces the stored trust for the same name while
+// the popover is open.
+let trustPopoverDisplayed = null;
+
+// Toggle popover visibility and the matching aria-expanded state on the
+// shield. All popover-content building lives in `toggleTrustPopover` —
+// this helper only flips chrome and resets the floating-tooltip state so
+// a pending "Copy"/"Copied" hint can't outlive the open it belongs to.
 const setTrustPopoverOpen = (open) => {
   if (!trustPopover || !trustShield) return;
   trustPopover.hidden = !open;
   trustShield.setAttribute('aria-expanded', open ? 'true' : 'false');
+  resetTrustTooltip();
+  if (!open) {
+    trustPopoverDisplayed = null;
+  }
+};
+
+// Public hook so other modules (e.g. menus.js) can dismiss the popover
+// without duplicating the open/close logic.
+export const closeTrustPopover = () => {
+  if (trustPopover && !trustPopover.hidden) {
+    setTrustPopoverOpen(false);
+  }
 };
 
 const toggleTrustPopover = () => {
@@ -280,61 +352,164 @@ const toggleTrustPopover = () => {
   trustPopover.setAttribute('data-trust', level);
 
   const title = document.getElementById('trust-popover-title');
-  const subtitle = document.getElementById('trust-popover-subtitle');
-  const summary = document.getElementById('trust-popover-summary');
-  const blockEl = document.getElementById('trust-popover-block');
-  const agreedEl = document.getElementById('trust-popover-agreed');
-  const dissentedEl = document.getElementById('trust-popover-dissented');
-  const dissentedSection = document.getElementById('trust-popover-dissented-section');
-  const agreedSection = document.getElementById('trust-popover-agreed-section');
+  const statusEl = document.getElementById('trust-popover-status');
+  const trustFieldsEl = document.getElementById('trust-popover-trust-fields');
+  const contentFieldsEl = document.getElementById('trust-popover-content-fields');
 
   if (title) title.textContent = name;
-  if (subtitle) {
-    // Full resolved URI (e.g. bzz://<hash>, ipfs://<CID>) — the content
-    // address the ENS record points at. Falls back to protocol-only if
-    // the URI wasn't captured (shouldn't happen for successful resolves).
-    const uri = state.ensUriByName.get(name);
-    const proto = state.ensProtocols.get(name);
-    subtitle.textContent = uri || (proto ? `Resolved as ${proto}://…` : '');
-  }
-  if (summary) {
-    const buildSummary = TRUST_SUMMARY[level];
-    if (!buildSummary) {
+
+  // Pure helper computes status sentence + the two row arrays. Keeps
+  // the level/scheme/proto branching unit-testable and out of the DOM
+  // build path below.
+  const { status, trustRows, contentRows } = buildTrustRows({
+    trust,
+    level,
+    uri: state.ensUriByName.get(name) || '',
+    proto: state.ensProtocols.get(name),
+  });
+
+  if (statusEl) {
+    if (status === null) {
       console.warn('[trust] unknown trust level:', level);
-      summary.textContent = 'Unknown trust state.';
+      statusEl.textContent = '';
     } else {
-      summary.textContent = buildSummary(trust);
-    }
-  }
-  if (blockEl) {
-    if (trust.block?.number) {
-      const hash = trust.block.hash || '';
-      const short = hash ? `${hash.slice(0, 10)}…${hash.slice(-4)}` : '';
-      blockEl.textContent = `#${trust.block.number}${short ? '  ' + short : ''}`;
-    } else {
-      blockEl.textContent = '(not recorded)';
-    }
-  }
-  if (agreedEl && agreedSection) {
-    const agreed = trust.agreed || [];
-    if (agreed.length > 0) {
-      agreedEl.textContent = agreed.join(', ');
-      agreedSection.hidden = false;
-    } else {
-      agreedSection.hidden = true;
-    }
-  }
-  if (dissentedEl && dissentedSection) {
-    const dissented = trust.dissented || [];
-    if (dissented.length > 0) {
-      dissentedEl.textContent = dissented.join(', ');
-      dissentedSection.hidden = false;
-    } else {
-      dissentedSection.hidden = true;
+      statusEl.textContent = status;
     }
   }
 
+  // Shared floating tooltip used by all clickable value spans across
+  // both field groups. Switches between "Copy" (hover) and "Copied"
+  // (post-click). Positioned by JS just below the cursor when first
+  // shown; never follows the cursor afterwards.
+  const tooltipEl = document.getElementById('trust-popover-tooltip');
+
+  const positionTooltip = (clientX, clientY) => {
+    if (!tooltipEl) return;
+    tooltipEl.style.left = `${clientX + 12}px`;
+    tooltipEl.style.top = `${clientY + 18}px`;
+  };
+
+  // Build a single field row: a non-clickable label span + a
+  // clickable value span. Only the value carries the cursor:pointer,
+  // the data-copy attribute, and the hover/click event handlers.
+  const buildRow = (row) => {
+    const div = document.createElement('div');
+    div.className = 'trust-popover-field';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'trust-popover-field-label';
+    labelSpan.textContent = `${row.label}: `;
+    div.appendChild(labelSpan);
+
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'trust-popover-field-value';
+    valueSpan.textContent = row.display;
+    div.appendChild(valueSpan);
+
+    if (row.autoFit) {
+      div.dataset.autoFit = row.autoFit;
+    }
+
+    if (row.copy) {
+      valueSpan.dataset.copy = row.copy;
+
+      valueSpan.addEventListener('mousemove', (e) => {
+        // While "Copied" is showing, keep the tooltip pinned where
+        // the click happened — don't follow the cursor or let the
+        // hover-show timer fire underneath.
+        if (trustTooltipCopiedActive) return;
+        if (!tooltipEl) return;
+        // Once the tooltip is visible, it stays put. Only the
+        // *initial* position (captured below) is honoured; further
+        // mousemove events while the tooltip is already shown are
+        // ignored so the tooltip doesn't drift along with the
+        // cursor.
+        if (!tooltipEl.hidden) return;
+        const x = e.clientX;
+        const y = e.clientY;
+        clearTimeout(trustTooltipShowTimer);
+        trustTooltipShowTimer = setTimeout(() => {
+          if (trustTooltipCopiedActive) return;
+          if (!tooltipEl) return;
+          positionTooltip(x, y);
+          tooltipEl.textContent = 'Copy';
+          tooltipEl.hidden = false;
+        }, TRUST_TOOLTIP_HOVER_DELAY_MS);
+      });
+
+      valueSpan.addEventListener('mouseleave', () => {
+        // Clear the hover-show timer, but DON'T clear the "Copied"
+        // hold timer: the user may have already moved away after
+        // clicking, and we still want them to see the confirmation
+        // for the rest of its hold window.
+        clearTimeout(trustTooltipShowTimer);
+        trustTooltipShowTimer = null;
+        if (!trustTooltipCopiedActive && tooltipEl) {
+          tooltipEl.hidden = true;
+        }
+      });
+
+      valueSpan.addEventListener('click', async (e) => {
+        clearTimeout(trustTooltipShowTimer);
+        clearTimeout(trustTooltipCopiedTimer);
+        trustTooltipShowTimer = null;
+        trustTooltipCopiedActive = true;
+
+        if (tooltipEl) {
+          tooltipEl.textContent = 'Copied';
+          positionTooltip(e.clientX, e.clientY);
+          tooltipEl.hidden = false;
+        }
+
+        trustTooltipCopiedTimer = setTimeout(() => {
+          trustTooltipCopiedActive = false;
+          trustTooltipCopiedTimer = null;
+          if (tooltipEl) {
+            tooltipEl.hidden = true;
+            tooltipEl.textContent = 'Copy';
+          }
+        }, TRUST_TOOLTIP_COPIED_HOLD_MS);
+
+        const text = valueSpan.dataset.copy || '';
+        if (!text) return;
+        try {
+          await electronAPI?.copyText?.(text);
+        } catch (err) {
+          console.warn('[trust] copy failed:', err);
+        }
+      });
+    } else {
+      // No copy value (e.g. the Network row, or unknown-protocol
+      // fallback). No cursor change, no tooltip handlers — the row
+      // reads as plain text.
+      div.classList.add('trust-popover-field-uncopyable');
+    }
+    return div;
+  };
+
+  if (trustFieldsEl) {
+    trustFieldsEl.replaceChildren(...trustRows.map(buildRow));
+  }
+  if (contentFieldsEl) {
+    contentFieldsEl.replaceChildren(...contentRows.map(buildRow));
+  }
+
+  // Record the identity of what's now rendered before we flip the
+  // popover open — `setTrustPopoverOpen(true)` doesn't clear it, only
+  // the close path does.
+  trustPopoverDisplayed = { name, trust };
   setTrustPopoverOpen(true);
+
+  // Fit-to-width truncation runs AFTER the popover is un-hidden so
+  // scrollWidth / clientWidth reflect real layout. Each row that
+  // carries data-auto-fit gets its value middle-truncated to fit a
+  // single line.
+  [trustFieldsEl, contentFieldsEl].forEach((groupEl) => {
+    if (!groupEl) return;
+    groupEl.querySelectorAll('[data-auto-fit]').forEach((div) => {
+      fitFieldValueToWidth(div, div.dataset.autoFit);
+    });
+  });
 };
 
 // Update protocol icon AND trust shield from the current address-bar value.
@@ -374,6 +549,21 @@ const updateProtocolIcon = () => {
       trustShield.removeAttribute('data-trust');
       trustShield.setAttribute('aria-label', 'ENS resolution trust status');
       trustShield.hidden = true;
+    }
+
+    // Stale-popover guard: if the popover is open but the address bar
+    // no longer resolves to the same ENS name + trust object the
+    // popover was opened against, dismiss it. Without this, navigating
+    // away (to a non-ENS URL, an internal page, or a different ENS
+    // name) or switching to another tab would leave a misleading
+    // popover behind showing details for the previous resolution —
+    // a real risk on a security/trust surface.
+    if (trustPopover && !trustPopover.hidden && trustPopoverDisplayed) {
+      const stale =
+        !badge ||
+        badge.name !== trustPopoverDisplayed.name ||
+        badge.trust !== trustPopoverDisplayed.trust;
+      if (stale) setTrustPopoverOpen(false);
     }
   }
 };
@@ -1291,7 +1481,7 @@ const handleNavigationEvent = (event) => {
       electronAPI?.setWindowTitle?.(displayUrl);
       updateNavigationState();
       updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+      updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
       return;
@@ -1311,7 +1501,11 @@ const handleNavigationEvent = (event) => {
       navState.hasNavigatedDuringCurrentLoad = true;
       updateNavigationState();
       updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+      updateGithubBridgeIcon();
+      // Re-evaluate the protocol icon and trust shield against the new
+      // freedom:// URL — without this, navigating to Settings (etc.)
+      // from an ENS page leaves the prior page's trust shield stuck on.
+      updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
       return;
     }
@@ -1327,7 +1521,7 @@ const handleNavigationEvent = (event) => {
       navState.hasNavigatedDuringCurrentLoad = true;
       updateNavigationState();
       updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+      updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
       return;
@@ -1469,8 +1663,12 @@ export const initNavigation = () => {
   trustPopover = document.getElementById('trust-popover');
 
   if (trustShield) {
-    trustShield.addEventListener('click', (e) => {
-      e.stopPropagation();
+    // Don't stopPropagation: we want the click to bubble to the
+    // document-click handlers in menus.js so any open nodes / hamburger
+    // menu closes in the same gesture. The popover-closer below is
+    // shield-aware (trustShield.contains(e.target)) so it won't dismiss
+    // the popover we're about to open.
+    trustShield.addEventListener('click', () => {
       toggleTrustPopover();
     });
   }
@@ -1855,7 +2053,7 @@ export const initNavigation = () => {
         }
         updateNavigationState();
         updateBookmarkButtonVisibility();
-  updateGithubBridgeIcon();
+        updateGithubBridgeIcon();
         updateProtocolIcon();
         break;
     }

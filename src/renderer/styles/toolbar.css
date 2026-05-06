@@ -98,26 +98,39 @@
   flex: 1;
 }
 
-/* Trust shield for ENS resolutions (sits to the LEFT of the protocol icon
-   when both are visible). Click opens the trust details popover. */
+/* Trust shield for ENS resolutions. Sits at the left of the address bar
+   (where the protocol icon lives for non-ENS pages — the protocol icon is
+   moved into the popover for ENS pages, see below). Visually mirrors the
+   bookmark button (.icon-btn.input-action-btn): round, transparent idle,
+   subtle hover. Click opens the trust details popover. */
 .trust-shield {
   position: absolute;
-  left: 8px;
+  left: 6px;
   top: 50%;
   transform: translateY(-50%);
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   margin: 0;
   border: none;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
   display: none;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  z-index: 2;
-  border-radius: 4px;
-  transition: background-color 0.15s ease;
+  /* Default arrow cursor, matching the toolbar's other .icon-btn buttons
+     (back/forward/reload/home/bookmark) — no hand-pointer. */
+  cursor: default;
+  /* Sit above the menu backdrop (z-index 9999) so a click on the shield
+     while the nodes / hamburger menu is open lands on the shield itself
+     rather than being swallowed by the backdrop. The document-click
+     handlers in menus.js then close the open menu, and the shield's
+     own handler opens the popover — single click, two effects. */
+  z-index: 10001;
+  border-radius: 50%;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease;
 }
 
 .trust-shield[hidden] {
@@ -125,11 +138,12 @@
 }
 
 .trust-shield:not([hidden]) {
-  display: flex;
+  display: inline-flex;
 }
 
 .trust-shield:hover {
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .trust-shield svg {
@@ -145,11 +159,12 @@
   display: block;
 }
 
+/* Verified / user-configured strokes match the HTTPS globe colour. */
 .trust-shield[data-trust='verified'] .icon-verified {
-  color: #2ea043;
+  color: #6b9e7a;
 }
 .trust-shield[data-trust='user-configured'] .icon-user-configured {
-  color: #2ea043;
+  color: #6b9e7a;
 }
 .trust-shield[data-trust='unverified'] .icon-unverified {
   color: #d29922;
@@ -159,18 +174,20 @@
 }
 
 /* Trust details popover, anchored below the address bar when the shield
-   is clicked. Populated by navigation.js from state.ensTrustByName. */
+   is clicked. Populated by navigation.js from state.ensTrustByName.
+   Width / chrome match the nodes (.bee-dropdown) and hamburger
+   (.menu-dropdown) menus so all three feel like the same surface. */
 .trust-popover {
   position: absolute;
   top: 100%;
   left: 0;
   margin-top: 6px;
-  min-width: 280px;
-  max-width: min(400px, calc(100vw - 24px));
+  width: 240px;
+  max-width: calc(100vw - 24px);
   background: var(--menu-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   z-index: 10000;
   padding: 14px 16px;
   font-size: 13px;
@@ -181,82 +198,122 @@
   display: none !important;
 }
 
-.trust-popover-header {
-  margin-bottom: 10px;
-}
-
+/* ENS name as headline — same colour, weight, and size as the Swarm /
+   IPFS labels in the nodes menu (.bee-toggle-label inside .menu-item:
+   color: var(--text), 14px, regular). The 16px bottom margin matches
+   the gap below the Swarm headline in the node menu (.menu-item's 8px
+   bottom padding + .bee-info's 8px top padding) so the detail rows
+   below sit at the same vertical rhythm. */
 .trust-popover-title {
-  font-weight: 600;
-  word-break: break-all;
-}
-
-.trust-popover-subtitle {
-  font-family: monospace;
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 2px;
-  word-break: break-all;
-}
-
-.trust-popover-summary {
-  margin: 0 0 12px;
-  line-height: 1.5;
-  color: var(--text);
-}
-
-.trust-popover[data-trust='verified'] .trust-popover-summary,
-.trust-popover[data-trust='user-configured'] .trust-popover-summary {
-  color: #4ac267;
-}
-.trust-popover[data-trust='unverified'] .trust-popover-summary {
-  color: #d29922;
-}
-.trust-popover[data-trust='conflict'] .trust-popover-summary {
-  color: #ff5e5e;
-}
-
-.trust-popover-section {
-  margin-top: 8px;
-}
-
-.trust-popover-section-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-bottom: 3px;
-}
-
-.trust-popover-section-value {
-  font-family: monospace;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   word-break: break-all;
+  margin-bottom: 16px;
 }
 
-.trust-popover-learn {
-  display: inline-block;
-  margin-top: 12px;
+/* Body of the popover: a status sentence on top, a flat list of
+   "Label: value" lines below. Same UI font as the nodes menu. */
+.trust-popover-info {
+  display: flex;
+  flex-direction: column;
   font-size: 12px;
-  color: var(--accent);
-  text-decoration: none;
+  color: var(--text);
 }
 
-.trust-popover-learn:hover {
-  text-decoration: underline;
+.trust-popover-status {
+  /* Match the hamburger / nodes menu's .menu-item text — same font-size
+     and colour — so the status sentence reads as a peer of the menu
+     items below the title rather than at the smaller .trust-popover-info
+     body size used for the field rows. */
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
 }
 
-/* Shift the protocol icon right to make room for the shield when both show. */
+/* Horizontal divider between every section in the popover body.
+   Drawn as a border-bottom on each direct child of .trust-popover-info
+   except the last, so the popover can have an arbitrary number of
+   sections (currently: status, trust fields, content fields) and the
+   dividers always appear between them. The 16px padding/margin around
+   the line gives roughly twice the breathing room the nodes menu's
+   dividers get from .menu-item's 8px padding + .menu-divider's 4px
+   margin — substantial enough that the section break reads cleanly
+   even though the popover content has no hover states to fill the
+   gap visually. */
+.trust-popover-info > *:not(:last-child) {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.trust-popover-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Slightly dimmed so the status sentence above stays the strongest
+     signal under the title. Mirrors .bee-info's 0.8 in the nodes menu. */
+  opacity: 0.8;
+}
+
+/* Each field row is split into a label span and a value span. The
+   label is plain text; only the value is the click-to-copy hotspot
+   (cursor: pointer). The hover "Copy" / post-click "Copied" tooltip
+   is a real sibling element (.trust-popover-tooltip) rather than a
+   pseudo so it isn't clipped by the row's overflow:hidden (needed
+   for the ellipsis fallback) and so JS can position it below the
+   cursor. */
+.trust-popover-field {
+  /* Force single-line rendering. Long values that don't fit fall back
+     to text-overflow ellipsis at the end. Content Hash gets a smarter
+     middle-truncation in JS (see fitContentHashRow) so the protocol
+     prefix and the tail of the CID stay visible — but text-overflow
+     here is the safety net if measurement / parsing fails. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trust-popover-field-value {
+  cursor: pointer;
+}
+
+.trust-popover-field-uncopyable .trust-popover-field-value {
+  cursor: default;
+}
+
+/* Floating "Copy" tooltip. Positioned at the document level via
+   position: fixed and JS-driven left/top so it tracks the mouse
+   cursor (just below + slightly right, matching native tooltip
+   placement). pointer-events: none so it never intercepts clicks
+   on the underlying row. */
+.trust-popover-tooltip {
+  position: fixed;
+  pointer-events: none;
+  padding: 2px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 10001;
+}
+
+.trust-popover-tooltip[hidden] {
+  display: none !important;
+}
+
+/* When the shield is visible (ENS pages), hide the address-bar protocol
+   icon entirely — the popover surfaces the network as a "Network: IPFS /
+   Swarm" text row, so a duplicate SVG next to the shield would be noise.
+   The address-input padding then mirrors the non-ENS layout, accounting
+   for just the shield. */
 .address-wrapper:has(.trust-shield:not([hidden])) .protocol-icon {
-  left: 36px;
+  display: none;
 }
 
-/* Address input padding accounts for whichever of the two icons is visible. */
 .address-wrapper:has(.trust-shield:not([hidden])) .address-input {
   padding-left: 36px;
-}
-.address-wrapper:has(.trust-shield:not([hidden])):has(.protocol-icon.visible) .address-input {
-  padding-left: 62px;
 }
 
 /* Protocol icon in address bar */

@@ -77,10 +77,14 @@ describe('navigation-utils', () => {
       expect(resolveProtocolIconType({ value: 'bzz://meinhard.eth/path' })).toBe('swarm');
     });
 
-    test('hides icons for internal pages and gates radicle on settings', async () => {
+    test('uses the neutral globe for internal pages and gates radicle on settings', async () => {
       const { resolveProtocolIconType } = await loadNavigationUtils();
 
-      expect(resolveProtocolIconType({ value: 'freedom://history' })).toBeNull();
+      // Internal pages reuse the neutral http globe so the address bar
+      // always shows *something* — and never falls back to a stale ENS
+      // trust shield left behind by a previous navigation.
+      expect(resolveProtocolIconType({ value: 'freedom://history' })).toBe('http');
+      expect(resolveProtocolIconType({ value: 'freedom://settings' })).toBe('http');
       expect(resolveProtocolIconType({ value: 'rad://rid' })).toBe('http');
       expect(
         resolveProtocolIconType({
@@ -210,6 +214,287 @@ describe('navigation-utils', () => {
       const ensTrustByName = new Map([['vitalik.eth', { agreed: ['a'] }]]);
 
       expect(resolveTrustBadge({ value: 'ens://vitalik.eth', ensTrustByName })).toBeNull();
+    });
+  });
+
+  describe('buildTrustRows', () => {
+    // The fixtures below mirror the four user-visible levels surfaced by
+    // the ENS resolver. Each test pins the exact row sequence so a future
+    // copy / ordering regression in this security-relevant surface is
+    // caught here rather than at review time.
+
+    test('verified with full quorum: lists quorum, all RPCs, block, network, hash', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: {
+          agreed: ['ethereum.publicnode.com', 'eth.drpc.org', 'cloudflare-eth.com'],
+          queried: ['ethereum.publicnode.com', 'eth.drpc.org', 'cloudflare-eth.com'],
+          block: { number: 25030249 },
+        },
+        uri: 'ipfs://QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+      });
+
+      expect(result.status).toBe('ENS resolution verified');
+      expect(result.trustRows).toEqual([
+        { label: 'RPC Quorum', display: '3/3', copy: '' },
+        {
+          label: 'RPC 1',
+          display: 'ethereum.publicnode.com',
+          copy: 'ethereum.publicnode.com',
+          autoFit: 'ethereum.publicnode.com',
+        },
+        {
+          label: 'RPC 2',
+          display: 'eth.drpc.org',
+          copy: 'eth.drpc.org',
+          autoFit: 'eth.drpc.org',
+        },
+        {
+          label: 'RPC 3',
+          display: 'cloudflare-eth.com',
+          copy: 'cloudflare-eth.com',
+          autoFit: 'cloudflare-eth.com',
+        },
+        { label: 'Block', display: '25030249', copy: '25030249' },
+      ]);
+      expect(result.contentRows).toEqual([
+        { label: 'Network', display: 'IPFS', copy: '' },
+        {
+          label: 'CID',
+          display: 'QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+          copy: 'QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+          autoFit: 'QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+        },
+      ]);
+    });
+
+    test('verified with partial quorum: only lists RPCs that responded', async () => {
+      // 3 queried, 2 agreed — quorum still met, but the third RPC dropped
+      // out and shouldn't be rendered as a numbered row alongside the
+      // responders.
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: {
+          agreed: ['ethereum.publicnode.com', 'eth.drpc.org'],
+          queried: ['ethereum.publicnode.com', 'eth.drpc.org', 'down.example'],
+          block: { number: 25038025 },
+        },
+        uri: 'ipfs://QmHash',
+      });
+
+      expect(result.status).toBe('ENS resolution verified');
+      expect(result.trustRows.map((r) => r.label)).toEqual([
+        'RPC Quorum',
+        'RPC 1',
+        'RPC 2',
+        'Block',
+      ]);
+      expect(result.trustRows[0]).toEqual({
+        label: 'RPC Quorum',
+        display: '2/3',
+        copy: '',
+      });
+    });
+
+    test('user-configured: skips quorum and labels the single RPC "Your RPC"', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'user-configured',
+        trust: {
+          agreed: ['rpc.mycompany.com'],
+          queried: ['rpc.mycompany.com'],
+          block: { number: 25030249 },
+        },
+        uri: 'ipfs://QmHash',
+      });
+
+      expect(result.status).toBe('Resolved with your configured RPC');
+      // No "RPC Quorum: 1/1" — degenerate single-RPC case is suppressed.
+      expect(result.trustRows.map((r) => r.label)).toEqual(['Your RPC', 'Block']);
+      expect(result.trustRows[0]).toEqual({
+        label: 'Your RPC',
+        display: 'rpc.mycompany.com',
+        copy: 'rpc.mycompany.com',
+        autoFit: 'rpc.mycompany.com',
+      });
+    });
+
+    test('unverified: omits quorum row when only one RPC was queried', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'unverified',
+        trust: {
+          agreed: ['ethereum.publicnode.com'],
+          queried: ['ethereum.publicnode.com'],
+          block: { number: 25030249 },
+        },
+        uri: 'ipfs://QmHash',
+      });
+
+      expect(result.status).toBe('ENS resolution not verified');
+      expect(result.trustRows.map((r) => r.label)).toEqual(['RPC 1', 'Block']);
+    });
+
+    test('conflict with one dissenter: uses singular "Dissenting RPC" label', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'conflict',
+        trust: {
+          agreed: ['ethereum.publicnode.com'],
+          queried: ['ethereum.publicnode.com', 'eth.drpc.org'],
+          dissented: ['eth.drpc.org'],
+          block: { number: 25030249 },
+        },
+        uri: 'ipfs://QmHash',
+      });
+
+      expect(result.status).toBe('Verification failed: RPCs disagree');
+      expect(result.trustRows.map((r) => r.label)).toEqual([
+        'RPC Quorum',
+        'RPC 1',
+        'Dissenting RPC',
+        'Block',
+      ]);
+    });
+
+    test('conflict with multiple dissenters: numbers each "Dissenting RPC N"', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'conflict',
+        trust: {
+          agreed: [],
+          queried: ['a.example', 'b.example', 'c.example'],
+          dissented: ['b.example', 'c.example'],
+        },
+        uri: 'ipfs://QmHash',
+      });
+
+      expect(result.trustRows.map((r) => r.label)).toEqual([
+        'RPC Quorum',
+        'Dissenting RPC 1',
+        'Dissenting RPC 2',
+      ]);
+    });
+
+    test('returns null status for an unknown trust level', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      // Caller (toggleTrustPopover) decides what to do — current behaviour
+      // is to log a warning and clear the status row rather than render
+      // a confusing fallback sentence.
+      const result = buildTrustRows({ level: 'mystery', trust: {}, uri: '' });
+      expect(result.status).toBeNull();
+    });
+
+    test('Network falls back to uppercased scheme for unmapped URI schemes', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: { agreed: [], queried: [] },
+        uri: 'arweave://abcd',
+      });
+
+      // No entry in TRUST_NETWORK_NAME for 'arweave' — fall back to
+      // 'ARWEAVE' rather than dropping the row entirely.
+      expect(result.contentRows[0]).toEqual({
+        label: 'Network',
+        display: 'ARWEAVE',
+        copy: '',
+      });
+      // No entry in TRUST_HASH_LABEL either — the hash row uses the
+      // generic 'Content Hash' label.
+      expect(result.contentRows[1]).toEqual({
+        label: 'Content Hash',
+        display: 'abcd',
+        copy: 'abcd',
+        autoFit: 'abcd',
+      });
+    });
+
+    test('Swarm via cached protocol (URI missing) normalizes "swarm" → "bzz"', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      // state.ensProtocols stores 'swarm' (the resolver's friendly name),
+      // but the lookup tables are keyed on URI schemes ('bzz'). When the
+      // URI is missing we fall back to the cached protocol — and must
+      // map 'swarm' to 'bzz' or the network row would render 'SWARM'
+      // (uppercase fallback) instead of the friendly 'Swarm'.
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: { agreed: [], queried: [] },
+        uri: '',
+        proto: 'swarm',
+      });
+
+      expect(result.contentRows).toEqual([
+        { label: 'Network', display: 'Swarm', copy: '' },
+      ]);
+    });
+
+    test('IPNS URIs fall through to the uppercase network fallback', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      // 'ipns' isn't an explicit entry in TRUST_NETWORK_NAME but the
+      // uppercase fallback yields 'IPNS', which is the user-facing
+      // string we want anyway.
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: { agreed: [], queried: [] },
+        uri: 'ipns://k51qzi5/',
+      });
+
+      expect(result.contentRows[0]).toEqual({
+        label: 'Network',
+        display: 'IPNS',
+        copy: '',
+      });
+    });
+
+    test('omits the Network row when there is no URI and no cached protocol', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: { agreed: [], queried: [] },
+      });
+
+      expect(result.contentRows).toEqual([]);
+    });
+
+    test('omits the Block row when no block.number is available', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: {
+          agreed: ['a'],
+          queried: ['a'],
+          // No `block` field at all.
+        },
+        uri: 'ipfs://QmHash',
+      });
+
+      expect(result.trustRows.map((r) => r.label)).toEqual(['RPC 1']);
+    });
+
+    test('tolerates missing arrays and missing arguments', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      // No trust object, no level, no uri, no proto — should still
+      // produce a well-formed shape rather than throwing.
+      const result = buildTrustRows();
+      expect(result.status).toBeNull();
+      expect(result.trustRows).toEqual([]);
+      expect(result.contentRows).toEqual([]);
     });
   });
 
