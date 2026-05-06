@@ -305,13 +305,9 @@ const loadNavigationModule = async (options = {}) => {
   const trustShield = createElement('button');
   const trustPopover = createElement('div');
   const trustPopoverTitle = createElement('div');
-  const trustPopoverSubtitle = createElement('div');
-  const trustPopoverSummary = createElement('p');
-  const trustPopoverBlock = createElement('div');
-  const trustPopoverAgreed = createElement('div');
-  const trustPopoverAgreedSection = createElement('div');
-  const trustPopoverDissented = createElement('div');
-  const trustPopoverDissentedSection = createElement('div');
+  const trustPopoverStatus = createElement('div');
+  const trustPopoverTrustFields = createElement('div');
+  const trustPopoverContentFields = createElement('div');
   const document = createDocument({
     elementsById: {
       'address-input': addressInput,
@@ -324,13 +320,9 @@ const loadNavigationModule = async (options = {}) => {
       'trust-shield': trustShield,
       'trust-popover': trustPopover,
       'trust-popover-title': trustPopoverTitle,
-      'trust-popover-subtitle': trustPopoverSubtitle,
-      'trust-popover-summary': trustPopoverSummary,
-      'trust-popover-block': trustPopoverBlock,
-      'trust-popover-agreed': trustPopoverAgreed,
-      'trust-popover-agreed-section': trustPopoverAgreedSection,
-      'trust-popover-dissented': trustPopoverDissented,
-      'trust-popover-dissented-section': trustPopoverDissentedSection,
+      'trust-popover-status': trustPopoverStatus,
+      'trust-popover-trust-fields': trustPopoverTrustFields,
+      'trust-popover-content-fields': trustPopoverContentFields,
     },
   });
 

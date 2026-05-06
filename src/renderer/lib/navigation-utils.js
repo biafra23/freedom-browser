@@ -40,7 +40,11 @@ export const resolveProtocolIconType = ({
   if (normalizedValue.startsWith('rad://')) {
     return enableRadicleIntegration ? 'radicle' : 'http';
   }
-  if (normalizedValue.startsWith('freedom://')) return null;
+  // Internal pages aren't network-served, but we still surface the
+  // neutral globe (same icon `rad://` falls back to when its integration
+  // is disabled) so the address bar always carries some leading mark
+  // and never reuses the trust shield from a previous ENS page.
+  if (normalizedValue.startsWith('freedom://')) return 'http';
 
   // Bare ENS / legacy `ens://` falls back to the cached resolved protocol.
   const ensName = extractEnsName(normalizedValue);

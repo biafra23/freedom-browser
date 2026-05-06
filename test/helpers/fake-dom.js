@@ -234,6 +234,14 @@ class FakeElement {
     this.parentNode = null;
   }
 
+  replaceChildren(...newChildren) {
+    this.children.forEach((child) => {
+      child.parentNode = null;
+    });
+    this.children = [];
+    newChildren.forEach((child) => this.appendChild(child));
+  }
+
   contains(target) {
     if (this === target) return true;
     return this.children.some((child) => child.contains(target));

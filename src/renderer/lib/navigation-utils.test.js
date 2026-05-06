@@ -77,10 +77,14 @@ describe('navigation-utils', () => {
       expect(resolveProtocolIconType({ value: 'bzz://meinhard.eth/path' })).toBe('swarm');
     });
 
-    test('hides icons for internal pages and gates radicle on settings', async () => {
+    test('uses the neutral globe for internal pages and gates radicle on settings', async () => {
       const { resolveProtocolIconType } = await loadNavigationUtils();
 
-      expect(resolveProtocolIconType({ value: 'freedom://history' })).toBeNull();
+      // Internal pages reuse the neutral http globe so the address bar
+      // always shows *something* — and never falls back to a stale ENS
+      // trust shield left behind by a previous navigation.
+      expect(resolveProtocolIconType({ value: 'freedom://history' })).toBe('http');
+      expect(resolveProtocolIconType({ value: 'freedom://settings' })).toBe('http');
       expect(resolveProtocolIconType({ value: 'rad://rid' })).toBe('http');
       expect(
         resolveProtocolIconType({
