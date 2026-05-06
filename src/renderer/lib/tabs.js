@@ -799,11 +799,33 @@ const renderTabs = () => {
   });
 };
 
+// URLs `createTab` is allowed to load directly as the initial webview
+// `src`. Everything else — dweb schemes, hostile `file://`/`data:`/
+// `javascript:`, anything we don't recognise — is parked on
+// `about:blank` and dispatched to `loadTarget`, which routes the
+// schemes it understands and silently drops the rest. This narrow
+// allowlist is what keeps `createTab('file:///etc/passwd')` (e.g. from
+// a malicious `tab:new-with-url` IPC or `setWindowOpenHandler` flow)
+// from turning into a direct local-file navigation.
+const isDirectLoadUrl = (url) => {
+  if (!url) return true;
+  if (url === 'about:blank') return true;
+  if (url === homeUrl) return true;
+  return /^https?:\/\//i.test(url);
+};
+
 // Create a new tab
 export const createTab = (url = null) => {
   const tabId = tabState.nextTabId++;
-  const isDirectUrl = !url || url.startsWith('http://') || url.startsWith('https://');
-  const webviewUrl = isDirectUrl ? (url || homeUrl) : homeUrl;
+  // Direct loads: empty/null (use homeUrl), http(s), about:blank, and
+  // the app's own `homeUrl` (production: file:///…/pages/home.html).
+  // Anything else parks on about:blank while `onLoadTarget` resolves
+  // it — this keeps dweb URLs working (their resolution pipeline takes
+  // ~50 ms) without producing the GUEST_VIEW_MANAGER_CALL log noise
+  // that pointing the webview at homeUrl first did, and prevents
+  // hostile schemes from ever becoming a direct webview navigation.
+  const isDirect = isDirectLoadUrl(url);
+  const webviewUrl = isDirect ? (url || homeUrl) : 'about:blank';
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {
@@ -821,9 +843,13 @@ export const createTab = (url = null) => {
   // Switch to the new tab
   switchTab(tabId, { isNewTab: true });
 
-  // For protocol URLs (ens://, bzz://, ipfs://, etc.), route through the
-  // URL resolution pipeline instead of setting webview src directly
-  if (!isDirectUrl && url) {
+  // Anything that isn't a direct-load URL flows through the resolution
+  // pipeline. For routed schemes (bzz://, ipfs://, ens://, rad:,
+  // freedom://, ethereum:, view-source:, bare ENS names) loadTarget
+  // performs the real navigation; for unrecognised inputs (file://,
+  // data:, javascript:, etc.) it falls through to a debug-log no-op,
+  // leaving the tab on about:blank.
+  if (!isDirect) {
     setTimeout(() => { if (onLoadTarget) onLoadTarget(url); }, 50);
   }
 

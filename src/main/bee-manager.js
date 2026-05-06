@@ -127,7 +127,7 @@ full-node: false
 blockchain-rpc-endpoint: ${isLightNode ? `"${blockchainRpcEndpoint}"` : '""'}
 cors-allowed-origins: "null"
 skip-postage-snapshot: true
-resolver-options: https://cloudflare-eth.com
+resolver-options: https://ethereum.publicnode.com
 storage-incentives-enable: false
 data-dir: ${dataDir}
 password: ${password}

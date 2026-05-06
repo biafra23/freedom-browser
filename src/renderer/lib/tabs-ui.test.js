@@ -163,7 +163,7 @@ const loadTabsModule = async (options = {}) => {
   jest.doMock('./menu-backdrop.js', () => backdropMocks);
   jest.doMock('./page-context-menu.js', () => pageContextMenuMocks);
   jest.doMock('./page-urls.js', () => ({
-    homeUrl: HOME_URL,
+    homeUrl: options.homeUrl || HOME_URL,
   }));
 
   const mod = await import('./tabs.js');
@@ -253,6 +253,129 @@ describe('tabs ui behavior', () => {
       { id: initialTab.id, url: initialTab.url, title: initialTab.title, isActive: false },
       { id: thirdTab.id, url: thirdTab.url, title: thirdTab.title, isActive: false },
     ]);
+  });
+
+  test('createTab loads file:// homeUrl directly without going through onLoadTarget', async () => {
+    // Regression: a previous fix replaced "anything not http(s) loads
+    // homeUrl, then onLoadTarget(url) overrides ~50 ms later" with
+    // "anything not http(s) loads about:blank, then onLoadTarget(url)".
+    // That broke production new-tab + new-window paths because the real
+    // homeUrl is a `file:///app/pages/home.html` URL, and `loadTarget`
+    // only routes view-source/ethereum/freedom/ENS/IPFS/IPNS/rad/bzz/http
+    // — `file://` falls through to "Ignoring empty input or invalid URL"
+    // and the tab stays on about:blank forever. The fix is an explicit
+    // allowlist of *direct-load-safe* URLs (homeUrl + http(s) +
+    // about:blank); everything else (dweb schemes AND hostile schemes)
+    // parks on about:blank and is dispatched to loadTarget, which routes
+    // what it can and silently drops the rest.
+    const productionHomeUrl = 'file:///app/pages/home.html';
+    const { mod, createdWebviews } = await loadTabsModule({ homeUrl: productionHomeUrl });
+    const onLoadTarget = jest.fn();
+    mod.setLoadTargetHandler(onLoadTarget);
+
+    jest.useFakeTimers();
+    try {
+      await mod.initTabs();
+      // initTabs creates the first tab via createTab(homeUrl). The webview
+      // must point at homeUrl directly, not at about:blank.
+      expect(createdWebviews[0].getAttribute('src')).toBe(productionHomeUrl);
+
+      // Likewise for an explicit createTab(homeUrl) (new-tab button path).
+      mod.createTab(productionHomeUrl);
+      expect(createdWebviews[1].getAttribute('src')).toBe(productionHomeUrl);
+
+      // No deferred onLoadTarget dispatch for direct URLs.
+      jest.runAllTimers();
+      expect(onLoadTarget).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('createTab never loads hostile schemes directly into the webview', async () => {
+    // Security regression: after tightening the indirect-protocol
+    // allowlist to fix the GUEST_VIEW_MANAGER_CALL noise, the inverse
+    // (everything-not-in-the-allowlist loads directly) made arbitrary
+    // `file:///etc/passwd`, `data:`, `javascript:`, etc. URLs into
+    // direct webview navigations. That path is reachable from main-
+    // process IPC (`tab:new-with-url` via `setWindowOpenHandler`) and
+    // any caller of `createTab(url)`. The fix flips the rule: only
+    // direct-load known-safe URLs (!url, http(s), about:blank,
+    // homeUrl); park everything else on about:blank and dispatch
+    // through loadTarget, which silently drops what it can't route.
+    const productionHomeUrl = 'file:///app/pages/home.html';
+    const { mod, createdWebviews } = await loadTabsModule({
+      homeUrl: productionHomeUrl,
+    });
+    const onLoadTarget = jest.fn();
+    mod.setLoadTargetHandler(onLoadTarget);
+
+    jest.useFakeTimers();
+    try {
+      await mod.initTabs();
+      const hostileTargets = [
+        'file:///etc/passwd',
+        'file:///app/pages/settings.html',
+        'data:text/html,<script>alert(1)</script>',
+        'javascript:alert(1)',
+        'blob:https://example.com/abc',
+        'chrome://settings',
+      ];
+      const baseCount = createdWebviews.length;
+      for (const url of hostileTargets) {
+        mod.createTab(url);
+      }
+      for (let i = 0; i < hostileTargets.length; i++) {
+        const src = createdWebviews[baseCount + i].getAttribute('src');
+        expect(src).toBe('about:blank');
+        expect(src).not.toBe(hostileTargets[i]);
+      }
+      jest.runAllTimers();
+      expect(onLoadTarget.mock.calls.map((call) => call[0])).toEqual(hostileTargets);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('createTab defers dweb URLs through onLoadTarget with about:blank placeholder', async () => {
+    // Counterpart to the file:// regression above: dweb / freedom /
+    // wallet schemes (`bzz:`, `ipfs:`, `ipns:`, `ens:`, `rad:`,
+    // `freedom:`, `ethereum:`, `view-source:`) MUST sit on about:blank
+    // and let loadTarget take over after a microtask, because pointing
+    // the webview at homeUrl synchronously and then calling loadURL
+    // triggers `net::ERR_ABORTED` and Electron logs the rejected
+    // GUEST_VIEW_MANAGER_CALL promise once per tab.
+    const { mod, createdWebviews } = await loadTabsModule({
+      homeUrl: 'file:///app/pages/home.html',
+    });
+    const onLoadTarget = jest.fn();
+    mod.setLoadTargetHandler(onLoadTarget);
+
+    jest.useFakeTimers();
+    try {
+      await mod.initTabs();
+      const targets = [
+        'bzz://meinhard.eth',
+        'ipfs://vitalik.eth',
+        'ipns://docs.ipfs.tech',
+        'ens://swarm.eth',
+        'rad:z2u2CP3ZJzB7ZqE8jHrau19yjcfCQ',
+        'freedom://settings',
+        'ethereum:0xabc',
+        'view-source:bzz://meinhard.eth',
+      ];
+      const baseCount = createdWebviews.length;
+      for (const url of targets) {
+        mod.createTab(url);
+      }
+      for (let i = 0; i < targets.length; i++) {
+        expect(createdWebviews[baseCount + i].getAttribute('src')).toBe('about:blank');
+      }
+      jest.runAllTimers();
+      expect(onLoadTarget.mock.calls.map((call) => call[0])).toEqual(targets);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('updates favicons and manages devtools state', async () => {

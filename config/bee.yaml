@@ -5,7 +5,7 @@ mainnet: 'true'
 full-node: 'false'
 cors-allowed-origins: '*'
 skip-postage-snapshot: 'true'
-resolver-options: https://cloudflare-eth.com
+resolver-options: https://ethereum.publicnode.com
 data-dir: DATA_DIR
 password: PASSWORD
 storage-incentives-enable: 'false'
