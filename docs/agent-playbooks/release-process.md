@@ -61,6 +61,8 @@ Commit style:
 docs(changelog): add user-facing <version> release notes
 ```
 
+**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — the releaser must read through the diff on the release branch and amend the `docs(changelog): …` commit with any wording, scope, or categorisation corrections. `CHANGELOG.md` is not read by §3 (verify) or §4 (build distributables), so those steps can run in parallel with the review. §5 (upload + website) and §6 (tag) freeze the changelog state visible to end users and must wait until review is complete.
+
 ## 3. Verify before building
 
 On the release branch, with a clean working tree:
