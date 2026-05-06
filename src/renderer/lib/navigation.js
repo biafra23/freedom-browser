@@ -303,6 +303,16 @@ const resetTrustTooltip = () => {
   }
 };
 
+// Identity of the ENS resolution currently rendered into the popover —
+// `{ name, trust }` while open, `null` while closed. Used by the
+// stale-popover guard in `updateProtocolIcon` so we can dismiss the
+// popover when the address bar moves to a different ENS name, a non-ENS
+// URL, an internal page, or a different tab. Comparing the trust
+// reference (and not just the name) also catches the rarer case where
+// a fresh resolution replaces the stored trust for the same name while
+// the popover is open.
+let trustPopoverDisplayed = null;
+
 // Toggle popover visibility and the matching aria-expanded state on the
 // shield. All popover-content building lives in `toggleTrustPopover` —
 // this helper only flips chrome and resets the floating-tooltip state so
@@ -312,6 +322,9 @@ const setTrustPopoverOpen = (open) => {
   trustPopover.hidden = !open;
   trustShield.setAttribute('aria-expanded', open ? 'true' : 'false');
   resetTrustTooltip();
+  if (!open) {
+    trustPopoverDisplayed = null;
+  }
 };
 
 // Public hook so other modules (e.g. menus.js) can dismiss the popover
@@ -481,6 +494,10 @@ const toggleTrustPopover = () => {
     contentFieldsEl.replaceChildren(...contentRows.map(buildRow));
   }
 
+  // Record the identity of what's now rendered before we flip the
+  // popover open — `setTrustPopoverOpen(true)` doesn't clear it, only
+  // the close path does.
+  trustPopoverDisplayed = { name, trust };
   setTrustPopoverOpen(true);
 
   // Fit-to-width truncation runs AFTER the popover is un-hidden so
@@ -532,6 +549,21 @@ const updateProtocolIcon = () => {
       trustShield.removeAttribute('data-trust');
       trustShield.setAttribute('aria-label', 'ENS resolution trust status');
       trustShield.hidden = true;
+    }
+
+    // Stale-popover guard: if the popover is open but the address bar
+    // no longer resolves to the same ENS name + trust object the
+    // popover was opened against, dismiss it. Without this, navigating
+    // away (to a non-ENS URL, an internal page, or a different ENS
+    // name) or switching to another tab would leave a misleading
+    // popover behind showing details for the previous resolution —
+    // a real risk on a security/trust surface.
+    if (trustPopover && !trustPopover.hidden && trustPopoverDisplayed) {
+      const stale =
+        !badge ||
+        badge.name !== trustPopoverDisplayed.name ||
+        badge.trust !== trustPopoverDisplayed.trust;
+      if (stale) setTrustPopoverOpen(false);
     }
   }
 };

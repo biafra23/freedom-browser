@@ -126,6 +126,11 @@ const loadNavigationModule = async (options = {}) => {
   const navigationUtilsMocks = {
     applyEnsSuffix: jest.fn((targetUri, suffix = '') => `${targetUri}${suffix}`),
     buildRadicleDisabledUrl: jest.fn(() => 'file:///app/pages/rad-browser.html?error=disabled'),
+    buildTrustRows: jest.fn(() => ({
+      status: 'ENS resolution verified',
+      trustRows: [],
+      contentRows: [],
+    })),
     buildViewSourceNavigation: jest.fn(({ value }) => ({
       addressValue: `display:${value}`,
       loadUrl: `load:${value}`,
@@ -1450,6 +1455,125 @@ describe('navigation', () => {
       ctx.elements.addressInput.dispatch('input');
 
       expect(ctx.elements.trustShield.hidden).toBe(true);
+    });
+  });
+
+  describe('trust popover staleness', () => {
+    // The popover is a security/trust surface. Leaving it open on a stale
+    // ENS resolution after the user has navigated away (or switched
+    // tabs) would mislead about the page they're now looking at — these
+    // tests pin the close-on-stale guard wired into updateProtocolIcon.
+
+    const verifiedTrust = {
+      level: 'verified',
+      queried: ['a', 'b'],
+      agreed: ['a', 'b'],
+    };
+
+    const openPopoverFor = (ctx, ensName, trust = verifiedTrust) => {
+      // index.html declares `<div id="trust-popover" hidden>`; the fake
+      // DOM creates plain elements with no initial attributes, so we
+      // mirror the production starting state explicitly here. Without
+      // it `toggleTrustPopover` would read `hidden === undefined` and
+      // take the "already open, close it" branch on the first click.
+      ctx.elements.trustPopover.hidden = true;
+      ctx.state.ensTrustByName.set(ensName, trust);
+      ctx.elements.addressInput.value = `ens://${ensName}`;
+      ctx.elements.addressInput.dispatch('input');
+      ctx.elements.trustShield.dispatch('click');
+      expect(ctx.elements.trustPopover.hidden).toBe(false);
+      expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('true');
+    };
+
+    test('closes when the address bar moves to a non-ENS URL', async () => {
+      const ctx = await loadNavigationModule();
+      await ctx.mod.initNavigation();
+
+      openPopoverFor(ctx, 'vitalik.eth');
+
+      ctx.elements.addressInput.value = 'https://example.com';
+      ctx.elements.addressInput.dispatch('input');
+
+      expect(ctx.elements.trustPopover.hidden).toBe(true);
+      expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('closes when the address bar moves to a freedom:// internal page', async () => {
+      const ctx = await loadNavigationModule();
+      await ctx.mod.initNavigation();
+
+      openPopoverFor(ctx, 'vitalik.eth');
+
+      // Internal pages render the neutral globe (no shield); the
+      // popover must follow the shield away rather than linger with
+      // vitalik.eth's RPCs / block / CID over the settings page.
+      ctx.elements.addressInput.value = 'freedom://settings';
+      ctx.elements.addressInput.dispatch('input');
+
+      expect(ctx.elements.trustPopover.hidden).toBe(true);
+      expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('closes when the address bar moves to a different ENS name', async () => {
+      const ctx = await loadNavigationModule();
+      await ctx.mod.initNavigation();
+
+      ctx.state.ensTrustByName.set('other.eth', {
+        level: 'unverified',
+        queried: ['x'],
+        agreed: ['x'],
+      });
+      openPopoverFor(ctx, 'vitalik.eth');
+
+      ctx.elements.addressInput.value = 'ens://other.eth';
+      ctx.elements.addressInput.dispatch('input');
+
+      // The shield itself stays visible for the new ENS name, but the
+      // popover content was about vitalik.eth and must not survive the
+      // switch.
+      expect(ctx.elements.trustShield.hidden).toBe(false);
+      expect(ctx.elements.trustPopover.hidden).toBe(true);
+      expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('stays open across a no-op refresh on the same address', async () => {
+      // Regression guard against a too-aggressive close rule: the
+      // stale check must not fire when the address bar simply
+      // re-emits an input event (e.g. focus changes, programmatic
+      // value reassignment to the same string) without the resolved
+      // ENS name actually changing.
+      const ctx = await loadNavigationModule();
+      await ctx.mod.initNavigation();
+
+      openPopoverFor(ctx, 'vitalik.eth');
+
+      ctx.elements.addressInput.dispatch('input');
+
+      expect(ctx.elements.trustPopover.hidden).toBe(false);
+      expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('true');
+    });
+
+    test('closes when stored trust for the same name is replaced', async () => {
+      // Rarer but real: a fresh resolution finishes for the still-
+      // current ENS name and replaces the trust map entry. The popover
+      // is now showing details that no longer match the stored
+      // resolution. Comparing the trust object reference (not just the
+      // name) catches this.
+      const ctx = await loadNavigationModule();
+      await ctx.mod.initNavigation();
+
+      openPopoverFor(ctx, 'vitalik.eth');
+
+      ctx.state.ensTrustByName.set('vitalik.eth', {
+        level: 'conflict',
+        queried: ['a', 'b'],
+        agreed: ['a'],
+        dissented: ['b'],
+      });
+      ctx.elements.addressInput.dispatch('input');
+
+      expect(ctx.elements.trustPopover.hidden).toBe(true);
+      expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('false');
     });
   });
 });
