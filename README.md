@@ -416,6 +416,8 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | ----------------------------------------------------------------- | -------------------------------------------- |
 | `npm start`                                                       | Launch the Electron app                      |
 | `npm test`                                                        | Run unit tests (Jest)                        |
+| `npm run test:e2e`                                                | Run the harness E2E suite (stubbed nodes; fast, no network) |
+| `npm run test:e2e:live`                                           | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
 | `npm run bee:download`                                            | Download the Bee binary for your platform    |
 | `npm run ipfs:download`                                           | Download the Kubo binary for your platform   |
 | `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset`     | Manage Bee outside the app                   |
@@ -462,7 +464,9 @@ The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with option
 
 ### Testing
 
-Run all tests:
+#### Unit tests (Jest)
+
+Run all unit tests:
 
 ```bash
 npm test
@@ -475,6 +479,17 @@ The suite covers most of `src/main/` and `src/renderer/lib/` — see `src/**/*.t
 - **Identity, vault & wallet**: `identity/derivation`, `identity/vault`, `identity/formats`, `wallet/dapp-permissions`, `wallet/transaction-service`
 - **Parsing & utilities**: `url-utils`, `cid-utils`, `origin-utils`, `ethereum-uri`, `page-urls`, `brand`
 - **Storage & history**: `bookmarks-store`, `settings-store`, `history`, `feed-store`, `publish-history`
+
+#### End-to-end tests (Playwright + Electron)
+
+Two Playwright projects live under `test-e2e/`. **Both are run manually — neither is wired into CI.** Configuration is in `playwright.config.js`.
+
+| Suite | Command | Files | What it does |
+| --- | --- | --- | --- |
+| `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Bee/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
+| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Bee + IPFS spawn, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. Currently one spec (`eth-sites.spec.js`) cold-starts both nodes, waits for >20 connected peers on each, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS) and asserts the rendered pages. Requires `npm run bee:download` and `npm run ipfs:download` first; Swarm/IPFS cold-start can take a few minutes on a fresh repo. The Bee check is skipped if the binary is missing; the IPFS check fails loudly. |
+
+Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Bee port detection don't tolerate parallel app instances.
 
 ### Logging
 

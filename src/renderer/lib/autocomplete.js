@@ -246,6 +246,14 @@ const handleKeyDown = (e) => {
     if (e.key === 'ArrowDown' && addressInput?.value) {
       handleInput();
       e.preventDefault();
+      return;
+    }
+    // User committed before the 80 ms debounce fired. Cancel the
+    // pending suggestion render so the dropdown doesn't pop open
+    // after the navigation has already started.
+    if ((e.key === 'Enter' || e.key === 'Escape') && debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
     }
     return;
   }

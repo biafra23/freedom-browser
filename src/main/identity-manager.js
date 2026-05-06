@@ -34,6 +34,14 @@ const VAULT_META_FILE = 'vault-meta.json';
  * Get the app data directory for identity storage
  */
 function getIdentityDataDir() {
+  // Explicit override for tests / advanced users — keeps a live E2E
+  // run from picking up the developer's persistent dev `identity-data/`
+  // vault, which would flip Bee/IPFS into injected-identity mode and
+  // make them hang waiting for keys the temp data dirs don't have.
+  // Honoured in both dev and packaged modes.
+  if (process.env.FREEDOM_IDENTITY_DATA) {
+    return process.env.FREEDOM_IDENTITY_DATA;
+  }
   if (!app.isPackaged) {
     return path.join(__dirname, '..', '..', 'identity-data');
   }

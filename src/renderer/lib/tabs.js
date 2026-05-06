@@ -540,6 +540,7 @@ const createTabElement = (tab) => {
   const tabEl = document.createElement('button');
   tabEl.className = 'tab';
   tabEl.dataset.tabId = tab.id;
+  tabEl.dataset.test = 'tab';
   tabEl.draggable = true;
 
   // Tab icon container (favicon, spinner, or default globe)
@@ -576,6 +577,7 @@ const createTabElement = (tab) => {
   // Close button
   const closeEl = document.createElement('button');
   closeEl.className = 'tab-close';
+  closeEl.dataset.test = 'tab-close';
   closeEl.innerHTML =
     '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>';
   closeEl.addEventListener('click', (e) => {

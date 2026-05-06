@@ -64,6 +64,17 @@ function getIpfsBinaryPath() {
 }
 
 function getIpfsDataPath() {
+  // Explicit override for tests / advanced users — keeps a live E2E
+  // run from clobbering the developer's persistent dev `ipfs-data/`.
+  // Honoured in both dev and packaged modes; only set this when you
+  // want a throwaway repo (Kubo will re-init identity, peerstore, etc.).
+  if (process.env.FREEDOM_IPFS_DATA) {
+    const overrideDir = process.env.FREEDOM_IPFS_DATA;
+    if (!fs.existsSync(overrideDir)) {
+      fs.mkdirSync(overrideDir, { recursive: true });
+    }
+    return overrideDir;
+  }
   if (!app.isPackaged) {
     const devDataDir = path.join(__dirname, '..', '..', 'ipfs-data');
     if (!fs.existsSync(devDataDir)) {

@@ -73,6 +73,7 @@ const createBookmarkButton = (item, isOverflowItem = false) => {
   const button = document.createElement('button');
   button.className = isOverflowItem ? 'bookmarks-overflow-item' : 'bookmark';
   button.dataset.hash = item.target;
+  button.dataset.test = isOverflowItem ? 'bookmark-overflow-item' : 'bookmark-item';
 
   // Create icon container
   const iconContainer = document.createElement('span');
