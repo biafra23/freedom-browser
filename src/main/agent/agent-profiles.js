@@ -26,16 +26,17 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const IPC = require('../../shared/ipc-channels');
 const { newId } = require('../../shared/random-id');
+const { TIERS } = require('./tool-tiers');
 
 // Conservative default for the auto-created profile: can read the
 // current tab and drive the browser within consent gates, can hit
 // public networks for reads. Excludes anything that sends user data
 // outward, costs money, or signs.
 const DEFAULT_TIERS = [
-  'local_safe',
-  'local_sensitive',
-  'external_network',
-  'browser_mutation',
+  TIERS.LOCAL_SAFE,
+  TIERS.LOCAL_SENSITIVE,
+  TIERS.EXTERNAL_NETWORK,
+  TIERS.BROWSER_MUTATION,
 ];
 
 const DEFAULT_PROFILE_NAME = 'Local AI';
