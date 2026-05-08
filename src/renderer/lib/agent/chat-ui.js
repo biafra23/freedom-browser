@@ -31,7 +31,11 @@ let composerEl;
 let inputEl;
 let sendBtn;
 let stopBtn;
-let modelSelect;
+let modelSelector;
+let modelBtn;
+let modelBtnName;
+let modelDropdown;
+let modelList;
 let clearBtn;
 let statusBadge;
 
@@ -41,7 +45,11 @@ export function initChatUi() {
   inputEl = document.getElementById('agent-input');
   sendBtn = document.getElementById('agent-send-btn');
   stopBtn = document.getElementById('agent-stop-btn');
-  modelSelect = document.getElementById('agent-model-select');
+  modelSelector = document.getElementById('agent-model-selector');
+  modelBtn = document.getElementById('agent-model-btn');
+  modelBtnName = document.getElementById('agent-model-btn-name');
+  modelDropdown = document.getElementById('agent-model-dropdown');
+  modelList = document.getElementById('agent-model-list');
   clearBtn = document.getElementById('agent-clear-btn');
   statusBadge = document.getElementById('agent-status-badge');
 
@@ -65,8 +73,12 @@ export function initChatUi() {
   });
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
-  modelSelect?.addEventListener('change', () => {
-    state.selectedModel = modelSelect.value;
+  modelBtn?.addEventListener('click', toggleModelDropdown);
+  // Close the model dropdown on any click outside the selector.
+  document.addEventListener('click', (e) => {
+    if (modelSelector && !modelSelector.contains(e.target)) {
+      closeModelDropdown();
+    }
   });
 
   window.agent.onChatChunk((data) => handleChunk(data));
@@ -102,30 +114,67 @@ export async function refreshStatus() {
       setStatus('error', 'offline');
     }
 
-    if (modelSelect) {
-      modelSelect.innerHTML = '';
-      const names = state.models.map((m) => m.name);
-      const choices = names.length > 0 ? names : [FALLBACK_MODEL];
-      for (const name of choices) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        modelSelect.appendChild(opt);
-      }
-      // Prefer the previously selected model if still installed; otherwise
-      // use FALLBACK_MODEL if present, otherwise the first available.
-      const preferred =
-        (state.selectedModel && choices.includes(state.selectedModel)
-          ? state.selectedModel
-          : null) ||
-        (choices.includes(FALLBACK_MODEL) ? FALLBACK_MODEL : choices[0]);
-      modelSelect.value = preferred;
-      state.selectedModel = preferred;
-    }
+    const names = state.models.map((m) => m.name);
+    const choices = names.length > 0 ? names : [FALLBACK_MODEL];
+    // Prefer the previously selected model if still installed; otherwise
+    // use FALLBACK_MODEL if present, otherwise the first available.
+    const preferred =
+      (state.selectedModel && choices.includes(state.selectedModel)
+        ? state.selectedModel
+        : null) ||
+      (choices.includes(FALLBACK_MODEL) ? FALLBACK_MODEL : choices[0]);
+    state.selectedModel = preferred;
+    renderModelDropdown(choices);
+    if (modelBtnName) modelBtnName.textContent = preferred;
   } catch (err) {
     pushDebug(`[ChatUi] Status refresh failed: ${err?.message || err}`);
     setStatus('error', 'offline');
   }
+}
+
+function renderModelDropdown(choices) {
+  if (!modelList) return;
+  modelList.innerHTML = '';
+  for (const name of choices) {
+    const li = document.createElement('li');
+    li.className = 'agent-model-item';
+    if (name === state.selectedModel) li.classList.add('active');
+    li.setAttribute('role', 'option');
+    li.dataset.model = name;
+    li.textContent = name;
+    li.addEventListener('click', () => selectModel(name));
+    modelList.appendChild(li);
+  }
+}
+
+function selectModel(name) {
+  state.selectedModel = name;
+  if (modelBtnName) modelBtnName.textContent = name;
+  // Update the active class without a full re-render.
+  if (modelList) {
+    for (const item of modelList.children) {
+      item.classList.toggle('active', item.dataset.model === name);
+    }
+  }
+  closeModelDropdown();
+}
+
+function toggleModelDropdown() {
+  if (!modelSelector || !modelDropdown) return;
+  if (modelSelector.classList.contains('open')) {
+    closeModelDropdown();
+  } else {
+    modelSelector.classList.add('open');
+    modelDropdown.classList.remove('hidden');
+    modelBtn?.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function closeModelDropdown() {
+  if (!modelSelector || !modelDropdown) return;
+  modelSelector.classList.remove('open');
+  modelDropdown.classList.add('hidden');
+  modelBtn?.setAttribute('aria-expanded', 'false');
 }
 
 function setStatus(level, text) {
@@ -191,7 +240,7 @@ async function handleSubmit(e) {
   const text = inputEl.value.trim();
   if (!text) return;
 
-  const model = state.selectedModel || (modelSelect && modelSelect.value) || FALLBACK_MODEL;
+  const model = state.selectedModel || FALLBACK_MODEL;
   // Auto-title from the first user message of a fresh session. Existing
   // sessions keep their stored title (user-renamed or earlier auto-title).
   const initialTitle = state.messages.length === 0 ? autoTitleFromMessage(text) : null;

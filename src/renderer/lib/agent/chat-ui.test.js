@@ -49,7 +49,11 @@ const loadChatUi = async ({
   const inputEl = createElement('textarea');
   const sendBtn = createElement('button');
   const stopBtn = createElement('button');
-  const modelSelect = createElement('select');
+  const modelSelector = createElement('div');
+  const modelBtn = createElement('button');
+  const modelBtnName = createElement('span');
+  const modelDropdown = createElement('div', { classes: ['hidden'] });
+  const modelList = createElement('ul');
   const clearBtn = createElement('button');
   const statusBadge = createElement('span');
 
@@ -60,7 +64,11 @@ const loadChatUi = async ({
       'agent-input': inputEl,
       'agent-send-btn': sendBtn,
       'agent-stop-btn': stopBtn,
-      'agent-model-select': modelSelect,
+      'agent-model-selector': modelSelector,
+      'agent-model-btn': modelBtn,
+      'agent-model-btn-name': modelBtnName,
+      'agent-model-dropdown': modelDropdown,
+      'agent-model-list': modelList,
       'agent-clear-btn': clearBtn,
       'agent-status-badge': statusBadge,
     },
@@ -90,7 +98,11 @@ const loadChatUi = async ({
     inputEl,
     sendBtn,
     stopBtn,
-    modelSelect,
+    modelSelector,
+    modelBtn,
+    modelBtnName,
+    modelDropdown,
+    modelList,
     clearBtn,
     statusBadge,
   };
@@ -121,25 +133,61 @@ describe('chat-ui', () => {
     expect(statusBadge.classList.contains('error')).toBe(true);
   });
 
-  test('populates model select with installed models, prefers default fallback', async () => {
-    const { modelSelect } = await loadChatUi({
+  test('populates model dropdown with installed models, prefers default fallback', async () => {
+    const { modelList, modelBtnName } = await loadChatUi({
       initialStatus: {
         running: true,
         version: '0.23.2',
         models: [{ name: 'qwen3:0.6b' }, { name: 'gemma4:e2b' }],
       },
     });
-    const optValues = modelSelect.children.map((c) => c.value);
-    expect(optValues).toEqual(['qwen3:0.6b', 'gemma4:e2b']);
-    expect(modelSelect.value).toBe('gemma4:e2b');
+    const itemValues = modelList.children.map((c) => c.dataset.model);
+    expect(itemValues).toEqual(['qwen3:0.6b', 'gemma4:e2b']);
+    expect(modelBtnName.textContent).toBe('gemma4:e2b');
+    // Active item is the selected one.
+    const active = modelList.children.find((c) => c.classList.contains('active'));
+    expect(active.dataset.model).toBe('gemma4:e2b');
   });
 
   test('falls back to default model name when no models installed', async () => {
-    const { modelSelect } = await loadChatUi({
+    const { modelList, modelBtnName } = await loadChatUi({
       initialStatus: { running: true, version: '0.23.2', models: [] },
     });
-    expect(modelSelect.children.map((c) => c.value)).toEqual(['gemma4:e2b']);
-    expect(modelSelect.value).toBe('gemma4:e2b');
+    expect(modelList.children.map((c) => c.dataset.model)).toEqual(['gemma4:e2b']);
+    expect(modelBtnName.textContent).toBe('gemma4:e2b');
+  });
+
+  test('clicking the model button toggles the dropdown open/closed', async () => {
+    const { modelBtn, modelDropdown, modelSelector } = await loadChatUi();
+    expect(modelDropdown.classList.contains('hidden')).toBe(true);
+
+    modelBtn.dispatch('click');
+    expect(modelDropdown.classList.contains('hidden')).toBe(false);
+    expect(modelSelector.classList.contains('open')).toBe(true);
+    expect(modelBtn.getAttribute('aria-expanded')).toBe('true');
+
+    modelBtn.dispatch('click');
+    expect(modelDropdown.classList.contains('hidden')).toBe(true);
+    expect(modelSelector.classList.contains('open')).toBe(false);
+    expect(modelBtn.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('clicking a dropdown item selects the model and closes the dropdown', async () => {
+    const { modelBtn, modelList, modelBtnName, modelDropdown } = await loadChatUi({
+      initialStatus: {
+        running: true,
+        version: '0.23.2',
+        models: [{ name: 'qwen3:0.6b' }, { name: 'gemma4:e2b' }],
+      },
+    });
+    modelBtn.dispatch('click');
+    const otherItem = modelList.children.find((c) => c.dataset.model === 'qwen3:0.6b');
+    otherItem.dispatch('click');
+
+    expect(modelBtnName.textContent).toBe('qwen3:0.6b');
+    expect(modelDropdown.classList.contains('hidden')).toBe(true);
+    const active = modelList.children.find((c) => c.classList.contains('active'));
+    expect(active.dataset.model).toBe('qwen3:0.6b');
   });
 
   test('submit pushes user message + assistant placeholder and starts a stream', async () => {
