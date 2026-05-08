@@ -77,6 +77,12 @@ export function initChatUi() {
     if (event.detail?.id === 'ai-sidebar') refreshStatus();
   });
 
+  // Re-fetch status whenever the Ollama lifecycle transitions (start
+  // succeeded / process exited / etc.). The chat UI's status badge and
+  // model dropdown both depend on whether the daemon is reachable, so
+  // we want the same source of truth as the Nodes panel.
+  window.ollama?.onStatusUpdate?.(() => refreshStatus());
+
   refreshStatus();
   renderMessages();
   pushDebug('[ChatUi] Initialized');

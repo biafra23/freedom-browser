@@ -195,4 +195,11 @@ module.exports = {
   AGENT_CHAT_CHUNK: 'agent:chat:chunk',
   AGENT_CHAT_DONE: 'agent:chat:done',
   AGENT_CHAT_CANCEL: 'agent:chat:cancel',
+
+  // Ollama sidecar lifecycle
+  OLLAMA_START: 'ollama:start',
+  OLLAMA_STOP: 'ollama:stop',
+  OLLAMA_GET_STATUS: 'ollama:getStatus',
+  OLLAMA_STATUS_UPDATE: 'ollama:statusUpdate',
+  OLLAMA_CHECK_BINARY: 'ollama:checkBinary',
 };

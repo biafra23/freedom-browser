@@ -729,6 +729,18 @@
                 </label>
               </div>
             </div>
+            <div class="row sub" id="start-ollama-row">
+              <div class="row-body">
+                <p class="row-label">Start Ollama daemon when Freedom opens</p>
+                <p class="row-help">Auto-starts the bundled Ollama sidecar on launch and stops it on quit. Reuses an existing Ollama daemon on port 11434 if one is already running.</p>
+              </div>
+              <div class="row-control">
+                <label class="toggle">
+                  <input type="checkbox" id="start-ollama-at-launch" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -781,6 +793,7 @@
         startRadicle: $('start-radicle-at-launch'),
         enableIdentity: $('enable-identity-wallet'),
         enableLocalAI: $('enable-local-ai'),
+        startOllama: $('start-ollama-at-launch'),
         autoUpdate: $('auto-update'),
       };
 
@@ -917,6 +930,7 @@
         startRadicleAtLaunch: isWindows ? false : fields.startRadicle.checked,
         enableIdentityWallet: fields.enableIdentity.checked,
         enableLocalAI: fields.enableLocalAI.checked,
+        startOllamaAtLaunch: fields.startOllama.checked,
         autoUpdate: fields.autoUpdate.checked,
         enableEnsCustomRpc: fields.enableEnsCustomRpc.checked,
         ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
@@ -939,6 +953,7 @@
         fields.startRadicle.checked = settings.startRadicleAtLaunch === true;
         fields.enableIdentity.checked = settings.enableIdentityWallet === true;
         fields.enableLocalAI.checked = settings.enableLocalAI === true;
+        fields.startOllama.checked = settings.startOllamaAtLaunch !== false;
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.enableEnsCustomRpc.checked = settings.enableEnsCustomRpc === true;
         fields.ensRpcUrl.value = settings.ensRpcUrl || '';
@@ -1126,6 +1141,7 @@
       fields.startRadicle.addEventListener('change', save);
       fields.enableIdentity.addEventListener('change', save);
       fields.enableLocalAI.addEventListener('change', save);
+      fields.startOllama.addEventListener('change', save);
       fields.autoUpdate.addEventListener('change', save);
 
       fields.enableEnsCustomRpc.addEventListener('change', () => {

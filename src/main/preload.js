@@ -423,3 +423,15 @@ contextBridge.exposeInMainWorld('agent', {
     return () => ipcRenderer.removeListener('agent:chat:done', handler);
   },
 });
+
+contextBridge.exposeInMainWorld('ollama', {
+  start: () => ipcRenderer.invoke('ollama:start'),
+  stop: () => ipcRenderer.invoke('ollama:stop'),
+  getStatus: () => ipcRenderer.invoke('ollama:getStatus'),
+  checkBinary: () => ipcRenderer.invoke('ollama:checkBinary'),
+  onStatusUpdate: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('ollama:statusUpdate', handler);
+    return () => ipcRenderer.removeListener('ollama:statusUpdate', handler);
+  },
+});

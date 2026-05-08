@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS = {
   enableRadicleIntegration: false,
   enableIdentityWallet: true,
   enableLocalAI: true,
+  startOllamaAtLaunch: true,
   beeNodeMode: 'ultraLight',
   startBeeAtLaunch: true,
   startIpfsAtLaunch: true,

@@ -97,6 +97,7 @@ const { registerFeedStoreIpc } = require('./swarm/feed-store');
 const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
 const { registerAgentIpc } = require('./agent/agent-ipc');
+const { registerOllamaIpc, startOllama, stopOllama } = require('./agent/ollama-manager');
 const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
 const { migrateUserData } = require('./migrate-user-data');
 const { initUpdater } = require('./updater');
@@ -157,6 +158,7 @@ async function bootstrap() {
   registerSwarmProviderIpc();
   registerFeedStoreIpc();
   registerAgentIpc();
+  registerOllamaIpc();
   if (!TEST_MODE) {
     // Skip registering the real bzz/ipfs/ipns handlers in test mode —
     // installTestHarness() registers fixture-driven stubs on the same
@@ -208,6 +210,9 @@ async function bootstrap() {
     }
     if (settings.enableRadicleIntegration && settings.startRadicleAtLaunch) {
       startRadicle();
+    }
+    if (settings.enableLocalAI && settings.startOllamaAtLaunch) {
+      startOllama();
     }
   }
 
@@ -287,7 +292,7 @@ app.on('before-quit', async (event) => {
   cleanupTempDirs();
 
   log.info('[App] Waiting for Bee, IPFS, and Radicle to stop...');
-  await Promise.all([stopBee(), stopIpfs(), stopRadicle()]);
+  await Promise.all([stopBee(), stopIpfs(), stopRadicle(), stopOllama()]);
   log.info('[App] All processes stopped, quitting...');
 
 

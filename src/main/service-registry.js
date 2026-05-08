@@ -42,6 +42,14 @@ const registry = {
     tempMessage: null,
     tempMessageTimeout: null,
   },
+  ollama: {
+    api: null,        // e.g., 'http://127.0.0.1:11434'
+    gateway: null,    // Same as api — Ollama serves /api/* and /v1/* on one port
+    mode: MODE.NONE,
+    statusMessage: null,
+    tempMessage: null,
+    tempMessageTimeout: null,
+  },
 };
 
 // Default ports
@@ -63,6 +71,10 @@ const DEFAULTS = {
     p2pPort: 8776,    // radicle-node P2P port
     fallbackRange: 10,
   },
+  ollama: {
+    apiPort: 11434,
+    fallbackRange: 10,
+  },
 };
 
 /**
@@ -80,6 +92,7 @@ function getRegistry() {
     ipfs: { ...registry.ipfs },
     bee: { ...registry.bee },
     radicle: { ...registry.radicle },
+    ollama: { ...registry.ollama },
   };
 }
 
@@ -248,6 +261,13 @@ function getRadicleApiUrl() {
 }
 
 /**
+ * Get URL for Ollama API (serves both /api/* and OpenAI-compatible /v1/*)
+ */
+function getOllamaApiUrl() {
+  return registry.ollama.api || `http://127.0.0.1:${DEFAULTS.ollama.apiPort}`;
+}
+
+/**
  * Register IPC handlers for service registry
  */
 function registerServiceRegistryIpc() {
@@ -273,6 +293,7 @@ module.exports = {
   getBeeApiUrl,
   getBeeGatewayUrl,
   getRadicleApiUrl,
+  getOllamaApiUrl,
   broadcastRegistryUpdate,
   registerServiceRegistryIpc,
 };
