@@ -165,17 +165,41 @@ async function handleSubmit(e) {
   }
 }
 
+// Per-chunk re-rendering of the full assistant message is O(n²) in
+// content length (marked + DOMPurify both re-parse the entire string),
+// so we coalesce to one render per animation frame. Multiple tokens
+// arriving inside the same frame collapse to a single parse + sanitise.
+let renderScheduled = false;
+
+function flushAssistantRender() {
+  renderScheduled = false;
+  if (!state.activeAssistantEl) return;
+  const last = state.messages[state.messages.length - 1];
+  if (!last || last.role !== 'assistant') return;
+  const contentEl = state.activeAssistantEl.querySelector('.agent-message-content');
+  if (!contentEl) return;
+  contentEl.innerHTML = renderMarkdown(last.content);
+  scrollToBottom();
+}
+
+function scheduleAssistantRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(flushAssistantRender);
+  } else {
+    // Test fallback: run synchronously when rAF isn't available.
+    flushAssistantRender();
+  }
+}
+
 function handleChunk(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
   if (!state.activeAssistantEl) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== 'assistant') return;
   last.content += data.content;
-  const contentEl = state.activeAssistantEl.querySelector('.agent-message-content');
-  if (contentEl) {
-    contentEl.innerHTML = renderMarkdown(last.content);
-    scrollToBottom();
-  }
+  scheduleAssistantRender();
 }
 
 function handleDone(data) {

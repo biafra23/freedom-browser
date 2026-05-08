@@ -38,6 +38,3 @@ export function renderMarkdown(text) {
     ADD_ATTR: ['target', 'rel'],
   });
 }
-
-// Exported for tests.
-export const _internals = { reset: () => { configured = false; } };

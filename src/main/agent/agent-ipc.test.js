@@ -18,9 +18,12 @@ jest.mock('../logger', () => ({
 }));
 
 jest.mock('./ollama-meta', () => ({
-  getBaseUrl: () => 'http://127.0.0.1:11434',
   getVersion: jest.fn(),
   listModels: jest.fn(),
+}));
+
+jest.mock('../service-registry', () => ({
+  getOllamaApiUrl: jest.fn(() => 'http://127.0.0.1:11434'),
 }));
 
 const mockTextStream = jest.fn();

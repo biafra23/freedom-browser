@@ -30,29 +30,29 @@ const crypto = require('crypto');
 const { ipcMain, app } = require('electron');
 const log = require('../logger');
 const IPC = require('../../shared/ipc-channels');
-const { getVersion, listModels, getBaseUrl } = require('./ollama-meta');
+const { getVersion, listModels } = require('./ollama-meta');
+const { getOllamaApiUrl } = require('../service-registry');
 
 // streamId -> { controller, senderId }
 const activeStreams = new Map();
 
-// Lazy-load AI SDK Core + provider so unit tests can mock them via
-// jest.doMock without paying the import cost in modules that don't chat.
+// Lazy-load AI SDK Core so unit tests can mock it via jest.doMock without
+// paying the import cost. The provider is rebuilt per chat against the
+// service-registry's live URL so a port-conflict fallback (default 11434
+// busy → 11435) doesn't leave us streaming to a stale baseURL.
 let _streamText;
 let _createOpenAICompatible;
-let _provider;
 
 function loadAiSdk() {
   if (!_streamText) _streamText = require('ai').streamText;
   if (!_createOpenAICompatible) {
     _createOpenAICompatible = require('@ai-sdk/openai-compatible').createOpenAICompatible;
   }
-  if (!_provider) {
-    _provider = _createOpenAICompatible({
-      name: 'ollama',
-      baseURL: `${getBaseUrl()}/v1`,
-    });
-  }
-  return { streamText: _streamText, provider: _provider };
+  const provider = _createOpenAICompatible({
+    name: 'ollama',
+    baseURL: `${getOllamaApiUrl()}/v1`,
+  });
+  return { streamText: _streamText, provider };
 }
 
 function newStreamId() {
@@ -78,9 +78,10 @@ function dropStreamsForSender(senderId) {
 
 async function handleStatus() {
   try {
+    const baseUrl = getOllamaApiUrl();
     const [version, tags] = await Promise.all([
-      getVersion(),
-      listModels().catch(() => ({ models: [] })),
+      getVersion({ baseUrl }),
+      listModels({ baseUrl }).catch(() => ({ models: [] })),
     ]);
     return {
       running: true,
@@ -206,7 +207,6 @@ module.exports = {
     handleStatus,
     startChatStream,
     cancelChatStream,
-    pumpChat,
     dropStreamsForSender,
   },
 };

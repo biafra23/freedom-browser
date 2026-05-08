@@ -432,6 +432,9 @@ contextBridge.exposeInMainWorld('ollama', {
   onStatusUpdate: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('ollama:statusUpdate', handler);
+    // Replay the current status on subscribe so callers see state at
+    // mount time, matching the bee/ipfs/radicle bridges.
+    ipcRenderer.invoke('ollama:getStatus').then(callback);
     return () => ipcRenderer.removeListener('ollama:statusUpdate', handler);
   },
 });
