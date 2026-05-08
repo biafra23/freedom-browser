@@ -11,6 +11,7 @@
     <title>Freedom</title>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./styles/sidebar.css" />
+    <link rel="stylesheet" href="./styles/agent-sidebar.css" />
   </head>
   <body>
     <!-- Update Toast Notification -->
@@ -71,6 +72,20 @@
       </div>
     </div>
     <header class="toolbar">
+      <button
+        id="agent-toggle-btn"
+        class="agent-toggle-btn"
+        type="button"
+        aria-label="Toggle AI Chat"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <path d="M21 12c0 4.97-4.03 9-9 9-1.42 0-2.77-.33-3.97-.91L3 21l.91-5.03A8.96 8.96 0 0 1 3 12c0-4.97 4.03-9 9-9s9 4.03 9 9Z"/>
+          <circle cx="9" cy="12" r="1" fill="currentColor"/>
+          <circle cx="12" cy="12" r="1" fill="currentColor"/>
+          <circle cx="15" cy="12" r="1" fill="currentColor"/>
+        </svg>
+      </button>
       <div class="nav-buttons">
         <button id="back-btn" class="icon-btn" aria-label="Back" disabled>
           <svg
@@ -683,6 +698,48 @@
     </header>
     <nav class="bookmarks" aria-label="Bookmarks" id="bookmarks-bar" data-test="bookmarks-bar"></nav>
     <section class="app-body">
+      <aside id="agent-sidebar" class="agent-sidebar collapsed" aria-label="AI Chat">
+        <div class="agent-sidebar-inner">
+          <div class="agent-sidebar-header">
+            <div class="agent-sidebar-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12c0 4.97-4.03 9-9 9-1.42 0-2.77-.33-3.97-.91L3 21l.91-5.03A8.96 8.96 0 0 1 3 12c0-4.97 4.03-9 9-9s9 4.03 9 9Z"/>
+              </svg>
+              <span>Chat</span>
+              <span id="agent-status-badge" class="agent-status-badge" title="Daemon status">…</span>
+            </div>
+            <button
+              type="button"
+              id="agent-sidebar-close"
+              class="agent-sidebar-close"
+              aria-label="Close chat"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"/><path d="M6 6 18 18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="agent-sidebar-meta">
+            <label for="agent-model-select">Model</label>
+            <select id="agent-model-select" class="agent-model-select"></select>
+            <button type="button" id="agent-clear-btn" class="agent-clear-btn" title="Clear conversation">Clear</button>
+          </div>
+          <div id="agent-messages" class="agent-messages" aria-live="polite"></div>
+          <form id="agent-composer" class="agent-composer" autocomplete="off">
+            <textarea
+              id="agent-input"
+              class="agent-input"
+              rows="2"
+              placeholder="Ask the model anything…"
+              aria-label="Message to model"
+            ></textarea>
+            <div class="agent-composer-actions">
+              <button type="button" id="agent-stop-btn" class="agent-stop-btn hidden" title="Stop generation">Stop</button>
+              <button type="submit" id="agent-send-btn" class="agent-send-btn">Send</button>
+            </div>
+          </form>
+        </div>
+      </aside>
       <main class="content">
         <div id="webview-container" class="webview-container">
           <!-- Webviews inserted dynamically by tabs.js -->

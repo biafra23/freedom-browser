@@ -407,3 +407,19 @@ contextBridge.exposeInMainWorld('swarmFeedStore', {
   setFeedIdentity: (origin, identityMode) => ipcRenderer.invoke('swarm:set-feed-identity', origin, identityMode),
   revokeFeedAccess: (origin) => ipcRenderer.invoke('swarm:revoke-feed-access', origin),
 });
+
+contextBridge.exposeInMainWorld('agent', {
+  getStatus: () => ipcRenderer.invoke('agent:status'),
+  startChat: (model, messages) => ipcRenderer.invoke('agent:chat:start', { model, messages }),
+  cancelChat: (streamId) => ipcRenderer.invoke('agent:chat:cancel', { streamId }),
+  onChatChunk: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:chunk', handler);
+    return () => ipcRenderer.removeListener('agent:chat:chunk', handler);
+  },
+  onChatDone: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:done', handler);
+    return () => ipcRenderer.removeListener('agent:chat:done', handler);
+  },
+});

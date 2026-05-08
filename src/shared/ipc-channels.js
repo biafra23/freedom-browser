@@ -188,4 +188,11 @@ module.exports = {
   SWARM_HAS_FEED_GRANT: 'swarm:has-feed-grant',
   SWARM_GET_IDENTITY_MODE: 'swarm:get-identity-mode',
   SWARM_REVOKE_FEED_ACCESS: 'swarm:revoke-feed-access',
+
+  // Local AI Agent (sidecar Ollama runtime)
+  AGENT_STATUS: 'agent:status',
+  AGENT_CHAT_START: 'agent:chat:start',
+  AGENT_CHAT_CHUNK: 'agent:chat:chunk',
+  AGENT_CHAT_DONE: 'agent:chat:done',
+  AGENT_CHAT_CANCEL: 'agent:chat:cancel',
 };

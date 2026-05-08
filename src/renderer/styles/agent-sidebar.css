@@ -1,0 +1,356 @@
+/**
+ * Agent Sidebar Styles
+ *
+ * Left-side panel for the local AI chat.
+ * Mirrors the right wallet sidebar's collapsed-width pattern so the
+ * webview area smoothly resizes when toggled.
+ */
+
+/* ============================================
+   Layout
+   ============================================ */
+
+.agent-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  flex-shrink: 0;
+  background-color: var(--toolbar);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  transition: width 0.2s ease, border-width 0.2s ease;
+}
+
+.agent-sidebar.collapsed {
+  width: 0;
+  border-right-width: 0;
+}
+
+.agent-sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 360px;
+  min-width: 360px;
+}
+
+/* ============================================
+   Toggle button (in header)
+   ============================================ */
+
+.agent-toggle-btn {
+  background: transparent;
+  border: none;
+  width: 32px;
+  height: 32px;
+  margin: 0 4px 0 8px;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+}
+
+.agent-toggle-btn:hover {
+  background-color: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.agent-toggle-btn.active {
+  background-color: var(--accent-bg, rgba(64, 128, 255, 0.15));
+  color: var(--accent, #4080ff);
+}
+
+.agent-toggle-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ============================================
+   Header
+   ============================================ */
+
+.agent-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.agent-sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-sidebar-title svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent, #4080ff);
+}
+
+.agent-status-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background-color: rgba(127, 127, 127, 0.18);
+  color: var(--text-muted, #888);
+}
+
+.agent-status-badge.running {
+  background-color: rgba(60, 180, 100, 0.18);
+  color: rgb(60, 160, 90);
+}
+
+.agent-status-badge.error {
+  background-color: rgba(220, 80, 80, 0.18);
+  color: rgb(200, 60, 60);
+}
+
+.agent-sidebar-close {
+  background: transparent;
+  border: none;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted, #888);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-sidebar-close:hover {
+  background-color: var(--bg-hover, rgba(127, 127, 127, 0.12));
+  color: var(--text);
+}
+
+.agent-sidebar-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ============================================
+   Meta row (model picker)
+   ============================================ */
+
+.agent-sidebar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+
+.agent-sidebar-meta label {
+  font-weight: 500;
+}
+
+.agent-model-select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.agent-clear-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-muted, #888);
+}
+
+.agent-clear-btn:hover {
+  color: var(--text);
+}
+
+/* ============================================
+   Messages
+   ============================================ */
+
+.agent-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.agent-message-role {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #888);
+}
+
+.agent-message-content {
+  padding: 8px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.agent-message.user .agent-message-content {
+  background-color: var(--accent-bg, rgba(64, 128, 255, 0.12));
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.agent-message.user .agent-message-role {
+  align-self: flex-end;
+}
+
+.agent-message.assistant .agent-message-content {
+  background-color: rgba(127, 127, 127, 0.08);
+  border: 1px solid var(--border);
+}
+
+.agent-message.assistant.streaming .agent-message-content::after {
+  content: '▍';
+  display: inline-block;
+  margin-left: 1px;
+  opacity: 0.6;
+  animation: agent-cursor-blink 1s steps(2, start) infinite;
+}
+
+.agent-message.error .agent-message-content {
+  background-color: rgba(220, 80, 80, 0.1);
+  border: 1px solid rgba(220, 80, 80, 0.4);
+  color: rgb(200, 60, 60);
+}
+
+.agent-message-meta {
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+
+@keyframes agent-cursor-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.agent-empty-state {
+  margin: auto;
+  text-align: center;
+  color: var(--text-muted, #888);
+  font-size: 12px;
+  padding: 20px;
+}
+
+.agent-empty-state strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+
+/* ============================================
+   Composer
+   ============================================ */
+
+.agent-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.agent-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 48px;
+  max-height: 200px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.agent-input:focus {
+  outline: none;
+  border-color: var(--accent, #4080ff);
+}
+
+.agent-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.agent-send-btn,
+.agent-stop-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.agent-send-btn {
+  background-color: var(--accent, #4080ff);
+  color: white;
+}
+
+.agent-send-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.agent-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.agent-stop-btn {
+  background-color: rgba(220, 80, 80, 0.85);
+  color: white;
+}
+
+.agent-stop-btn:hover {
+  background-color: rgb(220, 80, 80);
+}
+
+.agent-stop-btn.hidden,
+.agent-send-btn.hidden {
+  display: none;
+}
