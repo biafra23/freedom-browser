@@ -443,6 +443,12 @@
             </svg>
             Ethereum RPC
           </button>
+          <button type="button" class="nav-item" data-target="local-ai">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3 L14 10 L21 12 L14 14 L12 21 L10 14 L3 12 L10 10 Z"></path>
+            </svg>
+            Local AI
+          </button>
           <button type="button" class="nav-item" data-target="experimental" id="nav-experimental">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M10 2v7.31"></path>
@@ -707,6 +713,25 @@
           </div>
         </section>
 
+        <!-- Local AI -->
+        <section class="section" id="local-ai">
+          <h2 class="section-title">Local AI</h2>
+          <div class="card">
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label">Enable Local AI <span style="color: var(--text-muted); font-weight: 400">(Alpha)</span></p>
+                <p class="row-help">Adds a sidebar with a local AI chat that can read and drive the browser on your behalf.</p>
+              </div>
+              <div class="row-control">
+                <label class="toggle">
+                  <input type="checkbox" id="enable-local-ai" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- Updates -->
         <section class="section" id="updates">
           <h2 class="section-title">Updates</h2>
@@ -755,6 +780,7 @@
         startRadicleRow: $('start-radicle-row'),
         startRadicle: $('start-radicle-at-launch'),
         enableIdentity: $('enable-identity-wallet'),
+        enableLocalAI: $('enable-local-ai'),
         autoUpdate: $('auto-update'),
       };
 
@@ -890,6 +916,7 @@
         enableRadicleIntegration: isWindows ? false : fields.enableRadicle.checked,
         startRadicleAtLaunch: isWindows ? false : fields.startRadicle.checked,
         enableIdentityWallet: fields.enableIdentity.checked,
+        enableLocalAI: fields.enableLocalAI.checked,
         autoUpdate: fields.autoUpdate.checked,
         enableEnsCustomRpc: fields.enableEnsCustomRpc.checked,
         ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
@@ -911,6 +938,7 @@
         fields.enableRadicle.checked = settings.enableRadicleIntegration === true;
         fields.startRadicle.checked = settings.startRadicleAtLaunch === true;
         fields.enableIdentity.checked = settings.enableIdentityWallet === true;
+        fields.enableLocalAI.checked = settings.enableLocalAI === true;
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.enableEnsCustomRpc.checked = settings.enableEnsCustomRpc === true;
         fields.ensRpcUrl.value = settings.ensRpcUrl || '';
@@ -1097,6 +1125,7 @@
       });
       fields.startRadicle.addEventListener('change', save);
       fields.enableIdentity.addEventListener('change', save);
+      fields.enableLocalAI.addEventListener('change', save);
       fields.autoUpdate.addEventListener('change', save);
 
       fields.enableEnsCustomRpc.addEventListener('change', () => {

@@ -262,10 +262,10 @@
 }
 
 /* ============================================
-   Toolbar Button (Wallet Toggle)
+   Toolbar Buttons (Sidebar Toggles)
    ============================================ */
 
-.wallet-toggle-btn {
+.sidebar-toggle-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -281,14 +281,19 @@
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-.wallet-toggle-btn:hover,
-.wallet-toggle-btn[aria-expanded='true'] {
+.sidebar-toggle-btn:hover,
+.sidebar-toggle-btn[aria-expanded='true'] {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
-.wallet-toggle-btn svg {
+.sidebar-toggle-btn svg {
   width: 15px;
   height: 15px;
+}
+
+.ai-toggle-btn svg {
+  width: 17px;
+  height: 17px;
 }
 
 /* ============================================
@@ -864,8 +869,8 @@
   background-color: rgba(0, 0, 0, 0.05);
 }
 
-[data-theme="light"] .wallet-toggle-btn:hover,
-[data-theme="light"] .wallet-toggle-btn[aria-expanded='true'] {
+[data-theme="light"] .sidebar-toggle-btn:hover,
+[data-theme="light"] .sidebar-toggle-btn[aria-expanded='true'] {
   background-color: rgba(0, 0, 0, 0.1);
 }
 
@@ -5541,4 +5546,23 @@
 
 [data-theme="light"] .dapp-sign-reject-btn:hover {
   background: rgba(0, 0, 0, 0.06);
+}
+
+/* ============================================
+   AI Sidebar (placeholder)
+   ============================================ */
+
+.ai-sidebar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.ai-sidebar-placeholder-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
 }

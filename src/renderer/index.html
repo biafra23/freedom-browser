@@ -555,7 +555,7 @@
       </div>
       <button
         id="wallet-toggle-btn"
-        class="wallet-toggle-btn"
+        class="sidebar-toggle-btn"
         type="button"
         aria-label="Toggle Identity & Wallet"
         aria-expanded="false"
@@ -564,6 +564,17 @@
           <path d="M2.5 23.277C2.5 22.7247 2.94772 22.277 3.5 22.277H65.5C68.2614 22.277 70.5 24.5156 70.5 27.277V64.277C70.5 67.0384 68.2614 69.277 65.5 69.277H3.5C2.94772 69.277 2.5 68.8293 2.5 68.277V23.277Z" vector-effect="non-scaling-stroke"/>
           <path d="M52.7354 2.82857L2.96783 21.6005C2.68632 21.7067 2.5 21.9761 2.5 22.277H59.5V7.50684C59.5 4.01172 56.0056 1.59507 52.7354 2.82857Z" vector-effect="non-scaling-stroke"/>
           <path d="M70.5 52.277C70.5 52.8293 70.0523 53.277 69.5 53.277H45.5C42.7386 53.277 40.5 51.0384 40.5 48.277V43.277C40.5 40.5156 42.7386 38.277 45.5 38.277H69.5C70.0523 38.277 70.5 38.7247 70.5 39.277V52.277Z" vector-effect="non-scaling-stroke"/>
+        </svg>
+      </button>
+      <button
+        id="ai-toggle-btn"
+        class="sidebar-toggle-btn ai-toggle-btn hidden"
+        type="button"
+        aria-label="Toggle Local AI"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 3 L14 10 L21 12 L14 14 L12 21 L10 14 L3 12 L10 10 Z" vector-effect="non-scaling-stroke"/>
         </svg>
       </button>
       <div class="menu" data-menu id="main-menu">
@@ -2301,6 +2312,30 @@
               </div>
             </div>
 
+          </div>
+        </div>
+      </aside>
+      <aside id="ai-sidebar" class="sidebar collapsed">
+        <div class="sidebar-inner">
+          <div class="sidebar-header">
+            <div class="sidebar-title">
+              <svg class="sidebar-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 3 L14 10 L21 12 L14 14 L12 21 L10 14 L3 12 L10 10 Z"/>
+              </svg>
+              <span>Local AI</span>
+            </div>
+            <button type="button" class="sidebar-close" id="ai-sidebar-close" aria-label="Close sidebar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"/><path d="M6 6 18 18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="sidebar-content">
+            <div class="ai-sidebar-placeholder">
+              <p class="ai-sidebar-placeholder-text">
+                Local AI chat is coming soon.
+              </p>
+            </div>
           </div>
         </div>
       </aside>

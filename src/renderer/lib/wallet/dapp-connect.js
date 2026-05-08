@@ -108,7 +108,8 @@ function setupDappConnectScreen() {
     });
   }
 
-  document.addEventListener('sidebar-opened', () => {
+  document.addEventListener('sidebar-opened', (event) => {
+    if (event.detail?.id !== 'sidebar') return;
     updateConnectionBanner();
   });
 

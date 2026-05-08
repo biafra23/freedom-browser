@@ -99,7 +99,8 @@ export function initWalletUi() {
   });
 
   // Listen for sidebar close to clean up sub-screens
-  document.addEventListener('sidebar-closed', () => {
+  document.addEventListener('sidebar-closed', (event) => {
+    if (event.detail?.id !== 'sidebar') return;
     closeAllSubscreens();
   });
 

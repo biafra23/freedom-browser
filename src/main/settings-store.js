@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   theme: 'system',
   enableRadicleIntegration: false,
   enableIdentityWallet: true,
+  enableLocalAI: true,
   beeNodeMode: 'ultraLight',
   startBeeAtLaunch: true,
   startIpfsAtLaunch: true,
