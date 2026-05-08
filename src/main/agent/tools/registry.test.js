@@ -22,7 +22,7 @@ function makeTool(overrides = {}) {
 }
 
 beforeEach(() => {
-  registry._clear();
+  registry._internals.clear();
   noopExec.mockClear();
 });
 

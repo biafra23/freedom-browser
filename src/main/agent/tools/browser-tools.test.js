@@ -15,6 +15,7 @@ function makeWc(overrides = {}) {
     executeJavaScript: jest.fn(async () => ''),
     loadURL: jest.fn(async () => undefined),
     capturePage: jest.fn(async () => ({
+      toJPEG: () => Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
       toPNG: () => Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     })),
     getURL: jest.fn(() => 'https://example.com/'),
@@ -160,10 +161,10 @@ describe('fill', () => {
 });
 
 describe('screenshot', () => {
-  test('returns a PNG data URL', async () => {
+  test('returns a JPEG data URL', async () => {
     mockFromId.mockReturnValue(makeWc());
     const result = await tools.screenshot.execute({}, ctx);
-    expect(result.mimeType).toBe('image/png');
-    expect(result.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(result.mimeType).toBe('image/jpeg');
+    expect(result.dataUrl).toMatch(/^data:image\/jpeg;base64,/);
   });
 });

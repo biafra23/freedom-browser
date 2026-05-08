@@ -81,5 +81,5 @@ module.exports = {
   listForTiers,
   runTool,
   // Test hook — production code never clears the registry mid-run.
-  _clear: clear,
+  _internals: { clear },
 };

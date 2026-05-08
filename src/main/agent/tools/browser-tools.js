@@ -24,6 +24,9 @@ const { webContents } = require('electron');
 const { z } = require('zod');
 const { TIERS } = require('../tool-tiers');
 
+// ~Gemma 8k-token context proxy at ~4 chars/token. The slice happens
+// page-side so a multi-MB innerText doesn't cross the IPC boundary;
+// the post-await `slice` below is a defence-in-depth no-op.
 const READ_TEXT_LIMIT = 32_000;
 
 function getActiveWebContents(ctx) {
@@ -47,10 +50,13 @@ const readCurrentTab = {
   async execute(_input, ctx) {
     const wc = getActiveWebContents(ctx);
     const text = await wc.executeJavaScript(
-      '(document.body && document.body.innerText) || ""'
+      `(((document.body && document.body.innerText) || "")).slice(0, ${READ_TEXT_LIMIT})`
     );
-    const truncated = String(text || '').slice(0, READ_TEXT_LIMIT);
-    return { url: wc.getURL(), title: wc.getTitle(), text: truncated };
+    return {
+      url: wc.getURL(),
+      title: wc.getTitle(),
+      text: String(text || '').slice(0, READ_TEXT_LIMIT),
+    };
   },
 };
 
@@ -123,15 +129,19 @@ const fill = {
 
 const screenshot = {
   name: 'screenshot',
-  description: 'Capture the visible portion of the active tab as a PNG (base64-encoded data URL).',
+  description:
+    'Capture the visible portion of the active tab as a JPEG (base64-encoded data URL).',
   tier: TIERS.LOCAL_SENSITIVE,
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const wc = getActiveWebContents(ctx);
     const image = await wc.capturePage();
+    // JPEG q80 instead of PNG: ~5-10× smaller payload across IPC and to
+    // the model's vision pipeline, ~3-5× faster encode on the main
+    // thread. Lossy compression is fine for "agent looks at the page".
     return {
-      mimeType: 'image/png',
-      dataUrl: `data:image/png;base64,${image.toPNG().toString('base64')}`,
+      mimeType: 'image/jpeg',
+      dataUrl: `data:image/jpeg;base64,${image.toJPEG(80).toString('base64')}`,
     };
   },
 };

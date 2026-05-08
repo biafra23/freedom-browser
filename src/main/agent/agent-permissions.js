@@ -78,6 +78,10 @@ function grantForSession(sessionId, tier) {
   log.info(`[AgentPermissions] Session-grant: ${sessionId} ${tier}`);
 }
 
+// Wired by Phase 5a-iii (agent-loop layer): call when a session is
+// deleted so its grants don't outlive the conversation. Not invoking
+// it just means the in-memory Map grows for the life of the process —
+// bounded by user behaviour but worth releasing.
 function clearSession(sessionId) {
   if (sessionGrants.delete(sessionId)) {
     log.info(`[AgentPermissions] Cleared grants for session ${sessionId}`);
@@ -95,5 +99,5 @@ module.exports = {
   hasSessionGrant,
   clearSession,
   // Test hook.
-  _internals: { clearAll, sessionGrants },
+  _internals: { clearAll },
 };

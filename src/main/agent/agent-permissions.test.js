@@ -23,7 +23,7 @@ function makeTool(overrides = {}) {
 const profile = (tiers) => ({ allowed_tool_tiers: tiers });
 
 beforeEach(() => {
-  registry._clear();
+  registry._internals.clear();
   broker._internals.clearAll();
 });
 

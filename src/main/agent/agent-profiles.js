@@ -186,6 +186,11 @@ function createProfile({ name, systemPrompt = null, allowedToolTiers = DEFAULT_T
   return getProfile(id);
 }
 
+// COALESCE-based update: passing `undefined` (or omitting) leaves a
+// field alone. There's no path to clear `system_prompt` back to NULL
+// without a sentinel — acceptable for v1 since no consumer needs it.
+// Phase 4 wizard can switch to explicit `'systemPrompt' in fields`
+// detection if a "remove prompt" affordance ships.
 function updateProfile(id, { name, systemPrompt, allowedToolTiers } = {}) {
   if (!id) throw new Error('id is required');
   const tiers =
@@ -229,4 +234,5 @@ module.exports = {
   updateProfile,
   deleteProfile,
   DEFAULT_TIERS,
+  DEFAULT_PROFILE_NAME,
 };
