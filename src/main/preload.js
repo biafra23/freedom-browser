@@ -410,8 +410,11 @@ contextBridge.exposeInMainWorld('swarmFeedStore', {
 
 contextBridge.exposeInMainWorld('agent', {
   getStatus: () => ipcRenderer.invoke('agent:status'),
-  startChat: (model, messages) => ipcRenderer.invoke('agent:chat:start', { model, messages }),
+  startChat: (model, messages, opts = {}) =>
+    ipcRenderer.invoke('agent:chat:start', { model, messages, ...opts }),
   cancelChat: (streamId) => ipcRenderer.invoke('agent:chat:cancel', { streamId }),
+  respondConsent: (streamId, callId, decision) =>
+    ipcRenderer.invoke('agent:chat:consent', { streamId, callId, decision }),
   onChatChunk: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('agent:chat:chunk', handler);
@@ -421,6 +424,21 @@ contextBridge.exposeInMainWorld('agent', {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('agent:chat:done', handler);
     return () => ipcRenderer.removeListener('agent:chat:done', handler);
+  },
+  onToolCall: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:tool-call', handler);
+    return () => ipcRenderer.removeListener('agent:chat:tool-call', handler);
+  },
+  onToolResult: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:tool-result', handler);
+    return () => ipcRenderer.removeListener('agent:chat:tool-result', handler);
+  },
+  onConsentRequest: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:consent-request', handler);
+    return () => ipcRenderer.removeListener('agent:chat:consent-request', handler);
   },
   // Sessions persistence (Phase 2c).
   listSessions: (limit) => ipcRenderer.invoke('agent:session:list', { limit }),

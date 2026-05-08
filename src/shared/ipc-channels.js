@@ -195,6 +195,11 @@ module.exports = {
   AGENT_CHAT_CHUNK: 'agent:chat:chunk',
   AGENT_CHAT_DONE: 'agent:chat:done',
   AGENT_CHAT_CANCEL: 'agent:chat:cancel',
+  // Tool-call lifecycle (Phase 5a-iii)
+  AGENT_CHAT_TOOL_CALL: 'agent:chat:tool-call',
+  AGENT_CHAT_TOOL_RESULT: 'agent:chat:tool-result',
+  AGENT_CHAT_CONSENT_REQUEST: 'agent:chat:consent-request',
+  AGENT_CHAT_CONSENT: 'agent:chat:consent',
 
   // Agent sessions store
   AGENT_SESSION_LIST: 'agent:session:list',

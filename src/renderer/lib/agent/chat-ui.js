@@ -13,6 +13,7 @@
 
 import { renderMarkdown } from './markdown.js';
 import { pushDebug } from '../debug.js';
+import { getActiveWebview } from '../tabs.js';
 
 const FALLBACK_MODEL = 'gemma4:e2b';
 
@@ -20,6 +21,11 @@ const state = {
   messages: [],
   activeStreamId: null,
   activeAssistantEl: null,
+  // Tool-call cards live inside the active assistant message's bubble.
+  // toolCallEls maps callId → { wrapEl, headerEl, bodyEl } so the
+  // tool-result + consent-response handlers can update the card in
+  // place without re-rendering the whole message.
+  activeToolCallEls: new Map(),
   selectedModel: null,
   models: [],
   daemonRunning: false,
@@ -83,6 +89,9 @@ export function initChatUi() {
 
   window.agent.onChatChunk((data) => handleChunk(data));
   window.agent.onChatDone((data) => handleDone(data));
+  window.agent.onToolCall?.((data) => handleToolCall(data));
+  window.agent.onToolResult?.((data) => handleToolResult(data));
+  window.agent.onConsentRequest?.((data) => handleConsentRequest(data));
 
   // Refresh status whenever the AI sidebar opens — daemon may have
   // started/stopped while it was hidden.
@@ -195,10 +204,7 @@ async function loadCurrentSession() {
     const session = await window.agent.getRecentSession();
     if (!session) return;
     state.currentSessionId = session.id;
-    state.messages = (session.messages || []).map((m) => ({
-      role: m.role,
-      content: m.content || '',
-    }));
+    state.messages = (session.messages || []).map(rowToInMemoryMessage);
     renderMessages();
   } catch (err) {
     pushDebug(`[ChatUi] Could not load recent session: ${err?.message || err}`);
@@ -221,17 +227,43 @@ function autoTitleFromMessage(text) {
   return trimmed.slice(0, TITLE_MAX_LEN - 1) + '…';
 }
 
-async function persistMessage(role, content) {
+function rowToInMemoryMessage(row) {
+  const msg = { role: row.role, content: row.content || '' };
+  if (row.parts_json) {
+    try {
+      const parts = JSON.parse(row.parts_json);
+      if (Array.isArray(parts.toolCalls)) msg.toolCalls = parts.toolCalls;
+    } catch (err) {
+      pushDebug(`[ChatUi] Could not parse parts_json: ${err?.message || err}`);
+    }
+  }
+  return msg;
+}
+
+async function persistMessage(role, content, parts = null) {
   if (!state.currentSessionId) return;
   try {
     await window.agent.appendMessage({
       sessionId: state.currentSessionId,
       role,
       content,
+      parts,
     });
   } catch (err) {
     pushDebug(`[ChatUi] Could not persist ${role} message: ${err?.message || err}`);
   }
+}
+
+function getActiveWebContentsId() {
+  try {
+    const wv = getActiveWebview?.();
+    if (wv && typeof wv.getWebContentsId === 'function') {
+      return wv.getWebContentsId();
+    }
+  } catch (err) {
+    pushDebug(`[ChatUi] Could not resolve active webview: ${err?.message || err}`);
+  }
+  return null;
 }
 
 async function handleSubmit(e) {
@@ -262,7 +294,10 @@ async function handleSubmit(e) {
   state.activeAssistantEl = appendMessage(assistantMsg, { streaming: true });
 
   try {
-    const result = await window.agent.startChat(model, state.messages.slice(0, -1));
+    const result = await window.agent.startChat(model, state.messages.slice(0, -1), {
+      sessionId: state.currentSessionId,
+      activeWebContentsId: getActiveWebContentsId(),
+    });
     if (result.error) {
       finalizeAssistant({ error: result.error });
       return;
@@ -310,6 +345,52 @@ function handleChunk(data) {
   scheduleAssistantRender();
 }
 
+function ensureToolCallsArray(message) {
+  if (!Array.isArray(message.toolCalls)) message.toolCalls = [];
+  return message.toolCalls;
+}
+
+function handleToolCall(data) {
+  if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
+  if (!state.activeAssistantEl) return;
+  const last = state.messages[state.messages.length - 1];
+  if (!last || last.role !== 'assistant') return;
+  ensureToolCallsArray(last).push({
+    id: data.callId,
+    name: data.name,
+    tier: data.tier,
+    args: data.args,
+    status: 'pending',
+    result: null,
+  });
+  appendToolCallCard(state.activeAssistantEl, {
+    callId: data.callId,
+    name: data.name,
+    tier: data.tier,
+    args: data.args,
+  });
+}
+
+function handleToolResult(data) {
+  if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
+  const last = state.messages[state.messages.length - 1];
+  if (!last || last.role !== 'assistant') return;
+  const calls = ensureToolCallsArray(last);
+  const record = calls.find((c) => c.id === data.callId);
+  if (record) {
+    record.status = data.status;
+    record.result = data.result;
+  }
+  updateToolCallCard(data.callId, data.status, data.result);
+}
+
+function handleConsentRequest(data) {
+  if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
+  // Replace the existing card's body with consent buttons. The
+  // tool-call event has already created the card via handleToolCall.
+  updateToolCallCardForConsent(data.callId, data);
+}
+
 function handleDone(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
   finalizeAssistant({
@@ -355,14 +436,16 @@ function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
   }
 
   // Fire-and-forget persist of the final assistant message (including
-  // error / partial-on-cancel content) so on next launch the user sees
-  // the same conversation state they left.
-  if (last?.role === 'assistant' && last.content) {
-    persistMessage('assistant', last.content);
+  // error / partial-on-cancel content + any tool calls) so on next
+  // launch the user sees the same conversation state they left.
+  if (last?.role === 'assistant' && (last.content || last.toolCalls?.length)) {
+    const parts = last.toolCalls?.length ? { toolCalls: last.toolCalls } : null;
+    persistMessage('assistant', last.content, parts);
   }
 
   state.activeStreamId = null;
   state.activeAssistantEl = null;
+  state.activeToolCallEls.clear();
   setComposerBusy(false);
   inputEl?.focus();
 }
@@ -396,10 +479,7 @@ export async function loadSessionById(id) {
     const session = await window.agent.getSession(id);
     if (!session) return false;
     state.currentSessionId = session.id;
-    state.messages = (session.messages || []).map((m) => ({
-      role: m.role,
-      content: m.content || '',
-    }));
+    state.messages = (session.messages || []).map(rowToInMemoryMessage);
     renderMessages();
     return true;
   } catch (err) {
@@ -465,9 +545,150 @@ function appendMessage(msg, opts = {}) {
 
   wrap.appendChild(role);
   wrap.appendChild(content);
+
+  // Restore historical tool-call cards when re-rendering a saved
+  // assistant message. Live cards are added by handleToolCall as
+  // events arrive — those go through appendToolCallCard instead.
+  if (msg.role === 'assistant' && Array.isArray(msg.toolCalls) && !opts.streaming) {
+    for (const call of msg.toolCalls) {
+      const card = renderToolCallShell(call);
+      renderToolCallBody(card, call);
+      wrap.appendChild(card.wrapEl);
+    }
+  }
+
   messagesEl.appendChild(wrap);
   scrollToBottom();
   return wrap;
+}
+
+function renderToolCallShell(call) {
+  const wrapEl = document.createElement('div');
+  wrapEl.className = 'agent-tool-card';
+  wrapEl.dataset.callId = call.id;
+  wrapEl.dataset.tier = call.tier || '';
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'agent-tool-card-header';
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'agent-tool-card-name';
+  nameSpan.textContent = call.name;
+  const statusSpan = document.createElement('span');
+  statusSpan.className = 'agent-tool-card-status';
+  headerEl.appendChild(nameSpan);
+  headerEl.appendChild(statusSpan);
+
+  const bodyEl = document.createElement('div');
+  bodyEl.className = 'agent-tool-card-body';
+
+  wrapEl.appendChild(headerEl);
+  wrapEl.appendChild(bodyEl);
+
+  return { wrapEl, headerEl, statusEl: statusSpan, bodyEl };
+}
+
+function renderToolCallBody(card, call) {
+  card.bodyEl.textContent = '';
+  card.statusEl.textContent = call.status || 'pending';
+  card.wrapEl.classList.remove('pending', 'allowed', 'denied', 'blocked', 'error', 'consent');
+  card.wrapEl.classList.add(call.status || 'pending');
+
+  // Compact args summary so the user can verify the model isn't doing
+  // something weird (e.g., navigating to a surprise URL).
+  if (call.args && Object.keys(call.args).length > 0) {
+    const argsEl = document.createElement('pre');
+    argsEl.className = 'agent-tool-card-args';
+    argsEl.textContent = JSON.stringify(call.args, null, 2);
+    card.bodyEl.appendChild(argsEl);
+  }
+
+  if (call.result?.error) {
+    const errEl = document.createElement('div');
+    errEl.className = 'agent-tool-card-error';
+    errEl.textContent = call.result.error;
+    card.bodyEl.appendChild(errEl);
+  }
+}
+
+function appendToolCallCard(assistantWrap, call) {
+  // Normalise the streamed event shape (uses `callId`) to the in-memory
+  // record shape (uses `id`) so renderToolCallShell / renderToolCallBody
+  // can be shared with the session-restore path.
+  const normalised = { id: call.callId, ...call };
+  const card = renderToolCallShell(normalised);
+  renderToolCallBody(card, { ...normalised, status: 'pending' });
+  assistantWrap.appendChild(card.wrapEl);
+  state.activeToolCallEls.set(call.callId, card);
+  scrollToBottom();
+}
+
+function updateToolCallCard(callId, status, result) {
+  const card = state.activeToolCallEls.get(callId);
+  if (!card) return;
+  // Re-derive the call from state.messages so the body has args + name.
+  const last = state.messages[state.messages.length - 1];
+  const record = last?.toolCalls?.find((c) => c.id === callId);
+  if (record) {
+    renderToolCallBody(card, record);
+  } else {
+    card.statusEl.textContent = status;
+    card.wrapEl.classList.add(status);
+    if (result?.error) {
+      const errEl = document.createElement('div');
+      errEl.className = 'agent-tool-card-error';
+      errEl.textContent = result.error;
+      card.bodyEl.appendChild(errEl);
+    }
+  }
+  scrollToBottom();
+}
+
+function updateToolCallCardForConsent(callId, data) {
+  const card = state.activeToolCallEls.get(callId);
+  if (!card) return;
+  card.wrapEl.classList.add('consent');
+  card.statusEl.textContent = 'awaiting consent';
+
+  const prompt = document.createElement('div');
+  prompt.className = 'agent-tool-card-consent';
+  const desc = document.createElement('p');
+  desc.className = 'agent-tool-card-consent-text';
+  desc.textContent = `The agent wants to ${data.description || data.name}.`;
+  prompt.appendChild(desc);
+
+  const actions = document.createElement('div');
+  actions.className = 'agent-tool-card-consent-actions';
+
+  for (const choice of [
+    { label: 'Allow once', value: 'allow' },
+    { label: 'Allow for session', value: 'allow-session' },
+    { label: 'Deny', value: 'deny', danger: true },
+  ]) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className =
+      'agent-tool-card-consent-btn' + (choice.danger ? ' danger' : '');
+    btn.textContent = choice.label;
+    btn.addEventListener('click', () => {
+      // Disable all buttons immediately so the user can't double-click;
+      // tool result event will replace the consent block when it arrives.
+      for (const b of actions.querySelectorAll('button')) b.disabled = true;
+      respondConsent(data.callId, choice.value);
+    });
+    actions.appendChild(btn);
+  }
+  prompt.appendChild(actions);
+  card.bodyEl.appendChild(prompt);
+  scrollToBottom();
+}
+
+async function respondConsent(callId, decision) {
+  if (!state.activeStreamId) return;
+  try {
+    await window.agent.respondConsent(state.activeStreamId, callId, decision);
+  } catch (err) {
+    pushDebug(`[ChatUi] respondConsent failed: ${err?.message || err}`);
+  }
 }
 
 function appendMeta(el, text) {

@@ -11,19 +11,32 @@ const flushMicrotasks = async () => {
 };
 
 function createAgentBridge(initialStatus = { running: true, version: '0.23.2', models: [] }) {
-  const handlers = { chunk: null, done: null };
+  const handlers = { chunk: null, done: null, toolCall: null, toolResult: null, consentRequest: null };
   return {
     handlers,
     bridge: {
       getStatus: jest.fn().mockResolvedValue(initialStatus),
       startChat: jest.fn().mockResolvedValue({ streamId: 'stream-1' }),
       cancelChat: jest.fn().mockResolvedValue({ cancelled: true }),
+      respondConsent: jest.fn().mockResolvedValue({ ok: true }),
       onChatChunk: jest.fn((cb) => {
         handlers.chunk = cb;
         return jest.fn();
       }),
       onChatDone: jest.fn((cb) => {
         handlers.done = cb;
+        return jest.fn();
+      }),
+      onToolCall: jest.fn((cb) => {
+        handlers.toolCall = cb;
+        return jest.fn();
+      }),
+      onToolResult: jest.fn((cb) => {
+        handlers.toolResult = cb;
+        return jest.fn();
+      }),
+      onConsentRequest: jest.fn((cb) => {
+        handlers.consentRequest = cb;
         return jest.fn();
       }),
       // Sessions persistence (Phase 2c).
@@ -83,6 +96,9 @@ const loadChatUi = async ({
   global.DOMPurify = { sanitize: jest.fn((html) => html) };
 
   jest.doMock('../debug.js', () => ({ pushDebug: jest.fn() }));
+  jest.doMock('../tabs.js', () => ({
+    getActiveWebview: jest.fn(() => ({ getWebContentsId: () => 99 })),
+  }));
 
   const mod = await import('./chat-ui.js');
   mod.initChatUi();
@@ -196,7 +212,11 @@ describe('chat-ui', () => {
     composerEl.dispatch('submit', { preventDefault: jest.fn() });
     await flushMicrotasks();
 
-    expect(bridge.startChat).toHaveBeenCalledWith('gemma4:e2b', [{ role: 'user', content: 'hello' }]);
+    expect(bridge.startChat).toHaveBeenCalledWith(
+      'gemma4:e2b',
+      [{ role: 'user', content: 'hello' }],
+      expect.objectContaining({ activeWebContentsId: 99 })
+    );
     expect(mod._internals.state.messages).toEqual([
       { role: 'user', content: 'hello' },
       { role: 'assistant', content: '' },
@@ -328,11 +348,19 @@ describe('chat-ui', () => {
       modelId: 'gemma4:e2b',
       title: 'hello',
     });
+    // startChat now carries sessionId + activeWebContentsId so the broker
+    // and the browser-tools' webContents lookup have what they need.
+    expect(bridge.startChat).toHaveBeenCalledWith(
+      'gemma4:e2b',
+      [{ role: 'user', content: 'hello' }],
+      expect.objectContaining({ sessionId: 'session-1', activeWebContentsId: 99 })
+    );
     expect(mod._internals.state.currentSessionId).toBe('session-1');
     expect(bridge.appendMessage).toHaveBeenCalledWith({
       sessionId: 'session-1',
       role: 'user',
       content: 'hello',
+      parts: null,
     });
 
     handlers.done({ streamId: 'stream-1', fullContent: 'hi back' });
@@ -342,6 +370,7 @@ describe('chat-ui', () => {
       sessionId: 'session-1',
       role: 'assistant',
       content: 'hi back',
+      parts: null,
     });
   });
 
@@ -382,5 +411,142 @@ describe('chat-ui', () => {
 
     expect(bridge.createSession).toHaveBeenCalledTimes(2);
     expect(mod._internals.state.currentSessionId).toBe('session-2');
+  });
+
+  describe('tool calls and consent', () => {
+    async function startChatAndCapture() {
+      const ctx = await loadChatUi();
+      ctx.inputEl.value = 'do a thing';
+      ctx.composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+      return ctx;
+    }
+
+    test('tool-call event renders a card under the active assistant message', async () => {
+      const { mod, handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://example.com' },
+      });
+
+      const last = mod._internals.state.messages[mod._internals.state.messages.length - 1];
+      expect(last.toolCalls).toHaveLength(1);
+      expect(last.toolCalls[0]).toEqual(
+        expect.objectContaining({ id: 'c1', name: 'navigate', status: 'pending' })
+      );
+      const card = messagesEl.querySelector('.agent-tool-card');
+      expect(card).toBeTruthy();
+      expect(card.dataset.callId).toBe('c1');
+    });
+
+    test('tool-result event flips the card status and stores the result on the message', async () => {
+      const { mod, handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://x' },
+      });
+      handlers.toolResult({
+        streamId: 'stream-1',
+        callId: 'c1',
+        status: 'allowed',
+        result: { url: 'https://x/' },
+      });
+
+      const last = mod._internals.state.messages[mod._internals.state.messages.length - 1];
+      expect(last.toolCalls[0].status).toBe('allowed');
+      expect(last.toolCalls[0].result).toEqual({ url: 'https://x/' });
+      const card = messagesEl.querySelector('.agent-tool-card');
+      expect(card.classList.contains('allowed')).toBe(true);
+    });
+
+    test('consent-request event renders three buttons; allow click calls respondConsent', async () => {
+      const { bridge, handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://x' },
+      });
+      handlers.consentRequest({
+        streamId: 'stream-1',
+        callId: 'c1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://x' },
+        description: 'navigate to https://x',
+      });
+
+      const card = messagesEl.querySelector('.agent-tool-card');
+      expect(card.classList.contains('consent')).toBe(true);
+      const buttons = card.querySelectorAll('.agent-tool-card-consent-btn');
+      expect(buttons).toHaveLength(3);
+      // First button is "Allow once".
+      buttons[0].dispatch('click');
+      await flushMicrotasks();
+      expect(bridge.respondConsent).toHaveBeenCalledWith('stream-1', 'c1', 'allow');
+    });
+
+    test('done event persists the assistant message with parts.toolCalls', async () => {
+      const { bridge, handlers } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://x' },
+      });
+      handlers.toolResult({
+        streamId: 'stream-1',
+        callId: 'c1',
+        status: 'allowed',
+        result: { url: 'https://x/' },
+      });
+      handlers.done({
+        streamId: 'stream-1',
+        fullContent: 'I navigated for you.',
+        toolCalls: [],
+      });
+      await flushMicrotasks();
+
+      const lastAppend = bridge.appendMessage.mock.calls.find(
+        (c) => c[0].role === 'assistant'
+      );
+      expect(lastAppend).toBeTruthy();
+      expect(lastAppend[0].parts).toEqual({
+        toolCalls: [
+          expect.objectContaining({ id: 'c1', name: 'navigate', status: 'allowed' }),
+        ],
+      });
+    });
+
+    test('restoring a session parses parts_json into in-memory toolCalls', async () => {
+      const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
+      _bridge.getRecentSession = jest.fn().mockResolvedValue({
+        id: 'session-prev',
+        messages: [
+          { role: 'user', content: 'go to x' },
+          {
+            role: 'assistant',
+            content: 'done',
+            parts_json: JSON.stringify({
+              toolCalls: [
+                { id: 'old', name: 'navigate', tier: 'browser_mutation', args: { url: 'https://x' }, status: 'allowed', result: { url: 'https://x/' } },
+              ],
+            }),
+          },
+        ],
+      });
+      const { mod } = await loadChatUi({ agent: { handlers: _handlers, bridge: _bridge } });
+      const restored = mod._internals.state.messages[1];
+      expect(restored.toolCalls).toHaveLength(1);
+      expect(restored.toolCalls[0].name).toBe('navigate');
+    });
   });
 });

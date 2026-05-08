@@ -5953,6 +5953,115 @@
   margin-top: 2px;
 }
 
+.agent-tool-card {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.05);
+  font-size: 12px;
+}
+
+.agent-tool-card.allowed {
+  border-color: rgba(60, 180, 100, 0.4);
+  background: rgba(60, 180, 100, 0.06);
+}
+
+.agent-tool-card.denied,
+.agent-tool-card.blocked,
+.agent-tool-card.error {
+  border-color: rgba(220, 80, 80, 0.4);
+  background: rgba(220, 80, 80, 0.06);
+}
+
+.agent-tool-card.consent {
+  border-color: var(--accent);
+  background: var(--accent-muted, rgba(64, 128, 255, 0.08));
+}
+
+.agent-tool-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-tool-card-name {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.agent-tool-card-status {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.agent-tool-card-body {
+  margin-top: 4px;
+}
+
+.agent-tool-card-args {
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(127, 127, 127, 0.10);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-tool-card-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgb(200, 60, 60);
+}
+
+.agent-tool-card-consent {
+  margin-top: 6px;
+}
+
+.agent-tool-card-consent-text {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.agent-tool-card-consent-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.agent-tool-card-consent-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-tool-card-consent-btn:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.10);
+}
+
+.agent-tool-card-consent-btn.danger {
+  border-color: rgba(220, 80, 80, 0.5);
+  color: rgb(200, 60, 60);
+}
+
+.agent-tool-card-consent-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @keyframes agent-cursor-blink {
   to {
     visibility: hidden;
