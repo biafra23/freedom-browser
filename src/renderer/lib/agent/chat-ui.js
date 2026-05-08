@@ -23,6 +23,7 @@ const state = {
   selectedModel: null,
   models: [],
   daemonRunning: false,
+  currentSessionId: null,
 };
 
 let messagesEl;
@@ -85,6 +86,7 @@ export function initChatUi() {
 
   refreshStatus();
   renderMessages();
+  loadCurrentSession();
   pushDebug('[ChatUi] Initialized');
 }
 
@@ -135,6 +137,45 @@ function setStatus(level, text) {
   statusBadge.textContent = text;
 }
 
+// On startup, resume the most recent session so conversations survive
+// quit/reopen. If none exists, defer creating one until the first user
+// message — keeps an empty session out of the DB just for opening the
+// sidebar.
+async function loadCurrentSession() {
+  try {
+    const session = await window.agent.getRecentSession();
+    if (!session) return;
+    state.currentSessionId = session.id;
+    state.messages = (session.messages || []).map((m) => ({
+      role: m.role,
+      content: m.content || '',
+    }));
+    renderMessages();
+  } catch (err) {
+    pushDebug(`[ChatUi] Could not load recent session: ${err?.message || err}`);
+  }
+}
+
+async function ensureSession(modelId) {
+  if (state.currentSessionId) return state.currentSessionId;
+  const session = await window.agent.createSession({ modelId });
+  state.currentSessionId = session.id;
+  return session.id;
+}
+
+async function persistMessage(role, content) {
+  if (!state.currentSessionId) return;
+  try {
+    await window.agent.appendMessage({
+      sessionId: state.currentSessionId,
+      role,
+      content,
+    });
+  } catch (err) {
+    pushDebug(`[ChatUi] Could not persist ${role} message: ${err?.message || err}`);
+  }
+}
+
 async function handleSubmit(e) {
   e.preventDefault();
   if (state.activeStreamId) return;
@@ -142,11 +183,13 @@ async function handleSubmit(e) {
   if (!text) return;
 
   const model = state.selectedModel || (modelSelect && modelSelect.value) || FALLBACK_MODEL;
+  await ensureSession(model);
 
   state.messages.push({ role: 'user', content: text });
   appendMessage({ role: 'user', content: text });
   inputEl.value = '';
   setComposerBusy(true);
+  persistMessage('user', text);
 
   // Insert an empty assistant message that we'll stream into.
   const assistantMsg = { role: 'assistant', content: '' };
@@ -246,6 +289,13 @@ function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
     }
   }
 
+  // Persist the final assistant message (including error / partial-on-cancel
+  // content) so on next launch the user sees the same conversation state
+  // they left.
+  if (last?.role === 'assistant' && last.content) {
+    persistMessage('assistant', last.content);
+  }
+
   state.activeStreamId = null;
   state.activeAssistantEl = null;
   setComposerBusy(false);
@@ -261,8 +311,12 @@ async function handleStop() {
   }
 }
 
-function handleClear() {
+async function handleClear() {
   if (state.activeStreamId) return;
+  // Archive the current session by simply forgetting its id — the
+  // next user message creates a fresh one. Phase 3 adds the sessions
+  // list UI for navigating back to old conversations.
+  state.currentSessionId = null;
   state.messages = [];
   renderMessages();
 }

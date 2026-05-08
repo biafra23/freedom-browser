@@ -196,6 +196,15 @@ module.exports = {
   AGENT_CHAT_DONE: 'agent:chat:done',
   AGENT_CHAT_CANCEL: 'agent:chat:cancel',
 
+  // Agent sessions store
+  AGENT_SESSION_LIST: 'agent:session:list',
+  AGENT_SESSION_GET: 'agent:session:get',
+  AGENT_SESSION_GET_RECENT: 'agent:session:get-recent',
+  AGENT_SESSION_CREATE: 'agent:session:create',
+  AGENT_SESSION_RENAME: 'agent:session:rename',
+  AGENT_SESSION_DELETE: 'agent:session:delete',
+  AGENT_SESSION_APPEND_MESSAGE: 'agent:session:append-message',
+
   // Ollama sidecar lifecycle
   OLLAMA_START: 'ollama:start',
   OLLAMA_STOP: 'ollama:stop',

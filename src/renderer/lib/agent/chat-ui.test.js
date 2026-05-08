@@ -26,6 +26,14 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
         handlers.done = cb;
         return jest.fn();
       }),
+      // Sessions persistence (Phase 2c).
+      getRecentSession: jest.fn().mockResolvedValue(null),
+      createSession: jest.fn().mockResolvedValue({ id: 'session-1' }),
+      appendMessage: jest.fn().mockResolvedValue({ id: 'msg-1' }),
+      listSessions: jest.fn().mockResolvedValue([]),
+      getSession: jest.fn().mockResolvedValue(null),
+      renameSession: jest.fn().mockResolvedValue({ ok: true }),
+      deleteSession: jest.fn().mockResolvedValue({ ok: true }),
     },
   };
 }
@@ -242,5 +250,86 @@ describe('chat-ui', () => {
     document.handlers['sidebar-opened']({ detail: { id: 'sidebar' } });
     await flushMicrotasks();
     expect(bridge.getStatus).not.toHaveBeenCalled();
+  });
+
+  test('resumes the most recent session on init', async () => {
+    const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
+    _bridge.getRecentSession = jest.fn().mockResolvedValue({
+      id: 'session-prev',
+      messages: [
+        { role: 'user', content: 'last time I asked' },
+        { role: 'assistant', content: 'and I answered' },
+      ],
+    });
+    const { mod } = await loadChatUi({ agent: { handlers: _handlers, bridge: _bridge } });
+
+    expect(mod._internals.state.currentSessionId).toBe('session-prev');
+    expect(mod._internals.state.messages).toEqual([
+      { role: 'user', content: 'last time I asked' },
+      { role: 'assistant', content: 'and I answered' },
+    ]);
+  });
+
+  test('creates a session on first user message and persists both sides', async () => {
+    const { mod, bridge, handlers, inputEl, composerEl } = await loadChatUi();
+    inputEl.value = 'hello';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+
+    expect(bridge.createSession).toHaveBeenCalledWith({ modelId: 'gemma4:e2b' });
+    expect(mod._internals.state.currentSessionId).toBe('session-1');
+    expect(bridge.appendMessage).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      role: 'user',
+      content: 'hello',
+    });
+
+    handlers.done({ streamId: 'stream-1', fullContent: 'hi back' });
+    await flushMicrotasks();
+
+    expect(bridge.appendMessage).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      role: 'assistant',
+      content: 'hi back',
+    });
+  });
+
+  test('does not create a session per submit — reuses currentSessionId', async () => {
+    const { bridge, handlers, inputEl, composerEl } = await loadChatUi();
+
+    inputEl.value = 'one';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+    handlers.done({ streamId: 'stream-1', fullContent: 'reply one' });
+    await flushMicrotasks();
+
+    inputEl.value = 'two';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+
+    expect(bridge.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  test('clear forgets currentSessionId so the next message starts a new session', async () => {
+    const { mod, bridge, clearBtn, inputEl, composerEl, handlers } = await loadChatUi();
+
+    inputEl.value = 'first chat';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+    handlers.done({ streamId: 'stream-1', fullContent: 'reply' });
+    await flushMicrotasks();
+    expect(mod._internals.state.currentSessionId).toBe('session-1');
+
+    clearBtn.dispatch('click');
+    await flushMicrotasks();
+    expect(mod._internals.state.currentSessionId).toBeNull();
+
+    bridge.createSession.mockResolvedValueOnce({ id: 'session-2' });
+    inputEl.value = 'second chat';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+
+    expect(bridge.createSession).toHaveBeenCalledTimes(2);
+    expect(mod._internals.state.currentSessionId).toBe('session-2');
   });
 });

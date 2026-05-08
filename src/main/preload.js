@@ -422,6 +422,14 @@ contextBridge.exposeInMainWorld('agent', {
     ipcRenderer.on('agent:chat:done', handler);
     return () => ipcRenderer.removeListener('agent:chat:done', handler);
   },
+  // Sessions persistence (Phase 2c).
+  listSessions: (limit) => ipcRenderer.invoke('agent:session:list', { limit }),
+  getSession: (id) => ipcRenderer.invoke('agent:session:get', { id }),
+  getRecentSession: () => ipcRenderer.invoke('agent:session:get-recent'),
+  createSession: (init) => ipcRenderer.invoke('agent:session:create', init),
+  renameSession: (id, title) => ipcRenderer.invoke('agent:session:rename', { id, title }),
+  deleteSession: (id) => ipcRenderer.invoke('agent:session:delete', { id }),
+  appendMessage: (payload) => ipcRenderer.invoke('agent:session:append-message', payload),
 });
 
 contextBridge.exposeInMainWorld('ollama', {
