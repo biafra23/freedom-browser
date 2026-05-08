@@ -86,14 +86,14 @@ describe('handleStatus', () => {
   test('returns running:true with version + models when daemon is reachable', async () => {
     getVersion.mockResolvedValue({ version: '0.23.2' });
     listModels.mockResolvedValue({
-      models: [{ name: 'gemma3:4b', size: 4_000_000_000, modified_at: '2026-05-08T12:00:00Z' }],
+      models: [{ name: 'gemma4:e2b', size: 4_000_000_000, modified_at: '2026-05-08T12:00:00Z' }],
     });
 
     const result = await _internals.handleStatus();
     expect(result.running).toBe(true);
     expect(result.version).toBe('0.23.2');
     expect(result.models).toHaveLength(1);
-    expect(result.models[0].name).toBe('gemma3:4b');
+    expect(result.models[0].name).toBe('gemma4:e2b');
   });
 
   test('returns running:false when version check fails', async () => {
@@ -121,7 +121,7 @@ describe('startChatStream + pumpChat', () => {
 
     const sender = makeSender();
     const result = await _internals.startChatStream(makeEvent(sender), {
-      model: 'gemma3:4b',
+      model: 'gemma4:e2b',
       messages: [{ role: 'user', content: 'hi' }],
     });
 
@@ -151,7 +151,7 @@ describe('startChatStream + pumpChat', () => {
   test('rejects empty messages and returns an error object', async () => {
     const sender = makeSender();
     const result = await _internals.startChatStream(makeEvent(sender), {
-      model: 'gemma3:4b',
+      model: 'gemma4:e2b',
       messages: [],
     });
     expect(result.error).toMatch(/non-empty array/);
@@ -172,7 +172,7 @@ describe('startChatStream + pumpChat', () => {
 
     const sender = makeSender();
     const { streamId } = await _internals.startChatStream(makeEvent(sender), {
-      model: 'gemma3:4b',
+      model: 'gemma4:e2b',
       messages: [{ role: 'user', content: 'hi' }],
     });
     _internals.cancelChatStream(null, { streamId });
@@ -196,7 +196,7 @@ describe('startChatStream + pumpChat', () => {
 
     const sender = makeSender();
     await _internals.startChatStream(makeEvent(sender), {
-      model: 'gemma3:4b',
+      model: 'gemma4:e2b',
       messages: [{ role: 'user', content: 'hi' }],
     });
     await flushAsyncQueue();
@@ -212,7 +212,7 @@ describe('startChatStream + pumpChat', () => {
       isDestroyed: jest.fn().mockReturnValueOnce(false).mockReturnValueOnce(true).mockReturnValue(true),
     });
     await _internals.startChatStream(makeEvent(sender), {
-      model: 'gemma3:4b',
+      model: 'gemma4:e2b',
       messages: [{ role: 'user', content: 'hi' }],
     });
     await flushAsyncQueue();
@@ -240,7 +240,7 @@ describe('cancelChatStream', () => {
     });
     const sender = makeSender();
     const { streamId } = await _internals.startChatStream(makeEvent(sender), {
-      model: 'gemma3:4b',
+      model: 'gemma4:e2b',
       messages: [{ role: 'user', content: 'hi' }],
     });
     expect(_internals.activeStreams.has(streamId)).toBe(true);

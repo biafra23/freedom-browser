@@ -118,20 +118,20 @@ describe('chat-ui', () => {
       initialStatus: {
         running: true,
         version: '0.23.2',
-        models: [{ name: 'qwen3:0.6b' }, { name: 'gemma3:4b' }],
+        models: [{ name: 'qwen3:0.6b' }, { name: 'gemma4:e2b' }],
       },
     });
     const optValues = modelSelect.children.map((c) => c.value);
-    expect(optValues).toEqual(['qwen3:0.6b', 'gemma3:4b']);
-    expect(modelSelect.value).toBe('gemma3:4b');
+    expect(optValues).toEqual(['qwen3:0.6b', 'gemma4:e2b']);
+    expect(modelSelect.value).toBe('gemma4:e2b');
   });
 
   test('falls back to default model name when no models installed', async () => {
     const { modelSelect } = await loadChatUi({
       initialStatus: { running: true, version: '0.23.2', models: [] },
     });
-    expect(modelSelect.children.map((c) => c.value)).toEqual(['gemma3:4b']);
-    expect(modelSelect.value).toBe('gemma3:4b');
+    expect(modelSelect.children.map((c) => c.value)).toEqual(['gemma4:e2b']);
+    expect(modelSelect.value).toBe('gemma4:e2b');
   });
 
   test('submit pushes user message + assistant placeholder and starts a stream', async () => {
@@ -140,7 +140,7 @@ describe('chat-ui', () => {
     composerEl.dispatch('submit', { preventDefault: jest.fn() });
     await flushMicrotasks();
 
-    expect(bridge.startChat).toHaveBeenCalledWith('gemma3:4b', [{ role: 'user', content: 'hello' }]);
+    expect(bridge.startChat).toHaveBeenCalledWith('gemma4:e2b', [{ role: 'user', content: 'hello' }]);
     expect(mod._internals.state.messages).toEqual([
       { role: 'user', content: 'hello' },
       { role: 'assistant', content: '' },

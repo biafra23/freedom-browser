@@ -14,7 +14,7 @@
 import { renderMarkdown } from './markdown.js';
 import { pushDebug } from '../debug.js';
 
-const FALLBACK_MODEL = 'gemma3:4b';
+const FALLBACK_MODEL = 'gemma4:e2b';
 
 const state = {
   messages: [],

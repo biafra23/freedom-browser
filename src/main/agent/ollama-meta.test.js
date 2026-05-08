@@ -47,7 +47,7 @@ describe('getVersion', () => {
 describe('listModels', () => {
   test('returns model list from /api/tags', async () => {
     const payload = {
-      models: [{ name: 'gemma3:4b', size: 4_000_000_000, modified_at: '2026-05-08T00:00:00Z' }],
+      models: [{ name: 'gemma4:e2b', size: 4_000_000_000, modified_at: '2026-05-08T00:00:00Z' }],
     };
     const fetchImpl = jest.fn().mockResolvedValue({ ok: true, json: async () => payload });
     const result = await listModels({ fetchImpl, baseUrl: 'http://x' });
