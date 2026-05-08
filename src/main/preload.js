@@ -432,6 +432,15 @@ contextBridge.exposeInMainWorld('agent', {
   appendMessage: (payload) => ipcRenderer.invoke('agent:session:append-message', payload),
 });
 
+contextBridge.exposeInMainWorld('agentProfiles', {
+  list: () => ipcRenderer.invoke('agent:profile:list'),
+  get: (id) => ipcRenderer.invoke('agent:profile:get', { id }),
+  getDefault: () => ipcRenderer.invoke('agent:profile:get-default'),
+  create: (data) => ipcRenderer.invoke('agent:profile:create', data),
+  update: (id, data) => ipcRenderer.invoke('agent:profile:update', { id, ...data }),
+  delete: (id) => ipcRenderer.invoke('agent:profile:delete', { id }),
+});
+
 contextBridge.exposeInMainWorld('ollama', {
   start: () => ipcRenderer.invoke('ollama:start'),
   stop: () => ipcRenderer.invoke('ollama:stop'),

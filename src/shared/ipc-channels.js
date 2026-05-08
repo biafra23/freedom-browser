@@ -205,6 +205,14 @@ module.exports = {
   AGENT_SESSION_DELETE: 'agent:session:delete',
   AGENT_SESSION_APPEND_MESSAGE: 'agent:session:append-message',
 
+  // Agent profiles (named LLM personas with allowed tool tiers)
+  AGENT_PROFILE_LIST: 'agent:profile:list',
+  AGENT_PROFILE_GET: 'agent:profile:get',
+  AGENT_PROFILE_GET_DEFAULT: 'agent:profile:get-default',
+  AGENT_PROFILE_CREATE: 'agent:profile:create',
+  AGENT_PROFILE_UPDATE: 'agent:profile:update',
+  AGENT_PROFILE_DELETE: 'agent:profile:delete',
+
   // Ollama sidecar lifecycle
   OLLAMA_START: 'ollama:start',
   OLLAMA_STOP: 'ollama:stop',
