@@ -57,6 +57,7 @@
     "ollama:stop": "pkill -SIGTERM ollama || echo 'Ollama not running or failed to stop'",
     "ollama:status": "curl -s http://127.0.0.1:11434/api/version && echo && curl -s http://127.0.0.1:11434/api/tags",
     "ollama:reset": "rm -rf agent-models && echo 'Ollama models reset.'",
+    "pi:smoke": "node scripts/pi-smoke.js",
     "identity:reset": "rm -rf bee-data ipfs-data radicle-data identity-data && echo 'All identity data reset (bee, ipfs, radicle, vault).'",
     "dapp:reset": "node scripts/reset-dapp-permissions.js",
     "serve:updates": "node scripts/serve-updates.js",
@@ -193,6 +194,7 @@
   "dependencies": {
     "@adraffy/ens-normalize": "^1.10.1",
     "@ai-sdk/openai-compatible": "^1.0.0",
+    "@earendil-works/pi-coding-agent": "0.74.0",
     "@ensdomains/content-hash": "^3.0.0",
     "@ethersphere/bee-js": "^12.1.0",
     "@metamask/browser-passworder": "^6.0.0",
@@ -205,6 +207,7 @@
     "marked": "^16.0.0",
     "micro-key-producer": "^0.8.2",
     "qrcode": "^1.5.4",
+    "typebox": "1.1.38",
     "zod": "^4.0.0"
   },
   "overrides": {

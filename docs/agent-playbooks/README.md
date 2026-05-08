@@ -10,5 +10,6 @@ Use these files on demand:
 - `changelog-process.md`: release changelog procedure.
 - `release-process.md`: release branch, version bump, tag, build, and publish steps.
 - `security-checklist.md`: pre-commit and pre-PR security checks.
+- `pi-conventions.md`: rules and gotchas for embedding `@earendil-works/pi-coding-agent` (Pi).
 
 Keep `AGENTS.md` short and stable. Put detailed examples and process notes here.
