@@ -2323,6 +2323,7 @@
                 <path d="M12 3 L14 10 L21 12 L14 14 L12 21 L10 14 L3 12 L10 10 Z"/>
               </svg>
               <span>Local AI</span>
+              <span id="agent-status-badge" class="agent-status-badge" title="Daemon status">…</span>
             </div>
             <button type="button" class="sidebar-close" id="ai-sidebar-close" aria-label="Close sidebar">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2330,12 +2331,26 @@
               </svg>
             </button>
           </div>
-          <div class="sidebar-content">
-            <div class="ai-sidebar-placeholder">
-              <p class="ai-sidebar-placeholder-text">
-                Local AI chat is coming soon.
-              </p>
+          <div class="sidebar-content agent-content">
+            <div class="agent-meta-row">
+              <label for="agent-model-select">Model</label>
+              <select id="agent-model-select" class="agent-model-select"></select>
+              <button type="button" id="agent-clear-btn" class="agent-clear-btn" title="Clear conversation">Clear</button>
             </div>
+            <div id="agent-messages" class="agent-messages" aria-live="polite"></div>
+            <form id="agent-composer" class="agent-composer" autocomplete="off">
+              <textarea
+                id="agent-input"
+                class="agent-input"
+                rows="2"
+                placeholder="Ask the model anything…"
+                aria-label="Message to model"
+              ></textarea>
+              <div class="agent-composer-actions">
+                <button type="button" id="agent-stop-btn" class="agent-stop-btn hidden" title="Stop generation">Stop</button>
+                <button type="submit" id="agent-send-btn" class="agent-send-btn">Send</button>
+              </div>
+            </form>
           </div>
         </div>
       </aside>
@@ -2673,6 +2688,8 @@
       </div>
     </dialog>
 
+    <script src="./vendor/marked.min.js"></script>
+    <script src="./vendor/purify.min.js"></script>
     <script type="module" src="./index.js"></script>
   </body>
 </html>
