@@ -487,8 +487,9 @@ describe('chat-ui', () => {
       expect(card.classList.contains('consent')).toBe(true);
       const buttons = card.querySelectorAll('.agent-tool-card-consent-btn');
       expect(buttons).toHaveLength(3);
-      // First button is "Allow once".
-      buttons[0].dispatch('click');
+      const allowBtn = card.querySelector('[data-action="allow"]');
+      expect(allowBtn).toBeTruthy();
+      allowBtn.dispatch('click');
       await flushMicrotasks();
       expect(bridge.respondConsent).toHaveBeenCalledWith('stream-1', 'c1', 'allow');
     });

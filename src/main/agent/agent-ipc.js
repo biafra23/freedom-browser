@@ -47,13 +47,6 @@ const { BROWSER_TOOLS } = require('./tools/browser-tools');
 // }
 const activeStreams = new Map();
 
-let toolsRegistered = false;
-function ensureToolsRegistered() {
-  if (toolsRegistered) return;
-  registry.registerAll(BROWSER_TOOLS);
-  toolsRegistered = true;
-}
-
 // Lazy-load AI SDK Core so unit tests can mock it via jest.doMock without
 // paying the import cost. Provider is rebuilt per chat against the
 // service-registry's live URL so a port-conflict fallback (default 11434
@@ -266,8 +259,6 @@ async function startChatStream(
     return { error: 'messages must be a non-empty array' };
   }
 
-  ensureToolsRegistered();
-
   const streamId = newStreamId();
   const controller = new AbortController();
   const sender = event.sender;
@@ -372,7 +363,14 @@ function handleConsentResponse(_event, { streamId, callId, decision }) {
   return { ok: true };
 }
 
+let agentIpcRegistered = false;
+
 function registerAgentIpc() {
+  if (agentIpcRegistered) return;
+  agentIpcRegistered = true;
+
+  registry.registerAll(BROWSER_TOOLS);
+
   ipcMain.handle(IPC.AGENT_STATUS, () => handleStatus());
   ipcMain.handle(IPC.AGENT_CHAT_START, (event, payload) => startChatStream(event, payload));
   ipcMain.handle(IPC.AGENT_CHAT_CANCEL, (event, payload) => cancelChatStream(event, payload));

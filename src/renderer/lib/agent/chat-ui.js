@@ -355,20 +355,18 @@ function handleToolCall(data) {
   if (!state.activeAssistantEl) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== 'assistant') return;
-  ensureToolCallsArray(last).push({
+  // One in-memory record shape used by both the live event flow and
+  // the historical-restore flow; renderToolCallShell reads `id`.
+  const record = {
     id: data.callId,
     name: data.name,
     tier: data.tier,
     args: data.args,
     status: 'pending',
     result: null,
-  });
-  appendToolCallCard(state.activeAssistantEl, {
-    callId: data.callId,
-    name: data.name,
-    tier: data.tier,
-    args: data.args,
-  });
+  };
+  ensureToolCallsArray(last).push(record);
+  appendToolCallCard(state.activeAssistantEl, record);
 }
 
 function handleToolResult(data) {
@@ -381,7 +379,7 @@ function handleToolResult(data) {
     record.status = data.status;
     record.result = data.result;
   }
-  updateToolCallCard(data.callId, data.status, data.result);
+  updateToolCallCard(data.callId);
 }
 
 function handleConsentRequest(data) {
@@ -467,6 +465,7 @@ export function startNewSession() {
   if (state.activeStreamId) return false;
   state.currentSessionId = null;
   state.messages = [];
+  state.activeToolCallEls.clear();
   renderMessages();
   return true;
 }
@@ -480,6 +479,7 @@ export async function loadSessionById(id) {
     if (!session) return false;
     state.currentSessionId = session.id;
     state.messages = (session.messages || []).map(rowToInMemoryMessage);
+    state.activeToolCallEls.clear();
     renderMessages();
     return true;
   } catch (err) {
@@ -610,38 +610,32 @@ function renderToolCallBody(card, call) {
   }
 }
 
-function appendToolCallCard(assistantWrap, call) {
-  // Normalise the streamed event shape (uses `callId`) to the in-memory
-  // record shape (uses `id`) so renderToolCallShell / renderToolCallBody
-  // can be shared with the session-restore path.
-  const normalised = { id: call.callId, ...call };
-  const card = renderToolCallShell(normalised);
-  renderToolCallBody(card, { ...normalised, status: 'pending' });
+function appendToolCallCard(assistantWrap, record) {
+  const card = renderToolCallShell(record);
+  renderToolCallBody(card, record);
   assistantWrap.appendChild(card.wrapEl);
-  state.activeToolCallEls.set(call.callId, card);
+  state.activeToolCallEls.set(record.id, card);
   scrollToBottom();
 }
 
-function updateToolCallCard(callId, status, result) {
+function updateToolCallCard(callId) {
   const card = state.activeToolCallEls.get(callId);
   if (!card) return;
-  // Re-derive the call from state.messages so the body has args + name.
+  // Re-derive the call from state.messages — the source of truth — so
+  // the body has args, name, and the freshest status / result. The
+  // tool-result handler updates the in-memory record before us.
   const last = state.messages[state.messages.length - 1];
   const record = last?.toolCalls?.find((c) => c.id === callId);
-  if (record) {
-    renderToolCallBody(card, record);
-  } else {
-    card.statusEl.textContent = status;
-    card.wrapEl.classList.add(status);
-    if (result?.error) {
-      const errEl = document.createElement('div');
-      errEl.className = 'agent-tool-card-error';
-      errEl.textContent = result.error;
-      card.bodyEl.appendChild(errEl);
-    }
-  }
+  if (!record) return;
+  renderToolCallBody(card, record);
   scrollToBottom();
 }
+
+const CONSENT_CHOICES = Object.freeze([
+  { label: 'Allow once', value: 'allow' },
+  { label: 'Allow for session', value: 'allow-session' },
+  { label: 'Deny', value: 'deny', danger: true },
+]);
 
 function updateToolCallCardForConsent(callId, data) {
   const card = state.activeToolCallEls.get(callId);
@@ -659,15 +653,12 @@ function updateToolCallCardForConsent(callId, data) {
   const actions = document.createElement('div');
   actions.className = 'agent-tool-card-consent-actions';
 
-  for (const choice of [
-    { label: 'Allow once', value: 'allow' },
-    { label: 'Allow for session', value: 'allow-session' },
-    { label: 'Deny', value: 'deny', danger: true },
-  ]) {
+  for (const choice of CONSENT_CHOICES) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className =
       'agent-tool-card-consent-btn' + (choice.danger ? ' danger' : '');
+    btn.dataset.action = choice.value;
     btn.textContent = choice.label;
     btn.addEventListener('click', () => {
       // Disable all buttons immediately so the user can't double-click;
