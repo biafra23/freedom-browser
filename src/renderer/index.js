@@ -54,6 +54,7 @@ import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
 import { initAiSidebar } from './lib/ai-sidebar.js';
 import { initChatUi } from './lib/agent/chat-ui.js';
+import { initSessionsUi } from './lib/agent/sessions-ui.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
 
 const electronAPI = window.electronAPI;
@@ -226,6 +227,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initSidebar();     // Identity & wallet sidebar
   initAiSidebar();   // Local AI chat sidebar
   initChatUi();      // Chat panel inside the AI sidebar
+  initSessionsUi();  // Sessions list / master-detail swap
   initWalletUi();    // Wallet & identity display in sidebar
   loadBookmarks();
   initPlatformUI();

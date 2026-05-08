@@ -52,8 +52,10 @@ const matchesSingleSelector = (element, selector) => {
     return element.classList.contains(className) && element.dataset[dataKey] === dataValue;
   }
 
-  if (selector.startsWith('.')) {
-    return element.classList.contains(selector.slice(1));
+  if (selector.startsWith('.') && !selector.includes('[') && !selector.includes(':')) {
+    // Supports `.foo.bar.baz` — every dot-prefixed segment must be present.
+    const classes = selector.split('.').filter(Boolean);
+    return classes.every((cls) => element.classList.contains(cls));
   }
 
   if (selector === 'webview') {
@@ -231,6 +233,18 @@ class FakeElement {
     if (index >= 0) {
       this.parentNode.children.splice(index, 1);
     }
+    this.parentNode = null;
+  }
+
+  replaceWith(newNode) {
+    if (!this.parentNode) return;
+    if (newNode.parentNode) {
+      newNode.remove();
+    }
+    const index = this.parentNode.children.indexOf(this);
+    if (index < 0) return;
+    newNode.parentNode = this.parentNode;
+    this.parentNode.children.splice(index, 1, newNode);
     this.parentNode = null;
   }
 

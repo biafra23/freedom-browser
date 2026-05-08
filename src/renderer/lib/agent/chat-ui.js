@@ -156,11 +156,20 @@ async function loadCurrentSession() {
   }
 }
 
-async function ensureSession(modelId) {
+async function ensureSession(modelId, initialTitle = null) {
   if (state.currentSessionId) return state.currentSessionId;
-  const session = await window.agent.createSession({ modelId });
+  const session = await window.agent.createSession({ modelId, title: initialTitle });
   state.currentSessionId = session.id;
   return session.id;
+}
+
+const TITLE_MAX_LEN = 40;
+
+function autoTitleFromMessage(text) {
+  const trimmed = (text || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed) return null;
+  if (trimmed.length <= TITLE_MAX_LEN) return trimmed;
+  return trimmed.slice(0, TITLE_MAX_LEN - 1) + '…';
 }
 
 async function persistMessage(role, content) {
@@ -183,7 +192,10 @@ async function handleSubmit(e) {
   if (!text) return;
 
   const model = state.selectedModel || (modelSelect && modelSelect.value) || FALLBACK_MODEL;
-  await ensureSession(model);
+  // Auto-title from the first user message of a fresh session. Existing
+  // sessions keep their stored title (user-renamed or earlier auto-title).
+  const initialTitle = state.messages.length === 0 ? autoTitleFromMessage(text) : null;
+  await ensureSession(model, initialTitle);
 
   state.messages.push({ role: 'user', content: text });
   appendMessage({ role: 'user', content: text });
@@ -315,14 +327,44 @@ async function handleStop() {
   }
 }
 
-function handleClear() {
-  if (state.activeStreamId) return;
-  // Archive the current session by simply forgetting its id — the
-  // next user message creates a fresh one. Phase 3 adds the sessions
-  // list UI for navigating back to old conversations.
+// Forget the current session id — the next user message creates a fresh
+// one. The old session remains in the DB and shows up in the sessions
+// list. Used by both the "+ New" button and the sessions UI's
+// new-chat affordance.
+export function startNewSession() {
+  if (state.activeStreamId) return false;
   state.currentSessionId = null;
   state.messages = [];
   renderMessages();
+  return true;
+}
+
+// Load a saved session into the chat view. Used by the sessions UI when
+// the user picks a row. Refuses while a stream is active.
+export async function loadSessionById(id) {
+  if (state.activeStreamId) return false;
+  try {
+    const session = await window.agent.getSession(id);
+    if (!session) return false;
+    state.currentSessionId = session.id;
+    state.messages = (session.messages || []).map((m) => ({
+      role: m.role,
+      content: m.content || '',
+    }));
+    renderMessages();
+    return true;
+  } catch (err) {
+    pushDebug(`[ChatUi] loadSessionById failed: ${err?.message || err}`);
+    return false;
+  }
+}
+
+export function getCurrentSessionId() {
+  return state.currentSessionId;
+}
+
+function handleClear() {
+  startNewSession();
 }
 
 function setComposerBusy(busy) {

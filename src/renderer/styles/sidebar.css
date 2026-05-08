@@ -5617,6 +5617,169 @@
   color: var(--text);
 }
 
+.agent-sessions-toggle-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.agent-sessions-toggle-btn:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.agent-sessions-toggle-btn[aria-pressed='true'] {
+  color: var(--text);
+  background-color: rgba(127, 127, 127, 0.12);
+}
+
+.agent-sessions-toggle-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agent-view.hidden {
+  display: none;
+}
+
+.agent-sessions-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.agent-session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+
+.agent-session-row:hover {
+  background-color: rgba(127, 127, 127, 0.08);
+}
+
+.agent-session-row.active {
+  background-color: rgba(64, 128, 255, 0.10);
+}
+
+.agent-session-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-session-row-title {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-session-row-title.untitled {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.agent-session-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.agent-session-row-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.agent-session-row:hover .agent-session-row-actions,
+.agent-session-row:focus-within .agent-session-row-actions {
+  opacity: 1;
+}
+
+.agent-session-action-btn {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+
+.agent-session-action-btn:hover {
+  color: var(--text);
+  background-color: rgba(127, 127, 127, 0.15);
+}
+
+.agent-session-action-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-session-rename-input {
+  flex: 1;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--text);
+  outline: none;
+}
+
+.agent-session-confirm-delete {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.agent-session-confirm-btn {
+  background: rgba(220, 80, 80, 0.85);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-session-confirm-btn.cancel {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.agent-sessions-empty {
+  margin: auto;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .agent-messages {
   flex: 1;
   overflow-y: auto;

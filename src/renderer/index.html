@@ -2333,24 +2333,46 @@
           </div>
           <div class="sidebar-content agent-content">
             <div class="agent-meta-row">
+              <button
+                type="button"
+                id="agent-sessions-toggle-btn"
+                class="agent-sessions-toggle-btn"
+                title="Sessions"
+                aria-label="Sessions"
+                aria-pressed="false"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="4" y1="6" x2="20" y2="6"/>
+                  <line x1="4" y1="12" x2="20" y2="12"/>
+                  <line x1="4" y1="18" x2="20" y2="18"/>
+                </svg>
+              </button>
               <label for="agent-model-select">Model</label>
               <select id="agent-model-select" class="agent-model-select"></select>
-              <button type="button" id="agent-clear-btn" class="agent-clear-btn" title="Clear conversation">Clear</button>
+              <button type="button" id="agent-clear-btn" class="agent-clear-btn" title="Start a new chat">+ New</button>
             </div>
-            <div id="agent-messages" class="agent-messages" aria-live="polite"></div>
-            <form id="agent-composer" class="agent-composer" autocomplete="off">
-              <textarea
-                id="agent-input"
-                class="agent-input"
-                rows="2"
-                placeholder="Ask the model anything…"
-                aria-label="Message to model"
-              ></textarea>
-              <div class="agent-composer-actions">
-                <button type="button" id="agent-stop-btn" class="agent-stop-btn hidden" title="Stop generation">Stop</button>
-                <button type="submit" id="agent-send-btn" class="agent-send-btn">Send</button>
+            <div id="agent-chat-view" class="agent-view">
+              <div id="agent-messages" class="agent-messages" aria-live="polite"></div>
+              <form id="agent-composer" class="agent-composer" autocomplete="off">
+                <textarea
+                  id="agent-input"
+                  class="agent-input"
+                  rows="2"
+                  placeholder="Ask the model anything…"
+                  aria-label="Message to model"
+                ></textarea>
+                <div class="agent-composer-actions">
+                  <button type="button" id="agent-stop-btn" class="agent-stop-btn hidden" title="Stop generation">Stop</button>
+                  <button type="submit" id="agent-send-btn" class="agent-send-btn">Send</button>
+                </div>
+              </form>
+            </div>
+            <div id="agent-sessions-view" class="agent-view hidden">
+              <ul id="agent-sessions-list" class="agent-sessions-list" aria-label="Recent sessions"></ul>
+              <div id="agent-sessions-empty" class="agent-sessions-empty hidden">
+                No saved chats yet. Send a message to start one.
               </div>
-            </form>
+            </div>
           </div>
         </div>
       </aside>

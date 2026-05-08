@@ -276,7 +276,10 @@ describe('chat-ui', () => {
     composerEl.dispatch('submit', { preventDefault: jest.fn() });
     await flushMicrotasks();
 
-    expect(bridge.createSession).toHaveBeenCalledWith({ modelId: 'gemma4:e2b' });
+    expect(bridge.createSession).toHaveBeenCalledWith({
+      modelId: 'gemma4:e2b',
+      title: 'hello',
+    });
     expect(mod._internals.state.currentSessionId).toBe('session-1');
     expect(bridge.appendMessage).toHaveBeenCalledWith({
       sessionId: 'session-1',
