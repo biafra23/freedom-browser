@@ -1,17 +1,23 @@
 /**
  * Chat UI
  *
- * Message-list + composer wired to the main-process Ollama sidecar
- * via the `window.agent` preload bridge. Streaming tokens are
- * appended to the in-flight assistant message as they arrive over
- * IPC, with the rendered HTML re-derived on each chunk via the
- * markdown helper.
+ * Message-list + composer wired to the main-process Pi runtime via the
+ * `window.agent` preload bridge. Pi owns the conversation log: each
+ * session is a JSONL file under `userData/pi-agent/sessions/`, and the
+ * `id` we pass back and forth IS that file path.
  *
- * Conversation is in-memory only for now — Phase 2 of the local-AI
- * roadmap adds the SQLite-backed sessions store.
+ * Per-prompt flow: renderer ensures a session exists (create on first
+ * prompt of a new chat), calls `agent.startChat({ sessionPath, model,
+ * prompt })`, then streams text deltas into the active assistant
+ * bubble. Pi auto-restores prior history when the same sessionPath is
+ * opened again, so we don't ship the message array over IPC.
+ *
+ * Tool calls are wired in Phase 3; Phase 2 is chat-only. The tool-call
+ * card / consent handlers below are kept but no events trigger them yet.
  */
 
 import { renderMarkdown } from './markdown.js';
+import { adaptMessages } from './pi-message-adapter.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -24,11 +30,14 @@ const state = {
   // Tool-call cards live inside the active assistant message's bubble.
   // toolCallEls maps callId → { wrapEl, headerEl, bodyEl } so the
   // tool-result + consent-response handlers can update the card in
-  // place without re-rendering the whole message.
+  // place without re-rendering the whole message. Phase 3 brings this
+  // back to life; Phase 2 leaves the wiring in place but no events fire.
   activeToolCallEls: new Map(),
   selectedModel: null,
   models: [],
   daemonRunning: false,
+  // The Pi JSONL path of the open session. null = "fresh chat, no JSONL
+  // exists yet" — first user prompt creates one via createSession.
   currentSessionId: null,
 };
 
@@ -80,7 +89,6 @@ export function initChatUi() {
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
   modelBtn?.addEventListener('click', toggleModelDropdown);
-  // Close the model dropdown on any click outside the selector.
   document.addEventListener('click', (e) => {
     if (modelSelector && !modelSelector.contains(e.target)) {
       closeModelDropdown();
@@ -89,20 +97,14 @@ export function initChatUi() {
 
   window.agent.onChatChunk((data) => handleChunk(data));
   window.agent.onChatDone((data) => handleDone(data));
-  window.agent.onToolCall?.((data) => handleToolCall(data));
-  window.agent.onToolResult?.((data) => handleToolResult(data));
-  window.agent.onConsentRequest?.((data) => handleConsentRequest(data));
+  window.agent.onToolCall((data) => handleToolCall(data));
+  window.agent.onToolResult((data) => handleToolResult(data));
+  window.agent.onConsentRequest((data) => handleConsentRequest(data));
 
-  // Refresh status whenever the AI sidebar opens — daemon may have
-  // started/stopped while it was hidden.
   document.addEventListener('sidebar-opened', (event) => {
     if (event.detail?.id === 'ai-sidebar') refreshStatus();
   });
 
-  // Re-fetch status whenever the Ollama lifecycle transitions (start
-  // succeeded / process exited / etc.). The chat UI's status badge and
-  // model dropdown both depend on whether the daemon is reachable, so
-  // we want the same source of truth as the Nodes panel.
   window.ollama?.onStatusUpdate?.(() => refreshStatus());
 
   refreshStatus();
@@ -125,8 +127,6 @@ export async function refreshStatus() {
 
     const names = state.models.map((m) => m.name);
     const choices = names.length > 0 ? names : [FALLBACK_MODEL];
-    // Prefer the previously selected model if still installed; otherwise
-    // use FALLBACK_MODEL if present, otherwise the first available.
     const preferred =
       (state.selectedModel && choices.includes(state.selectedModel)
         ? state.selectedModel
@@ -159,7 +159,6 @@ function renderModelDropdown(choices) {
 function selectModel(name) {
   state.selectedModel = name;
   if (modelBtnName) modelBtnName.textContent = name;
-  // Update the active class without a full re-render.
   if (modelList) {
     for (const item of modelList.children) {
       item.classList.toggle('active', item.dataset.model === name);
@@ -195,27 +194,24 @@ function setStatus(level, text) {
   statusBadge.textContent = text;
 }
 
+function hydrateFromSession(session) {
+  if (!session) return false;
+  state.currentSessionId = session.id;
+  state.messages = adaptMessages(session.messages);
+  state.activeToolCallEls.clear();
+  renderMessages();
+  return true;
+}
+
 // On startup, resume the most recent session so conversations survive
-// quit/reopen. If none exists, defer creating one until the first user
-// message — keeps an empty session out of the DB just for opening the
-// sidebar.
+// quit/reopen. Pi's session list is read from JSONL files on disk; the
+// renderer just renders what comes back.
 async function loadCurrentSession() {
   try {
-    const session = await window.agent.getRecentSession();
-    if (!session) return;
-    state.currentSessionId = session.id;
-    state.messages = (session.messages || []).map(rowToInMemoryMessage);
-    renderMessages();
+    hydrateFromSession(await window.agent.getRecentSession());
   } catch (err) {
     pushDebug(`[ChatUi] Could not load recent session: ${err?.message || err}`);
   }
-}
-
-async function ensureSession(modelId, initialTitle = null) {
-  if (state.currentSessionId) return state.currentSessionId;
-  const session = await window.agent.createSession({ modelId, title: initialTitle });
-  state.currentSessionId = session.id;
-  return session.id;
 }
 
 const TITLE_MAX_LEN = 40;
@@ -227,31 +223,11 @@ function autoTitleFromMessage(text) {
   return trimmed.slice(0, TITLE_MAX_LEN - 1) + '…';
 }
 
-function rowToInMemoryMessage(row) {
-  const msg = { role: row.role, content: row.content || '' };
-  if (row.parts_json) {
-    try {
-      const parts = JSON.parse(row.parts_json);
-      if (Array.isArray(parts.toolCalls)) msg.toolCalls = parts.toolCalls;
-    } catch (err) {
-      pushDebug(`[ChatUi] Could not parse parts_json: ${err?.message || err}`);
-    }
-  }
-  return msg;
-}
-
-async function persistMessage(role, content, parts = null) {
-  if (!state.currentSessionId) return;
-  try {
-    await window.agent.appendMessage({
-      sessionId: state.currentSessionId,
-      role,
-      content,
-      parts,
-    });
-  } catch (err) {
-    pushDebug(`[ChatUi] Could not persist ${role} message: ${err?.message || err}`);
-  }
+async function ensureSession(initialTitle = null) {
+  if (state.currentSessionId) return state.currentSessionId;
+  const session = await window.agent.createSession({ title: initialTitle });
+  state.currentSessionId = session.id;
+  return session.id;
 }
 
 function getActiveWebContentsId() {
@@ -273,20 +249,18 @@ async function handleSubmit(e) {
   if (!text) return;
 
   const model = state.selectedModel || FALLBACK_MODEL;
-  // Auto-title from the first user message of a fresh session. Existing
-  // sessions keep their stored title (user-renamed or earlier auto-title).
-  const initialTitle = state.messages.length === 0 ? autoTitleFromMessage(text) : null;
-  await ensureSession(model, initialTitle);
+  // Auto-title from the first user message of a fresh chat. Existing
+  // sessions keep their stored name.
+  const initialTitle =
+    !state.currentSessionId && state.messages.length === 0
+      ? autoTitleFromMessage(text)
+      : null;
+  const sessionPath = await ensureSession(initialTitle);
 
   state.messages.push({ role: 'user', content: text });
   appendMessage({ role: 'user', content: text });
   inputEl.value = '';
   setComposerBusy(true);
-  // Fire-and-forget — persist failure is logged via pushDebug but
-  // does not block the chat stream from starting. In-memory messages
-  // remain the source of truth for this run; cross-launch loss is
-  // acceptable for v1, hardenable in Phase 3 with a status indicator.
-  persistMessage('user', text);
 
   // Insert an empty assistant message that we'll stream into.
   const assistantMsg = { role: 'assistant', content: '' };
@@ -294,11 +268,13 @@ async function handleSubmit(e) {
   state.activeAssistantEl = appendMessage(assistantMsg, { streaming: true });
 
   try {
-    const result = await window.agent.startChat(model, state.messages.slice(0, -1), {
-      sessionId: state.currentSessionId,
+    const result = await window.agent.startChat({
+      sessionPath,
+      model,
+      prompt: text,
       activeWebContentsId: getActiveWebContentsId(),
     });
-    if (result.error) {
+    if (result?.error) {
       finalizeAssistant({ error: result.error });
       return;
     }
@@ -310,8 +286,7 @@ async function handleSubmit(e) {
 
 // Per-chunk re-rendering of the full assistant message is O(n²) in
 // content length (marked + DOMPurify both re-parse the entire string),
-// so we coalesce to one render per animation frame. Multiple tokens
-// arriving inside the same frame collapse to a single parse + sanitise.
+// so we coalesce to one render per animation frame.
 let renderScheduled = false;
 
 function flushAssistantRender() {
@@ -331,7 +306,6 @@ function scheduleAssistantRender() {
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(flushAssistantRender);
   } else {
-    // Test fallback: run synchronously when rAF isn't available.
     flushAssistantRender();
   }
 }
@@ -355,8 +329,6 @@ function handleToolCall(data) {
   if (!state.activeAssistantEl) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== 'assistant') return;
-  // One in-memory record shape used by both the live event flow and
-  // the historical-restore flow; renderToolCallShell reads `id`.
   const record = {
     id: data.callId,
     name: data.name,
@@ -384,8 +356,6 @@ function handleToolResult(data) {
 
 function handleConsentRequest(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
-  // Replace the existing card's body with consent buttons. The
-  // tool-call event has already created the card via handleToolCall.
   updateToolCallCardForConsent(data.callId, data);
 }
 
@@ -433,14 +403,6 @@ function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
     }
   }
 
-  // Fire-and-forget persist of the final assistant message (including
-  // error / partial-on-cancel content + any tool calls) so on next
-  // launch the user sees the same conversation state they left.
-  if (last?.role === 'assistant' && (last.content || last.toolCalls?.length)) {
-    const parts = last.toolCalls?.length ? { toolCalls: last.toolCalls } : null;
-    persistMessage('assistant', last.content, parts);
-  }
-
   state.activeStreamId = null;
   state.activeAssistantEl = null;
   state.activeToolCallEls.clear();
@@ -458,9 +420,8 @@ async function handleStop() {
 }
 
 // Forget the current session id — the next user message creates a fresh
-// one. The old session remains in the DB and shows up in the sessions
-// list. Used by both the "+ New" button and the sessions UI's
-// new-chat affordance.
+// JSONL via createSession. The old session remains on disk and shows up
+// in the sessions list.
 export function startNewSession() {
   if (state.activeStreamId) return false;
   state.currentSessionId = null;
@@ -470,18 +431,11 @@ export function startNewSession() {
   return true;
 }
 
-// Load a saved session into the chat view. Used by the sessions UI when
-// the user picks a row. Refuses while a stream is active.
+// Load a saved session into the chat view. Used by the sessions UI.
 export async function loadSessionById(id) {
   if (state.activeStreamId) return false;
   try {
-    const session = await window.agent.getSession(id);
-    if (!session) return false;
-    state.currentSessionId = session.id;
-    state.messages = (session.messages || []).map(rowToInMemoryMessage);
-    state.activeToolCallEls.clear();
-    renderMessages();
-    return true;
+    return hydrateFromSession(await window.agent.getSession(id));
   } catch (err) {
     pushDebug(`[ChatUi] loadSessionById failed: ${err?.message || err}`);
     return false;
@@ -491,7 +445,6 @@ export async function loadSessionById(id) {
 export function getCurrentSessionId() {
   return state.currentSessionId;
 }
-
 
 function setComposerBusy(busy) {
   if (busy) {
@@ -512,7 +465,7 @@ function renderMessages() {
     const empty = document.createElement('div');
     empty.className = 'agent-empty-state';
     empty.innerHTML =
-      '<strong>Local AI Chat</strong><span>Ask the model anything. Conversations are kept in memory only — clearing or closing the sidebar discards them.</span>';
+      '<strong>Local AI Chat</strong><span>Ask the model anything. Conversations persist as Pi sessions on disk and survive restarts.</span>';
     messagesEl.appendChild(empty);
     return;
   }
@@ -546,9 +499,8 @@ function appendMessage(msg, opts = {}) {
   wrap.appendChild(role);
   wrap.appendChild(content);
 
-  // Restore historical tool-call cards when re-rendering a saved
-  // assistant message. Live cards are added by handleToolCall as
-  // events arrive — those go through appendToolCallCard instead.
+  // Restore historical tool-call cards when re-rendering. Phase 3 will
+  // emit live cards via handleToolCall once tool wiring lands.
   if (msg.role === 'assistant' && Array.isArray(msg.toolCalls) && !opts.streaming) {
     for (const call of msg.toolCalls) {
       const card = renderToolCallShell(call);
@@ -593,8 +545,6 @@ function renderToolCallBody(card, call) {
   card.wrapEl.classList.remove('pending', 'allowed', 'denied', 'blocked', 'error', 'consent');
   card.wrapEl.classList.add(call.status || 'pending');
 
-  // Compact args summary so the user can verify the model isn't doing
-  // something weird (e.g., navigating to a surprise URL).
   if (call.args && Object.keys(call.args).length > 0) {
     const argsEl = document.createElement('pre');
     argsEl.className = 'agent-tool-card-args';
@@ -621,9 +571,6 @@ function appendToolCallCard(assistantWrap, record) {
 function updateToolCallCard(callId) {
   const card = state.activeToolCallEls.get(callId);
   if (!card) return;
-  // Re-derive the call from state.messages — the source of truth — so
-  // the body has args, name, and the freshest status / result. The
-  // tool-result handler updates the in-memory record before us.
   const last = state.messages[state.messages.length - 1];
   const record = last?.toolCalls?.find((c) => c.id === callId);
   if (!record) return;
@@ -661,8 +608,6 @@ function updateToolCallCardForConsent(callId, data) {
     btn.dataset.action = choice.value;
     btn.textContent = choice.label;
     btn.addEventListener('click', () => {
-      // Disable all buttons immediately so the user can't double-click;
-      // tool result event will replace the consent block when it arrives.
       for (const b of actions.querySelectorAll('button')) b.disabled = true;
       respondConsent(data.callId, choice.value);
     });
@@ -694,5 +639,4 @@ function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// Exported for tests.
-export const _internals = { state };
+export const _internals = { state, hydrateFromSession };

@@ -98,7 +98,6 @@ const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
 const { registerAgentIpc } = require('./agent/agent-ipc');
 const { registerOllamaIpc, startOllama, stopOllama } = require('./agent/ollama-manager');
-const { registerSessionsIpc, closeDb: closeSessionsDb } = require('./agent/sessions-store');
 const { registerProfilesIpc, closeDb: closeProfilesDb } = require('./agent/agent-profiles');
 const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
 const { migrateUserData } = require('./migrate-user-data');
@@ -161,7 +160,6 @@ async function bootstrap() {
   registerFeedStoreIpc();
   registerAgentIpc();
   registerOllamaIpc();
-  registerSessionsIpc();
   registerProfilesIpc();
   if (!TEST_MODE) {
     // Skip registering the real bzz/ipfs/ipns handlers in test mode —
@@ -291,7 +289,6 @@ app.on('before-quit', async (event) => {
   log.info('[App] Closing history databases...');
   closeHistoryDb();
   closePublishHistoryDb();
-  closeSessionsDb();
   closeProfilesDb();
 
   // Clean up any GitHub bridge temp directories

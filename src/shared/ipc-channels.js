@@ -201,14 +201,13 @@ module.exports = {
   AGENT_CHAT_CONSENT_REQUEST: 'agent:chat:consent-request',
   AGENT_CHAT_CONSENT: 'agent:chat:consent',
 
-  // Agent sessions store
+  // Agent sessions (Pi-backed JSONL files; `id` is the file path)
   AGENT_SESSION_LIST: 'agent:session:list',
   AGENT_SESSION_GET: 'agent:session:get',
   AGENT_SESSION_GET_RECENT: 'agent:session:get-recent',
   AGENT_SESSION_CREATE: 'agent:session:create',
   AGENT_SESSION_RENAME: 'agent:session:rename',
   AGENT_SESSION_DELETE: 'agent:session:delete',
-  AGENT_SESSION_APPEND_MESSAGE: 'agent:session:append-message',
 
   // Agent profiles (named LLM personas with allowed tool tiers)
   AGENT_PROFILE_LIST: 'agent:profile:list',

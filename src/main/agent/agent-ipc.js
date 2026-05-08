@@ -1,105 +1,113 @@
 /**
- * Agent IPC
+ * Agent IPC (Pi-backed)
  *
- * Bridges the renderer to the local Ollama sidecar via AI SDK Core +
- * the OpenAI-compatible provider (Ollama exposes `/v1/chat/completions`).
- * Five concerns:
+ * Bridges the renderer to a Pi `AgentSession` per chat turn. Five concerns:
  *
- * 1. **Status** (`agent:status`) — point-in-time snapshot for the
- *    sidebar header: is the daemon reachable, what version, which
- *    models are installed.
- * 2. **Streaming chat** (`agent:chat:start` → `agent:chat:chunk` /
- *    `agent:chat:done`) — long-running, multi-chunk request. The
- *    invoke handler returns a `streamId` immediately; chunks flow
- *    over `event.sender.send` until a terminal `agent:chat:done`.
- * 3. **Tool calls** (`agent:chat:tool-call` / `:tool-result`) — AI
- *    SDK invokes our wrapped `execute` function for each tool the
- *    model emits; we forward the call, run it through the broker,
- *    and stream the result back so the renderer can render a card.
- * 4. **Consent** (`agent:chat:consent-request` →
- *    `agent:chat:consent`) — when the broker says `ask`, we emit a
- *    request, await the user's allow/allow-session/deny via the
- *    response channel, and resume the wrapped execute accordingly.
- * 5. **Cancellation** (`agent:chat:cancel`) — abort an in-flight
- *    stream by id, including any pending consent prompts.
+ *   1. **Status** (`agent:status`) — point-in-time snapshot for the
+ *      sidebar header: is Ollama reachable, what version, which models.
+ *   2. **Streaming chat** (`agent:chat:start` → `agent:chat:chunk` /
+ *      `agent:chat:done`) — long-running, multi-chunk request. The
+ *      invoke handler returns a `streamId` immediately; chunks flow
+ *      over `event.sender.send` until a terminal `agent:chat:done`.
+ *   3. **Sessions** (`agent:session:list/get/get-recent/create/rename/delete`)
+ *      — a thin shell over Pi's `SessionManager`. Sessions live as
+ *      JSONL files under `userData/pi-agent/sessions/<encoded-cwd>/`.
+ *   4. **Consent** (`agent:chat:consent-request` / `agent:chat:consent`)
+ *      — Phase 3 wires real tool consent through here. Phase 2 has no
+ *      tools yet; the consent handler returns "no pending consent".
+ *   5. **Cancellation** (`agent:chat:cancel`) — abort the in-flight
+ *      stream by id.
  *
- * Streams are tracked per-sender. When a sender goes away (renderer
- * close, navigation) we abort + drop the stream so a closed window
- * can't leak an in-flight Ollama request or a stuck consent prompt.
+ * One Pi `AgentSession` per `chat:start` (per chat turn). When agent_end
+ * fires (or on cancel / error / sender-destroyed), the session is
+ * disposed and the stream removed from `activeStreams`.
+ *
+ * Pi owns all message persistence — no SQLite. The Pi JSONL is the
+ * source of truth for prior conversation; chat:start with an existing
+ * sessionPath restores history automatically via Pi's session context.
  */
 
 const { ipcMain, app } = require('electron');
+const path = require('node:path');
+const fs = require('node:fs');
 const log = require('../logger');
 const IPC = require('../../shared/ipc-channels');
 const { newId } = require('../../shared/random-id');
 const { getVersion, listModels } = require('./ollama-meta');
 const { getOllamaApiUrl } = require('../service-registry');
-const profilesStore = require('./agent-profiles');
-const sessionsStore = require('./sessions-store');
-const broker = require('./agent-permissions');
-const registry = require('./tools/registry');
-const { BROWSER_TOOLS } = require('./tools/browser-tools');
+const {
+  createFreedomPiSession,
+  getFreedomAgentDir,
+  _internals: piInternals,
+} = require('./pi-runtime');
 
 // streamId -> {
-//   controller, senderId, sessionId, profile, activeWebContentsId,
-//   toolCalls,            // accumulated for parts persistence on done
-//   pendingConsent,       // Map<callId, resolve>
+//   streamId, senderId, sender, sessionPath, activeWebContentsId,
+//   session?, dispose?, unsubscribe?,
+//   fullText, cancelled
 // }
 const activeStreams = new Map();
 
-// Lazy-load AI SDK Core so unit tests can mock it via jest.doMock without
-// paying the import cost. Provider is rebuilt per chat against the
-// service-registry's live URL so a port-conflict fallback (default 11434
-// busy → 11435) doesn't leave us streaming to a stale baseURL.
-let _streamText;
-let _createOpenAICompatible;
-let _tool;
-let _stepCountIs;
-
-function loadAiSdk() {
-  if (!_streamText) {
-    const ai = require('ai');
-    _streamText = ai.streamText;
-    _tool = ai.tool;
-    _stepCountIs = ai.stepCountIs;
-  }
-  if (!_createOpenAICompatible) {
-    _createOpenAICompatible = require('@ai-sdk/openai-compatible').createOpenAICompatible;
-  }
-  const provider = _createOpenAICompatible({
-    name: 'ollama',
-    baseURL: `${getOllamaApiUrl()}/v1`,
-  });
-  return { streamText: _streamText, tool: _tool, stepCountIs: _stepCountIs, provider };
-}
+// Coalesce streaming text deltas before crossing the IPC boundary. Pi emits
+// per-token text_delta events (300-500 per response on Gemma 4); the renderer
+// already coalesces marked + DOMPurify renders to one per animation frame, so
+// flushing main-side at ~16ms gives us at most one IPC + one render per frame.
+const CHUNK_FLUSH_MS = 16;
 
 function newStreamId() {
   return newId();
 }
 
+function getAgentDir() {
+  return getFreedomAgentDir(app);
+}
+
+function getSessionsDir() {
+  return path.join(getAgentDir(), 'sessions');
+}
+
+function ensureSessionsDir() {
+  const dir = getSessionsDir();
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+async function loadPi() {
+  return piInternals.loadPi();
+}
+
+function sendIfAlive(ctx, channel, payload) {
+  if (ctx.sender && !ctx.sender.isDestroyed()) {
+    ctx.sender.send(channel, payload);
+  }
+}
+
 function dropStream(streamId) {
-  const entry = activeStreams.get(streamId);
-  if (entry?.pendingConsent) {
-    // Reject any outstanding consent prompts so the wrapped execute
-    // unwinds rather than waiting forever.
-    for (const resolve of entry.pendingConsent.values()) {
-      resolve('deny');
-    }
-    entry.pendingConsent.clear();
+  const ctx = activeStreams.get(streamId);
+  if (!ctx) return;
+  try {
+    ctx.unsubscribe?.();
+  } catch (err) {
+    log.warn(`[Agent] unsubscribe threw for ${streamId}:`, err.message);
+  }
+  try {
+    ctx.dispose?.();
+  } catch (err) {
+    log.warn(`[Agent] dispose threw for ${streamId}:`, err.message);
   }
   activeStreams.delete(streamId);
 }
 
 function dropStreamsForSender(senderId) {
-  for (const [streamId, entry] of activeStreams) {
-    if (entry.senderId === senderId) {
-      try {
-        entry.controller.abort();
-      } catch {
-        // Aborting an already-finished controller is a no-op.
-      }
-      dropStream(streamId);
-    }
+  for (const [streamId, ctx] of activeStreams) {
+    if (ctx.senderId !== senderId) continue;
+    ctx.cancelled = true;
+    // Best-effort abort so session.prompt resolves sooner; pumpChat's `finally`
+    // also calls dropStream but is a no-op once we've already cleared the map.
+    ctx.session?.abort().catch((err) =>
+      log.warn(`[Agent] session.abort during sender drop threw: ${err.message}`)
+    );
+    dropStream(streamId);
   }
 }
 
@@ -120,247 +128,321 @@ async function handleStatus() {
       })),
     };
   } catch (err) {
-    return {
-      running: false,
-      error: err.message,
-      models: [],
-    };
+    return { running: false, error: err.message, models: [] };
   }
 }
 
-function resolveProfile(sessionId) {
-  if (sessionId) {
-    const session = sessionsStore.getSession(sessionId);
-    if (session?.agent_id) {
-      const p = profilesStore.getProfile(session.agent_id);
-      if (p) return p;
-    }
-  }
-  return profilesStore.getDefaultProfile();
-}
+// --- Sessions IPC ----------------------------------------------------------
 
-function buildAiSdkTools(streamCtx) {
-  const { tool } = loadAiSdk();
-  const visible = broker.listToolsForProfile(streamCtx.profile);
-  const out = {};
-  for (const def of visible) {
-    out[def.name] = tool({
-      description: def.description,
-      inputSchema: def.inputSchema,
-      execute: makeWrappedExecute(def, streamCtx),
-    });
-  }
-  return out;
-}
-
-function makeWrappedExecute(def, streamCtx) {
-  return async (input) => {
-    const callId = newId();
-    const callRecord = {
-      id: callId,
-      name: def.name,
-      tier: def.tier,
-      args: input,
-      status: 'pending',
-      result: null,
-    };
-    streamCtx.toolCalls.push(callRecord);
-
-    sendIfAlive(streamCtx, IPC.AGENT_CHAT_TOOL_CALL, {
-      streamId: streamCtx.streamId,
-      callId,
-      name: def.name,
-      tier: def.tier,
-      args: input,
-    });
-
-    const decision = broker.evaluate({
-      toolName: def.name,
-      profile: streamCtx.profile,
-      sessionId: streamCtx.sessionId,
-    });
-
-    let userChoice = null;
-    if (decision.decision === 'block') {
-      return finalizeCallAsError(streamCtx, callRecord, 'blocked', decision.reason);
-    }
-    if (decision.decision === 'allow') {
-      userChoice = 'allow';
-    } else if (decision.decision === 'ask') {
-      sendIfAlive(streamCtx, IPC.AGENT_CHAT_CONSENT_REQUEST, {
-        streamId: streamCtx.streamId,
-        callId,
-        name: def.name,
-        tier: def.tier,
-        args: input,
-        description: def.description,
-      });
-      userChoice = await new Promise((resolve) => {
-        streamCtx.pendingConsent.set(callId, resolve);
-      });
-      streamCtx.pendingConsent.delete(callId);
-    }
-
-    if (userChoice === 'deny') {
-      return finalizeCallAsError(streamCtx, callRecord, 'denied', 'User denied this tool call');
-    }
-    if (userChoice === 'allow-session' && streamCtx.sessionId) {
-      broker.grantForSession(streamCtx.sessionId, def.tier);
-    }
-
-    try {
-      const result = await registry.runTool(def.name, input, {
-        webContentsId: streamCtx.activeWebContentsId,
-        sessionId: streamCtx.sessionId,
-      });
-      callRecord.status = 'allowed';
-      callRecord.result = result;
-      sendIfAlive(streamCtx, IPC.AGENT_CHAT_TOOL_RESULT, {
-        streamId: streamCtx.streamId,
-        callId,
-        status: 'allowed',
-        result,
-      });
-      return result;
-    } catch (err) {
-      return finalizeCallAsError(streamCtx, callRecord, 'error', err.message);
-    }
+function infoToView(info) {
+  return {
+    id: info.path,
+    title: info.name || firstLine(info.firstMessage) || '(Untitled)',
+    created_at: info.created instanceof Date ? info.created.getTime() : null,
+    updated_at: info.modified instanceof Date ? info.modified.getTime() : null,
+    message_count: info.messageCount ?? 0,
   };
 }
 
-function finalizeCallAsError(streamCtx, callRecord, status, message) {
-  callRecord.status = status;
-  callRecord.result = { error: message };
-  sendIfAlive(streamCtx, IPC.AGENT_CHAT_TOOL_RESULT, {
-    streamId: streamCtx.streamId,
-    callId: callRecord.id,
-    status,
-    result: callRecord.result,
-  });
-  // Returning the error as the tool result lets the model see what
-  // happened and react gracefully (typically: explain to the user).
-  return { error: message };
+function firstLine(text) {
+  if (!text) return '';
+  const trimmed = String(text).trim();
+  if (!trimmed) return '';
+  const nl = trimmed.indexOf('\n');
+  return nl === -1 ? trimmed : trimmed.slice(0, nl);
 }
 
-function sendIfAlive(streamCtx, channel, payload) {
-  if (streamCtx.sender && !streamCtx.sender.isDestroyed()) {
-    streamCtx.sender.send(channel, payload);
+function parseIso(timestamp) {
+  if (!timestamp) return null;
+  const ms = Date.parse(timestamp);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function entriesToTimestamps(entries, headerTimestamp) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    const headerMs = parseIso(headerTimestamp);
+    return { created: headerMs, updated: headerMs };
+  }
+  return {
+    created: parseIso(entries[0]?.timestamp),
+    updated: parseIso(entries[entries.length - 1]?.timestamp),
+  };
+}
+
+async function listSessions(limit = 50) {
+  const pi = await loadPi();
+  const cwd = getAgentDir();
+  const sessionsDir = ensureSessionsDir();
+  const infos = await pi.SessionManager.list(cwd, sessionsDir);
+  return infos
+    .sort((a, b) => (b.modified?.getTime() ?? 0) - (a.modified?.getTime() ?? 0))
+    .slice(0, limit)
+    .map(infoToView);
+}
+
+async function getSession(sessionPath) {
+  if (!sessionPath) return null;
+  const pi = await loadPi();
+  let sm;
+  try {
+    sm = pi.SessionManager.open(sessionPath);
+  } catch (err) {
+    log.warn(`[Agent] getSession open failed for ${sessionPath}: ${err.message}`);
+    return null;
+  }
+  const entries = sm.getEntries();
+  const messages = [];
+  for (const entry of entries) {
+    if (entry?.type === 'message' && entry.message) messages.push(entry.message);
+  }
+  const { created, updated } = entriesToTimestamps(entries, sm.getHeader()?.timestamp);
+  return {
+    id: sessionPath,
+    title:
+      sm.getSessionName() ||
+      firstLine(extractFirstUserText(messages)) ||
+      '(Untitled)',
+    messages,
+    created_at: created,
+    updated_at: updated,
+  };
+}
+
+function extractFirstUserText(messages) {
+  for (const m of messages) {
+    if (m?.role !== 'user') continue;
+    if (typeof m.content === 'string') return m.content;
+    if (Array.isArray(m.content)) {
+      const text = m.content.find((c) => c?.type === 'text')?.text;
+      if (text) return text;
+    }
+  }
+  return '';
+}
+
+async function getRecentSession() {
+  const list = await listSessions(1);
+  if (list.length === 0) return null;
+  return getSession(list[0].id);
+}
+
+async function createSession({ title = null } = {}) {
+  const pi = await loadPi();
+  const cwd = getAgentDir();
+  const sessionsDir = ensureSessionsDir();
+  const sm = pi.SessionManager.create(cwd, sessionsDir);
+  if (title) {
+    sm.appendSessionInfo(title);
+  }
+  const sessionPath = sm.getSessionFile();
+  if (!sessionPath) {
+    throw new Error('SessionManager.create returned no session file path');
+  }
+  const tsMs = parseIso(sm.getHeader()?.timestamp) ?? Date.now();
+  return {
+    id: sessionPath,
+    title: title ?? null,
+    created_at: tsMs,
+    updated_at: tsMs,
+    message_count: 0,
+  };
+}
+
+async function renameSession(sessionPath, title) {
+  if (!sessionPath || !title) return false;
+  const pi = await loadPi();
+  let sm;
+  try {
+    sm = pi.SessionManager.open(sessionPath);
+  } catch (err) {
+    log.warn(`[Agent] renameSession open failed: ${err.message}`);
+    return false;
+  }
+  sm.appendSessionInfo(String(title));
+  return true;
+}
+
+function deleteSession(sessionPath) {
+  if (!sessionPath) return false;
+  try {
+    fs.unlinkSync(sessionPath);
+    return true;
+  } catch (err) {
+    log.warn(`[Agent] deleteSession failed for ${sessionPath}: ${err.message}`);
+    return false;
   }
 }
 
-async function startChatStream(
-  event,
-  { model, messages, sessionId = null, activeWebContentsId = null } = {}
-) {
-  if (!model || typeof model !== 'string') {
-    return { error: 'model is required' };
-  }
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return { error: 'messages must be a non-empty array' };
+// --- Chat IPC --------------------------------------------------------------
+
+async function startChatStream(event, payload = {}) {
+  const { model, prompt, sessionPath, activeWebContentsId = null } = payload;
+  if (!model || typeof model !== 'string') return { error: 'model is required' };
+  if (!prompt || typeof prompt !== 'string') return { error: 'prompt is required' };
+  if (!sessionPath || typeof sessionPath !== 'string') {
+    return { error: 'sessionPath is required' };
   }
 
   const streamId = newStreamId();
-  const controller = new AbortController();
   const sender = event.sender;
-  const streamCtx = {
+  const ctx = {
     streamId,
-    controller,
     senderId: sender.id,
     sender,
-    sessionId,
+    sessionPath,
     activeWebContentsId,
-    profile: resolveProfile(sessionId),
-    toolCalls: [],
-    pendingConsent: new Map(),
+    fullText: '',
+    cancelled: false,
   };
-  activeStreams.set(streamId, streamCtx);
+  activeStreams.set(streamId, ctx);
 
-  pumpChat({ model, messages, signal: controller.signal, streamCtx }).finally(() => {
+  // Fire-and-forget: pumpChat owns the lifecycle, including emitting the
+  // terminal AGENT_CHAT_DONE and dropping the stream from the map.
+  pumpChat({ model, prompt, ctx }).catch((err) => {
+    log.error(`[Agent] pumpChat ${streamId} fatal:`, err);
+    sendIfAlive(ctx, IPC.AGENT_CHAT_DONE, {
+      streamId,
+      fullContent: ctx.fullText,
+      toolCalls: [],
+      error: err?.message || String(err),
+    });
     dropStream(streamId);
   });
 
   return { streamId };
 }
 
-async function pumpChat({ model, messages, signal, streamCtx }) {
-  let fullContent = '';
+async function pumpChat({ model, prompt, ctx }) {
+  const emitDone = (extra = {}) =>
+    sendIfAlive(ctx, IPC.AGENT_CHAT_DONE, {
+      streamId: ctx.streamId,
+      fullContent: ctx.fullText,
+      toolCalls: [],
+      ...extra,
+    });
+
+  let session;
+  let dispose;
   try {
-    const { streamText, stepCountIs, provider } = loadAiSdk();
-    const result = streamText({
-      model: provider(model),
-      messages,
-      tools: buildAiSdkTools(streamCtx),
-      stopWhen: stepCountIs(8),
-      abortSignal: signal,
+    const created = await createFreedomPiSession({
+      agentDir: getAgentDir(),
+      modelId: model,
+      sessionPath: ctx.sessionPath,
     });
-
-    for await (const delta of result.textStream) {
-      if (delta) {
-        fullContent += delta;
-        sendIfAlive(streamCtx, IPC.AGENT_CHAT_CHUNK, {
-          streamId: streamCtx.streamId,
-          content: delta,
-        });
-      }
-    }
-
-    const [finishReason, usage] = await Promise.all([
-      result.finishReason.catch(() => null),
-      result.usage.catch(() => null),
-    ]);
-
-    sendIfAlive(streamCtx, IPC.AGENT_CHAT_DONE, {
-      streamId: streamCtx.streamId,
-      fullContent,
-      toolCalls: streamCtx.toolCalls,
-      stats: { finishReason, usage },
-    });
+    session = created.session;
+    dispose = created.dispose;
   } catch (err) {
-    if (signal.aborted) {
-      log.info(`[Agent] Chat stream ${streamCtx.streamId} cancelled`);
-      sendIfAlive(streamCtx, IPC.AGENT_CHAT_DONE, {
-        streamId: streamCtx.streamId,
-        fullContent,
-        toolCalls: streamCtx.toolCalls,
-        cancelled: true,
-      });
-      return;
+    emitDone({ error: err?.message || String(err) });
+    dropStream(ctx.streamId);
+    return;
+  }
+
+  ctx.session = session;
+  ctx.dispose = dispose;
+
+  let pendingDelta = '';
+  let flushTimer = null;
+  const flushPending = () => {
+    if (!pendingDelta) return;
+    const content = pendingDelta;
+    pendingDelta = '';
+    sendIfAlive(ctx, IPC.AGENT_CHAT_CHUNK, { streamId: ctx.streamId, content });
+  };
+  const cancelFlushTimer = () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
     }
-    log.error(`[Agent] Chat stream ${streamCtx.streamId} failed:`, err.message);
-    sendIfAlive(streamCtx, IPC.AGENT_CHAT_DONE, {
-      streamId: streamCtx.streamId,
-      fullContent,
-      toolCalls: streamCtx.toolCalls,
-      error: err.message,
-    });
+  };
+
+  let agentEndEvent = null;
+
+  ctx.unsubscribe = session.subscribe((evt) => {
+    if (
+      evt.type === 'message_update' &&
+      evt.assistantMessageEvent?.type === 'text_delta'
+    ) {
+      const delta = evt.assistantMessageEvent.delta;
+      if (!delta) return;
+      ctx.fullText += delta;
+      pendingDelta += delta;
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushTimer = null;
+          flushPending();
+        }, CHUNK_FLUSH_MS);
+      }
+    } else if (evt.type === 'agent_end') {
+      agentEndEvent = evt;
+    }
+  });
+
+  try {
+    await session.prompt(prompt, { source: 'extension' });
+    cancelFlushTimer();
+    flushPending();
+    emitDone(
+      ctx.cancelled
+        ? { cancelled: true }
+        : { stats: extractStats(agentEndEvent) }
+    );
+  } catch (err) {
+    cancelFlushTimer();
+    flushPending();
+    if (ctx.cancelled) {
+      emitDone({ cancelled: true });
+    } else {
+      log.error(`[Agent] Chat stream ${ctx.streamId} failed:`, err.message);
+      emitDone({ error: err.message });
+    }
+  } finally {
+    cancelFlushTimer();
+    dropStream(ctx.streamId);
   }
 }
 
-function cancelChatStream(_event, { streamId }) {
-  const entry = activeStreams.get(streamId);
-  if (!entry) {
-    return { cancelled: false };
+function extractStats(agentEndEvent) {
+  const messages = agentEndEvent?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  let assistant = null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'assistant') {
+      assistant = messages[i];
+      break;
+    }
   }
-  try {
-    entry.controller.abort();
-  } catch {
-    // Aborting an already-finished controller is a no-op.
+  if (!assistant?.usage) {
+    return assistant?.stopReason ? { finishReason: assistant.stopReason } : null;
   }
-  dropStream(streamId);
+  return {
+    finishReason: assistant.stopReason || null,
+    usage: {
+      inputTokens: assistant.usage.input,
+      outputTokens: assistant.usage.output,
+      totalTokens: assistant.usage.totalTokens,
+    },
+  };
+}
+
+async function cancelChatStream(_event, { streamId } = {}) {
+  const ctx = activeStreams.get(streamId);
+  if (!ctx) return { cancelled: false };
+  ctx.cancelled = true;
+  if (ctx.session) {
+    try {
+      await ctx.session.abort();
+    } catch (err) {
+      log.warn(`[Agent] cancel: session.abort threw: ${err.message}`);
+    }
+  }
   return { cancelled: true };
 }
 
-function handleConsentResponse(_event, { streamId, callId, decision }) {
-  const entry = activeStreams.get(streamId);
-  if (!entry || !entry.pendingConsent.has(callId)) {
-    return { ok: false, reason: 'no pending consent for this callId' };
-  }
-  const accepted = ['allow', 'allow-session', 'deny'];
-  const choice = accepted.includes(decision) ? decision : 'deny';
-  const resolve = entry.pendingConsent.get(callId);
-  resolve(choice);
-  entry.pendingConsent.delete(callId);
-  return { ok: true };
+function handleConsentResponse(_event, _payload = {}) {
+  // Phase 2 has no tool calls yet — Phase 3 wires the real consent flow
+  // through this channel. Returning ok:false keeps the renderer's optimistic
+  // UI from hanging if a stale consent response arrives.
+  return { ok: false, reason: 'no pending consent (Phase 2: tools not wired)' };
 }
 
 let agentIpcRegistered = false;
@@ -369,18 +451,30 @@ function registerAgentIpc() {
   if (agentIpcRegistered) return;
   agentIpcRegistered = true;
 
-  registry.registerAll(BROWSER_TOOLS);
-
   ipcMain.handle(IPC.AGENT_STATUS, () => handleStatus());
+
+  // Chat
   ipcMain.handle(IPC.AGENT_CHAT_START, (event, payload) => startChatStream(event, payload));
   ipcMain.handle(IPC.AGENT_CHAT_CANCEL, (event, payload) => cancelChatStream(event, payload));
   ipcMain.handle(IPC.AGENT_CHAT_CONSENT, (event, payload) => handleConsentResponse(event, payload));
+
+  // Sessions (Pi-backed)
+  ipcMain.handle(IPC.AGENT_SESSION_LIST, (_e, payload = {}) => listSessions(payload.limit ?? 50));
+  ipcMain.handle(IPC.AGENT_SESSION_GET, (_e, payload = {}) => getSession(payload.id));
+  ipcMain.handle(IPC.AGENT_SESSION_GET_RECENT, () => getRecentSession());
+  ipcMain.handle(IPC.AGENT_SESSION_CREATE, (_e, payload = {}) => createSession(payload));
+  ipcMain.handle(IPC.AGENT_SESSION_RENAME, async (_e, payload = {}) => ({
+    ok: await renameSession(payload.id, payload.title),
+  }));
+  ipcMain.handle(IPC.AGENT_SESSION_DELETE, (_e, payload = {}) => ({
+    ok: deleteSession(payload.id),
+  }));
 
   app.on('web-contents-created', (_event, contents) => {
     contents.on('destroyed', () => dropStreamsForSender(contents.id));
   });
 
-  log.info('[Agent] IPC registered');
+  log.info('[Agent] IPC registered (Pi-backed)');
 }
 
 module.exports = {
@@ -390,8 +484,13 @@ module.exports = {
     handleStatus,
     startChatStream,
     cancelChatStream,
-    dropStreamsForSender,
     handleConsentResponse,
-    resolveProfile,
+    dropStreamsForSender,
+    listSessions,
+    getSession,
+    getRecentSession,
+    createSession,
+    renameSession,
+    deleteSession,
   },
 };
