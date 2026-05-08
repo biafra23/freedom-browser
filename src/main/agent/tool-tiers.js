@@ -41,7 +41,14 @@ const TIER_POLICY = Object.freeze({
   [TIERS.EXTERNAL_WITH_USER_DATA]: 'always',
   [TIERS.MONEY]: 'always',
   [TIERS.IDENTITY_OR_SIGNING]: 'always',
-  [TIERS.BROWSER_MUTATION]: 'always',
+  // Browser mutations (navigate / click / fill) honour session grants
+  // so a user who clicked "Allow for session" once doesn't get re-
+  // prompted on every step of normal browsing. Trade-off accepted: the
+  // user trusts the agent for the rest of that session including
+  // potentially-irreversible click/fill actions. If that trust window
+  // proves too coarse, split into BROWSER_NAVIGATION (session-once) +
+  // BROWSER_MUTATION (always) per the Pi-permissions research.
+  [TIERS.BROWSER_MUTATION]: 'session-once',
   [TIERS.BLOCKED]: 'never',
 });
 

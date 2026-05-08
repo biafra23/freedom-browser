@@ -124,19 +124,43 @@ describe('evaluate — allow paths', () => {
 
 describe('evaluate — ask paths', () => {
   test('always-ask tiers prompt even with previous calls', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.BROWSER_MUTATION }));
+    // MONEY stays at 'always' policy — every spend is a fresh prompt.
+    // (BROWSER_MUTATION used to be the example here but moved to
+    // 'session-once' because navigate/click/fill chains in normal use
+    // made re-prompting too noisy.)
+    registry.register(makeTool({ name: 't', tier: TIERS.MONEY }));
     const r1 = broker.evaluate({
       toolName: 't',
-      profile: profile([TIERS.BROWSER_MUTATION]),
+      profile: profile([TIERS.MONEY]),
       sessionId: 's1',
     });
     const r2 = broker.evaluate({
       toolName: 't',
-      profile: profile([TIERS.BROWSER_MUTATION]),
+      profile: profile([TIERS.MONEY]),
       sessionId: 's1',
     });
     expect(r1.decision).toBe('ask');
     expect(r2.decision).toBe('ask');
+  });
+
+  test('browser_mutation honours session grants like local_sensitive', () => {
+    registry.register(makeTool({ name: 'navigate', tier: TIERS.BROWSER_MUTATION }));
+    const before = broker.evaluate({
+      toolName: 'navigate',
+      profile: profile([TIERS.BROWSER_MUTATION]),
+      sessionId: 's1',
+    });
+    expect(before.decision).toBe('ask');
+
+    broker.grantForSession('s1', TIERS.BROWSER_MUTATION);
+
+    const after = broker.evaluate({
+      toolName: 'navigate',
+      profile: profile([TIERS.BROWSER_MUTATION]),
+      sessionId: 's1',
+    });
+    expect(after.decision).toBe('allow');
+    expect(after.cached).toBe(true);
   });
 });
 
