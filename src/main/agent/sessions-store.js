@@ -16,26 +16,16 @@
 const log = require('../logger');
 const { app, ipcMain } = require('electron');
 const path = require('path');
-const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const IPC = require('../../shared/ipc-channels');
+const { newId } = require('../../shared/random-id');
 
 let db = null;
 let statements = null;
-let dbPathOverride = null;
-
-function setDbPathForTests(p) {
-  dbPathOverride = p;
-}
-
-function getDbPath() {
-  if (dbPathOverride) return dbPathOverride;
-  return path.join(app.getPath('userData'), 'agent-sessions.sqlite');
-}
 
 function getDb() {
   if (db) return db;
-  const dbPath = getDbPath();
+  const dbPath = path.join(app.getPath('userData'), 'agent-sessions.sqlite');
   log.info('[AgentSessions] Opening database:', dbPath);
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
@@ -120,10 +110,6 @@ function getStatements() {
     `),
   };
   return statements;
-}
-
-function newId() {
-  return crypto.randomBytes(8).toString('hex');
 }
 
 function createSession({ title = null, agentId = null, modelId = null } = {}) {
@@ -212,6 +198,4 @@ module.exports = {
   renameSession,
   deleteSession,
   appendMessage,
-  // Test hooks.
-  _internals: { setDbPathForTests, newId },
 };

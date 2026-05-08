@@ -26,10 +26,10 @@
  * streams text.
  */
 
-const crypto = require('crypto');
 const { ipcMain, app } = require('electron');
 const log = require('../logger');
 const IPC = require('../../shared/ipc-channels');
+const { newId } = require('../../shared/random-id');
 const { getVersion, listModels } = require('./ollama-meta');
 const { getOllamaApiUrl } = require('../service-registry');
 
@@ -56,7 +56,7 @@ function loadAiSdk() {
 }
 
 function newStreamId() {
-  return crypto.randomBytes(8).toString('hex');
+  return newId();
 }
 
 function dropStream(streamId) {

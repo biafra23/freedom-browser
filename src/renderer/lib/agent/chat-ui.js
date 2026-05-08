@@ -189,6 +189,10 @@ async function handleSubmit(e) {
   appendMessage({ role: 'user', content: text });
   inputEl.value = '';
   setComposerBusy(true);
+  // Fire-and-forget — persist failure is logged via pushDebug but
+  // does not block the chat stream from starting. In-memory messages
+  // remain the source of truth for this run; cross-launch loss is
+  // acceptable for v1, hardenable in Phase 3 with a status indicator.
   persistMessage('user', text);
 
   // Insert an empty assistant message that we'll stream into.
@@ -289,9 +293,9 @@ function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
     }
   }
 
-  // Persist the final assistant message (including error / partial-on-cancel
-  // content) so on next launch the user sees the same conversation state
-  // they left.
+  // Fire-and-forget persist of the final assistant message (including
+  // error / partial-on-cancel content) so on next launch the user sees
+  // the same conversation state they left.
   if (last?.role === 'assistant' && last.content) {
     persistMessage('assistant', last.content);
   }
@@ -311,7 +315,7 @@ async function handleStop() {
   }
 }
 
-async function handleClear() {
+function handleClear() {
   if (state.activeStreamId) return;
   // Archive the current session by simply forgetting its id — the
   // next user message creates a fresh one. Phase 3 adds the sessions
