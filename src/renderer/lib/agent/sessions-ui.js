@@ -117,7 +117,7 @@ function renderRow(session, isActive) {
   }));
   actions.appendChild(makeActionButton('Delete', trashIconSvg(), (e) => {
     e.stopPropagation();
-    startInlineDelete(li, session, actions);
+    showDeleteConfirm(li, session, actions);
   }));
 
   li.appendChild(body);
@@ -149,6 +149,9 @@ function startInlineRename(rowEl, session, titleEl) {
   input.value = session.title || '';
   input.maxLength = 80;
 
+  // Guards against the Enter-then-blur double-fire: pressing Enter calls
+  // commit() and refreshList() removes the input from the DOM, which fires
+  // blur and would otherwise re-enter commit().
   let committed = false;
   const commit = async () => {
     if (committed) return;
@@ -182,7 +185,7 @@ function startInlineRename(rowEl, session, titleEl) {
   input.select();
 }
 
-function startInlineDelete(rowEl, session, actionsEl) {
+function showDeleteConfirm(rowEl, session, actionsEl) {
   // Replace the action buttons with a confirm/cancel pair. Click outside
   // the row or click cancel to abort.
   const confirmBox = document.createElement('div');
@@ -254,4 +257,4 @@ function trashIconSvg() {
 }
 
 // Exported for tests.
-export const _internals = { formatRelativeTime, refreshList, showSessionsView, showChatView };
+export const _internals = { formatRelativeTime };

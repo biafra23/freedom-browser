@@ -52,8 +52,10 @@ const matchesSingleSelector = (element, selector) => {
     return element.classList.contains(className) && element.dataset[dataKey] === dataValue;
   }
 
-  if (selector.startsWith('.') && !selector.includes('[') && !selector.includes(':')) {
+  if (selector.startsWith('.') && !/[[\s:>+~]/.test(selector)) {
     // Supports `.foo.bar.baz` — every dot-prefixed segment must be present.
+    // Combinators (`.foo > .bar`, `.foo .bar`) are intentionally rejected so
+    // the fake fails loudly instead of silently no-matching.
     const classes = selector.split('.').filter(Boolean);
     return classes.every((cls) => element.classList.contains(cls));
   }

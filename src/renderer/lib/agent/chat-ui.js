@@ -64,7 +64,7 @@ export function initChatUi() {
     }
   });
   stopBtn.addEventListener('click', handleStop);
-  clearBtn?.addEventListener('click', handleClear);
+  clearBtn?.addEventListener('click', startNewSession);
   modelSelect?.addEventListener('change', () => {
     state.selectedModel = modelSelect.value;
   });
@@ -363,9 +363,6 @@ export function getCurrentSessionId() {
   return state.currentSessionId;
 }
 
-function handleClear() {
-  startNewSession();
-}
 
 function setComposerBusy(busy) {
   if (busy) {

@@ -5678,7 +5678,7 @@
 }
 
 .agent-session-row.active {
-  background-color: rgba(64, 128, 255, 0.10);
+  background-color: var(--accent-muted, rgba(64, 128, 255, 0.10));
 }
 
 .agent-session-row-body {
