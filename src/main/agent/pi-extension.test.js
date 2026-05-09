@@ -51,6 +51,24 @@ jest.mock('./tools/wallet-tools', () => {
           types: typedData?.types || {},
         }),
       }),
+      stub('wallet_send_transaction', 'money', {
+        formatConsentDescription: ({ reason }) =>
+          `send a transaction. Reason: ${reason}.`,
+        // Async to exercise the await path in pi-extension.
+        getConsentSignDetails: async ({ to, chainId, reason }) => ({
+          kind: 'transaction',
+          reason,
+          from: '0xMAIN…dead',
+          to,
+          chainId,
+        }),
+      }),
+      // Fake tool used only by the timeout test — its consent-details
+      // builder never resolves, so the racer in pi-extension must time
+      // out and fall through to the text-only consent path.
+      stub('wallet_hang_test', 'identity_or_signing', {
+        getConsentSignDetails: () => new Promise(() => {}),
+      }),
     ],
   };
 });
@@ -184,6 +202,7 @@ describe('Phase 3 — tool registration', () => {
       'ens_resolve_contenthash',
       'wallet_sign_message',
       'wallet_sign_typed_data',
+      'wallet_send_transaction',
     ]) {
       expect(names).toContain(expected);
     }
@@ -264,8 +283,10 @@ describe('Phase 3 — tool registration', () => {
         'wallet_get_balance',
         'wallet_get_chain',
         'wallet_get_token_balances',
+        'wallet_hang_test',
         'wallet_list_accounts',
         'wallet_list_chains',
+        'wallet_send_transaction',
         'wallet_sign_message',
         'wallet_sign_typed_data',
         'wallet_switch_chain',
@@ -450,6 +471,45 @@ describe('Phase 3 — tool_call hook', () => {
     expect(ctx.requestConsent).toHaveBeenCalledWith(
       expect.objectContaining({
         description: expect.stringContaining('Reason: log in to MySite'),
+      })
+    );
+  });
+
+  test('hung getConsentSignDetails is timed out so the consent prompt still fires (no signDetails)', async () => {
+    jest.useFakeTimers();
+    try {
+      const { ctx, handler } = await setup();
+      // Don't await yet — race timer against the never-resolving formatter.
+      const promise = handler({
+        toolCallId: 'c-hang',
+        toolName: 'wallet_hang_test',
+        input: {},
+      });
+      // Advance past the 5s timeout window.
+      await jest.advanceTimersByTimeAsync(6000);
+      await promise;
+      expect(ctx.requestConsent).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'wallet_hang_test', signDetails: undefined })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('async getConsentSignDetails is awaited and the resolved value forwarded as signDetails', async () => {
+    const { ctx, handler } = await setup();
+    await handler({
+      toolCallId: 'c-tx',
+      toolName: 'wallet_send_transaction',
+      input: { to: '0xRECIP', chainId: 1, reason: 'send some ETH' },
+    });
+    expect(ctx.requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signDetails: expect.objectContaining({
+          kind: 'transaction',
+          to: '0xRECIP',
+          chainId: 1,
+        }),
       })
     );
   });

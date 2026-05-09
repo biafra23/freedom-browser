@@ -220,6 +220,7 @@ describe('createFreedomPiSession', () => {
         'ens_resolve_contenthash',
         'wallet_sign_message',
         'wallet_sign_typed_data',
+        'wallet_send_transaction',
       ].sort()
     );
   });

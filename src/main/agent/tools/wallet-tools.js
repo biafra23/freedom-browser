@@ -33,6 +33,31 @@ const { ENS_REASONS, ENS_RESULT_TYPES } = ensResolver;
 const transactionService = require('../../wallet/transaction-service');
 const vaultTimer = require('../../vault-timer');
 const vaultUnlockBridge = require('../vault-unlock-bridge');
+const { decodeKnownAction } = require('./wallet-tx-decode');
+const { formatUnits, parseUnits } = require('ethers');
+const { shortAddress: shortAddr } = require('../../../shared/address-utils');
+
+// Resolve the wei value for wallet_send_transaction. Smoke-flagged
+// failure: small models reliably misconvert decimal native units to
+// wei (e.g. Gemma multiplied "0.01 * 10^18" and got 10^20). Accepting
+// `valueNative` ("0.01") and converting server-side via parseUnits
+// removes the footgun. `value` (wei) stays available for callers that
+// have the integer ready. Mutually exclusive.
+function resolveValueWei({ value, valueNative, nativeDecimals }) {
+  if (value && value !== '' && valueNative && valueNative !== '') {
+    throw new Error(
+      'Provide either `value` (wei) or `valueNative` (decimal native units), not both.'
+    );
+  }
+  if (valueNative && valueNative !== '') {
+    try {
+      return parseUnits(valueNative, nativeDecimals).toString();
+    } catch (err) {
+      throw new Error(`Invalid valueNative "${valueNative}": ${err.message}`, { cause: err });
+    }
+  }
+  return value && value !== '' ? value : '0';
+}
 
 const WALLET_BRIDGE_GLOBAL = '__agentWalletBridge__';
 const WALLET_BRIDGE_LABEL = 'wallet';
@@ -44,11 +69,6 @@ async function getActiveAddressOrThrow() {
   const address = await identityManager.getActiveWalletAddress();
   if (!address) throw new Error(VAULT_LOCKED_HINT);
   return address;
-}
-
-function shortAddr(address) {
-  if (typeof address !== 'string' || address.length < 10) return address;
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 // Resolve {address, walletIndex} for a signing request. Caller passes
@@ -556,6 +576,213 @@ function createWalletTools({ hostWebContentsId, Type }) {
     },
   };
 
+  // Send a signed transaction. Tier MONEY (always-ask). The consent
+  // card is the richest one in the cluster: from / to / chain / value /
+  // gas / total in native token, plus ERC-20 transfer/approve decoding
+  // when the calldata matches a known selector. Gas is auto-estimated
+  // (the model shouldn't have to pick correct values), fees auto-fetched
+  // from the chain. Returns immediately with the tx hash + explorer URL —
+  // does NOT wait for confirmation; a separate wallet_wait_for_transaction
+  // tool can be added later if the agent wants to poll.
+  const walletSendTransaction = {
+    name: 'wallet_send_transaction',
+    label: 'Send transaction',
+    description:
+      'Sign and broadcast a transaction from the user\'s wallet. Always asks ' +
+      'for consent (every transaction is consequential — no session grants). ' +
+      'Defaults to the active wallet; gas + fees are auto-estimated.',
+    tier: TIERS.MONEY,
+    promptSnippet: "sign and send a transaction from the user's wallet",
+    promptGuidelines: [
+      'Always provide a clear `reason` — shown verbatim on the consent card. Be specific about what the transaction does (e.g. "send 0.05 ETH to alice.eth", "swap 100 USDC for ETH on Uniswap"), never generic.',
+      'PREFER `valueNative` for native-currency amounts ("0.01" for 0.01 xDAI / ETH / etc.) — the tool converts to wei using the chain\'s native decimals. `value` is the raw wei integer; only use it if you already have the wei amount. Never multiply decimals yourself — small models reliably miscount the zeros.',
+      'For ERC-20 transfers, `valueNative` and `value` are both 0 — the token amount lives inside `data` (build with the contract\'s transfer ABI: selector 0xa9059cbb + 32-byte recipient + 32-byte amount). The consent card decodes the calldata so the user sees "Transfer 1.0 USDC to 0x..." instead of raw hex.',
+      'Gas estimation runs server-side before the consent prompt — the user sees the estimated gas cost in the consent card. If estimation fails, the prompt still shows but without a Total figure.',
+    ],
+    parameters: Type.Object({
+      to: Type.String({ minLength: 1 }),
+      chainId: Type.Number({ minimum: 1 }),
+      reason: Type.String({
+        minLength: 1,
+        description: 'Why the user is being asked to send — shown verbatim on the consent card.',
+      }),
+      // Two ways to specify the native-currency value. Use one or the other.
+      value: Type.Optional(Type.String({
+        description: 'Wei as string (integer). Defaults to "0". Mutex with valueNative.',
+      })),
+      valueNative: Type.Optional(Type.String({
+        description: 'Decimal native units, e.g. "0.01" for 0.01 ETH. Tool converts to wei using the chain\'s native decimals. Mutex with value.',
+      })),
+      data: Type.Optional(Type.String({ description: 'Hex calldata. Defaults to "0x".' })),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    formatConsentDescription({ to, chainId, reason, address }) {
+      const target = address ? shortAddr(address) : 'the active wallet';
+      const recipient = shortAddr(to);
+      return `send a transaction from ${target} to ${recipient} on chain ${chainId}. Reason: ${reason}.`;
+    },
+    async getConsentSignDetails({ to, value, valueNative, data, chainId, reason, address }) {
+      const dataHex = data && data !== '' ? data : '0x';
+
+      // Resolve signing wallet sync-ish — getDerivedWallets is needed
+      // only when an address override is given; the default-active path
+      // skips it. Errors here propagate to the formatter try/catch in
+      // pi-extension and the renderer falls back to text-only consent.
+      const { walletAddress } = await resolveSigningWallet(address);
+
+      const chain = chainsModule.getChain(chainId);
+      const chainName = chain
+        ? `${chain.name} (${chain.nativeCurrency?.symbol ?? ''})`.trim()
+        : `chainId ${chainId}`;
+      const nativeSymbol = chain?.nativeCurrency?.symbol ?? '';
+      const nativeDecimals = chain?.nativeCurrency?.decimals ?? 18;
+
+      // Convert valueNative → wei here so estimateGas + the consent
+      // card both see the canonical wei amount. Throws on conflicting
+      // params or malformed input — caught by pi-extension's formatter
+      // try/catch and falls through to text-only consent.
+      const valueWei = resolveValueWei({ value, valueNative, nativeDecimals });
+
+      const toUrl = chain?.blockExplorer
+        ? `${chain.blockExplorer}/address/${to}`
+        : null;
+
+      // Best-effort gas estimate. If the RPC is flaky or the tx would
+      // revert, surface the error in the gas display rather than
+      // suppressing the whole consent prompt. estimateGas + getGasPrices
+      // are independent — fire in parallel to halve consent-prompt
+      // latency on slow RPCs.
+      let gasLimit;
+      let gasPrices;
+      let gasError;
+      const [gasResult, priceResult] = await Promise.allSettled([
+        transactionService.estimateGas({
+          from: walletAddress,
+          to,
+          value: valueWei,
+          data: dataHex,
+          chainId,
+        }),
+        transactionService.getGasPrices(chainId),
+      ]);
+      if (gasResult.status === 'fulfilled') {
+        gasLimit = gasResult.value.gasLimit;
+      } else {
+        gasError = gasResult.reason?.message || String(gasResult.reason);
+      }
+      if (priceResult.status === 'fulfilled') {
+        gasPrices = priceResult.value;
+      } else {
+        gasError = gasError || priceResult.reason?.message || String(priceResult.reason);
+      }
+
+      // Compute gas wei = gasLimit * effectiveGasPrice (or maxFeePerGas
+      // for EIP-1559). Display in native units so the user sees
+      // "0.0021 ETH" not "2100000000 gwei".
+      let gasDisplay = gasError ? `unavailable (${gasError})` : null;
+      let totalDisplay = null;
+      if (gasLimit && gasPrices) {
+        const pricePerGas =
+          gasPrices.type === 'eip1559'
+            ? BigInt(gasPrices.maxFeePerGas)
+            : BigInt(gasPrices.gasPrice || '0');
+        const gasWei = (BigInt(gasLimit) * pricePerGas).toString();
+        gasDisplay = `~${formatUnits(gasWei, nativeDecimals)} ${nativeSymbol}`.trim();
+        const total = BigInt(valueWei) + BigInt(gasWei);
+        totalDisplay = `~${formatUnits(total, nativeDecimals)} ${nativeSymbol}`.trim();
+      }
+
+      const valueDisplay =
+        valueWei === '0'
+          ? null
+          : `${formatUnits(valueWei, nativeDecimals)} ${nativeSymbol}`.trim();
+
+      // Calldata decode — only ERC-20 transfer / approve today. Other
+      // selectors fall through to a "Show calldata" disclosure on the
+      // raw hex (handled in the renderer).
+      const decoded = decodeKnownAction({ to, data: dataHex, chainId });
+      let action = null;
+      if (decoded?.kind === 'erc20-transfer') {
+        const amt = decoded.formattedAmount ?? `${decoded.rawAmount} (raw)`;
+        const sym = decoded.tokenSymbol || 'tokens';
+        action = `Transfer ${amt} ${sym} to ${shortAddr(decoded.recipient)}`;
+      } else if (decoded?.kind === 'erc20-approve') {
+        const amt = decoded.formattedAmount ?? `${decoded.rawAmount} (raw)`;
+        const sym = decoded.tokenSymbol || 'tokens';
+        action = `Approve ${shortAddr(decoded.spender)} to spend ${amt} ${sym}`;
+      }
+
+      return {
+        kind: 'transaction',
+        reason,
+        from: shortAddr(walletAddress),
+        to: shortAddr(to),
+        toUrl,
+        chainId,
+        chainName,
+        valueDisplay,
+        gasDisplay,
+        totalDisplay,
+        dataHex,
+        action,
+      };
+    },
+    async execute(_id, { to, value, valueNative, data, chainId, reason, address }, signal) {
+      const { walletIndex, walletAddress } = await resolveSigningWallet(address);
+      await ensureVaultUnlocked({
+        hostWebContentsId,
+        reason: `Send transaction — ${reason}`,
+        signal,
+      });
+
+      const chain = chainsModule.getChain(chainId);
+      const nativeDecimals = chain?.nativeCurrency?.decimals ?? 18;
+      const valueWei = resolveValueWei({ value, valueNative, nativeDecimals });
+      const dataHex = data && data !== '' ? data : '0x';
+
+      // Re-estimate gas + re-fetch fees inside execute (consent-card
+      // estimates may be stale by the time the user clicks Allow).
+      // Independent calls — parallel.
+      const [{ gasLimit }, gasPrices] = await Promise.all([
+        transactionService.estimateGas({
+          from: walletAddress,
+          to,
+          value: valueWei,
+          data: dataHex,
+          chainId,
+        }),
+        transactionService.getGasPrices(chainId),
+      ]);
+
+      const identity = await identityManager.loadIdentityModule();
+      const privateKey = identity.exportPrivateKey(walletIndex);
+
+      const sendParams = {
+        to,
+        value: valueWei,
+        data: dataHex,
+        gasLimit,
+        chainId,
+      };
+      if (gasPrices.type === 'eip1559') {
+        sendParams.maxFeePerGas = gasPrices.maxFeePerGas;
+        sendParams.maxPriorityFeePerGas = gasPrices.maxPriorityFeePerGas;
+      } else {
+        sendParams.gasPrice = gasPrices.gasPrice;
+      }
+      const result = await transactionService.signAndSendTransaction(sendParams, privateKey);
+      vaultTimer.resetVaultAutoLockTimer();
+      return jsonResult({
+        txHash: result.hash,
+        from: result.from,
+        to: result.to,
+        value: result.value,
+        chainId,
+        blockExplorerUrl: result.explorerUrl,
+      });
+    },
+  };
+
   return [
     walletGetAccount,
     walletListAccounts,
@@ -569,6 +796,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
     ensResolveContenthash,
     walletSignMessage,
     walletSignTypedData,
+    walletSendTransaction,
   ];
 }
 

@@ -38,6 +38,23 @@ const { createSubagentTools } = require('./subagent-tools');
 
 const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
 
+// How long to wait for an async getConsentSignDetails before falling
+// back to the text-only consent path. Tuned generous (5s) — the only
+// current async builder is wallet_send_transaction, which fires two
+// parallel RPCs (estimateGas + getGasPrices) and should resolve well
+// under 1s on a healthy provider; 5s is the "RPC is in trouble"
+// threshold past which the consent prompt should still show even
+// without the gas estimate.
+const CONSENT_FORMATTER_TIMEOUT_MS = 5000;
+
+function raceWithTimeout(promise, ms, message) {
+  let timer;
+  const timeoutP = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeoutP]).finally(() => clearTimeout(timer));
+}
+
 // Pi's default system prompt declares the agent a "coding assistant operating
 // inside pi" and points it at pi's docs. That mis-primes a browser agent —
 // Gemma 4 e2b in particular tries to fit user requests into a coding-assistant
@@ -304,11 +321,28 @@ function createFreedomExtension({
         let signDetails;
         if (typeof meta.getConsentSignDetails === 'function') {
           try {
-            signDetails = meta.getConsentSignDetails(event.input);
+            // Awaited so async builders work — wallet_send_transaction
+            // (Phase 7d.5) needs to estimate gas before the consent
+            // card can show "Total: value + gas". Sync formatters keep
+            // working unchanged because await on a non-Promise resolves
+            // immediately to the value.
+            //
+            // Race against a timeout so a hung RPC inside an async
+            // builder can't pin the consent prompt indefinitely. Tools
+            // that need a long prep should handle their own internal
+            // timeouts and surface a clean "(unavailable)" instead of
+            // letting the await stretch — the broader consent flow
+            // shouldn't be held hostage to a flaky provider.
+            signDetails = await raceWithTimeout(
+              meta.getConsentSignDetails(event.input),
+              CONSENT_FORMATTER_TIMEOUT_MS,
+              `getConsentSignDetails for ${event.toolName} timed out`
+            );
           } catch (err) {
             // Same fallback rationale as the description formatter — a
-            // bug in the structured-payload builder shouldn't suppress
-            // the consent prompt; renderer falls through to text-only.
+            // bug (or e.g. an RPC failure during gas estimation)
+            // shouldn't suppress the consent prompt itself; renderer
+            // falls through to text-only.
             log.warn(
               `[Pi] getConsentSignDetails threw for ${event.toolName}: ${err.message}`
             );
@@ -318,6 +352,11 @@ function createFreedomExtension({
           callId: event.toolCallId,
           name: event.toolName,
           tier: meta.tier,
+          // Forward the broker's per-call policy (`'always' | 'session-once'
+          // | 'auto'`) so the renderer can hide options the policy doesn't
+          // honour (e.g. "Allow for session" on always-ask tiers like
+          // MONEY) without keeping its own copy of the tier-policy table.
+          policy: decision.policy,
           args: event.input,
           description,
           signDetails,

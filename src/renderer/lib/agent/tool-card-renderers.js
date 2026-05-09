@@ -17,6 +17,8 @@
  * Easy to test in isolation against fake-dom.
  */
 
+import { shortAddress } from '../address-utils.js';
+
 const URL_DISPLAY_MAX = 60;
 const SELECTOR_DISPLAY_MAX = 80;
 const SCREENSHOT_MAX_PX = 220;
@@ -382,10 +384,6 @@ function renderSpawnSubagent(call) {
   return frag;
 }
 
-function shortAddress(address) {
-  if (typeof address !== 'string' || address.length < 10) return address || '';
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
 
 function renderWalletSignMessage(call) {
   const frag = document.createDocumentFragment();
@@ -436,6 +434,41 @@ function renderWalletSignTypedData(call) {
   return frag;
 }
 
+function renderWalletSendTransaction(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Send failed: ${failureText(call)}`));
+    return frag;
+  }
+  const txHash = call.result?.txHash;
+  const explorerUrl = call.result?.blockExplorerUrl;
+  const to = call.result?.to || call.args?.to;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Sending transaction to ${shortAddress(to)}…`));
+    return frag;
+  }
+  if (txHash) {
+    const summary = makeSummary(`Sent to ${shortAddress(to)}: `);
+    if (explorerUrl) {
+      const link = document.createElement('a');
+      link.className = 'agent-tool-url-pill';
+      link.href = explorerUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = truncateMiddle(txHash, 18);
+      summary.appendChild(link);
+    } else {
+      const code = document.createElement('code');
+      code.textContent = truncateMiddle(txHash, 18);
+      summary.appendChild(code);
+    }
+    frag.appendChild(summary);
+  } else {
+    frag.appendChild(makeSummary('Sent'));
+  }
+  return frag;
+}
+
 const TOOL_RENDERERS = {
   navigate: renderNavigate,
   read_current_tab: renderReadCurrentTab,
@@ -450,6 +483,7 @@ const TOOL_RENDERERS = {
   switch_tab: renderSwitchTab,
   wallet_sign_message: renderWalletSignMessage,
   wallet_sign_typed_data: renderWalletSignTypedData,
+  wallet_send_transaction: renderWalletSendTransaction,
 };
 
 function renderJsonFallback(call) {

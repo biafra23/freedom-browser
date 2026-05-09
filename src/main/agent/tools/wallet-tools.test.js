@@ -25,6 +25,8 @@ jest.mock('../../wallet/chains', () => ({
 
 jest.mock('../../chain-registry', () => ({
   isChainAvailable: jest.fn(),
+  getToken: jest.fn(),
+  getTokenKey: (chainId, address) => `${chainId}:${address}`,
 }));
 
 const mockIdentityModule = {
@@ -35,6 +37,9 @@ const mockIdentityModule = {
 jest.mock('../../wallet/transaction-service', () => ({
   signPersonalMessage: jest.fn(),
   signTypedData: jest.fn(),
+  estimateGas: jest.fn(),
+  getGasPrices: jest.fn(),
+  signAndSendTransaction: jest.fn(),
 }));
 
 jest.mock('../../vault-timer', () => ({
@@ -97,7 +102,7 @@ beforeEach(() => {
 });
 
 describe('tool catalog', () => {
-  test('exposes the twelve expected tools', () => {
+  test('exposes the thirteen expected tools', () => {
     const tools = makeTools();
     expect(Object.keys(tools).sort()).toEqual(
       [
@@ -113,11 +118,12 @@ describe('tool catalog', () => {
         'ens_resolve_contenthash',
         'wallet_sign_message',
         'wallet_sign_typed_data',
+        'wallet_send_transaction',
       ].sort()
     );
   });
 
-  test('tiers split: read tools WALLET_READ, switch_chain BROWSER_MUTATION, sign tools IDENTITY_OR_SIGNING', () => {
+  test('tiers split: read WALLET_READ, switch BROWSER_MUTATION, sign IDENTITY_OR_SIGNING, send MONEY', () => {
     const tools = makeTools();
     for (const name of [
       'wallet_get_account',
@@ -135,6 +141,7 @@ describe('tool catalog', () => {
     expect(tools.wallet_switch_chain.tier).toBe(TIERS.BROWSER_MUTATION);
     expect(tools.wallet_sign_message.tier).toBe(TIERS.IDENTITY_OR_SIGNING);
     expect(tools.wallet_sign_typed_data.tier).toBe(TIERS.IDENTITY_OR_SIGNING);
+    expect(tools.wallet_send_transaction.tier).toBe(TIERS.MONEY);
   });
 
   test('every tool has label, description, parameters, snippet, and at least one guideline', () => {
@@ -823,5 +830,309 @@ describe('wallet_sign_typed_data', () => {
     const get = makeTools().wallet_sign_typed_data.getConsentSignDetails;
     const details = get({ typedData: PERMIT_TYPED_DATA, reason: 'r' });
     expect(details.domain.verifyingContractUrl).toBeNull();
+  });
+});
+
+describe('wallet_send_transaction', () => {
+  const ETH_CHAIN = {
+    chainId: 1,
+    name: 'Ethereum',
+    nativeCurrency: { symbol: 'ETH', decimals: 18 },
+    blockExplorer: 'https://etherscan.io',
+  };
+  const ACTIVE = '0xMAINabcdef0123456789';
+
+  function setupHappyPath() {
+    identityManager.getActiveWalletAddress.mockResolvedValue(ACTIVE);
+    identityManager.getActiveWalletIndex.mockReturnValue(0);
+    identityManager.getDerivedWallets.mockResolvedValue([
+      { index: 0, name: 'Main Wallet', address: ACTIVE },
+    ]);
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    transactionService.estimateGas.mockResolvedValue({ gasLimit: '21000' });
+    transactionService.getGasPrices.mockResolvedValue({
+      type: 'eip1559',
+      maxFeePerGas: '100000000000',
+      maxPriorityFeePerGas: '2000000000',
+    });
+    mockIdentityModule.isUnlocked.mockReturnValue(true);
+    mockIdentityModule.exportPrivateKey.mockReturnValue('0xprivatekey');
+    transactionService.signAndSendTransaction.mockResolvedValue({
+      hash: '0xTXHASH',
+      from: ACTIVE,
+      to: '0xRECIPIENTabc',
+      value: '50000000000000000',
+      explorerUrl: 'https://etherscan.io/tx/0xTXHASH',
+    });
+  }
+
+  test('execute auto-estimates gas + fees and broadcasts via signAndSendTransaction', async () => {
+    setupHappyPath();
+    const result = await makeTools().wallet_send_transaction.execute('c1', {
+      to: '0xRECIPIENTabc',
+      value: '50000000000000000',
+      chainId: 1,
+      reason: 'send 0.05 ETH for testing',
+    });
+    expect(transactionService.estimateGas).toHaveBeenCalled();
+    expect(transactionService.getGasPrices).toHaveBeenCalledWith(1);
+    expect(transactionService.signAndSendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: '0xRECIPIENTabc',
+        value: '50000000000000000',
+        data: '0x',
+        gasLimit: '21000',
+        chainId: 1,
+        maxFeePerGas: '100000000000',
+        maxPriorityFeePerGas: '2000000000',
+      }),
+      '0xprivatekey'
+    );
+    expect(result.details).toEqual({
+      txHash: '0xTXHASH',
+      from: ACTIVE,
+      to: '0xRECIPIENTabc',
+      value: '50000000000000000',
+      chainId: 1,
+      blockExplorerUrl: 'https://etherscan.io/tx/0xTXHASH',
+    });
+    expect(vaultTimer.resetVaultAutoLockTimer).toHaveBeenCalledTimes(1);
+  });
+
+  test('execute uses legacy gas price when chain is not EIP-1559', async () => {
+    setupHappyPath();
+    transactionService.getGasPrices.mockResolvedValue({
+      type: 'legacy',
+      gasPrice: '5000000000',
+    });
+    await makeTools().wallet_send_transaction.execute('c1', {
+      to: '0xRECIP',
+      chainId: 1,
+      reason: 'r',
+    });
+    const sentParams = transactionService.signAndSendTransaction.mock.calls[0][0];
+    expect(sentParams.gasPrice).toBe('5000000000');
+    expect(sentParams.maxFeePerGas).toBeUndefined();
+  });
+
+  test('execute uses the explicit address when provided (bypasses active wallet)', async () => {
+    setupHappyPath();
+    const ALT = '0xALTwalletfedcba9876543';
+    identityManager.getDerivedWallets.mockResolvedValue([
+      { index: 0, name: 'Main Wallet', address: ACTIVE },
+      { index: 1, name: 'Trading', address: ALT },
+    ]);
+    await makeTools().wallet_send_transaction.execute('c1', {
+      to: '0xRECIP',
+      chainId: 1,
+      reason: 'r',
+      address: ALT.toLowerCase(),
+    });
+    expect(mockIdentityModule.exportPrivateKey).toHaveBeenCalledWith(1);
+  });
+
+  test('execute rejects an address parameter that does not match a derived wallet', async () => {
+    setupHappyPath();
+    identityManager.getDerivedWallets.mockResolvedValue([
+      { index: 0, name: 'Main Wallet', address: ACTIVE },
+    ]);
+    await expect(
+      makeTools().wallet_send_transaction.execute('c1', {
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'r',
+        address: '0xNOTMINE',
+      })
+    ).rejects.toThrow(/not one of the user's derived wallets/);
+    expect(transactionService.signAndSendTransaction).not.toHaveBeenCalled();
+  });
+
+  test('execute converts valueNative ("0.01") to wei using the chain\'s native decimals', async () => {
+    setupHappyPath();
+    await makeTools().wallet_send_transaction.execute('c1', {
+      to: '0xRECIP',
+      chainId: 1,
+      reason: 'send 0.01 ETH',
+      valueNative: '0.01',
+    });
+    expect(transactionService.signAndSendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ value: '10000000000000000' }), // 0.01 * 10^18
+      '0xprivatekey'
+    );
+  });
+
+  test('execute throws when both value and valueNative are provided', async () => {
+    setupHappyPath();
+    await expect(
+      makeTools().wallet_send_transaction.execute('c1', {
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'r',
+        value: '1',
+        valueNative: '0.01',
+      })
+    ).rejects.toThrow(/either `value` .*or `valueNative`/);
+    expect(transactionService.signAndSendTransaction).not.toHaveBeenCalled();
+  });
+
+  test('execute throws on malformed valueNative', async () => {
+    setupHappyPath();
+    await expect(
+      makeTools().wallet_send_transaction.execute('c1', {
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'r',
+        valueNative: 'not-a-number',
+      })
+    ).rejects.toThrow(/Invalid valueNative/);
+  });
+
+  test('execute defaults value to "0" and data to "0x" when omitted', async () => {
+    setupHappyPath();
+    await makeTools().wallet_send_transaction.execute('c1', {
+      to: '0xRECIP',
+      chainId: 1,
+      reason: 'r',
+    });
+    expect(transactionService.signAndSendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ value: '0', data: '0x' }),
+      '0xprivatekey'
+    );
+  });
+
+  test('execute requests vault unlock when locked, then signs', async () => {
+    setupHappyPath();
+    mockIdentityModule.isUnlocked.mockReturnValueOnce(false).mockReturnValue(true);
+    vaultUnlockBridge.requestVaultUnlock.mockResolvedValue();
+    await makeTools().wallet_send_transaction.execute('c1', {
+      to: '0xRECIP',
+      chainId: 1,
+      reason: 'r',
+    });
+    expect(vaultUnlockBridge.requestVaultUnlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.stringContaining('Send transaction'),
+      })
+    );
+    expect(transactionService.signAndSendTransaction).toHaveBeenCalled();
+  });
+
+  test('execute propagates underlying transaction errors', async () => {
+    setupHappyPath();
+    transactionService.signAndSendTransaction.mockRejectedValue(
+      new Error('insufficient funds for transaction')
+    );
+    await expect(
+      makeTools().wallet_send_transaction.execute('c1', {
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'r',
+      })
+    ).rejects.toThrow(/insufficient funds/);
+    expect(vaultTimer.resetVaultAutoLockTimer).not.toHaveBeenCalled();
+  });
+
+  describe('getConsentSignDetails', () => {
+    test('builds a transaction signDetails with from, to, chain, value, gas, total', async () => {
+      setupHappyPath();
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: '0xRECIPIENTabc',
+        value: '50000000000000000',
+        chainId: 1,
+        reason: 'send 0.05 ETH',
+      });
+      expect(details.kind).toBe('transaction');
+      expect(details.from).toContain('0xMAIN…');
+      expect(details.to).toContain('0xRECI…');
+      expect(details.toUrl).toBe('https://etherscan.io/address/0xRECIPIENTabc');
+      expect(details.chainName).toBe('Ethereum (ETH)');
+      expect(details.valueDisplay).toBe('0.05 ETH');
+      // gas = 21000 * 100 gwei = 2,100,000 gwei = 0.0021 ETH
+      expect(details.gasDisplay).toBe('~0.0021 ETH');
+      expect(details.totalDisplay).toBe('~0.0521 ETH');
+      expect(details.action).toBeNull();
+      expect(details.dataHex).toBe('0x');
+    });
+
+    test('decodes ERC-20 transfer calldata into a human-readable action', async () => {
+      setupHappyPath();
+      chainRegistry.getToken.mockReturnValue({
+        symbol: 'USDC',
+        decimals: 6,
+        chainId: 1,
+        address: '0xUSDC',
+      });
+      // transfer(0xaaaa…aaaa, 1000000) — selector 0xa9059cbb
+      const RECIP_PADDED = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const AMT_HEX = '00000000000000000000000000000000000000000000000000000000000f4240'; // 1_000_000
+      const data = '0xa9059cbb' + '000000000000000000000000' + RECIP_PADDED + AMT_HEX;
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: '0xUSDC',
+        chainId: 1,
+        data,
+        reason: 'send 1 USDC',
+      });
+      expect(details.action.toLowerCase()).toMatch(/transfer 1\.0 usdc to 0xaaaa…aaaa/);
+    });
+
+    test('decodes ERC-20 approve calldata', async () => {
+      setupHappyPath();
+      chainRegistry.getToken.mockReturnValue({
+        symbol: 'USDC',
+        decimals: 6,
+        chainId: 1,
+        address: '0xUSDC',
+      });
+      const SPENDER_PADDED = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const AMT_HEX = '00000000000000000000000000000000000000000000000000000000004c4b40'; // 5_000_000
+      const data = '0x095ea7b3' + '000000000000000000000000' + SPENDER_PADDED + AMT_HEX;
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: '0xUSDC',
+        chainId: 1,
+        data,
+        reason: 'approve Uniswap to spend 5 USDC',
+      });
+      expect(details.action.toLowerCase()).toMatch(/approve 0xbbbb…bbbb to spend 5\.0 usdc/);
+    });
+
+    test('gas estimation failure shows "unavailable" but does not throw', async () => {
+      setupHappyPath();
+      transactionService.estimateGas.mockRejectedValue(new Error('execution reverted'));
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'r',
+      });
+      expect(details.gasDisplay).toMatch(/unavailable.*execution reverted/);
+      expect(details.totalDisplay).toBeNull();
+      expect(details.from).toContain('0xMAIN…');
+      expect(details.chainName).toBe('Ethereum (ETH)');
+    });
+
+    test('valueNative is converted to wei before gas estimation + display', async () => {
+      setupHappyPath();
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'send 0.01 ETH',
+        valueNative: '0.01',
+      });
+      // estimateGas was called with the WEI conversion of 0.01 ETH, not the
+      // raw "0.01" string the model emitted.
+      expect(transactionService.estimateGas).toHaveBeenCalledWith(
+        expect.objectContaining({ value: '10000000000000000' })
+      );
+      expect(details.valueDisplay).toBe('0.01 ETH');
+    });
+
+    test('omits Value row when value is 0', async () => {
+      setupHappyPath();
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: '0xRECIP',
+        chainId: 1,
+        reason: 'r',
+      });
+      expect(details.valueDisplay).toBeNull();
+    });
   });
 });

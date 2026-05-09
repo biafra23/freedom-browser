@@ -26,6 +26,7 @@ import {
   setSlashExtras,
 } from './composer-slash-palette.js';
 import { renderToolBody, SUBAGENT_CHILDREN_CLASS } from './tool-card-renderers.js';
+import { makeConsentSection, addConsentRow } from './consent-render-helpers.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -848,12 +849,6 @@ const CONSENT_CHOICES = Object.freeze([
   { label: 'Deny', value: 'deny', danger: true },
 ]);
 
-// Render the EIP-712 typed-data structured consent body. Domain pills
-// (with a block-explorer link on verifyingContract when we know the
-// chain), the primary type label, top-level message keys flattened to
-// key→value rows, and a collapsed schema disclosure. Nested message
-// values are rendered as a JSON sub-disclosure to keep the v1 readable
-// for OpenSea-shaped lists without a full recursive renderer.
 function renderTypedDataConsentDetails(signDetails) {
   const wrap = document.createElement('div');
   wrap.className = 'agent-tool-card-typed-data';
@@ -862,11 +857,11 @@ function renderTypedDataConsentDetails(signDetails) {
   const message = signDetails.message || {};
   const types = signDetails.types || {};
 
-  wrap.appendChild(makeTypedSection('Domain', (list) => {
-    addTypedRow(list, 'name', domain.name);
-    addTypedRow(list, 'version', domain.version);
-    addTypedRow(list, 'chainId', domain.chainId);
-    addTypedRow(list, 'verifyingContract', domain.verifyingContract, {
+  wrap.appendChild(makeConsentSection('Domain', (list) => {
+    addConsentRow(list, 'name', domain.name);
+    addConsentRow(list, 'version', domain.version);
+    addConsentRow(list, 'chainId', domain.chainId);
+    addConsentRow(list, 'verifyingContract', domain.verifyingContract, {
       url: domain.verifyingContractUrl,
     });
   }));
@@ -879,7 +874,7 @@ function renderTypedDataConsentDetails(signDetails) {
   }
 
   const messageEntries = Object.entries(message);
-  wrap.appendChild(makeTypedSection('Message', (list) => {
+  wrap.appendChild(makeConsentSection('Message', (list) => {
     if (messageEntries.length === 0) {
       const empty = document.createElement('dd');
       empty.className = 'agent-tool-card-typed-empty';
@@ -888,7 +883,7 @@ function renderTypedDataConsentDetails(signDetails) {
       return;
     }
     for (const [key, value] of messageEntries) {
-      addTypedRow(list, key, value);
+      addConsentRow(list, key, value);
     }
   }));
 
@@ -908,52 +903,47 @@ function renderTypedDataConsentDetails(signDetails) {
   return wrap;
 }
 
-function makeTypedSection(heading, populate) {
-  const section = document.createElement('section');
-  section.className = 'agent-tool-card-typed-section';
-  const headingEl = document.createElement('div');
-  headingEl.className = 'agent-tool-card-typed-heading';
-  headingEl.textContent = heading;
-  section.appendChild(headingEl);
-  const list = document.createElement('dl');
-  list.className = 'agent-tool-card-typed-list';
-  populate(list);
-  section.appendChild(list);
-  return section;
-}
+// Send-transaction consent body. From / To (or decoded action for
+// ERC-20 transfer / approve calldata) / Chain / Value / Gas / Total +
+// optional calldata disclosure. Main side already decodes the calldata
+// shape and resolves token metadata, so the renderer just lays out
+// what it's given.
+function renderTransactionConsentDetails(signDetails) {
+  const wrap = document.createElement('div');
+  wrap.className = 'agent-tool-card-typed-data';
 
-function addTypedRow(list, key, value, opts = {}) {
-  if (value === null || value === undefined || value === '') return;
-  const dt = document.createElement('dt');
-  dt.textContent = key;
-  const dd = document.createElement('dd');
-  if (value !== null && typeof value === 'object') {
-    // Nested object/array — collapsed JSON sub-disclosure keeps v1
-    // readable. Recursive structured render is a polish item.
+  wrap.appendChild(makeConsentSection('Transaction', (list) => {
+    addConsentRow(list, 'From', signDetails.from);
+    addConsentRow(list, 'Chain', signDetails.chainName || signDetails.chainId);
+    if (signDetails.action) {
+      // Decoded action — surfaced instead of bare "To" + "Value" when we
+      // recognised the calldata (ERC-20 transfer / approve).
+      addConsentRow(list, 'Action', signDetails.action);
+      addConsentRow(list, 'Contract', signDetails.to, { url: signDetails.toUrl });
+    } else {
+      addConsentRow(list, 'To', signDetails.to, { url: signDetails.toUrl });
+      addConsentRow(list, 'Value', signDetails.valueDisplay);
+    }
+    addConsentRow(list, 'Gas', signDetails.gasDisplay);
+    addConsentRow(list, 'Total', signDetails.totalDisplay);
+  }));
+
+  if (signDetails.dataHex && signDetails.dataHex !== '0x' && !signDetails.action) {
+    // Show raw calldata for unrecognised contract calls only —
+    // recognised actions already surface their decoded form above.
     const details = document.createElement('details');
+    details.className = 'agent-tool-card-typed-schema';
     const summary = document.createElement('summary');
-    summary.textContent = Array.isArray(value)
-      ? `[${value.length} item${value.length === 1 ? '' : 's'}]`
-      : '[object]';
+    summary.textContent = 'Show calldata';
     details.appendChild(summary);
     const pre = document.createElement('pre');
     pre.className = 'agent-tool-mono';
-    pre.textContent = JSON.stringify(value, null, 2);
+    pre.textContent = signDetails.dataHex;
     details.appendChild(pre);
-    dd.appendChild(details);
-  } else if (opts.url) {
-    const a = document.createElement('a');
-    a.className = 'agent-tool-card-typed-link';
-    a.href = opts.url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.textContent = String(value);
-    dd.appendChild(a);
-  } else {
-    dd.textContent = String(value);
+    wrap.appendChild(details);
   }
-  list.appendChild(dt);
-  list.appendChild(dd);
+
+  return wrap;
 }
 
 function updateToolCallCardForConsent(callId, data) {
@@ -971,16 +961,30 @@ function updateToolCallCardForConsent(callId, data) {
 
   // Rich consent payload — for tools whose consent prompt needs more
   // than a single string (e.g. wallet_sign_typed_data showing the
-  // EIP-712 domain + decoded message). Dispatch on signDetails.kind;
+  // EIP-712 domain + decoded message, wallet_send_transaction showing
+  // from/to/value/gas + decoded calldata). Dispatch on signDetails.kind;
   // absence falls through to the existing text-only path.
   if (data.signDetails?.kind === 'typed-data') {
     prompt.appendChild(renderTypedDataConsentDetails(data.signDetails));
+  } else if (data.signDetails?.kind === 'transaction') {
+    prompt.appendChild(renderTransactionConsentDetails(data.signDetails));
   }
 
   const actions = document.createElement('div');
   actions.className = 'agent-tool-card-consent-actions';
 
-  for (const choice of CONSENT_CHOICES) {
+  // For always-ask policies (e.g. MONEY tier) the "Allow for session"
+  // button would store a grant the broker never honours — hide it so
+  // the user isn't offered an option that does nothing. The policy
+  // value comes from broker.evaluate via pi-extension; the renderer
+  // doesn't need its own copy of the tier-policy table. Threshold-
+  // based consent ("auto-approve up to $X per Y") is a separate
+  // planned phase.
+  const choices = data.policy === 'always'
+    ? CONSENT_CHOICES.filter((c) => c.value !== 'allow-session')
+    : CONSENT_CHOICES;
+
+  for (const choice of choices) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className =
