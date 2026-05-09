@@ -38,14 +38,43 @@ let activeClient = null;
 let activeInfo = null;
 
 /**
+ * Walk an Error's `cause` chain and return one flat string. The XMTP
+ * node-bindings loader throws with `cause` set to the underlying
+ * dlopen error; without flattening, the UI only sees the canned
+ * "Cannot find native binding" message and we lose the real reason
+ * (wrong arch, NAPI version mismatch, macOS quarantine, etc.).
+ */
+function formatErrorChain(err) {
+  const seen = new Set();
+  const parts = [];
+  let cur = err;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    parts.push(cur.message || String(cur));
+    cur = cur.cause;
+  }
+  return parts.join('\n  ↳ caused by: ');
+}
+
+/**
  * Load and cache the ESM @xmtp/node-sdk module.
  * @param {object|null} override - Optional injected SDK (for tests).
  */
 async function loadSdk(override) {
   if (override) return override;
   if (cachedSdk) return cachedSdk;
-  cachedSdk = await import('@xmtp/node-sdk');
-  return cachedSdk;
+  try {
+    cachedSdk = await import('@xmtp/node-sdk');
+    return cachedSdk;
+  } catch (err) {
+    const flat = formatErrorChain(err);
+    log.error(`[XmtpClient] failed to load @xmtp/node-sdk:\n${flat}`);
+    const wrapped = new Error(
+      `XMTP SDK failed to load (Node ${process.version}, ${process.platform}/${process.arch}): ${flat}`
+    );
+    wrapped.cause = err;
+    throw wrapped;
+  }
 }
 
 /**

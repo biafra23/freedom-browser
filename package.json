@@ -60,6 +60,7 @@
     "ollama:reset": "rm -rf agent-models && echo 'Ollama models reset.'",
     "pi:smoke": "node scripts/pi-smoke.js",
     "xmtp:smoke": "node scripts/xmtp-smoke.js",
+    "xmtp:doctor": "node scripts/xmtp-doctor.js",
     "lobby:admin": "node scripts/lobby-admin.js",
     "identity:reset": "rm -rf bee-data ipfs-data radicle-data identity-data && echo 'All identity data reset (bee, ipfs, radicle, vault).'",
     "dapp:reset": "node scripts/reset-dapp-permissions.js",
@@ -179,7 +180,7 @@
     ]
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "devDependencies": {
     "@babel/preset-env": "^7.29.0",
