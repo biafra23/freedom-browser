@@ -30,6 +30,9 @@ const chainsModule = require('../../wallet/chains');
 const chainRegistry = require('../../chain-registry');
 const ensResolver = require('../../ens-resolver');
 const { ENS_REASONS, ENS_RESULT_TYPES } = ensResolver;
+const transactionService = require('../../wallet/transaction-service');
+const vaultTimer = require('../../vault-timer');
+const vaultUnlockBridge = require('../vault-unlock-bridge');
 
 const WALLET_BRIDGE_GLOBAL = '__agentWalletBridge__';
 const WALLET_BRIDGE_LABEL = 'wallet';
@@ -41,6 +44,57 @@ async function getActiveAddressOrThrow() {
   const address = await identityManager.getActiveWalletAddress();
   if (!address) throw new Error(VAULT_LOCKED_HINT);
   return address;
+}
+
+function shortAddr(address) {
+  if (typeof address !== 'string' || address.length < 10) return address;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+// Resolve {address, walletIndex} for a signing request. Caller passes
+// either an explicit address (must match one of the user's derived
+// wallets exactly — case-insensitive) or omits it for the active wallet.
+// Throws with a clear, model-readable error in either failure mode.
+// Default-active path skips getDerivedWallets() to avoid the extra
+// vault-meta.json read + per-wallet derive loop on every signing call.
+async function resolveSigningWallet(address) {
+  if (!address) {
+    const activeAddress = await identityManager.getActiveWalletAddress();
+    if (!activeAddress) throw new Error(VAULT_LOCKED_HINT);
+    const activeIndex = identityManager.getActiveWalletIndex();
+    return { walletIndex: activeIndex, walletAddress: activeAddress };
+  }
+  const wallets = await identityManager.getDerivedWallets();
+  const lower = address.toLowerCase();
+  const match = wallets.find(
+    (w) => typeof w.address === 'string' && w.address.toLowerCase() === lower
+  );
+  if (!match) {
+    throw new Error(
+      `Address ${address} is not one of the user's derived wallets. Use wallet_list_accounts to see available addresses.`
+    );
+  }
+  return { walletIndex: match.index, walletAddress: match.address };
+}
+
+// Two-step unlock: the IDENTITY_OR_SIGNING consent has already fired
+// (always-ask tier, fired before execute by pi-extension's tool_call
+// hook). This second prompt walks the user through actually unlocking
+// the vault when needed. Resolves silently when already unlocked.
+async function ensureVaultUnlocked({ hostWebContentsId, reason, signal }) {
+  const identity = await identityManager.loadIdentityModule();
+  if (identity.isUnlocked()) return;
+  await vaultUnlockBridge.requestVaultUnlock({
+    reason,
+    hostWebContentsId,
+    signal,
+  });
+  // Defensive: race between unlock-resolved and lock-from-elsewhere.
+  // If the vault is somehow locked again by the time we proceed,
+  // fail clean rather than crashing inside the signer.
+  if (!identity.isUnlocked()) {
+    throw new Error('Vault locked again before signing could proceed');
+  }
 }
 
 function createWalletTools({ hostWebContentsId, Type }) {
@@ -351,6 +405,51 @@ function createWalletTools({ hostWebContentsId, Type }) {
     },
   };
 
+  const walletSignMessage = {
+    name: 'wallet_sign_message',
+    label: 'Sign message',
+    description:
+      'Sign an EIP-191 personal message with the user\'s wallet. Always asks for ' +
+      'consent and walks the user through unlocking the vault if needed. Defaults ' +
+      'to the active wallet; pass an explicit address to sign with another derived account.',
+    tier: TIERS.IDENTITY_OR_SIGNING,
+    promptSnippet: 'sign an EIP-191 personal message with the user\'s wallet',
+    promptGuidelines: [
+      'Always provide a clear `reason` explaining WHY the user is being asked to sign — the consent prompt shows it to the user verbatim. Be specific (e.g. "to log in to MySite as 0x...", "to prove authorship of this comment"), never generic ("user requested signature").',
+      'Defaults to the active wallet. Pass `address` to sign with a specific account from wallet_list_accounts; the address must match one of the user\'s derived wallets exactly.',
+      'EIP-191 signs an arbitrary string. For typed structured data (EIP-712 — Permits, OpenSea listings, etc.), wallet_sign_typed_data is the right tool — it gives the user a properly decoded consent card.',
+    ],
+    parameters: Type.Object({
+      message: Type.String({ minLength: 1 }),
+      reason: Type.String({
+        minLength: 1,
+        description: 'Why the user is being asked to sign — shown verbatim in the consent prompt.',
+      }),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    formatConsentDescription({ message, reason, address }) {
+      const target = address ? shortAddr(address) : 'the active wallet';
+      const truncated =
+        typeof message === 'string' && message.length > 80
+          ? `${message.slice(0, 80)}…`
+          : message;
+      return `sign a message with ${target}. Reason: ${reason}. Message: "${truncated}"`;
+    },
+    async execute(_id, { message, reason, address }, signal) {
+      const { walletIndex, walletAddress } = await resolveSigningWallet(address);
+      await ensureVaultUnlocked({
+        hostWebContentsId,
+        reason: `Sign a message — ${reason}`,
+        signal,
+      });
+      const identity = await identityManager.loadIdentityModule();
+      const privateKey = identity.exportPrivateKey(walletIndex);
+      const signature = await transactionService.signPersonalMessage(message, privateKey);
+      vaultTimer.resetVaultAutoLockTimer();
+      return jsonResult({ address: walletAddress, signature });
+    },
+  };
+
   return [
     walletGetAccount,
     walletListAccounts,
@@ -362,6 +461,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
     ensResolve,
     ensReverse,
     ensResolveContenthash,
+    walletSignMessage,
   ];
 }
 

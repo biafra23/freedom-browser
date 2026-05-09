@@ -43,6 +43,7 @@ const {
 } = require('./pi-runtime');
 const broker = require('./pi-broker');
 const { CONSENT_VALUES } = require('./pi-broker');
+const vaultUnlockBridge = require('./vault-unlock-bridge');
 
 // streamId -> {
 //   streamId, senderId, sender, sessionPath, activeWebContentsId,
@@ -612,6 +613,12 @@ function registerAgentIpc() {
   ipcMain.handle(IPC.AGENT_CHAT_START, (event, payload) => startChatStream(event, payload));
   ipcMain.handle(IPC.AGENT_CHAT_CANCEL, (event, payload) => cancelChatStream(event, payload));
   ipcMain.handle(IPC.AGENT_CHAT_CONSENT, (event, payload) => handleConsentResponse(event, payload));
+
+  // Vault unlock result from renderer (fire-and-forget — main is the
+  // one awaiting the Promise inside the bridge module).
+  ipcMain.on(IPC.AGENT_VAULT_UNLOCK_RESULT, (_event, payload) => {
+    vaultUnlockBridge.handleResult(payload || {});
+  });
 
   // Sessions (Pi-backed)
   ipcMain.handle(IPC.AGENT_SESSION_LIST, (_e, payload = {}) => listSessions(payload.limit ?? 50));

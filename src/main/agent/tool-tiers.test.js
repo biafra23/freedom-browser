@@ -29,7 +29,10 @@ describe('tool-tiers', () => {
     expect(TIER_POLICY[TIERS.LOCAL_SAFE]).toBe('auto');
     expect(TIER_POLICY[TIERS.LOCAL_SENSITIVE]).toBe('session-once');
     expect(TIER_POLICY[TIERS.MONEY]).toBe('always');
-    expect(TIER_POLICY[TIERS.IDENTITY_OR_SIGNING]).toBe('always');
+    // Signing was promoted from 'always' to 'session-once' in 7d.3 so
+    // "Allow for session" actually skips re-prompting on subsequent
+    // signing calls in the same chat thread.
+    expect(TIER_POLICY[TIERS.IDENTITY_OR_SIGNING]).toBe('session-once');
     expect(TIER_POLICY[TIERS.WALLET_READ]).toBe('auto');
     expect(TIER_POLICY[TIERS.BLOCKED]).toBe('never');
   });

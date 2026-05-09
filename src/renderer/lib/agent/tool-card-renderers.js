@@ -382,6 +382,35 @@ function renderSpawnSubagent(call) {
   return frag;
 }
 
+function shortAddress(address) {
+  if (typeof address !== 'string' || address.length < 10) return address || '';
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function renderWalletSignMessage(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Signing failed: ${failureText(call)}`));
+    return frag;
+  }
+  const address = call.result?.address || call.args?.address;
+  const signature = call.result?.signature;
+  if (call.status === 'pending') {
+    const target = address ? shortAddress(address) : 'active wallet';
+    frag.appendChild(makeSummary(`Signing message with ${target}…`));
+    return frag;
+  }
+  // Post-execution: result.address is canonical (same as args.address if
+  // provided, or the active-wallet address otherwise). Signature is a
+  // 132-char hex blob — too long for the summary, lives in disclosure.
+  const summary = makeSummary(`Signed with ${shortAddress(address)}`);
+  frag.appendChild(summary);
+  if (signature) {
+    frag.appendChild(makeDisclosure('Signature', makeMonoBlock(signature)));
+  }
+  return frag;
+}
+
 const TOOL_RENDERERS = {
   navigate: renderNavigate,
   read_current_tab: renderReadCurrentTab,
@@ -394,6 +423,7 @@ const TOOL_RENDERERS = {
   open_tab: renderOpenTab,
   close_tab: renderCloseTab,
   switch_tab: renderSwitchTab,
+  wallet_sign_message: renderWalletSignMessage,
 };
 
 function renderJsonFallback(call) {

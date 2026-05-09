@@ -47,7 +47,15 @@ const TIER_POLICY = Object.freeze({
   [TIERS.EXTERNAL_NETWORK]: 'always',
   [TIERS.EXTERNAL_WITH_USER_DATA]: 'always',
   [TIERS.MONEY]: 'always',
-  [TIERS.IDENTITY_OR_SIGNING]: 'always',
+  // Signing tools (wallet_sign_message in 7d.3, wallet_sign_typed_data
+  // in 7d.4) honour session grants so the user isn't re-prompted for
+  // every SIWE login or repeated proof-of-address. Trade-off: once
+  // granted for the session, every signing call in this chat thread
+  // auto-approves. Worth revisiting for typed-data signing if a Permit-
+  // shaped payload (token spend authorisation) wants stricter gating —
+  // could split into IDENTITY_OR_SIGNING (session-once) +
+  // IDENTITY_OR_SIGNING_STRICT (always) when 7d.4 lands.
+  [TIERS.IDENTITY_OR_SIGNING]: 'session-once',
   // Browser mutations (navigate / click / fill) honour session grants
   // so a user who clicked "Allow for session" once doesn't get re-
   // prompted on every step of normal browsing. Trade-off accepted: the

@@ -12,7 +12,7 @@ jest.mock('electron', () => ({
 // (and through them ethers + electron.app) just to verify wiring. Wallet
 // tool *behaviour* is covered in tools/wallet-tools.test.js.
 jest.mock('./tools/wallet-tools', () => {
-  const stub = (name, tier) => ({
+  const stub = (name, tier, extras = {}) => ({
     name,
     label: name,
     description: 'wallet stub',
@@ -21,6 +21,7 @@ jest.mock('./tools/wallet-tools', () => {
     promptGuidelines: ['stub'],
     parameters: { type: 'object', properties: {} },
     execute: async () => ({ content: [], details: {} }),
+    ...extras,
   });
   return {
     createWalletTools: () => [
@@ -34,6 +35,10 @@ jest.mock('./tools/wallet-tools', () => {
       stub('ens_resolve', 'wallet_read'),
       stub('ens_reverse', 'wallet_read'),
       stub('ens_resolve_contenthash', 'wallet_read'),
+      stub('wallet_sign_message', 'identity_or_signing', {
+        formatConsentDescription: ({ reason }) =>
+          `sign a message with the active wallet. Reason: ${reason}.`,
+      }),
     ],
   };
 });
@@ -165,6 +170,7 @@ describe('Phase 3 — tool registration', () => {
       'ens_resolve',
       'ens_reverse',
       'ens_resolve_contenthash',
+      'wallet_sign_message',
     ]) {
       expect(names).toContain(expected);
     }
@@ -247,6 +253,7 @@ describe('Phase 3 — tool registration', () => {
         'wallet_get_token_balances',
         'wallet_list_accounts',
         'wallet_list_chains',
+        'wallet_sign_message',
         'wallet_switch_chain',
       ].sort()
     );
@@ -417,6 +424,20 @@ describe('Phase 3 — tool_call hook', () => {
     });
     expect(ctx.requestConsent).toHaveBeenCalled();
     expect(result).toBeUndefined(); // allow → fall through, Pi calls execute
+  });
+
+  test('formatConsentDescription on a tool overrides the bare label in the consent prompt', async () => {
+    const { ctx, handler } = await setup();
+    await handler({
+      toolCallId: 'c1',
+      toolName: 'wallet_sign_message',
+      input: { message: 'Hello', reason: 'log in to MySite' },
+    });
+    expect(ctx.requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining('Reason: log in to MySite'),
+      })
+    );
   });
 
   test('blocks tools whose tier is not in the profile', async () => {

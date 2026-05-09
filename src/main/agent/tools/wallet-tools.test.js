@@ -10,6 +10,7 @@ jest.mock('../../identity-manager', () => ({
   getActiveWalletAddress: jest.fn(),
   getActiveWalletIndex: jest.fn(),
   getDerivedWallets: jest.fn(),
+  loadIdentityModule: jest.fn(),
 }));
 
 jest.mock('../../wallet/balance-service', () => ({
@@ -24,6 +25,23 @@ jest.mock('../../wallet/chains', () => ({
 
 jest.mock('../../chain-registry', () => ({
   isChainAvailable: jest.fn(),
+}));
+
+const mockIdentityModule = {
+  isUnlocked: jest.fn(),
+  exportPrivateKey: jest.fn(),
+};
+
+jest.mock('../../wallet/transaction-service', () => ({
+  signPersonalMessage: jest.fn(),
+}));
+
+jest.mock('../../vault-timer', () => ({
+  resetVaultAutoLockTimer: jest.fn(),
+}));
+
+jest.mock('../vault-unlock-bridge', () => ({
+  requestVaultUnlock: jest.fn(),
 }));
 
 jest.mock('../../ens-resolver', () => ({
@@ -51,6 +69,9 @@ const balanceService = require('../../wallet/balance-service');
 const chainsModule = require('../../wallet/chains');
 const chainRegistry = require('../../chain-registry');
 const ensResolver = require('../../ens-resolver');
+const transactionService = require('../../wallet/transaction-service');
+const vaultTimer = require('../../vault-timer');
+const vaultUnlockBridge = require('../vault-unlock-bridge');
 
 const { createWalletTools, _internals } = require('./wallet-tools');
 const { TIERS } = require('../tool-tiers');
@@ -69,10 +90,13 @@ function fakeWalletBridge() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockIdentityModule.isUnlocked.mockReset();
+  mockIdentityModule.exportPrivateKey.mockReset();
+  identityManager.loadIdentityModule.mockResolvedValue(mockIdentityModule);
 });
 
 describe('tool catalog', () => {
-  test('exposes the ten expected tools', () => {
+  test('exposes the eleven expected tools', () => {
     const tools = makeTools();
     expect(Object.keys(tools).sort()).toEqual(
       [
@@ -86,11 +110,12 @@ describe('tool catalog', () => {
         'ens_resolve',
         'ens_reverse',
         'ens_resolve_contenthash',
+        'wallet_sign_message',
       ].sort()
     );
   });
 
-  test('read tools are WALLET_READ; switch_chain is BROWSER_MUTATION', () => {
+  test('tiers split: read tools WALLET_READ, switch_chain BROWSER_MUTATION, sign IDENTITY_OR_SIGNING', () => {
     const tools = makeTools();
     for (const name of [
       'wallet_get_account',
@@ -106,6 +131,7 @@ describe('tool catalog', () => {
       expect(tools[name].tier).toBe(TIERS.WALLET_READ);
     }
     expect(tools.wallet_switch_chain.tier).toBe(TIERS.BROWSER_MUTATION);
+    expect(tools.wallet_sign_message.tier).toBe(TIERS.IDENTITY_OR_SIGNING);
   });
 
   test('every tool has label, description, parameters, snippet, and at least one guideline', () => {
@@ -479,6 +505,130 @@ describe('ens_resolve_contenthash', () => {
     await expect(
       makeTools().ens_resolve_contenthash.execute('c1', { name: 'attacked.eth' })
     ).rejects.toThrow(/RPC quorum failed.*conflicting.*untrusted/);
+  });
+});
+
+describe('wallet_sign_message', () => {
+  function setupHappyPath() {
+    identityManager.getDerivedWallets.mockResolvedValue([
+      { index: 0, name: 'Main Wallet', address: '0xMAINabcdef0123456789' },
+      { index: 1, name: 'Trading', address: '0xTRADINGfedcba9876543' },
+    ]);
+    identityManager.getActiveWalletAddress.mockResolvedValue('0xMAINabcdef0123456789');
+    identityManager.getActiveWalletIndex.mockReturnValue(0);
+    mockIdentityModule.isUnlocked.mockReturnValue(true);
+    mockIdentityModule.exportPrivateKey.mockReturnValue('0xprivatekey');
+    transactionService.signPersonalMessage.mockResolvedValue('0xSIGNATURE');
+  }
+
+  test('signs with the active wallet by default and resets the auto-lock timer', async () => {
+    setupHappyPath();
+    const result = await makeTools().wallet_sign_message.execute(
+      'c1',
+      { message: 'Hello', reason: 'prove ownership for SIWE' }
+    );
+    expect(transactionService.signPersonalMessage).toHaveBeenCalledWith('Hello', '0xprivatekey');
+    expect(mockIdentityModule.exportPrivateKey).toHaveBeenCalledWith(0);
+    expect(vaultTimer.resetVaultAutoLockTimer).toHaveBeenCalledTimes(1);
+    expect(result.details).toEqual({
+      address: '0xMAINabcdef0123456789',
+      signature: '0xSIGNATURE',
+    });
+  });
+
+  test('signs with a non-active wallet when address parameter matches a derived account', async () => {
+    setupHappyPath();
+    await makeTools().wallet_sign_message.execute(
+      'c1',
+      {
+        message: 'Hello',
+        reason: 'prove ownership',
+        address: '0xtradingfedcba9876543', // case-insensitive match
+      }
+    );
+    expect(mockIdentityModule.exportPrivateKey).toHaveBeenCalledWith(1);
+  });
+
+  test('rejects when the requested address is not in the user\'s derived wallets', async () => {
+    setupHappyPath();
+    await expect(
+      makeTools().wallet_sign_message.execute(
+        'c1',
+        { message: 'Hello', reason: 'r', address: '0xNotMine' }
+      )
+    ).rejects.toThrow(/not one of the user's derived wallets/);
+    expect(transactionService.signPersonalMessage).not.toHaveBeenCalled();
+  });
+
+  test('vault locked → calls vault-unlock bridge before signing', async () => {
+    setupHappyPath();
+    // Locked at first check → after bridge resolves, unlocked
+    mockIdentityModule.isUnlocked.mockReturnValueOnce(false).mockReturnValue(true);
+    vaultUnlockBridge.requestVaultUnlock.mockResolvedValue();
+    await makeTools().wallet_sign_message.execute(
+      'c1',
+      { message: 'Hi', reason: 'because' }
+    );
+    expect(vaultUnlockBridge.requestVaultUnlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostWebContentsId: 7,
+        reason: expect.stringContaining('Sign a message'),
+      })
+    );
+    expect(transactionService.signPersonalMessage).toHaveBeenCalled();
+  });
+
+  test('vault re-locks between unlock and sign → throws "Vault locked again" without leaking the key', async () => {
+    setupHappyPath();
+    // First check: locked → bridge resolves "unlocked" → re-check: locked again
+    // (auto-lock timer fired, or external lock — defensive branch).
+    mockIdentityModule.isUnlocked
+      .mockReturnValueOnce(false) // initial check
+      .mockReturnValueOnce(false); // post-unlock re-check
+    vaultUnlockBridge.requestVaultUnlock.mockResolvedValue();
+    await expect(
+      makeTools().wallet_sign_message.execute(
+        'c1',
+        { message: 'Hi', reason: 'because' }
+      )
+    ).rejects.toThrow(/Vault locked again before signing/);
+    expect(transactionService.signPersonalMessage).not.toHaveBeenCalled();
+    expect(mockIdentityModule.exportPrivateKey).not.toHaveBeenCalled();
+  });
+
+  test('vault locked → user cancels unlock → tool throws and signing is skipped', async () => {
+    setupHappyPath();
+    mockIdentityModule.isUnlocked.mockReturnValue(false);
+    vaultUnlockBridge.requestVaultUnlock.mockRejectedValue(
+      new Error('Vault unlock cancelled by user')
+    );
+    await expect(
+      makeTools().wallet_sign_message.execute(
+        'c1',
+        { message: 'Hi', reason: 'because' }
+      )
+    ).rejects.toThrow(/cancelled by user/);
+    expect(transactionService.signPersonalMessage).not.toHaveBeenCalled();
+    expect(vaultTimer.resetVaultAutoLockTimer).not.toHaveBeenCalled();
+  });
+
+  test('formatConsentDescription includes target wallet, reason, and a truncated message', () => {
+    const fmt = makeTools().wallet_sign_message.formatConsentDescription;
+    const desc = fmt({
+      message: 'a'.repeat(120),
+      reason: 'log in to MySite',
+      address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+    });
+    expect(desc).toContain('0xd8dA…6045');
+    expect(desc).toContain('Reason: log in to MySite');
+    expect(desc).toContain('"' + 'a'.repeat(80) + '…"');
+  });
+
+  test('formatConsentDescription says "the active wallet" when no address override is given', () => {
+    const fmt = makeTools().wallet_sign_message.formatConsentDescription;
+    const desc = fmt({ message: 'Hi', reason: 'reason' });
+    expect(desc).toContain('the active wallet');
+    expect(desc).not.toContain('0x');
   });
 });
 

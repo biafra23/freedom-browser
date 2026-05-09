@@ -288,6 +288,66 @@ describe('tool-card-renderers', () => {
     });
   });
 
+  describe('wallet_sign_message', () => {
+    const SIG = '0x' + 'ab'.repeat(65); // 132-hex sig
+    const ADDR = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+
+    test('pending shows "Signing message with <addr>…" using the requested address', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_message',
+        status: 'pending',
+        args: { message: 'Hi', reason: 'r', address: ADDR },
+      }));
+      const text = host.querySelector('.agent-tool-summary').textContent;
+      expect(text).toContain('Signing message with 0xd8dA…6045');
+    });
+
+    test('pending without an address arg falls back to "active wallet"', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_message',
+        status: 'pending',
+        args: { message: 'Hi', reason: 'r' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Signing message with active wallet'
+      );
+    });
+
+    test('allowed renders "Signed with <addr>" + a disclosure containing the signature', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_message',
+        status: 'allowed',
+        args: { message: 'Hi', reason: 'r' },
+        result: { address: ADDR, signature: SIG },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toBe(
+        'Signed with 0xd8dA…6045'
+      );
+      const disclosure = host.querySelector('.agent-tool-disclosure');
+      expect(disclosure).toBeTruthy();
+      expect(disclosure.querySelector('.agent-tool-disclosure-summary').textContent).toBe(
+        'Signature'
+      );
+      expect(disclosure.querySelector('.agent-tool-mono').textContent).toBe(SIG);
+    });
+
+    test('error path surfaces the underlying error', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_message',
+        status: 'error',
+        args: { message: 'Hi', reason: 'r' },
+        result: { error: 'Vault unlock cancelled by user' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Signing failed: Vault unlock cancelled by user'
+      );
+    });
+  });
+
   describe('switch_tab', () => {
     test('reports switched on success', async () => {
       const { mod } = await loadRenderers();

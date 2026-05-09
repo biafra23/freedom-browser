@@ -1,9 +1,12 @@
 jest.mock('electron', () => {
   const handlers = new Map();
+  const onListeners = new Map();
   return {
     ipcMain: {
       handle: jest.fn((channel, handler) => handlers.set(channel, handler)),
+      on: jest.fn((channel, listener) => onListeners.set(channel, listener)),
       _handlers: handlers,
+      _onListeners: onListeners,
     },
     app: {
       on: jest.fn(),

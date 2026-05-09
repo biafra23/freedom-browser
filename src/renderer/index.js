@@ -58,6 +58,7 @@ import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
 import { initAiSidebar } from './lib/ai-sidebar.js';
 import { initChatUi } from './lib/agent/chat-ui.js';
+import { initAgentVaultUnlockHandler } from './lib/agent/vault-unlock-handler.js';
 import { initSessionsUi } from './lib/agent/sessions-ui.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
 
@@ -279,6 +280,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initChatUi();      // Chat panel inside the AI sidebar
   initSessionsUi();  // Sessions list / master-detail swap
   initWalletUi();    // Wallet & identity display in sidebar
+  initAgentVaultUnlockHandler(); // Agent → main asks renderer to walk user through unlock
   loadBookmarks();
   initPlatformUI();
   initUpdateNotifications();

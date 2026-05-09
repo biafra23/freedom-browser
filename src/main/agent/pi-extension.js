@@ -202,8 +202,20 @@ function createFreedomExtension({
       ...walletTools,
       ...subagentTools,
     ]) {
-      toolMeta.set(def.name, { tier: def.tier, label: def.label });
-      const { tier, ...piDef } = def;
+      toolMeta.set(def.name, {
+        tier: def.tier,
+        label: def.label,
+        // Optional per-tool consent description formatter. Tools that
+        // need rich consent text (e.g. wallet_sign_message showing
+        // address + reason + truncated message) export this so the
+        // user sees what they're approving instead of a bare label.
+        formatConsentDescription: def.formatConsentDescription,
+      });
+      // Strip our non-Pi fields before forwarding to registerTool — Pi
+      // would otherwise carry them around as unknown extras. The
+      // formatter was already captured into toolMeta above, hence the
+      // underscore-prefix throwaway.
+      const { tier, formatConsentDescription: _formatConsentDescription, ...piDef } = def;
       pi.registerTool({
         ...piDef,
         executionMode: executionModeForTier(tier),
@@ -263,12 +275,27 @@ function createFreedomExtension({
       }
 
       if (decision.decision === 'ask') {
+        let description = meta.label;
+        if (typeof meta.formatConsentDescription === 'function') {
+          try {
+            const formatted = meta.formatConsentDescription(event.input);
+            if (formatted && typeof formatted === 'string') {
+              description = formatted;
+            }
+          } catch (err) {
+            // Formatter bug shouldn't kill the consent prompt — fall back
+            // to the bare label so the user can still approve / deny.
+            log.warn(
+              `[Pi] formatConsentDescription threw for ${event.toolName}: ${err.message}`
+            );
+          }
+        }
         const userChoice = await toolCallContext.requestConsent({
           callId: event.toolCallId,
           name: event.toolName,
           tier: meta.tier,
           args: event.input,
-          description: meta.label,
+          description,
         });
         if (userChoice === CONSENT.DENY) {
           return denyAndBlock(event.toolCallId, 'denied', 'User denied this tool call');
