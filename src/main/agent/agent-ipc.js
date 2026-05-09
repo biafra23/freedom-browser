@@ -351,6 +351,11 @@ function buildToolCallContext({ ctx, profile }) {
     profile,
     sessionId: ctx.sessionPath,
     webContentsId: ctx.activeWebContentsId,
+    // The chat-host renderer's webContents (where the AI sidebar
+    // lives). Different from `webContentsId` (the active tab's
+    // webview); tab-management tools use this to reach the host's
+    // window.__agentTabBridge__ via executeJavaScript.
+    hostWebContentsId: ctx.senderId,
 
     onToolCall: ({ callId, name, tier, args, subagentCallId }) => {
       ctx.toolCalls.push({

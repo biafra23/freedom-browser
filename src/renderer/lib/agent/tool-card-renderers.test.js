@@ -215,6 +215,92 @@ describe('tool-card-renderers', () => {
     });
   });
 
+  describe('list_tabs', () => {
+    test('summarises count + active tab title with a disclosure for the full list', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'list_tabs',
+        status: 'allowed',
+        args: {},
+        result: {
+          tabs: [
+            { id: 1, url: 'https://x', title: 'X', isActive: true },
+            { id: 2, url: 'https://y', title: 'Y', isActive: false },
+          ],
+        },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain('Listed 2 tabs');
+      expect(host.querySelector('.agent-tool-title').textContent).toBe('X');
+      const mono = host.querySelector('.agent-tool-mono');
+      expect(mono.textContent).toContain('[1]* X — https://x');
+      expect(mono.textContent).toContain('[2]  Y — https://y');
+    });
+
+    test('handles zero tabs without crashing', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'list_tabs',
+        status: 'allowed',
+        args: {},
+        result: { tabs: [] },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain('Listed 0 tabs');
+      expect(host.querySelector('.agent-tool-disclosure')).toBeNull();
+    });
+  });
+
+  describe('open_tab', () => {
+    test('shows the resolved URL pill from the new tab object', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'open_tab',
+        status: 'allowed',
+        args: { url: 'https://input' },
+        result: { tab: { id: 9, url: 'https://resolved', title: '' } },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain('Opened new tab');
+      const pill = host.querySelector('.agent-tool-url-pill');
+      expect(pill.href).toBe('https://resolved');
+    });
+  });
+
+  describe('close_tab', () => {
+    test('reports closed when bridge confirms', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'close_tab',
+        status: 'allowed',
+        args: { id: 3 },
+        result: { closed: true, id: 3 },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toBe('Closed tab 3');
+    });
+
+    test('reports unmatched id when bridge returns false', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'close_tab',
+        status: 'allowed',
+        args: { id: 99 },
+        result: { closed: false, id: 99 },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toBe('No tab matched id 99');
+    });
+  });
+
+  describe('switch_tab', () => {
+    test('reports switched on success', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'switch_tab',
+        status: 'allowed',
+        args: { id: 5 },
+        result: { switched: true, id: 5 },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toBe('Switched to tab 5');
+    });
+  });
+
   test('falls back to JSON args block for unknown tool names', async () => {
     const { mod } = await loadRenderers();
     const host = into(mod.renderToolBody({

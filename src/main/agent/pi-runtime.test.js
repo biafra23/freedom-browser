@@ -165,6 +165,7 @@ describe('createFreedomPiSession', () => {
       profile: { allowed_tool_tiers: ['local_safe'] },
       sessionId: 's1',
       webContentsId: 42,
+      hostWebContentsId: 7,
       onToolCall: jest.fn(),
       requestConsent: jest.fn(),
       onToolResult: jest.fn(),
@@ -195,7 +196,19 @@ describe('createFreedomPiSession', () => {
     };
     await factory(fakePi);
     expect(fakePi.tools.map((t) => t.name).sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'read_skill', 'screenshot', 'spawn_subagent'].sort()
+      [
+        'click',
+        'close_tab',
+        'fill',
+        'list_tabs',
+        'navigate',
+        'open_tab',
+        'read_current_tab',
+        'read_skill',
+        'screenshot',
+        'spawn_subagent',
+        'switch_tab',
+      ].sort()
     );
   });
 

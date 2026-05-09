@@ -90,6 +90,7 @@ describe('Phase 3 — tool registration', () => {
       profile: ALL_TIERS_PROFILE,
       sessionId: '/tmp/sessions/x.jsonl',
       webContentsId: 42,
+      hostWebContentsId: 7,
       onToolCall: jest.fn(),
       requestConsent: jest.fn(async () => 'allow'),
       onToolResult: jest.fn(),
@@ -97,12 +98,33 @@ describe('Phase 3 — tool registration', () => {
     };
   }
 
-  test('registers all five browser tools', async () => {
+  test('registers the five browser tools', async () => {
     const ctx = makeContext();
     const pi = makeFakePiApi();
     await createFreedomExtension({ toolCallContext: ctx })(pi);
-    const names = pi.tools.map((t) => t.name).sort();
-    expect(names).toEqual(['click', 'fill', 'navigate', 'read_current_tab', 'screenshot']);
+    const names = pi.tools.map((t) => t.name);
+    for (const expected of ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot']) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  test('registers the four tab tools when hostWebContentsId is bound', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    const names = pi.tools.map((t) => t.name);
+    for (const expected of ['list_tabs', 'open_tab', 'close_tab', 'switch_tab']) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  test('skips tab tools when hostWebContentsId is missing (no host renderer)', async () => {
+    const ctx = makeContext({ hostWebContentsId: undefined });
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    const names = pi.tools.map((t) => t.name);
+    expect(names).not.toContain('list_tabs');
+    expect(names).not.toContain('open_tab');
   });
 
   test('strips our non-Pi `tier` field before registerTool', async () => {
@@ -149,10 +171,22 @@ describe('Phase 3 — tool registration', () => {
     await handler({});
     expect(pi.setActiveCalls).toHaveLength(1);
     // For the all-tiers default profile we expect everything pi-extension
-    // registered to be enabled — the five browser tools, read_skill, and
-    // spawn_subagent.
+    // registered to be enabled — the five browser tools, four tab tools,
+    // read_skill, and spawn_subagent.
     expect(pi.setActiveCalls[0].sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'read_skill', 'screenshot', 'spawn_subagent'].sort()
+      [
+        'click',
+        'close_tab',
+        'fill',
+        'list_tabs',
+        'navigate',
+        'open_tab',
+        'read_current_tab',
+        'read_skill',
+        'screenshot',
+        'spawn_subagent',
+        'switch_tab',
+      ].sort()
     );
   });
 
@@ -171,8 +205,8 @@ describe('Phase 3 — tool registration', () => {
   });
 
   test('session_start filters by profile.allowed_tool_tiers', async () => {
-    // A subagent restricted to local_sensitive only should see read+screenshot
-    // — not navigate/click/fill (browser_mutation).
+    // A subagent restricted to local_sensitive only should see read+screenshot+list_tabs
+    // — not navigate/click/fill/open_tab/close_tab/switch_tab (browser_mutation).
     const ctx = makeContext({ profile: { allowed_tool_tiers: ['local_sensitive'] } });
     const pi = makeFakePiApi();
     await createFreedomExtension({
@@ -183,7 +217,9 @@ describe('Phase 3 — tool registration', () => {
     })(pi);
     const handler = pi.handlers.get('session_start')[0];
     await handler({});
-    expect(pi.setActiveCalls[0].sort()).toEqual(['read_current_tab', 'screenshot'].sort());
+    expect(pi.setActiveCalls[0].sort()).toEqual(
+      ['list_tabs', 'read_current_tab', 'screenshot'].sort()
+    );
   });
 
   test('registers a before_agent_start hook that overrides the system prompt', async () => {

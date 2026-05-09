@@ -228,6 +228,94 @@ function renderScreenshot(call) {
   return frag;
 }
 
+function renderListTabs(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`List tabs failed: ${failureText(call)}`));
+    return frag;
+  }
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary('Listing tabs…'));
+    return frag;
+  }
+  const tabs = call.result?.tabs || [];
+  const active = tabs.find((t) => t.isActive);
+  const summary = makeSummary(`Listed ${tabs.length} tab${tabs.length === 1 ? '' : 's'}`);
+  if (active) {
+    summary.append(' — active: ');
+    if (active.title) {
+      const strong = document.createElement('strong');
+      strong.className = 'agent-tool-title';
+      strong.textContent = truncateMiddle(active.title, 60);
+      strong.title = active.title;
+      summary.appendChild(strong);
+    } else if (active.url) {
+      summary.appendChild(makeUrlPill(active.url));
+    }
+  }
+  frag.appendChild(summary);
+  if (tabs.length > 0) {
+    const lines = tabs
+      .map((t) => `[${t.id}]${t.isActive ? '*' : ' '} ${t.title || '(untitled)'} — ${t.url || ''}`)
+      .join('\n');
+    frag.appendChild(makeDisclosure(`Show all ${tabs.length} tabs`, makeMonoBlock(lines)));
+  }
+  return frag;
+}
+
+function renderOpenTab(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Open tab failed: ${failureText(call)}`));
+    return frag;
+  }
+  const url = call.args?.url;
+  if (call.status === 'pending') {
+    const s = makeSummary('Opening new tab — ');
+    if (url) s.appendChild(makeUrlPill(url));
+    frag.appendChild(s);
+    return frag;
+  }
+  const tab = call.result?.tab;
+  const summary = makeSummary('Opened new tab ');
+  if (tab?.url) summary.appendChild(makeUrlPill(tab.url));
+  else if (url) summary.appendChild(makeUrlPill(url));
+  frag.appendChild(summary);
+  return frag;
+}
+
+function renderCloseTab(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Close tab failed: ${failureText(call)}`));
+    return frag;
+  }
+  const id = call.args?.id;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Closing tab ${id ?? ''}…`.trim()));
+    return frag;
+  }
+  const closed = call.result?.closed;
+  frag.appendChild(makeSummary(closed ? `Closed tab ${id}` : `No tab matched id ${id}`));
+  return frag;
+}
+
+function renderSwitchTab(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Switch tab failed: ${failureText(call)}`));
+    return frag;
+  }
+  const id = call.args?.id;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Switching to tab ${id ?? ''}…`.trim()));
+    return frag;
+  }
+  const switched = call.result?.switched;
+  frag.appendChild(makeSummary(switched ? `Switched to tab ${id}` : `No tab matched id ${id}`));
+  return frag;
+}
+
 function renderReadSkill(call) {
   const frag = document.createDocumentFragment();
   const requested = call.args?.name;
@@ -302,6 +390,10 @@ const TOOL_RENDERERS = {
   screenshot: renderScreenshot,
   spawn_subagent: renderSpawnSubagent,
   read_skill: renderReadSkill,
+  list_tabs: renderListTabs,
+  open_tab: renderOpenTab,
+  close_tab: renderCloseTab,
+  switch_tab: renderSwitchTab,
 };
 
 function renderJsonFallback(call) {

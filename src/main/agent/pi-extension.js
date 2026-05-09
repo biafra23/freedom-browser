@@ -32,6 +32,7 @@ const broker = require('./pi-broker');
 const { CONSENT } = require('./pi-broker');
 const { createBrowserTools } = require('./tools/browser-tools');
 const { createSkillTools } = require('./tools/skill-tools');
+const { createTabTools } = require('./tools/tab-tools');
 const { createSubagentTools } = require('./subagent-tools');
 
 const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
@@ -148,6 +149,19 @@ function createFreedomExtension({
       webContentsId: toolCallContext.webContentsId ?? null,
       Type,
     });
+    // Tab management tools reach the host renderer (where the chat
+    // sidebar lives + the tab list is owned) via a different
+    // webContents than the active-tab tools. Subagents see them only
+    // when their profile permits the relevant tier:
+    //   - list_tabs (LOCAL_SENSITIVE) — visible to summarize/extract/research
+    //   - open/close/switch_tab (BROWSER_MUTATION) — visible to research_topic
+    //     (which already has BROWSER_MUTATION for navigate/click/fill)
+    // Worth re-reviewing per-subagent if the tab actions feel out of
+    // scope for a given workflow.
+    const tabTools = createTabTools({
+      hostWebContentsId: toolCallContext.hostWebContentsId ?? null,
+      Type,
+    });
     // Skill tools work for both main and subagent — skills are
     // independent of who runs them. Subagents whose profile permits
     // LOCAL_SAFE see read_skill in their active set; existing
@@ -166,7 +180,7 @@ function createFreedomExtension({
           Type,
         });
     const toolMeta = new Map();
-    for (const def of [...browserTools, ...skillTools, ...subagentTools]) {
+    for (const def of [...browserTools, ...tabTools, ...skillTools, ...subagentTools]) {
       toolMeta.set(def.name, { tier: def.tier, label: def.label });
       const { tier, ...piDef } = def;
       pi.registerTool({

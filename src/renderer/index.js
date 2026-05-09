@@ -30,6 +30,9 @@ import {
   hideTabContextMenu,
   setOnContextMenuOpening as setOnTabContextMenuOpening,
   createTab,
+  closeTab,
+  switchTab,
+  getOpenTabs,
 } from './lib/tabs.js';
 import {
   initNavigation,
@@ -221,6 +224,40 @@ window.addEventListener('DOMContentLoaded', async () => {
   initBookmarks();
   initNavigation(); // Sets up event handler with tabs module
   initTabs(); // Creates first tab and starts loading home page
+  // Bridge for the agent's tab tools. The host renderer is the only
+  // place that owns the tab list (each tab is a webview); main-side
+  // tools call into this object via webContents.executeJavaScript.
+  // Returns are kept JSON-serialisable — no DOM refs.
+  //
+  // Set as a plain `window.foo = …` rather than via `contextBridge`
+  // because this is the privileged shell renderer (where the AI sidebar
+  // lives), not a webview running untrusted page content. Webviews run
+  // in separate web contents and can't reach this `window`.
+  window.__agentTabBridge__ = {
+    listTabs: () => getOpenTabs(),
+    openTab: (url) => {
+      const tab = createTab(url || null);
+      return tab ? { id: tab.id, url: tab.url, title: tab.title } : null;
+    },
+    // closeTab/switchTab return true ONLY when the id matched a real
+    // tab — main-side tools surface this to the model as
+    // `{closed: false}` / `{switched: false}` for unknown ids so the
+    // agent doesn't hallucinate success on a stale id.
+    closeTab: (id) => {
+      if (typeof id !== 'number') return false;
+      const exists = getOpenTabs().some((t) => t.id === id);
+      if (!exists) return false;
+      closeTab(id);
+      return true;
+    },
+    switchTab: (id) => {
+      if (typeof id !== 'number') return false;
+      const exists = getOpenTabs().some((t) => t.id === id);
+      if (!exists) return false;
+      switchTab(id);
+      return true;
+    },
+  };
   initAutocomplete(); // Address bar autocomplete
   initPageContextMenu(); // Page context menu for webviews
   initOnboarding();  // Identity onboarding wizard
