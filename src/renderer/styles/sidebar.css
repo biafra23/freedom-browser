@@ -43,6 +43,18 @@
   position: relative; /* Anchor for .sidebar-modal absolute positioning */
 }
 
+/* AI sidebar gets a wider default than the wallet sidebar — chat surfaces
+   (prose, tool cards, thinking disclosures) need more horizontal room than
+   wallet pills/numbers. Mutual exclusion with the wallet sidebar is
+   JS-driven (see sidebar-controller.js), unaffected by width. */
+#ai-sidebar:not(.collapsed) {
+  width: 420px;
+}
+
+#ai-sidebar .sidebar-inner {
+  width: 420px;
+}
+
 /* ============================================
    Sidebar Header
    ============================================ */
