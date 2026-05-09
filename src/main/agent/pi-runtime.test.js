@@ -165,6 +165,7 @@ describe('createFreedomPiSession', () => {
       profile: { allowed_tool_tiers: ['local_safe'] },
       sessionId: 's1',
       webContentsId: 42,
+      hostWebContentsId: 7,
       onToolCall: jest.fn(),
       requestConsent: jest.fn(),
       onToolResult: jest.fn(),
@@ -195,7 +196,34 @@ describe('createFreedomPiSession', () => {
     };
     await factory(fakePi);
     expect(fakePi.tools.map((t) => t.name).sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot', 'spawn_subagent'].sort()
+      [
+        'click',
+        'close_tab',
+        'fill',
+        'list_tabs',
+        'navigate',
+        'open_tab',
+        'read_current_tab',
+        'read_skill',
+        'screenshot',
+        'spawn_subagent',
+        'switch_tab',
+        'wallet_get_account',
+        'wallet_list_accounts',
+        'wallet_get_balance',
+        'wallet_get_token_balances',
+        'wallet_list_chains',
+        'wallet_get_chain',
+        'wallet_switch_chain',
+        'ens_resolve',
+        'ens_reverse',
+        'ens_resolve_contenthash',
+        'wallet_sign_message',
+        'wallet_sign_typed_data',
+        'wallet_send_transaction',
+        'wallet_get_transaction',
+        'wallet_wait_for_transaction',
+      ].sort()
     );
   });
 
@@ -291,8 +319,13 @@ describe('createFreedomPiSession', () => {
 });
 
 describe('listFreedomSkills', () => {
+  // listFreedomSkills delegates to skill-catalog, which owns its own
+  // pi cache (it can't share pi-runtime's because of a CJS require
+  // cycle). Inject the mock via skill-catalog's setPiModule.
+  const skillCatalog = require('./skill-catalog');
+
   beforeEach(() => {
-    _internals.setPiModule({
+    skillCatalog._internals.setPiModule({
       loadSkills: jest.fn(({ skillPaths }) => ({
         skills: [
           {
@@ -308,18 +341,14 @@ describe('listFreedomSkills', () => {
   });
 
   afterEach(() => {
-    _internals.setPiModule(null);
+    skillCatalog._internals.setPiModule(null);
   });
 
-  test('returns the parsed skills with name + description', async () => {
+  test('returns parsed skills with name, description, and source tag', async () => {
     const skills = await runtime.listFreedomSkills({ agentDir: '/tmp/x' });
     expect(skills).toEqual([
-      { name: 'tldr', description: 'Short summary' },
+      { name: 'tldr', description: 'Short summary', source: 'builtin' },
     ]);
-  });
-
-  test('throws when agentDir is missing', async () => {
-    await expect(runtime.listFreedomSkills({})).rejects.toThrow(/agentDir/);
   });
 });
 

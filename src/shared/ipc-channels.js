@@ -201,6 +201,13 @@ module.exports = {
   AGENT_CHAT_TOOL_RESULT: 'agent:chat:tool-result',
   AGENT_CHAT_CONSENT_REQUEST: 'agent:chat:consent-request',
   AGENT_CHAT_CONSENT: 'agent:chat:consent',
+  // Vault unlock requested mid-tool-call (e.g. wallet_sign_message hit a
+  // locked vault). Two-step: the IDENTITY_OR_SIGNING consent already
+  // fired and the user clicked Allow; this is the second prompt that
+  // walks the user through actually unlocking. Mirrors the dApp flow's
+  // showVaultUnlock pattern but routed through the chat sidebar.
+  AGENT_VAULT_UNLOCK_REQUEST: 'agent:vault-unlock:request',
+  AGENT_VAULT_UNLOCK_RESULT: 'agent:vault-unlock:result',
   // Out-of-band notice from main → renderer (slash command output, future
   // compaction indicators, errors). Distinct from CHUNK so the renderer
   // can render notices as system bubbles instead of assistant prose.

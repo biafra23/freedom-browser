@@ -174,6 +174,12 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   // ENS RPC test (used by settings page)
   testEnsRpc: guardInternal('testEnsRpc', (url) => ipcRenderer.invoke('ens:test-rpc', { url })),
 
+  // Agent status — installed Ollama models + daemon version. Used by the
+  // settings page's Local AI "Default model" dropdown so the user can
+  // pick from what's actually installed. Read-only; same IPC the host
+  // window's chat UI uses.
+  getAgentStatus: guardInternal('getAgentStatus', () => ipcRenderer.invoke('agent:status')),
+
   // Service registry snapshot (read-only).
   getServiceRegistry: guardInternal('getServiceRegistry', () =>
     ipcRenderer.invoke('service-registry:get')

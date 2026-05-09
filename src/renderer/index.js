@@ -30,7 +30,11 @@ import {
   hideTabContextMenu,
   setOnContextMenuOpening as setOnTabContextMenuOpening,
   createTab,
+  closeTab,
+  switchTab,
+  getOpenTabs,
 } from './lib/tabs.js';
+import { selectChainById } from './lib/wallet/chain-switcher.js';
 import {
   initNavigation,
   loadTarget,
@@ -54,6 +58,7 @@ import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
 import { initAiSidebar } from './lib/ai-sidebar.js';
 import { initChatUi } from './lib/agent/chat-ui.js';
+import { initAgentVaultUnlockHandler } from './lib/agent/vault-unlock-handler.js';
 import { initSessionsUi } from './lib/agent/sessions-ui.js';
 import { initChannelsUi } from './lib/agent/channels-ui.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
@@ -222,6 +227,52 @@ window.addEventListener('DOMContentLoaded', async () => {
   initBookmarks();
   initNavigation(); // Sets up event handler with tabs module
   initTabs(); // Creates first tab and starts loading home page
+  // Bridge for the agent's tab tools. The host renderer is the only
+  // place that owns the tab list (each tab is a webview); main-side
+  // tools call into this object via webContents.executeJavaScript.
+  // Returns are kept JSON-serialisable — no DOM refs.
+  //
+  // Set as a plain `window.foo = …` rather than via `contextBridge`
+  // because this is the privileged shell renderer (where the AI sidebar
+  // lives), not a webview running untrusted page content. Webviews run
+  // in separate web contents and can't reach this `window`.
+  window.__agentTabBridge__ = {
+    listTabs: () => getOpenTabs(),
+    openTab: (url) => {
+      const tab = createTab(url || null);
+      return tab ? { id: tab.id, url: tab.url, title: tab.title } : null;
+    },
+    // closeTab/switchTab return true ONLY when the id matched a real
+    // tab — main-side tools surface this to the model as
+    // `{closed: false}` / `{switched: false}` for unknown ids so the
+    // agent doesn't hallucinate success on a stale id.
+    closeTab: (id) => {
+      if (typeof id !== 'number') return false;
+      const exists = getOpenTabs().some((t) => t.id === id);
+      if (!exists) return false;
+      closeTab(id);
+      return true;
+    },
+    switchTab: (id) => {
+      if (typeof id !== 'number') return false;
+      const exists = getOpenTabs().some((t) => t.id === id);
+      if (!exists) return false;
+      switchTab(id);
+      return true;
+    },
+  };
+
+  // Wallet bridge — separate namespace from tab bridge because the
+  // wallet surface will grow (chain switch now, sign/send next). Same
+  // privileged-renderer assumption as __agentTabBridge__: webviews can't
+  // reach this `window` because they run in separate web contents.
+  window.__agentWalletBridge__ = {
+    setActiveChain: (chainId) => {
+      if (typeof chainId !== 'number') return false;
+      selectChainById(chainId);
+      return true;
+    },
+  };
   initAutocomplete(); // Address bar autocomplete
   initPageContextMenu(); // Page context menu for webviews
   initOnboarding();  // Identity onboarding wizard
@@ -231,6 +282,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initSessionsUi();  // Sessions list / master-detail swap
   initChannelsUi();  // XMTP channels list (master-detail, sibling to sessions)
   initWalletUi();    // Wallet & identity display in sidebar
+  initAgentVaultUnlockHandler(); // Agent → main asks renderer to walk user through unlock
   loadBookmarks();
   initPlatformUI();
   initUpdateNotifications();

@@ -870,6 +870,15 @@
                 </label>
               </div>
             </div>
+            <div class="row sub" id="ai-model-row">
+              <div class="row-body">
+                <p class="row-label">Default model</p>
+                <p class="row-help">Picked from your installed Ollama models. Start Ollama if the list is empty.</p>
+              </div>
+              <div class="row-control">
+                <select id="ai-selected-model"></select>
+              </div>
+            </div>
           </div>
 
           <h2 class="section-title" style="margin-top: 32px">Models</h2>
@@ -929,6 +938,7 @@
         enableLocalAI: $('enable-local-ai'),
         startOllama: $('start-ollama-at-launch'),
         localAIModelsList: $('local-ai-models-list'),
+        aiSelectedModel: $('ai-selected-model'),
         autoUpdate: $('auto-update'),
       };
 
@@ -1309,6 +1319,7 @@
         startOllamaAtLaunch: fields.startOllama.checked,
         localAIInstalledModels: [...installedSimulated],
         localAIDisabledModels: [...disabledModels],
+        aiSelectedModel: fields.aiSelectedModel.value || null,
         autoUpdate: fields.autoUpdate.checked,
         enableEnsCustomRpc: fields.enableEnsCustomRpc.checked,
         ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
@@ -1339,6 +1350,10 @@
           Array.isArray(settings.localAIDisabledModels) ? settings.localAIDisabledModels : []
         );
         renderLocalAIModels();
+        // Re-populate the model dropdown from the live Ollama daemon and
+        // pre-select the persisted choice. Async — fire-and-forget so it
+        // doesn't block the rest of the form from rendering.
+        populateModelDropdown(settings.aiSelectedModel || null);
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.enableEnsCustomRpc.checked = settings.enableEnsCustomRpc === true;
         fields.ensRpcUrl.value = settings.ensRpcUrl || '';
@@ -1527,6 +1542,43 @@
       fields.enableIdentity.addEventListener('change', save);
       fields.enableLocalAI.addEventListener('change', save);
       fields.startOllama.addEventListener('change', save);
+      fields.aiSelectedModel.addEventListener('change', save);
+
+      // Build the Default-model <select>. Pulls installed models from
+      // the running Ollama daemon via window.agent.getStatus(); pre-
+      // selects `preferred` (the persisted choice). Always renders
+      // FALLBACK_MODEL as a fallback option even when not installed,
+      // so the user sees what the agent will silently fall back to if
+      // their pick isn't available. Daemon offline → just the fallback.
+      const FALLBACK_MODEL = 'gemma4:e2b';
+      async function populateModelDropdown(preferred) {
+        const select = fields.aiSelectedModel;
+        if (!select) return;
+        let installed = [];
+        try {
+          // freedomAPI.getAgentStatus is the internal-page-safe accessor
+          // for the same `agent:status` IPC the chat UI uses. window.agent
+          // (host-window-only) is NOT available here — the settings page
+          // is loaded via webview-preload, not the host preload.
+          const status = await freedomAPI?.getAgentStatus?.();
+          if (Array.isArray(status?.models)) {
+            installed = status.models.map((m) => m.name).filter(Boolean);
+          }
+        } catch {
+          // Agent IPC unavailable (e.g. Local AI disabled) — fall through
+          // to the fallback-only dropdown.
+        }
+        const options = [...new Set([...installed, FALLBACK_MODEL])];
+        select.innerHTML = '';
+        for (const name of options) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name + (installed.includes(name) ? '' : ' (not installed)');
+          select.appendChild(opt);
+        }
+        const want = preferred && options.includes(preferred) ? preferred : FALLBACK_MODEL;
+        select.value = want;
+      }
       fields.autoUpdate.addEventListener('change', save);
 
       fields.enableEnsCustomRpc.addEventListener('change', () => {

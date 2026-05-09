@@ -460,6 +460,16 @@ contextBridge.exposeInMainWorld('agent', {
     ipcRenderer.on('agent:chat:notice', handler);
     return () => ipcRenderer.removeListener('agent:chat:notice', handler);
   },
+  // Vault unlock bridge — main asks the renderer to walk the user
+  // through unlocking the vault during a signing tool call. Renderer
+  // shows the existing showVaultUnlock UI, then sends back the result.
+  onVaultUnlockRequest: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:vault-unlock:request', handler);
+    return () => ipcRenderer.removeListener('agent:vault-unlock:request', handler);
+  },
+  respondVaultUnlock: (payload) =>
+    ipcRenderer.send('agent:vault-unlock:result', payload),
   // Sessions are Pi JSONL files; the `id` field returned here is the
   // absolute file path. The renderer treats it as an opaque token.
   listSessions: (limit) => ipcRenderer.invoke('agent:session:list', { limit }),

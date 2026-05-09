@@ -230,7 +230,14 @@ class FakeElement {
 
   append(...children) {
     for (const child of children) {
-      this.appendChild(child);
+      // Real-DOM `Element.append(...nodes)` accepts strings and turns
+      // them into text nodes. Mirror that so renderers can mix
+      // string literals with elements without per-call ceremony.
+      if (typeof child === 'string') {
+        this.textContent = `${this.textContent || ''}${child}`;
+      } else {
+        this.appendChild(child);
+      }
     }
   }
 

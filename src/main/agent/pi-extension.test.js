@@ -8,6 +8,73 @@ jest.mock('electron', () => ({
   webContents: { fromId: jest.fn() },
 }));
 
+// Avoid pulling in identity-manager / balance-service / chain-registry
+// (and through them ethers + electron.app) just to verify wiring. Wallet
+// tool *behaviour* is covered in tools/wallet-tools.test.js.
+jest.mock('./tools/wallet-tools', () => {
+  const stub = (name, tier, extras = {}) => ({
+    name,
+    label: name,
+    description: 'wallet stub',
+    tier,
+    promptSnippet: 'wallet stub',
+    promptGuidelines: ['stub'],
+    parameters: { type: 'object', properties: {} },
+    execute: async () => ({ content: [], details: {} }),
+    ...extras,
+  });
+  return {
+    createWalletTools: () => [
+      stub('wallet_get_account', 'wallet_read'),
+      stub('wallet_list_accounts', 'wallet_read'),
+      stub('wallet_get_balance', 'wallet_read'),
+      stub('wallet_get_token_balances', 'wallet_read'),
+      stub('wallet_list_chains', 'wallet_read'),
+      stub('wallet_get_chain', 'wallet_read'),
+      stub('wallet_switch_chain', 'browser_mutation'),
+      stub('ens_resolve', 'wallet_read'),
+      stub('ens_reverse', 'wallet_read'),
+      stub('ens_resolve_contenthash', 'wallet_read'),
+      stub('wallet_sign_message', 'identity_or_signing', {
+        formatConsentDescription: ({ reason }) =>
+          `sign a message with the active wallet. Reason: ${reason}.`,
+      }),
+      stub('wallet_sign_typed_data', 'identity_or_signing', {
+        formatConsentDescription: ({ reason }) =>
+          `sign typed data with the active wallet. Reason: ${reason}.`,
+        getConsentSignDetails: ({ typedData, reason }) => ({
+          kind: 'typed-data',
+          reason,
+          domain: typedData?.domain || {},
+          primaryType: typedData?.primaryType || null,
+          message: typedData?.message || {},
+          types: typedData?.types || {},
+        }),
+      }),
+      stub('wallet_send_transaction', 'money', {
+        formatConsentDescription: ({ reason }) =>
+          `send a transaction. Reason: ${reason}.`,
+        // Async to exercise the await path in pi-extension.
+        getConsentSignDetails: async ({ to, chainId, reason }) => ({
+          kind: 'transaction',
+          reason,
+          from: '0xMAIN…dead',
+          to,
+          chainId,
+        }),
+      }),
+      // Fake tool used only by the timeout test — its consent-details
+      // builder never resolves, so the racer in pi-extension must time
+      // out and fall through to the text-only consent path.
+      stub('wallet_hang_test', 'identity_or_signing', {
+        getConsentSignDetails: () => new Promise(() => {}),
+      }),
+      stub('wallet_get_transaction', 'wallet_read'),
+      stub('wallet_wait_for_transaction', 'wallet_read'),
+    ],
+  };
+});
+
 const log = require('../logger');
 const { createFreedomExtension } = require('./pi-extension');
 const broker = require('./pi-broker');
@@ -52,6 +119,7 @@ const ALL_TIERS_PROFILE = {
     TIERS.BROWSER_MUTATION,
     TIERS.MONEY,
     TIERS.IDENTITY_OR_SIGNING,
+    TIERS.WALLET_READ,
   ],
 };
 
@@ -90,6 +158,7 @@ describe('Phase 3 — tool registration', () => {
       profile: ALL_TIERS_PROFILE,
       sessionId: '/tmp/sessions/x.jsonl',
       webContentsId: 42,
+      hostWebContentsId: 7,
       onToolCall: jest.fn(),
       requestConsent: jest.fn(async () => 'allow'),
       onToolResult: jest.fn(),
@@ -97,12 +166,59 @@ describe('Phase 3 — tool registration', () => {
     };
   }
 
-  test('registers all five browser tools', async () => {
+  test('registers the five browser tools', async () => {
     const ctx = makeContext();
     const pi = makeFakePiApi();
     await createFreedomExtension({ toolCallContext: ctx })(pi);
-    const names = pi.tools.map((t) => t.name).sort();
-    expect(names).toEqual(['click', 'fill', 'navigate', 'read_current_tab', 'screenshot']);
+    const names = pi.tools.map((t) => t.name);
+    for (const expected of ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot']) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  test('registers the four tab tools when hostWebContentsId is bound', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    const names = pi.tools.map((t) => t.name);
+    for (const expected of ['list_tabs', 'open_tab', 'close_tab', 'switch_tab']) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  test('registers all wallet + chain + ENS tools', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    const names = pi.tools.map((t) => t.name);
+    for (const expected of [
+      'wallet_get_account',
+      'wallet_list_accounts',
+      'wallet_get_balance',
+      'wallet_get_token_balances',
+      'wallet_list_chains',
+      'wallet_get_chain',
+      'wallet_switch_chain',
+      'ens_resolve',
+      'ens_reverse',
+      'ens_resolve_contenthash',
+      'wallet_sign_message',
+      'wallet_sign_typed_data',
+      'wallet_send_transaction',
+      'wallet_get_transaction',
+      'wallet_wait_for_transaction',
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  test('skips tab tools when hostWebContentsId is missing (no host renderer)', async () => {
+    const ctx = makeContext({ hostWebContentsId: undefined });
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    const names = pi.tools.map((t) => t.name);
+    expect(names).not.toContain('list_tabs');
+    expect(names).not.toContain('open_tab');
   });
 
   test('strips our non-Pi `tier` field before registerTool', async () => {
@@ -149,9 +265,38 @@ describe('Phase 3 — tool registration', () => {
     await handler({});
     expect(pi.setActiveCalls).toHaveLength(1);
     // For the all-tiers default profile we expect everything pi-extension
-    // registered to be enabled — the five browser tools AND spawn_subagent.
+    // registered to be enabled — the five browser tools, four tab tools,
+    // read_skill, the wallet/chain/ENS cluster, and spawn_subagent.
     expect(pi.setActiveCalls[0].sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot', 'spawn_subagent'].sort()
+      [
+        'click',
+        'close_tab',
+        'ens_resolve',
+        'ens_resolve_contenthash',
+        'ens_reverse',
+        'fill',
+        'list_tabs',
+        'navigate',
+        'open_tab',
+        'read_current_tab',
+        'read_skill',
+        'screenshot',
+        'spawn_subagent',
+        'switch_tab',
+        'wallet_get_account',
+        'wallet_get_balance',
+        'wallet_get_chain',
+        'wallet_get_token_balances',
+        'wallet_get_transaction',
+        'wallet_hang_test',
+        'wallet_list_accounts',
+        'wallet_list_chains',
+        'wallet_send_transaction',
+        'wallet_sign_message',
+        'wallet_sign_typed_data',
+        'wallet_switch_chain',
+        'wallet_wait_for_transaction',
+      ].sort()
     );
   });
 
@@ -170,8 +315,8 @@ describe('Phase 3 — tool registration', () => {
   });
 
   test('session_start filters by profile.allowed_tool_tiers', async () => {
-    // A subagent restricted to local_sensitive only should see read+screenshot
-    // — not navigate/click/fill (browser_mutation).
+    // A subagent restricted to local_sensitive only should see read+screenshot+list_tabs
+    // — not navigate/click/fill/open_tab/close_tab/switch_tab (browser_mutation).
     const ctx = makeContext({ profile: { allowed_tool_tiers: ['local_sensitive'] } });
     const pi = makeFakePiApi();
     await createFreedomExtension({
@@ -182,7 +327,9 @@ describe('Phase 3 — tool registration', () => {
     })(pi);
     const handler = pi.handlers.get('session_start')[0];
     await handler({});
-    expect(pi.setActiveCalls[0].sort()).toEqual(['read_current_tab', 'screenshot'].sort());
+    expect(pi.setActiveCalls[0].sort()).toEqual(
+      ['list_tabs', 'read_current_tab', 'screenshot'].sort()
+    );
   });
 
   test('registers a before_agent_start hook that overrides the system prompt', async () => {
@@ -241,6 +388,16 @@ describe('Phase 3.1 — buildFreedomSystemPrompt', () => {
     expect(prompt).not.toMatch(/visual context/i);
   });
 
+  test('main-agent prompt explicitly enables web lookup for real-time info', () => {
+    // Pushes back on Gemma's "I can't access real-time data" reflex —
+    // the agent has navigate + read_current_tab and should reach for
+    // them on weather / news / prices questions.
+    const prompt = _internals.buildFreedomSystemPrompt({});
+    expect(prompt).toMatch(/real-time information/i);
+    expect(prompt).toMatch(/search engine/i);
+    expect(prompt).toMatch(/do not refuse/i);
+  });
+
   test('intro overrides the Freedom default lede', () => {
     const prompt = _internals.buildFreedomSystemPrompt({
       intro: 'You are an extraction subagent inside the Freedom browser.',
@@ -253,6 +410,25 @@ describe('Phase 3.1 — buildFreedomSystemPrompt', () => {
   test('appends current date last', () => {
     const prompt = _internals.buildFreedomSystemPrompt({});
     expect(prompt).toMatch(/Current date: \d{4}-\d{2}-\d{2}\s*$/);
+  });
+
+  test('omits the skills section when no skills are loaded', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({ skills: [] });
+    expect(prompt).not.toMatch(/Available skills/);
+    expect(prompt).not.toMatch(/read_skill/);
+  });
+
+  test('renders the skills section with name, source, and description', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({
+      skills: [
+        { name: 'tldr', description: 'Short summary', source: 'builtin' },
+        { name: 'mine', description: 'Custom recipe', source: 'user' },
+      ],
+    });
+    expect(prompt).toMatch(/Available skills/);
+    expect(prompt).toMatch(/call read_skill with the skill name/);
+    expect(prompt).toMatch(/- tldr \(builtin\): Short summary/);
+    expect(prompt).toMatch(/- mine \(user\): Custom recipe/);
   });
 });
 
@@ -289,6 +465,85 @@ describe('Phase 3 — tool_call hook', () => {
     });
     expect(ctx.requestConsent).toHaveBeenCalled();
     expect(result).toBeUndefined(); // allow → fall through, Pi calls execute
+  });
+
+  test('formatConsentDescription on a tool overrides the bare label in the consent prompt', async () => {
+    const { ctx, handler } = await setup();
+    await handler({
+      toolCallId: 'c1',
+      toolName: 'wallet_sign_message',
+      input: { message: 'Hello', reason: 'log in to MySite' },
+    });
+    expect(ctx.requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining('Reason: log in to MySite'),
+      })
+    );
+  });
+
+  test('hung getConsentSignDetails is timed out so the consent prompt still fires (no signDetails)', async () => {
+    jest.useFakeTimers();
+    try {
+      const { ctx, handler } = await setup();
+      // Don't await yet — race timer against the never-resolving formatter.
+      const promise = handler({
+        toolCallId: 'c-hang',
+        toolName: 'wallet_hang_test',
+        input: {},
+      });
+      // Advance past the 5s timeout window.
+      await jest.advanceTimersByTimeAsync(6000);
+      await promise;
+      expect(ctx.requestConsent).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'wallet_hang_test', signDetails: undefined })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('async getConsentSignDetails is awaited and the resolved value forwarded as signDetails', async () => {
+    const { ctx, handler } = await setup();
+    await handler({
+      toolCallId: 'c-tx',
+      toolName: 'wallet_send_transaction',
+      input: { to: '0xRECIP', chainId: 1, reason: 'send some ETH' },
+    });
+    expect(ctx.requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signDetails: expect.objectContaining({
+          kind: 'transaction',
+          to: '0xRECIP',
+          chainId: 1,
+        }),
+      })
+    );
+  });
+
+  test('getConsentSignDetails on a tool attaches a signDetails payload to the consent prompt', async () => {
+    const { ctx, handler } = await setup();
+    await handler({
+      toolCallId: 'c1',
+      toolName: 'wallet_sign_typed_data',
+      input: {
+        typedData: {
+          domain: { name: 'USD Coin', chainId: 1 },
+          types: { Permit: [] },
+          primaryType: 'Permit',
+          message: { value: '1' },
+        },
+        reason: 'permit Uniswap',
+      },
+    });
+    expect(ctx.requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signDetails: expect.objectContaining({
+          kind: 'typed-data',
+          primaryType: 'Permit',
+          domain: expect.objectContaining({ name: 'USD Coin' }),
+        }),
+      })
+    );
   });
 
   test('blocks tools whose tier is not in the profile', async () => {

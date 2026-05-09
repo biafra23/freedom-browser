@@ -23,8 +23,8 @@
  * renderer.
  */
 
-const { webContents } = require('electron');
 const { TIERS } = require('../tool-tiers');
+const { resolveWebContents, jsonResult, textBlock } = require('./_helpers');
 
 // ~Gemma 8k-token context proxy at ~4 chars/token. The slice happens
 // page-side so a multi-MB innerText doesn't cross the IPC boundary;
@@ -51,25 +51,7 @@ function getBrowserToolMeta() {
 }
 
 function getActiveWebContents(webContentsId) {
-  if (typeof webContentsId !== 'number') {
-    throw new Error('no active tab — webContentsId not bound to this tool');
-  }
-  const wc = webContents.fromId(webContentsId);
-  if (!wc || wc.isDestroyed()) {
-    throw new Error(`active tab webContents ${webContentsId} is not available`);
-  }
-  return wc;
-}
-
-function textBlock(text) {
-  return { type: 'text', text };
-}
-
-function jsonResult(details) {
-  return {
-    content: [textBlock(JSON.stringify(details, null, 2))],
-    details,
-  };
+  return resolveWebContents(webContentsId, 'active tab webContents');
 }
 
 /**

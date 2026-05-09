@@ -72,6 +72,16 @@ describe('evaluate — block paths', () => {
 });
 
 describe('evaluate — allow paths', () => {
+  test('wallet_read is auto-approved', () => {
+    const result = broker.evaluate({
+      toolName: 'wallet_get_account',
+      tier: TIERS.WALLET_READ,
+      profile: profile([TIERS.WALLET_READ]),
+      sessionId: 's1',
+    });
+    expect(result).toEqual({ decision: 'allow', tier: TIERS.WALLET_READ });
+  });
+
   test('local_safe is auto-approved', () => {
     const result = broker.evaluate({
       toolName: 't',
@@ -80,6 +90,25 @@ describe('evaluate — allow paths', () => {
       sessionId: 's1',
     });
     expect(result.decision).toBe('allow');
+  });
+
+  test('identity_or_signing honours session grants (was promoted from always in 7d.3)', () => {
+    const before = broker.evaluate({
+      toolName: 'wallet_sign_message',
+      tier: TIERS.IDENTITY_OR_SIGNING,
+      profile: profile([TIERS.IDENTITY_OR_SIGNING]),
+      sessionId: 's1',
+    });
+    expect(before.decision).toBe('ask');
+    broker.grantForSession('s1', TIERS.IDENTITY_OR_SIGNING);
+    const after = broker.evaluate({
+      toolName: 'wallet_sign_message',
+      tier: TIERS.IDENTITY_OR_SIGNING,
+      profile: profile([TIERS.IDENTITY_OR_SIGNING]),
+      sessionId: 's1',
+    });
+    expect(after.decision).toBe('allow');
+    expect(after.cached).toBe(true);
   });
 
   test('session-once tier auto-approves once a session grant exists', () => {

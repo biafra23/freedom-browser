@@ -26,6 +26,7 @@ import {
   setSlashExtras,
 } from './composer-slash-palette.js';
 import { renderToolBody, SUBAGENT_CHILDREN_CLASS } from './tool-card-renderers.js';
+import { makeConsentSection, addConsentRow } from './consent-render-helpers.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -73,11 +74,6 @@ let composerEl;
 let inputEl;
 let sendBtn;
 let stopBtn;
-let modelSelector;
-let modelBtn;
-let modelBtnName;
-let modelDropdown;
-let modelList;
 let clearBtn;
 let statusBadge;
 
@@ -87,11 +83,6 @@ export function initChatUi() {
   inputEl = document.getElementById('agent-input');
   sendBtn = document.getElementById('agent-send-btn');
   stopBtn = document.getElementById('agent-stop-btn');
-  modelSelector = document.getElementById('agent-model-selector');
-  modelBtn = document.getElementById('agent-model-btn');
-  modelBtnName = document.getElementById('agent-model-btn-name');
-  modelDropdown = document.getElementById('agent-model-dropdown');
-  modelList = document.getElementById('agent-model-list');
   clearBtn = document.getElementById('agent-clear-btn');
   statusBadge = document.getElementById('agent-status-badge');
 
@@ -145,12 +136,6 @@ export function initChatUi() {
   });
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
-  modelBtn?.addEventListener('click', toggleModelDropdown);
-  document.addEventListener('click', (e) => {
-    if (modelSelector && !modelSelector.contains(e.target)) {
-      closeModelDropdown();
-    }
-  });
 
   window.agent.onChatChunk((data) => handleChunk(data));
   window.agent.onThinkingChunk?.((data) => handleThinkingChunk(data));
@@ -209,64 +194,32 @@ export async function refreshStatus() {
       setStatus('error', 'offline');
     }
 
-    const names = state.models.map((m) => m.name);
-    const choices = names.length > 0 ? names : [FALLBACK_MODEL];
-    const preferred =
-      (state.selectedModel && choices.includes(state.selectedModel)
-        ? state.selectedModel
-        : null) ||
-      (choices.includes(FALLBACK_MODEL) ? FALLBACK_MODEL : choices[0]);
-    state.selectedModel = preferred;
-    renderModelDropdown(choices);
-    if (modelBtnName) modelBtnName.textContent = preferred;
+    // Model picking moved out of the sidebar into the AI settings page
+    // (Phase 7 polish). chat-ui reads the persisted choice from
+    // electronAPI.getSettings().aiSelectedModel on each refresh and
+    // falls back to FALLBACK_MODEL if the persisted choice isn't in
+    // the live installed list (e.g. user uninstalled it from Ollama).
+    state.selectedModel = await resolveSelectedModel(state.models);
   } catch (err) {
     pushDebug(`[ChatUi] Status refresh failed: ${err?.message || err}`);
     setStatus('error', 'offline');
   }
 }
 
-function renderModelDropdown(choices) {
-  if (!modelList) return;
-  modelList.innerHTML = '';
-  for (const name of choices) {
-    const li = document.createElement('li');
-    li.className = 'agent-model-item';
-    if (name === state.selectedModel) li.classList.add('active');
-    li.setAttribute('role', 'option');
-    li.dataset.model = name;
-    li.textContent = name;
-    li.addEventListener('click', () => selectModel(name));
-    modelList.appendChild(li);
+async function resolveSelectedModel(models) {
+  const installed = (models || []).map((m) => m.name).filter(Boolean);
+  let persisted = null;
+  try {
+    const settings = await window.electronAPI?.getSettings?.();
+    persisted = settings?.aiSelectedModel || null;
+  } catch (err) {
+    pushDebug(`[ChatUi] getSettings failed: ${err?.message || err}`);
   }
-}
-
-function selectModel(name) {
-  state.selectedModel = name;
-  if (modelBtnName) modelBtnName.textContent = name;
-  if (modelList) {
-    for (const item of modelList.children) {
-      item.classList.toggle('active', item.dataset.model === name);
-    }
+  if (persisted && installed.includes(persisted)) return persisted;
+  if (persisted) {
+    pushDebug(`[ChatUi] persisted model "${persisted}" not installed; falling back to ${FALLBACK_MODEL}`);
   }
-  closeModelDropdown();
-}
-
-function toggleModelDropdown() {
-  if (!modelSelector || !modelDropdown) return;
-  if (modelSelector.classList.contains('open')) {
-    closeModelDropdown();
-  } else {
-    modelSelector.classList.add('open');
-    modelDropdown.classList.remove('hidden');
-    modelBtn?.setAttribute('aria-expanded', 'true');
-  }
-}
-
-function closeModelDropdown() {
-  if (!modelSelector || !modelDropdown) return;
-  modelSelector.classList.remove('open');
-  modelDropdown.classList.add('hidden');
-  modelBtn?.setAttribute('aria-expanded', 'false');
+  return FALLBACK_MODEL;
 }
 
 function setStatus(level, text) {
@@ -1021,6 +974,103 @@ const CONSENT_CHOICES = Object.freeze([
   { label: 'Deny', value: 'deny', danger: true },
 ]);
 
+function renderTypedDataConsentDetails(signDetails) {
+  const wrap = document.createElement('div');
+  wrap.className = 'agent-tool-card-typed-data';
+
+  const domain = signDetails.domain || {};
+  const message = signDetails.message || {};
+  const types = signDetails.types || {};
+
+  wrap.appendChild(makeConsentSection('Domain', (list) => {
+    addConsentRow(list, 'name', domain.name);
+    addConsentRow(list, 'version', domain.version);
+    addConsentRow(list, 'chainId', domain.chainId);
+    addConsentRow(list, 'verifyingContract', domain.verifyingContract, {
+      url: domain.verifyingContractUrl,
+    });
+  }));
+
+  if (signDetails.primaryType) {
+    const typeLabel = document.createElement('div');
+    typeLabel.className = 'agent-tool-card-typed-primary';
+    typeLabel.textContent = `Type: ${signDetails.primaryType}`;
+    wrap.appendChild(typeLabel);
+  }
+
+  const messageEntries = Object.entries(message);
+  wrap.appendChild(makeConsentSection('Message', (list) => {
+    if (messageEntries.length === 0) {
+      const empty = document.createElement('dd');
+      empty.className = 'agent-tool-card-typed-empty';
+      empty.textContent = '(empty)';
+      list.appendChild(empty);
+      return;
+    }
+    for (const [key, value] of messageEntries) {
+      addConsentRow(list, key, value);
+    }
+  }));
+
+  if (Object.keys(types).length > 0) {
+    const details = document.createElement('details');
+    details.className = 'agent-tool-card-typed-schema';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Show schema';
+    details.appendChild(summary);
+    const pre = document.createElement('pre');
+    pre.className = 'agent-tool-mono';
+    pre.textContent = JSON.stringify(types, null, 2);
+    details.appendChild(pre);
+    wrap.appendChild(details);
+  }
+
+  return wrap;
+}
+
+// Send-transaction consent body. From / To (or decoded action for
+// ERC-20 transfer / approve calldata) / Chain / Value / Gas / Total +
+// optional calldata disclosure. Main side already decodes the calldata
+// shape and resolves token metadata, so the renderer just lays out
+// what it's given.
+function renderTransactionConsentDetails(signDetails) {
+  const wrap = document.createElement('div');
+  wrap.className = 'agent-tool-card-typed-data';
+
+  wrap.appendChild(makeConsentSection('Transaction', (list) => {
+    addConsentRow(list, 'From', signDetails.from);
+    addConsentRow(list, 'Chain', signDetails.chainName || signDetails.chainId);
+    if (signDetails.action) {
+      // Decoded action — surfaced instead of bare "To" + "Value" when we
+      // recognised the calldata (ERC-20 transfer / approve).
+      addConsentRow(list, 'Action', signDetails.action);
+      addConsentRow(list, 'Contract', signDetails.to, { url: signDetails.toUrl });
+    } else {
+      addConsentRow(list, 'To', signDetails.to, { url: signDetails.toUrl });
+      addConsentRow(list, 'Value', signDetails.valueDisplay);
+    }
+    addConsentRow(list, 'Gas', signDetails.gasDisplay);
+    addConsentRow(list, 'Total', signDetails.totalDisplay);
+  }));
+
+  if (signDetails.dataHex && signDetails.dataHex !== '0x' && !signDetails.action) {
+    // Show raw calldata for unrecognised contract calls only —
+    // recognised actions already surface their decoded form above.
+    const details = document.createElement('details');
+    details.className = 'agent-tool-card-typed-schema';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Show calldata';
+    details.appendChild(summary);
+    const pre = document.createElement('pre');
+    pre.className = 'agent-tool-mono';
+    pre.textContent = signDetails.dataHex;
+    details.appendChild(pre);
+    wrap.appendChild(details);
+  }
+
+  return wrap;
+}
+
 function updateToolCallCardForConsent(callId, data) {
   const card = state.activeToolCallEls.get(callId);
   if (!card) return;
@@ -1034,10 +1084,32 @@ function updateToolCallCardForConsent(callId, data) {
   desc.textContent = `The agent wants to ${data.description || data.name}.`;
   prompt.appendChild(desc);
 
+  // Rich consent payload — for tools whose consent prompt needs more
+  // than a single string (e.g. wallet_sign_typed_data showing the
+  // EIP-712 domain + decoded message, wallet_send_transaction showing
+  // from/to/value/gas + decoded calldata). Dispatch on signDetails.kind;
+  // absence falls through to the existing text-only path.
+  if (data.signDetails?.kind === 'typed-data') {
+    prompt.appendChild(renderTypedDataConsentDetails(data.signDetails));
+  } else if (data.signDetails?.kind === 'transaction') {
+    prompt.appendChild(renderTransactionConsentDetails(data.signDetails));
+  }
+
   const actions = document.createElement('div');
   actions.className = 'agent-tool-card-consent-actions';
 
-  for (const choice of CONSENT_CHOICES) {
+  // For always-ask policies (e.g. MONEY tier) the "Allow for session"
+  // button would store a grant the broker never honours — hide it so
+  // the user isn't offered an option that does nothing. The policy
+  // value comes from broker.evaluate via pi-extension; the renderer
+  // doesn't need its own copy of the tier-policy table. Threshold-
+  // based consent ("auto-approve up to $X per Y") is a separate
+  // planned phase.
+  const choices = data.policy === 'always'
+    ? CONSENT_CHOICES.filter((c) => c.value !== 'allow-session')
+    : CONSENT_CHOICES;
+
+  for (const choice of choices) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className =

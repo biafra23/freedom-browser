@@ -1,0 +1,986 @@
+/**
+ * Wallet Tools (Pi-shaped, read-only — Phase 7d.1)
+ *
+ * Exposes the user's wallet to the agent at the read-only level only:
+ * active-account lookup, native + ERC-20 balances, chain registry.
+ * No signing, no sending, no chain switching — those land in 7d.2/7d.3/7d.4.
+ *
+ * All five tools are tier WALLET_READ (auto-approve). Returning balances
+ * and chain configs is public chain data plus the user's own (already-
+ * publicly-tied) address; consent prompts would just train users to
+ * click-through. The richer consent surface arrives with signing/sending.
+ *
+ * Vault-locked behaviour: surfaced as a clean throw with a hint to open
+ * the wallet sidebar. The visual unlock-on-demand flow that signing
+ * needs lands with 7d.3, where every call requires unlock; in 7d.1 the
+ * only path that can hit "locked" is "active wallet index > 0 with no
+ * explicit address arg" (index 0 reads address from vault-meta.json
+ * without unlock).
+ *
+ * Pi-shaped result for every tool: a single text content block carrying
+ * the JSON-stringified payload (model-readable) plus the same payload as
+ * a free-form `details` object (renderer-readable).
+ */
+
+const { TIERS } = require('../tool-tiers');
+const { jsonResult, makeBridgeCaller } = require('./_helpers');
+const identityManager = require('../../identity-manager');
+const balanceService = require('../../wallet/balance-service');
+const chainsModule = require('../../wallet/chains');
+const chainRegistry = require('../../chain-registry');
+const ensResolver = require('../../ens-resolver');
+const { ENS_REASONS, ENS_RESULT_TYPES } = ensResolver;
+const transactionService = require('../../wallet/transaction-service');
+const vaultTimer = require('../../vault-timer');
+const vaultUnlockBridge = require('../vault-unlock-bridge');
+const { decodeKnownAction } = require('./wallet-tx-decode');
+const { formatUnits, parseUnits } = require('ethers');
+const { shortAddress: shortAddr } = require('../../../shared/address-utils');
+const { raceWithTimeout } = require('../promise-utils');
+
+// Resolve the wei value for wallet_send_transaction. Smoke-flagged
+// failure: small models reliably misconvert decimal native units to
+// wei (e.g. Gemma multiplied "0.01 * 10^18" and got 10^20). Accepting
+// `valueNative` ("0.01") and converting server-side via parseUnits
+// removes the footgun. `value` (wei) stays available for callers that
+// have the integer ready. Mutually exclusive.
+function resolveValueWei({ value, valueNative, nativeDecimals }) {
+  if (value && value !== '' && valueNative && valueNative !== '') {
+    throw new Error(
+      'Provide either `value` (wei) or `valueNative` (decimal native units), not both.'
+    );
+  }
+  if (valueNative && valueNative !== '') {
+    try {
+      return parseUnits(valueNative, nativeDecimals).toString();
+    } catch (err) {
+      throw new Error(`Invalid valueNative "${valueNative}": ${err.message}`, { cause: err });
+    }
+  }
+  return value && value !== '' ? value : '0';
+}
+
+const WALLET_BRIDGE_GLOBAL = '__agentWalletBridge__';
+const WALLET_BRIDGE_LABEL = 'wallet';
+
+const VAULT_LOCKED_HINT =
+  'This wallet is locked. Open the wallet sidebar to unlock the vault, or call this tool with an explicit address argument.';
+
+async function getActiveAddressOrThrow() {
+  const address = await identityManager.getActiveWalletAddress();
+  if (!address) throw new Error(VAULT_LOCKED_HINT);
+  return address;
+}
+
+// Resolve {address, walletIndex} for a signing request. Caller passes
+// either an explicit address (must match one of the user's derived
+// wallets exactly — case-insensitive) or omits it for the active wallet.
+// Throws with a clear, model-readable error in either failure mode.
+// Default-active path skips getDerivedWallets() to avoid the extra
+// vault-meta.json read + per-wallet derive loop on every signing call.
+// Resolve a recipient input — accepts either a 0x hex address or an
+// ENS name (anything that's not 0x-hex shape). For ENS, calls into
+// ens-resolver and throws a model-friendly error on failure. Returns
+// `{ address, ensName }` where ensName is null for direct hex inputs
+// and the original name for ENS inputs (used by the consent card to
+// surface "ENS → 0x" so the user sees what they're approving).
+//
+// Why auto-resolve in the tool: small models (Gemma 4 e2b in
+// particular) reliably forget to call ens_resolve before
+// wallet_send_transaction. ethers v6 already auto-resolves ENS for
+// `provider.getBalance(name)` so the read tools just work; this
+// brings send up to parity. Failures still surface to the model
+// (NOT_FOUND, INVALID_NAME, RPC) so it can react.
+const HEX_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+async function resolveAddressOrEns(input) {
+  if (typeof input !== 'string' || input.length === 0) {
+    throw new Error('Recipient is required (0x address or ENS name like vitalik.eth)');
+  }
+  if (HEX_ADDRESS_RE.test(input)) {
+    return { address: input, ensName: null };
+  }
+  const result = await ensResolver.resolveEnsAddress(input);
+  if (result?.success) {
+    return { address: result.address, ensName: result.name || input };
+  }
+  const reason = result?.reason || 'UNKNOWN';
+  if (reason === ENS_REASONS.NOT_FOUND) {
+    throw new Error(`Could not resolve ENS name: ${input} (no address record)`);
+  }
+  if (reason === ENS_REASONS.INVALID_NAME) {
+    throw new Error(`Invalid recipient: ${input} is neither a 0x address nor a valid ENS name`);
+  }
+  const detail = result?.error ? `: ${result.error}` : '';
+  throw new Error(`Could not resolve recipient ${input} (${reason})${detail}`);
+}
+
+async function resolveSigningWallet(address) {
+  if (!address) {
+    const activeAddress = await identityManager.getActiveWalletAddress();
+    if (!activeAddress) throw new Error(VAULT_LOCKED_HINT);
+    const activeIndex = identityManager.getActiveWalletIndex();
+    return { walletIndex: activeIndex, walletAddress: activeAddress };
+  }
+  const wallets = await identityManager.getDerivedWallets();
+  const lower = address.toLowerCase();
+  const match = wallets.find(
+    (w) => typeof w.address === 'string' && w.address.toLowerCase() === lower
+  );
+  if (!match) {
+    throw new Error(
+      `Address ${address} is not one of the user's derived wallets. Use wallet_list_accounts to see available addresses.`
+    );
+  }
+  return { walletIndex: match.index, walletAddress: match.address };
+}
+
+// Two-step unlock: the IDENTITY_OR_SIGNING consent has already fired
+// (always-ask tier, fired before execute by pi-extension's tool_call
+// hook). This second prompt walks the user through actually unlocking
+// the vault when needed. Resolves silently when already unlocked.
+async function ensureVaultUnlocked({ hostWebContentsId, reason, signal }) {
+  const identity = await identityManager.loadIdentityModule();
+  if (identity.isUnlocked()) return;
+  await vaultUnlockBridge.requestVaultUnlock({
+    reason,
+    hostWebContentsId,
+    signal,
+  });
+  // Defensive: race between unlock-resolved and lock-from-elsewhere.
+  // If the vault is somehow locked again by the time we proceed,
+  // fail clean rather than crashing inside the signer.
+  if (!identity.isUnlocked()) {
+    throw new Error('Vault locked again before signing could proceed');
+  }
+}
+
+function createWalletTools({ hostWebContentsId, Type }) {
+  const callWalletBridge = makeBridgeCaller({
+    globalName: WALLET_BRIDGE_GLOBAL,
+    label: WALLET_BRIDGE_LABEL,
+    hostId: hostWebContentsId,
+  });
+  const walletGetAccount = {
+    name: 'wallet_get_account',
+    label: 'Get active wallet',
+    description:
+      "Return the user's active wallet address, derivation index, and label. " +
+      'Read-only — no private keys are exposed.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: "fetch the user's active wallet (address, index, name)",
+    promptGuidelines: [
+      'Call wallet_get_account when the user asks "what\'s my address" or before any wallet-scoped operation that needs the active address.',
+      'The active wallet is one of several the user may have derived — do not assume it is the only one.',
+    ],
+    parameters: Type.Object({}),
+    async execute() {
+      const [address, wallets] = await Promise.all([
+        identityManager.getActiveWalletAddress(),
+        identityManager.getDerivedWallets(),
+      ]);
+      if (!address) throw new Error(VAULT_LOCKED_HINT);
+      const index = identityManager.getActiveWalletIndex();
+      const entry = wallets.find((w) => w.index === index);
+      return jsonResult({
+        address,
+        walletIndex: index,
+        name: entry?.name ?? null,
+      });
+    },
+  };
+
+  const walletListAccounts = {
+    name: 'wallet_list_accounts',
+    label: 'List wallet accounts',
+    description:
+      'List every derived wallet account the user has: index, name, address. ' +
+      'Returns the active-account index alongside so the model knows which one is currently selected.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'list every derived wallet account the user has',
+    promptGuidelines: [
+      'Call wallet_list_accounts when the user asks "how many wallets do I have", "what wallets do I have", "list my accounts", or wants to switch between accounts.',
+      'wallet_get_account returns only the active wallet — wallet_list_accounts shows all of them.',
+    ],
+    parameters: Type.Object({}),
+    async execute() {
+      const wallets = await identityManager.getDerivedWallets();
+      const activeIndex = identityManager.getActiveWalletIndex();
+      return jsonResult({ wallets, activeIndex });
+    },
+  };
+
+  const walletGetBalance = {
+    name: 'wallet_get_balance',
+    label: 'Get native balance',
+    description:
+      "Return the native-token balance of an address on a given chain. " +
+      'Address defaults to the active wallet; pass an address explicitly to look up arbitrary public balances.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'fetch the native-token balance for an address on a chain',
+    promptGuidelines: [
+      'chainId is required — call wallet_list_chains first if you do not know which chain ids the user supports.',
+      'Omit address to query the active wallet; pass an explicit address to look up arbitrary public balances.',
+    ],
+    parameters: Type.Object({
+      chainId: Type.Number({ minimum: 1 }),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    async execute(_id, { chainId, address }) {
+      const target = address || (await getActiveAddressOrThrow());
+      const chain = chainsModule.getChain(chainId);
+      if (!chain) throw new Error(`unknown chainId ${chainId}`);
+      const balance = await balanceService.getNativeBalance(
+        target,
+        chainId,
+        chain.nativeCurrency
+      );
+      return jsonResult({
+        address: target,
+        chainId,
+        symbol: balance.symbol,
+        decimals: balance.decimals,
+        formatted: balance.formatted,
+        raw: balance.raw,
+      });
+    },
+  };
+
+  const walletGetTokenBalances = {
+    name: 'wallet_get_token_balances',
+    label: 'Get token balances',
+    description:
+      'Return the ERC-20 token balances of an address on a given chain. ' +
+      'Excludes the native token — use wallet_get_balance for that.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'fetch ERC-20 token balances for an address on a chain',
+    promptGuidelines: [
+      'chainId is required.',
+      'Returns every ERC-20 Freedom knows about on that chain, including zero balances. Filter your response to what the user asked.',
+      'Omit address to query the active wallet.',
+    ],
+    parameters: Type.Object({
+      chainId: Type.Number({ minimum: 1 }),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    async execute(_id, { chainId, address }) {
+      const target = address || (await getActiveAddressOrThrow());
+      const balances = await balanceService.getTokenBalancesForChain(target, chainId);
+      return jsonResult({ address: target, chainId, balances });
+    },
+  };
+
+  const walletListChains = {
+    name: 'wallet_list_chains',
+    label: 'List chains',
+    description:
+      "List every chain the user's wallet supports, with id, name, native " +
+      'symbol, block explorer, and whether an RPC is configured.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'list every chain the wallet supports',
+    promptGuidelines: [
+      'Use wallet_list_chains to translate human chain names ("Ethereum", "Gnosis") to chainId before calling balance / token tools.',
+      'isAvailable=false means no RPC is configured for that chain — balance lookups on it will fail until the user adds one.',
+    ],
+    parameters: Type.Object({}),
+    async execute() {
+      const chains = chainsModule.getAllChains().map((c) => ({
+        chainId: c.chainId,
+        name: c.name,
+        nativeSymbol: c.nativeCurrency?.symbol ?? null,
+        blockExplorer: c.blockExplorer ?? null,
+        isAvailable: chainRegistry.isChainAvailable(c.chainId),
+      }));
+      return jsonResult({ chains });
+    },
+  };
+
+  const walletGetChain = {
+    name: 'wallet_get_chain',
+    label: 'Get chain config',
+    description:
+      'Return the full configuration for one chain by id: name, native ' +
+      'currency, block explorer, RPC URLs, contract addresses (if any).',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'fetch the full configuration for one chain by id',
+    promptGuidelines: [
+      'Useful when you need the block-explorer URL for an address or transaction, or the chain\'s native-token decimals.',
+    ],
+    parameters: Type.Object({
+      chainId: Type.Number({ minimum: 1 }),
+    }),
+    async execute(_id, { chainId }) {
+      const chain = chainsModule.getChain(chainId);
+      if (!chain) throw new Error(`unknown chainId ${chainId}`);
+      return jsonResult({
+        chainId: chain.chainId,
+        name: chain.name,
+        nativeCurrency: chain.nativeCurrency,
+        blockExplorer: chain.blockExplorer ?? null,
+        rpcUrls: chain.rpcUrls ?? [],
+        contracts: chain.contracts ?? null,
+      });
+    },
+  };
+
+  // wallet_switch_chain needs to round-trip into the renderer because the
+  // selected chain is renderer-side state (walletState.selectedChainId in
+  // chain-switcher.js). The renderer's selectChainById path is what fires
+  // the dApp `chainChanged` event for any open dApps — silently mutating
+  // state from main would skip that and surprise dApp consumers.
+  const walletSwitchChain = {
+    name: 'wallet_switch_chain',
+    label: 'Switch active chain',
+    description:
+      'Set the wallet sidebar\'s active chain. Updates the wallet UI and ' +
+      'emits an EIP-1193 chainChanged event to any open dApp in the active tab.',
+    tier: TIERS.BROWSER_MUTATION,
+    promptSnippet: 'switch the wallet sidebar to a different chain',
+    promptGuidelines: [
+      'Only call wallet_switch_chain when the user explicitly asks to switch chains, or when an open dApp needs a different chain to function — never as a silent prerequisite for other wallet tools (those take chainId explicitly).',
+      'Pass the chainId as a number (e.g. 1 for Ethereum, 100 for Gnosis). Use wallet_list_chains if the user named a chain by string.',
+    ],
+    parameters: Type.Object({
+      chainId: Type.Number({ minimum: 1 }),
+    }),
+    async execute(_id, { chainId }) {
+      const chain = chainsModule.getChain(chainId);
+      if (!chain) throw new Error(`unknown chainId ${chainId}`);
+      const ok = await callWalletBridge('setActiveChain', [chainId]);
+      if (!ok) throw new Error(`wallet bridge refused chain ${chainId}`);
+      return jsonResult({ chainId, name: chain.name });
+    },
+  };
+
+  const ensResolve = {
+    name: 'ens_resolve',
+    label: 'Resolve ENS name',
+    description:
+      'Resolve an ENS name (e.g. "vitalik.eth") to its primary Ethereum address ' +
+      'via the Universal Resolver, with multi-RPC quorum.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'resolve an ENS name to an Ethereum address',
+    promptGuidelines: [
+      'Call ens_resolve when the user mentions a "*.eth" name and you need its 0x address (e.g. for wallet_get_balance / wallet_get_token_balances on an ENS name).',
+      'Some ENS names have no address record set — the tool throws a clear "no address record" error in that case; surface it plainly to the user instead of guessing.',
+    ],
+    parameters: Type.Object({
+      name: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, { name }) {
+      const result = await ensResolver.resolveEnsAddress(name);
+      if (result?.success) {
+        return jsonResult({ name: result.name, address: result.address });
+      }
+      const reason = result?.reason || 'UNKNOWN';
+      const detail = result?.error ? `: ${result.error}` : '';
+      if (reason === ENS_REASONS.NOT_FOUND) {
+        throw new Error(`No address record for ${result.name || name}`);
+      }
+      if (reason === ENS_REASONS.INVALID_NAME) {
+        throw new Error(`Invalid ENS name: ${name}${detail}`);
+      }
+      throw new Error(`ENS resolve failed (${reason})${detail}`);
+    },
+  };
+
+  const ensReverse = {
+    name: 'ens_reverse',
+    label: 'Reverse-resolve address to ENS',
+    description:
+      'Look up the primary ENS name for an Ethereum address. Many addresses have no primary name set; the tool throws a clear error in that case.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'look up the primary ENS name for an Ethereum address',
+    promptGuidelines: [
+      'Call ens_reverse whenever the user references an Ethereum address (0x...) with phrases like "who owns", "whose address", "who is", or just to surface a human-readable name. Always try ens_reverse BEFORE web search or spawning a research subagent — most "who owns this address" questions are answered by the primary ENS name.',
+      'Treat the absence of a primary name as normal — do not infer one from a partial match. If ens_reverse returns "no primary ENS name", report that plainly; the user can then choose whether to dispatch a web search.',
+    ],
+    parameters: Type.Object({
+      address: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, { address }) {
+      const result = await ensResolver.resolveEnsReverse(address);
+      if (result?.success) {
+        return jsonResult({ address: result.address, name: result.name });
+      }
+      const reason = result?.reason || 'UNKNOWN';
+      const detail = result?.error ? `: ${result.error}` : '';
+      if (reason === ENS_REASONS.NOT_FOUND) {
+        throw new Error(`No primary ENS name for ${result.address || address}`);
+      }
+      if (reason === ENS_REASONS.INVALID_ADDRESS) {
+        throw new Error(`Invalid Ethereum address: ${address}${detail}`);
+      }
+      throw new Error(`ENS reverse failed (${reason})${detail}`);
+    },
+  };
+
+  // Contenthash result shape from ens-resolver:
+  //   ok          → { type: 'ok', name, codec, protocol, uri, decoded, trust }
+  //   not_found   → { type: 'not_found', reason, name, trust }
+  //   unsupported → { type: 'unsupported', reason, name, contentHash, trust }
+  //   conflict    → { type: 'conflict', name, trust, groups }   ← security signal
+  //   error       → { type: 'error', name, reason, error }
+  const ensResolveContenthash = {
+    name: 'ens_resolve_contenthash',
+    label: 'Resolve ENS contenthash',
+    description:
+      'Resolve an ENS name\'s contenthash record to a decentralised-content URI ' +
+      '(bzz://, ipfs://, or ipns://). Uses multi-RPC quorum; surfaces conflicts as errors.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'resolve an ENS name to its decentralised content (bzz / ipfs / ipns) URI',
+    promptGuidelines: [
+      'Call ens_resolve_contenthash when the user wants to visit or inspect the website behind an ENS name, not just its address.',
+      'A "conflict" error means RPC providers returned different contenthash records for the same name — treat it as a security signal and tell the user, do not pick one.',
+    ],
+    parameters: Type.Object({
+      name: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, { name }) {
+      const result = await ensResolver.resolveEnsContent(name);
+      if (result?.type === ENS_RESULT_TYPES.OK) {
+        return jsonResult({
+          name: result.name,
+          uri: result.uri,
+          protocol: result.protocol,
+          decoded: result.decoded,
+        });
+      }
+      const displayName = result?.name || name;
+      if (result?.type === ENS_RESULT_TYPES.NOT_FOUND) {
+        throw new Error(`No contenthash record for ${displayName} (${result.reason || 'NO_RECORD'})`);
+      }
+      if (result?.type === ENS_RESULT_TYPES.UNSUPPORTED) {
+        throw new Error(`Contenthash for ${displayName} uses an unsupported codec`);
+      }
+      if (result?.type === ENS_RESULT_TYPES.CONFLICT) {
+        throw new Error(
+          `RPC quorum failed for ${displayName} — providers returned conflicting contenthash records. Treat as untrusted.`
+        );
+      }
+      const detail = result?.error ? `: ${result.error}` : '';
+      throw new Error(`ENS contenthash resolve failed (${result?.reason || 'UNKNOWN'})${detail}`);
+    },
+  };
+
+  const walletSignMessage = {
+    name: 'wallet_sign_message',
+    label: 'Sign message',
+    description:
+      'Sign an EIP-191 personal message with the user\'s wallet. Always asks for ' +
+      'consent and walks the user through unlocking the vault if needed. Defaults ' +
+      'to the active wallet; pass an explicit address to sign with another derived account.',
+    tier: TIERS.IDENTITY_OR_SIGNING,
+    promptSnippet: 'sign an EIP-191 personal message with the user\'s wallet',
+    promptGuidelines: [
+      'Always provide a clear `reason` explaining WHY the user is being asked to sign — the consent prompt shows it to the user verbatim. Be specific (e.g. "to log in to MySite as 0x...", "to prove authorship of this comment"), never generic ("user requested signature").',
+      'Defaults to the active wallet. Pass `address` to sign with a specific account from wallet_list_accounts; the address must match one of the user\'s derived wallets exactly.',
+      'EIP-191 signs an arbitrary string. For typed structured data (EIP-712 — Permits, OpenSea listings, etc.), wallet_sign_typed_data is the right tool — it gives the user a properly decoded consent card.',
+    ],
+    parameters: Type.Object({
+      message: Type.String({ minLength: 1 }),
+      reason: Type.String({
+        minLength: 1,
+        description: 'Why the user is being asked to sign — shown verbatim in the consent prompt.',
+      }),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    formatConsentDescription({ message, reason, address }) {
+      const target = address ? shortAddr(address) : 'the active wallet';
+      const truncated =
+        typeof message === 'string' && message.length > 80
+          ? `${message.slice(0, 80)}…`
+          : message;
+      return `sign a message with ${target}. Reason: ${reason}. Message: "${truncated}"`;
+    },
+    async execute(_id, { message, reason, address }, signal) {
+      const { walletIndex, walletAddress } = await resolveSigningWallet(address);
+      await ensureVaultUnlocked({
+        hostWebContentsId,
+        reason: `Sign a message — ${reason}`,
+        signal,
+      });
+      const identity = await identityManager.loadIdentityModule();
+      const privateKey = identity.exportPrivateKey(walletIndex);
+      const signature = await transactionService.signPersonalMessage(message, privateKey);
+      vaultTimer.resetVaultAutoLockTimer();
+      return jsonResult({ address: walletAddress, signature });
+    },
+  };
+
+  // EIP-712 typed-data signing. Same wallet-resolution + unlock flow
+  // as wallet_sign_message; the new bit is the structured consent card
+  // that surfaces the domain + decoded message so the user knows what
+  // they're signing instead of staring at a blob of JSON.
+  //
+  // Tier note: shares IDENTITY_OR_SIGNING (session-once, post-7d.3).
+  // A user who clicked "Allow for session" on a SIWE login could in
+  // principle have a follow-up Permit auto-approved. The decoded card
+  // is the main defense; Permit-aware tier split (`primaryType ===
+  // 'Permit'` → stricter `always` policy) is a documented follow-up.
+  const walletSignTypedData = {
+    name: 'wallet_sign_typed_data',
+    label: 'Sign typed data',
+    description:
+      'Sign EIP-712 typed structured data (Permits, OpenSea listings, ' +
+      'SIWE typed-data variants, ...) with the user\'s wallet. The ' +
+      'consent card decodes the domain + message values so the user ' +
+      'sees what they\'re approving. Defaults to the active wallet.',
+    tier: TIERS.IDENTITY_OR_SIGNING,
+    promptSnippet: 'sign EIP-712 typed structured data with the user\'s wallet',
+    promptGuidelines: [
+      'Always provide a clear `reason` — shown verbatim on the consent card. Be specific about what the signature authorises (e.g. "approve OpenSea listing for X for Y ETH", "permit Uniswap router to spend N USDC").',
+      'Pass `typedData` as the standard EIP-712 object: { domain: { name, version?, chainId?, verifyingContract? }, types: { ... }, primaryType: "...", message: { ... } }. The user sees the domain pills and decoded message values directly.',
+      'Use wallet_sign_message instead for plain string messages (EIP-191) — typed data is for structured payloads with a schema.',
+    ],
+    parameters: Type.Object({
+      typedData: Type.Object(
+        {
+          domain: Type.Object(
+            {
+              name: Type.Optional(Type.String()),
+              version: Type.Optional(Type.String()),
+              chainId: Type.Optional(Type.Number()),
+              verifyingContract: Type.Optional(Type.String()),
+            },
+            { additionalProperties: true }
+          ),
+          types: Type.Object({}, { additionalProperties: true }),
+          primaryType: Type.String({ minLength: 1 }),
+          message: Type.Object({}, { additionalProperties: true }),
+        },
+        { additionalProperties: true }
+      ),
+      reason: Type.String({
+        minLength: 1,
+        description: 'Why the user is being asked to sign — shown verbatim on the consent card.',
+      }),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    formatConsentDescription({ typedData, reason, address }) {
+      // Bare-label fallback — the structured card via getConsentSignDetails
+      // is what the user actually sees in the rich path. This text only
+      // shows if the renderer somehow falls back to the text-only path.
+      const target = address ? shortAddr(address) : 'the active wallet';
+      const domainName = typedData?.domain?.name || 'unknown app';
+      const primaryType = typedData?.primaryType || 'data';
+      return `sign ${primaryType} for ${domainName} with ${target}. Reason: ${reason}.`;
+    },
+    getConsentSignDetails({ typedData, reason, address }) {
+      const domain = typedData?.domain || {};
+      // Block-explorer link for verifyingContract — chain.blockExplorer
+      // exists for every registered chain; fall back to null if the
+      // domain.chainId isn't recognised.
+      let verifyingContractUrl = null;
+      if (domain.verifyingContract && typeof domain.chainId === 'number') {
+        const chain = chainsModule.getChain(domain.chainId);
+        if (chain?.blockExplorer) {
+          verifyingContractUrl = `${chain.blockExplorer}/address/${domain.verifyingContract}`;
+        }
+      }
+      return {
+        kind: 'typed-data',
+        reason,
+        address: address || null,
+        domain: {
+          name: domain.name ?? null,
+          version: domain.version ?? null,
+          chainId: typeof domain.chainId === 'number' ? domain.chainId : null,
+          verifyingContract: domain.verifyingContract ?? null,
+          verifyingContractUrl,
+        },
+        primaryType: typedData?.primaryType ?? null,
+        message: typedData?.message ?? {},
+        types: typedData?.types ?? {},
+      };
+    },
+    async execute(_id, { typedData, reason, address }, signal) {
+      const { walletIndex, walletAddress } = await resolveSigningWallet(address);
+      await ensureVaultUnlocked({
+        hostWebContentsId,
+        reason: `Sign typed data — ${reason}`,
+        signal,
+      });
+      const identity = await identityManager.loadIdentityModule();
+      const privateKey = identity.exportPrivateKey(walletIndex);
+      const signature = await transactionService.signTypedData(typedData, privateKey);
+      vaultTimer.resetVaultAutoLockTimer();
+      return jsonResult({
+        address: walletAddress,
+        signature,
+        domain: typedData?.domain ?? {},
+        primaryType: typedData?.primaryType ?? null,
+      });
+    },
+  };
+
+  // Send a signed transaction. Tier MONEY (always-ask). The consent
+  // card is the richest one in the cluster: from / to / chain / value /
+  // gas / total in native token, plus ERC-20 transfer/approve decoding
+  // when the calldata matches a known selector. Gas is auto-estimated
+  // (the model shouldn't have to pick correct values), fees auto-fetched
+  // from the chain. Returns immediately with the tx hash + explorer URL —
+  // does NOT wait for confirmation; a separate wallet_wait_for_transaction
+  // tool can be added later if the agent wants to poll.
+  const walletSendTransaction = {
+    name: 'wallet_send_transaction',
+    label: 'Send transaction',
+    description:
+      'Sign and broadcast a transaction from the user\'s wallet. Always asks ' +
+      'for consent (every transaction is consequential — no session grants). ' +
+      'Defaults to the active wallet; gas + fees are auto-estimated.',
+    tier: TIERS.MONEY,
+    promptSnippet: "sign and send a transaction from the user's wallet",
+    promptGuidelines: [
+      'Always provide a clear `reason` — shown verbatim on the consent card. Be specific about what the transaction does (e.g. "send 0.05 ETH to alice.eth", "swap 100 USDC for ETH on Uniswap"), never generic.',
+      'PICK THE RIGHT CHAIN by token name — do not default to chainId 1. Native-token cheat sheet: ETH → 1 (Ethereum), xDAI → 100 (Gnosis), MATIC → 137 (Polygon), BNB → 56 (BNB Chain), AVAX → 43114 (Avalanche). xDAI is the NATIVE token of Gnosis, NOT the ERC-20 DAI on mainnet — they are different tokens. When the user names a token you don\'t recognise, call wallet_list_chains and match against `nativeSymbol` before guessing.',
+      'PREFER `valueNative` for native-currency amounts ("0.01" for 0.01 xDAI / ETH / etc.) — the tool converts to wei using the chain\'s native decimals. `value` is the raw wei integer; only use it if you already have the wei amount. Never multiply decimals yourself — small models reliably miscount the zeros.',
+      '`to` accepts EITHER a 0x address (`0xabc…`) OR an ENS name (`vitalik.eth`). The tool auto-resolves ENS internally; the consent card shows both forms ("vitalik.eth → 0xd8dA…6045") so the user can verify before approving. Pass the ENS name as-is — do NOT pre-resolve it via ens_resolve, the tool handles it.',
+      'For ERC-20 transfers, `valueNative` and `value` are both 0 — the token amount lives inside `data` (build with the contract\'s transfer ABI: selector 0xa9059cbb + 32-byte recipient + 32-byte amount). The consent card decodes the calldata so the user sees "Transfer 1.0 USDC to 0x..." instead of raw hex.',
+      'Gas estimation runs server-side before the consent prompt — the user sees the estimated gas cost in the consent card. If estimation fails, the prompt still shows but without a Total figure.',
+    ],
+    parameters: Type.Object({
+      to: Type.String({ minLength: 1 }),
+      chainId: Type.Number({ minimum: 1 }),
+      reason: Type.String({
+        minLength: 1,
+        description: 'Why the user is being asked to send — shown verbatim on the consent card.',
+      }),
+      // Two ways to specify the native-currency value. Use one or the other.
+      value: Type.Optional(Type.String({
+        description: 'Wei as string (integer). Defaults to "0". Mutex with valueNative.',
+      })),
+      valueNative: Type.Optional(Type.String({
+        description: 'Decimal native units, e.g. "0.01" for 0.01 ETH. Tool converts to wei using the chain\'s native decimals. Mutex with value.',
+      })),
+      data: Type.Optional(Type.String({ description: 'Hex calldata. Defaults to "0x".' })),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    formatConsentDescription({ to, chainId, reason, address }) {
+      const target = address ? shortAddr(address) : 'the active wallet';
+      const recipient = shortAddr(to);
+      return `send a transaction from ${target} to ${recipient} on chain ${chainId}. Reason: ${reason}.`;
+    },
+    async getConsentSignDetails({ to, value, valueNative, data, chainId, reason, address }) {
+      const dataHex = data && data !== '' ? data : '0x';
+
+      // Resolve signing wallet + recipient (auto-handles ENS) in
+      // parallel — both async, both needed for the consent card.
+      // Errors propagate to the formatter try/catch in pi-extension
+      // and the renderer falls back to text-only consent on throw.
+      const [{ walletAddress }, { address: resolvedTo, ensName: toEns }] = await Promise.all([
+        resolveSigningWallet(address),
+        resolveAddressOrEns(to),
+      ]);
+
+      const chain = chainsModule.getChain(chainId);
+      const chainName = chain
+        ? `${chain.name} (${chain.nativeCurrency?.symbol ?? ''})`.trim()
+        : `chainId ${chainId}`;
+      const nativeSymbol = chain?.nativeCurrency?.symbol ?? '';
+      const nativeDecimals = chain?.nativeCurrency?.decimals ?? 18;
+
+      // Convert valueNative → wei here so estimateGas + the consent
+      // card both see the canonical wei amount. Throws on conflicting
+      // params or malformed input — caught by pi-extension's formatter
+      // try/catch and falls through to text-only consent.
+      const valueWei = resolveValueWei({ value, valueNative, nativeDecimals });
+
+      const toUrl = chain?.blockExplorer
+        ? `${chain.blockExplorer}/address/${resolvedTo}`
+        : null;
+
+      // Best-effort gas estimate. If the RPC is flaky or the tx would
+      // revert, surface the error in the gas display rather than
+      // suppressing the whole consent prompt. estimateGas + getGasPrices
+      // are independent — fire in parallel to halve consent-prompt
+      // latency on slow RPCs.
+      let gasLimit;
+      let gasPrices;
+      let gasError;
+      const [gasResult, priceResult] = await Promise.allSettled([
+        transactionService.estimateGas({
+          from: walletAddress,
+          to: resolvedTo,
+          value: valueWei,
+          data: dataHex,
+          chainId,
+        }),
+        transactionService.getGasPrices(chainId),
+      ]);
+      if (gasResult.status === 'fulfilled') {
+        gasLimit = gasResult.value.gasLimit;
+      } else {
+        gasError = gasResult.reason?.message || String(gasResult.reason);
+      }
+      if (priceResult.status === 'fulfilled') {
+        gasPrices = priceResult.value;
+      } else {
+        gasError = gasError || priceResult.reason?.message || String(priceResult.reason);
+      }
+
+      // Compute gas wei = gasLimit * effectiveGasPrice (or maxFeePerGas
+      // for EIP-1559). Display in native units so the user sees
+      // "0.0021 ETH" not "2100000000 gwei".
+      let gasDisplay = gasError ? `unavailable (${gasError})` : null;
+      let totalDisplay = null;
+      if (gasLimit && gasPrices) {
+        const pricePerGas =
+          gasPrices.type === 'eip1559'
+            ? BigInt(gasPrices.maxFeePerGas)
+            : BigInt(gasPrices.gasPrice || '0');
+        const gasWei = (BigInt(gasLimit) * pricePerGas).toString();
+        gasDisplay = `~${formatUnits(gasWei, nativeDecimals)} ${nativeSymbol}`.trim();
+        const total = BigInt(valueWei) + BigInt(gasWei);
+        totalDisplay = `~${formatUnits(total, nativeDecimals)} ${nativeSymbol}`.trim();
+      }
+
+      const valueDisplay =
+        valueWei === '0'
+          ? null
+          : `${formatUnits(valueWei, nativeDecimals)} ${nativeSymbol}`.trim();
+
+      // Calldata decode — only ERC-20 transfer / approve today. Other
+      // selectors fall through to a "Show calldata" disclosure on the
+      // raw hex (handled in the renderer).
+      const decoded = decodeKnownAction({ to: resolvedTo, data: dataHex, chainId });
+      let action = null;
+      if (decoded?.kind === 'erc20-transfer') {
+        const amt = decoded.formattedAmount ?? `${decoded.rawAmount} (raw)`;
+        const sym = decoded.tokenSymbol || 'tokens';
+        action = `Transfer ${amt} ${sym} to ${shortAddr(decoded.recipient)}`;
+      } else if (decoded?.kind === 'erc20-approve') {
+        const amt = decoded.formattedAmount ?? `${decoded.rawAmount} (raw)`;
+        const sym = decoded.tokenSymbol || 'tokens';
+        action = `Approve ${shortAddr(decoded.spender)} to spend ${amt} ${sym}`;
+      }
+
+      // When `to` was an ENS name, surface "ensName → 0xshort" so the
+      // user sees what was resolved before approving. Same `toUrl`
+      // (block explorer link on the resolved address) either way.
+      const toDisplay = toEns
+        ? `${toEns} → ${shortAddr(resolvedTo)}`
+        : shortAddr(resolvedTo);
+
+      return {
+        kind: 'transaction',
+        reason,
+        from: shortAddr(walletAddress),
+        to: toDisplay,
+        toUrl,
+        chainId,
+        chainName,
+        valueDisplay,
+        gasDisplay,
+        totalDisplay,
+        dataHex,
+        action,
+      };
+    },
+    async execute(_id, { to, value, valueNative, data, chainId, reason, address }, signal) {
+      // Resolve signing wallet + recipient (auto-handles ENS) up front.
+      // Doing it here too (not just in getConsentSignDetails) keeps the
+      // contract simple: model can pass an ENS name OR a 0x address,
+      // either path lands at the same on-chain tx.
+      const [{ walletIndex, walletAddress }, { address: resolvedTo, ensName: toEns }] =
+        await Promise.all([
+          resolveSigningWallet(address),
+          resolveAddressOrEns(to),
+        ]);
+      await ensureVaultUnlocked({
+        hostWebContentsId,
+        reason: `Send transaction — ${reason}`,
+        signal,
+      });
+
+      const chain = chainsModule.getChain(chainId);
+      const nativeDecimals = chain?.nativeCurrency?.decimals ?? 18;
+      const valueWei = resolveValueWei({ value, valueNative, nativeDecimals });
+      const dataHex = data && data !== '' ? data : '0x';
+
+      // Re-estimate gas + re-fetch fees inside execute (consent-card
+      // estimates may be stale by the time the user clicks Allow).
+      // Independent calls — parallel.
+      const [{ gasLimit }, gasPrices] = await Promise.all([
+        transactionService.estimateGas({
+          from: walletAddress,
+          to: resolvedTo,
+          value: valueWei,
+          data: dataHex,
+          chainId,
+        }),
+        transactionService.getGasPrices(chainId),
+      ]);
+
+      const identity = await identityManager.loadIdentityModule();
+      const privateKey = identity.exportPrivateKey(walletIndex);
+
+      const sendParams = {
+        to: resolvedTo,
+        value: valueWei,
+        data: dataHex,
+        gasLimit,
+        chainId,
+      };
+      if (gasPrices.type === 'eip1559') {
+        sendParams.maxFeePerGas = gasPrices.maxFeePerGas;
+        sendParams.maxPriorityFeePerGas = gasPrices.maxPriorityFeePerGas;
+      } else {
+        sendParams.gasPrice = gasPrices.gasPrice;
+      }
+      const result = await transactionService.signAndSendTransaction(sendParams, privateKey);
+      vaultTimer.resetVaultAutoLockTimer();
+      return jsonResult({
+        txHash: result.hash,
+        from: result.from,
+        to: result.to,
+        // When the recipient was an ENS name, surface both forms in the
+        // result so the model + renderer can show "sent to meinhard.eth"
+        // without hand-tracking the original input.
+        recipientEns: toEns,
+        value: result.value,
+        chainId,
+        blockExplorerUrl: result.explorerUrl,
+      });
+    },
+  };
+
+  // Build the agent-facing receipt shape from a transaction-service
+  // details object. Decodes ERC-20 transfer/approve calldata into a
+  // structured `action` field so the agent can verify "this confirmed
+  // transfer of 1.0 USDC was to my address" without parsing hex.
+  function buildReceiptResult(details) {
+    const chain = chainsModule.getChain(details.chainId);
+    const nativeDecimals = chain?.nativeCurrency?.decimals ?? 18;
+    const valueFormatted = details.valueWei
+      ? formatUnits(details.valueWei, nativeDecimals)
+      : null;
+    let action = null;
+    if (details.to && details.data && details.data !== '0x') {
+      const decoded = decodeKnownAction({
+        to: details.to,
+        data: details.data,
+        chainId: details.chainId,
+      });
+      if (decoded?.kind === 'erc20-transfer') {
+        action = {
+          kind: 'erc20-transfer',
+          tokenAddress: decoded.tokenAddress,
+          tokenSymbol: decoded.tokenSymbol,
+          recipient: decoded.recipient,
+          formattedAmount: decoded.formattedAmount,
+          rawAmount: decoded.rawAmount,
+        };
+      } else if (decoded?.kind === 'erc20-approve') {
+        action = {
+          kind: 'erc20-approve',
+          tokenAddress: decoded.tokenAddress,
+          tokenSymbol: decoded.tokenSymbol,
+          spender: decoded.spender,
+          formattedAmount: decoded.formattedAmount,
+          rawAmount: decoded.rawAmount,
+        };
+      }
+    }
+    return {
+      status: details.status,
+      hash: details.hash,
+      from: details.from ?? null,
+      to: details.to ?? null,
+      valueWei: details.valueWei ?? null,
+      valueFormatted,
+      chainId: details.chainId,
+      blockExplorerUrl: details.explorerUrl ?? null,
+      blockNumber: details.blockNumber ?? null,
+      gasUsed: details.gasUsed ?? null,
+      action,
+      error: details.error ?? null,
+    };
+  }
+
+  const walletGetTransaction = {
+    name: 'wallet_get_transaction',
+    label: 'Get transaction details',
+    description:
+      'Look up a transaction by hash on a chain. Returns the on-chain ' +
+      "details (status, from, to, value, action) so the agent can verify " +
+      "a payment landed and was for the right amount to the right recipient. " +
+      'Read-only.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'fetch a transaction\'s on-chain details (status, from, to, value, action) by hash',
+    promptGuidelines: [
+      'Use wallet_get_transaction to verify "did this payment confirm?" or "what did this tx do?". The `action` field decodes ERC-20 transfer/approve calldata, so for token payments compare action.recipient + action.formattedAmount against expected; for native payments compare to + valueFormatted.',
+      'status values: "confirmed" (success), "failed" (executed but reverted), "pending" (broadcast, not yet mined), "not_found" (RPC has no record), "unknown" (RPC error — `error` field has details).',
+      'For "I just sent it, wait until it lands" use wallet_wait_for_transaction instead — this tool is a one-shot snapshot.',
+    ],
+    parameters: Type.Object({
+      hash: Type.String({ minLength: 1 }),
+      chainId: Type.Number({ minimum: 1 }),
+    }),
+    async execute(_id, { hash, chainId }) {
+      const details = await transactionService.getTransactionDetails(hash, chainId);
+      return jsonResult(buildReceiptResult(details));
+    },
+  };
+
+  const walletWaitForTransaction = {
+    name: 'wallet_wait_for_transaction',
+    label: 'Wait for transaction confirmation',
+    description:
+      'Block until a transaction is confirmed on a chain (or the timeout ' +
+      'expires). Returns the same shape as wallet_get_transaction once ' +
+      'confirmed; throws on timeout. Default timeout 30 seconds, max 120.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'wait until a transaction confirms (or timeout) and return its on-chain details',
+    promptGuidelines: [
+      'Use wallet_wait_for_transaction right after wallet_send_transaction to confirm "did my send land?" — pass the txHash from the send return value.',
+      'For passive verification (the payer says "I paid you"), prefer wallet_get_transaction first; only fall back to wait_for_transaction if status comes back "pending".',
+      'On timeout the tool throws — re-call to keep waiting, or fall back to wallet_get_transaction to check the current status without blocking.',
+    ],
+    parameters: Type.Object({
+      hash: Type.String({ minLength: 1 }),
+      chainId: Type.Number({ minimum: 1 }),
+      confirmations: Type.Optional(Type.Number({ minimum: 1, maximum: 32 })),
+      timeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 120000 })),
+    }),
+    async execute(_id, { hash, chainId, confirmations, timeoutMs }) {
+      const wantConfirmations = confirmations ?? 1;
+      const timeout = timeoutMs ?? 30000;
+      // The underlying transaction-service.waitForTransaction has its
+      // own 60s hardcoded timeout; layer raceWithTimeout on top so the
+      // agent can pick a tighter window. Caveat (documented in the
+      // helper): if our timer wins, the underlying ethers wait keeps
+      // polling until its own 60s — bounded leak, low cost at LLM rate.
+      // Switching to a polling-based wait would close the leak; deferred
+      // because the leak is bounded and rare in practice.
+      await raceWithTimeout(
+        transactionService.waitForTransaction(hash, chainId, wantConfirmations),
+        timeout,
+        `Timed out after ${timeout}ms waiting for ${hash}`
+      );
+      // Re-fetch via getTransactionDetails for the unified shape (the
+      // wait helper returns the receipt only; we want from/to/value too).
+      const details = await transactionService.getTransactionDetails(hash, chainId);
+      return jsonResult(buildReceiptResult(details));
+    },
+  };
+
+  return [
+    walletGetAccount,
+    walletListAccounts,
+    walletGetBalance,
+    walletGetTokenBalances,
+    walletListChains,
+    walletGetChain,
+    walletSwitchChain,
+    ensResolve,
+    ensReverse,
+    ensResolveContenthash,
+    walletSignMessage,
+    walletSignTypedData,
+    walletSendTransaction,
+    walletGetTransaction,
+    walletWaitForTransaction,
+  ];
+}
+
+module.exports = { createWalletTools, _internals: { VAULT_LOCKED_HINT } };

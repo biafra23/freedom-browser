@@ -17,6 +17,9 @@
  * Easy to test in isolation against fake-dom.
  */
 
+import { shortAddress } from '../address-utils.js';
+import { createTab } from '../tabs.js';
+
 const URL_DISPLAY_MAX = 60;
 const SELECTOR_DISPLAY_MAX = 80;
 const SCREENSHOT_MAX_PX = 220;
@@ -34,6 +37,20 @@ function truncateMiddle(text, max) {
   return `${text.slice(0, half)}…${text.slice(-half)}`;
 }
 
+// Click on an agent UI anchor → open in a new Freedom tab via the
+// existing tabs.js API instead of falling through to Electron's
+// default new-window behaviour (which spawns a bare BrowserWindow
+// outside the tab strip). target=_blank + rel stay as a fallback for
+// keyboard middle-click and accessibility.
+function openInTabOnClick(anchor) {
+  anchor.addEventListener('click', (e) => {
+    e.preventDefault();
+    const url = anchor.href;
+    if (url && url !== '#') createTab(url);
+  });
+  return anchor;
+}
+
 function makeUrlPill(url) {
   const a = document.createElement('a');
   a.className = 'agent-tool-url-pill';
@@ -42,7 +59,7 @@ function makeUrlPill(url) {
   a.rel = 'noopener noreferrer';
   a.title = url;
   a.textContent = truncateMiddle(url, URL_DISPLAY_MAX);
-  return a;
+  return openInTabOnClick(a);
 }
 
 function makeSelectorPill(selector) {
@@ -228,6 +245,122 @@ function renderScreenshot(call) {
   return frag;
 }
 
+function renderListTabs(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`List tabs failed: ${failureText(call)}`));
+    return frag;
+  }
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary('Listing tabs…'));
+    return frag;
+  }
+  const tabs = call.result?.tabs || [];
+  const active = tabs.find((t) => t.isActive);
+  const summary = makeSummary(`Listed ${tabs.length} tab${tabs.length === 1 ? '' : 's'}`);
+  if (active) {
+    summary.append(' — active: ');
+    if (active.title) {
+      const strong = document.createElement('strong');
+      strong.className = 'agent-tool-title';
+      strong.textContent = truncateMiddle(active.title, 60);
+      strong.title = active.title;
+      summary.appendChild(strong);
+    } else if (active.url) {
+      summary.appendChild(makeUrlPill(active.url));
+    }
+  }
+  frag.appendChild(summary);
+  if (tabs.length > 0) {
+    const lines = tabs
+      .map((t) => `[${t.id}]${t.isActive ? '*' : ' '} ${t.title || '(untitled)'} — ${t.url || ''}`)
+      .join('\n');
+    frag.appendChild(makeDisclosure(`Show all ${tabs.length} tabs`, makeMonoBlock(lines)));
+  }
+  return frag;
+}
+
+function renderOpenTab(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Open tab failed: ${failureText(call)}`));
+    return frag;
+  }
+  const url = call.args?.url;
+  if (call.status === 'pending') {
+    const s = makeSummary('Opening new tab — ');
+    if (url) s.appendChild(makeUrlPill(url));
+    frag.appendChild(s);
+    return frag;
+  }
+  const tab = call.result?.tab;
+  const summary = makeSummary('Opened new tab ');
+  if (tab?.url) summary.appendChild(makeUrlPill(tab.url));
+  else if (url) summary.appendChild(makeUrlPill(url));
+  frag.appendChild(summary);
+  return frag;
+}
+
+function renderCloseTab(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Close tab failed: ${failureText(call)}`));
+    return frag;
+  }
+  const id = call.args?.id;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Closing tab ${id ?? ''}…`.trim()));
+    return frag;
+  }
+  const closed = call.result?.closed;
+  frag.appendChild(makeSummary(closed ? `Closed tab ${id}` : `No tab matched id ${id}`));
+  return frag;
+}
+
+function renderSwitchTab(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Switch tab failed: ${failureText(call)}`));
+    return frag;
+  }
+  const id = call.args?.id;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Switching to tab ${id ?? ''}…`.trim()));
+    return frag;
+  }
+  const switched = call.result?.switched;
+  frag.appendChild(makeSummary(switched ? `Switched to tab ${id}` : `No tab matched id ${id}`));
+  return frag;
+}
+
+function renderReadSkill(call) {
+  const frag = document.createDocumentFragment();
+  const requested = call.args?.name;
+  if (isFailure(call) || call.result?.error) {
+    const reason = call.result?.error === 'not_found'
+      ? `Skill "${requested}" not found in the catalog`
+      : `Read failed: ${failureText(call)}`;
+    frag.appendChild(makeSummary(reason));
+    return frag;
+  }
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Loading skill ${requested || ''}…`.trim()));
+    return frag;
+  }
+  const { name, source, body } = call.result || {};
+  const summary = makeSummary('Loaded skill ');
+  const strong = document.createElement('strong');
+  strong.className = 'agent-tool-title';
+  strong.textContent = `/${name || requested}`;
+  summary.appendChild(strong);
+  if (source) summary.append(` (${source})`);
+  frag.appendChild(summary);
+  if (body) {
+    frag.appendChild(makeDisclosure(`Recipe (${body.length} chars)`, makeMonoBlock(body)));
+  }
+  return frag;
+}
+
 function renderSpawnSubagent(call) {
   const frag = document.createDocumentFragment();
   const id = call.args?.subagent_id || 'subagent';
@@ -266,6 +399,146 @@ function renderSpawnSubagent(call) {
   return frag;
 }
 
+
+function renderWalletSignMessage(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Signing failed: ${failureText(call)}`));
+    return frag;
+  }
+  const address = call.result?.address || call.args?.address;
+  const signature = call.result?.signature;
+  if (call.status === 'pending') {
+    const target = address ? shortAddress(address) : 'active wallet';
+    frag.appendChild(makeSummary(`Signing message with ${target}…`));
+    return frag;
+  }
+  // Post-execution: result.address is canonical (same as args.address if
+  // provided, or the active-wallet address otherwise). Signature is a
+  // 132-char hex blob — too long for the summary, lives in disclosure.
+  const summary = makeSummary(`Signed with ${shortAddress(address)}`);
+  frag.appendChild(summary);
+  if (signature) {
+    frag.appendChild(makeDisclosure('Signature', makeMonoBlock(signature)));
+  }
+  return frag;
+}
+
+function renderWalletSignTypedData(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Signing failed: ${failureText(call)}`));
+    return frag;
+  }
+  const address = call.result?.address || call.args?.address;
+  const signature = call.result?.signature;
+  const domainName =
+    call.result?.domain?.name || call.args?.typedData?.domain?.name || 'typed data';
+  const primaryType = call.result?.primaryType || call.args?.typedData?.primaryType;
+  const verb = primaryType ? `${primaryType} for ${domainName}` : domainName;
+  if (call.status === 'pending') {
+    const target = address ? shortAddress(address) : 'active wallet';
+    frag.appendChild(makeSummary(`Signing ${verb} with ${target}…`));
+    return frag;
+  }
+  const summary = makeSummary(`Signed ${verb} with ${shortAddress(address)}`);
+  frag.appendChild(summary);
+  if (signature) {
+    frag.appendChild(makeDisclosure('Signature', makeMonoBlock(signature)));
+  }
+  return frag;
+}
+
+function renderWalletSendTransaction(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Send failed: ${failureText(call)}`));
+    return frag;
+  }
+  const txHash = call.result?.txHash;
+  const explorerUrl = call.result?.blockExplorerUrl;
+  const to = call.result?.to || call.args?.to;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Sending transaction to ${shortAddress(to)}…`));
+    return frag;
+  }
+  if (txHash) {
+    const summary = makeSummary(`Sent to ${shortAddress(to)}: `);
+    if (explorerUrl) {
+      const link = document.createElement('a');
+      link.className = 'agent-tool-url-pill';
+      link.href = explorerUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = truncateMiddle(txHash, 18);
+      summary.appendChild(openInTabOnClick(link));
+    } else {
+      const code = document.createElement('code');
+      code.textContent = truncateMiddle(txHash, 18);
+      summary.appendChild(code);
+    }
+    frag.appendChild(summary);
+  } else {
+    frag.appendChild(makeSummary('Sent'));
+  }
+  return frag;
+}
+
+// Shared renderer for wallet_get_transaction and wallet_wait_for_transaction.
+// Both return the same unified receipt shape; same summary line + a
+// disclosure for the full payload.
+function renderWalletReceipt(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Receipt lookup failed: ${failureText(call)}`));
+    return frag;
+  }
+  const status = call.result?.status;
+  const hash = call.result?.hash || call.args?.hash;
+  const explorerUrl = call.result?.blockExplorerUrl;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Looking up ${truncateMiddle(hash || '', 18)}…`));
+    return frag;
+  }
+  // Headline: "Confirmed: Transfer 1.0 USDC to 0x… in block 1234"
+  // or "Confirmed: 0.05 ETH to 0x… in block 1234" for native value.
+  const action = call.result?.action;
+  const blockSuffix = call.result?.blockNumber ? ` in block ${call.result.blockNumber}` : '';
+  let line;
+  if (status === 'confirmed' && action?.kind === 'erc20-transfer') {
+    const amt = action.formattedAmount ?? `${action.rawAmount} (raw)`;
+    const sym = action.tokenSymbol || 'tokens';
+    line = `Confirmed: Transfer ${amt} ${sym} to ${shortAddress(action.recipient)}${blockSuffix}`;
+  } else if (status === 'confirmed' && action?.kind === 'erc20-approve') {
+    const amt = action.formattedAmount ?? `${action.rawAmount} (raw)`;
+    const sym = action.tokenSymbol || 'tokens';
+    line = `Confirmed: Approve ${shortAddress(action.spender)} for ${amt} ${sym}${blockSuffix}`;
+  } else if (status === 'confirmed') {
+    const v = call.result?.valueFormatted;
+    const to = call.result?.to;
+    line = v && v !== '0.0'
+      ? `Confirmed: ${v} to ${shortAddress(to)}${blockSuffix}`
+      : `Confirmed: contract call to ${shortAddress(to)}${blockSuffix}`;
+  } else if (status === 'pending') {
+    line = `Pending: ${truncateMiddle(hash || '', 18)} not yet mined`;
+  } else if (status === 'failed') {
+    line = `Failed: tx ${truncateMiddle(hash || '', 18)} reverted${blockSuffix}`;
+  } else if (status === 'not_found') {
+    line = `Not found: no record of ${truncateMiddle(hash || '', 18)}`;
+  } else {
+    line = `Unknown status (${call.result?.error || 'no error'})`;
+  }
+  const summary = makeSummary(line);
+  if (explorerUrl) {
+    const sep = document.createElement('span');
+    sep.textContent = ' · ';
+    summary.appendChild(sep);
+    summary.appendChild(makeUrlPill(explorerUrl));
+  }
+  frag.appendChild(summary);
+  return frag;
+}
+
 const TOOL_RENDERERS = {
   navigate: renderNavigate,
   read_current_tab: renderReadCurrentTab,
@@ -273,6 +546,16 @@ const TOOL_RENDERERS = {
   fill: renderFill,
   screenshot: renderScreenshot,
   spawn_subagent: renderSpawnSubagent,
+  read_skill: renderReadSkill,
+  list_tabs: renderListTabs,
+  open_tab: renderOpenTab,
+  close_tab: renderCloseTab,
+  switch_tab: renderSwitchTab,
+  wallet_sign_message: renderWalletSignMessage,
+  wallet_sign_typed_data: renderWalletSignTypedData,
+  wallet_send_transaction: renderWalletSendTransaction,
+  wallet_get_transaction: renderWalletReceipt,
+  wallet_wait_for_transaction: renderWalletReceipt,
 };
 
 function renderJsonFallback(call) {

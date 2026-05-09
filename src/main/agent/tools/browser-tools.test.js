@@ -91,7 +91,7 @@ describe('webContents resolution', () => {
   test('throws when webContentsId is not bound', async () => {
     const tools = createBrowserTools({ webContentsId: null, Type, TIERS });
     const read = tools.find((t) => t.name === 'read_current_tab');
-    await expect(read.execute('call-1', {})).rejects.toThrow(/webContentsId/);
+    await expect(read.execute('call-1', {})).rejects.toThrow(/id not bound/);
   });
 
   test('throws when fromId returns nothing', async () => {

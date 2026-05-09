@@ -1,9 +1,9 @@
 const { TIERS, ALL_TIERS, TIER_POLICY, isValidTier } = require('./tool-tiers');
 
 describe('tool-tiers', () => {
-  test('TIERS object is frozen and exposes all eight categories', () => {
+  test('TIERS object is frozen and exposes all nine categories', () => {
     expect(Object.isFrozen(TIERS)).toBe(true);
-    expect(ALL_TIERS).toHaveLength(8);
+    expect(ALL_TIERS).toHaveLength(9);
     expect(ALL_TIERS).toEqual(
       expect.arrayContaining([
         'local_safe',
@@ -13,6 +13,7 @@ describe('tool-tiers', () => {
         'money',
         'identity_or_signing',
         'browser_mutation',
+        'wallet_read',
         'blocked',
       ])
     );
@@ -28,7 +29,11 @@ describe('tool-tiers', () => {
     expect(TIER_POLICY[TIERS.LOCAL_SAFE]).toBe('auto');
     expect(TIER_POLICY[TIERS.LOCAL_SENSITIVE]).toBe('session-once');
     expect(TIER_POLICY[TIERS.MONEY]).toBe('always');
-    expect(TIER_POLICY[TIERS.IDENTITY_OR_SIGNING]).toBe('always');
+    // Signing was promoted from 'always' to 'session-once' in 7d.3 so
+    // "Allow for session" actually skips re-prompting on subsequent
+    // signing calls in the same chat thread.
+    expect(TIER_POLICY[TIERS.IDENTITY_OR_SIGNING]).toBe('session-once');
+    expect(TIER_POLICY[TIERS.WALLET_READ]).toBe('auto');
     expect(TIER_POLICY[TIERS.BLOCKED]).toBe('never');
   });
 

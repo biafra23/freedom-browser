@@ -310,6 +310,74 @@ async function getTransactionStatus(txHash, chainId) {
 }
 
 /**
+ * Combined tx details + receipt for the agent's payment-verification
+ * flow. Wallet-sidebar code uses `getTransactionStatus` (receipt only);
+ * the agent needs the original tx fields too (from / to / value / data)
+ * so the model can verify "this confirmed payment to me was for the
+ * right amount from the right sender". One helper, two RPC calls in
+ * parallel — splits the latency vs. doing them sequentially.
+ *
+ * Returns:
+ *   - status: 'pending' | 'confirmed' | 'failed' | 'not_found' | 'unknown'
+ *   - hash, from, to, valueWei (string), data, chainId
+ *   - blockNumber? gasUsed? effectiveGasPrice? (only when confirmed/failed)
+ *   - explorerUrl
+ *   - error? (when status === 'unknown')
+ */
+async function getTransactionDetails(txHash, chainId) {
+  const provider = getProvider(chainId);
+  if (!provider) {
+    throw new Error(`No provider available for chain ${chainId}`);
+  }
+
+  try {
+    const [tx, receipt] = await withRetry(
+      () => Promise.all([
+        provider.getTransaction(txHash),
+        provider.getTransactionReceipt(txHash),
+      ]),
+      2,
+      chainId
+    );
+
+    if (!tx) {
+      return { status: 'not_found', hash: txHash, explorerUrl: getTxExplorerUrl(chainId, txHash) };
+    }
+
+    const base = {
+      hash: txHash,
+      from: tx.from,
+      to: tx.to,
+      valueWei: tx.value?.toString(),
+      data: tx.data,
+      chainId,
+      explorerUrl: getTxExplorerUrl(chainId, txHash),
+    };
+
+    if (!receipt) {
+      return { ...base, status: 'pending' };
+    }
+
+    return {
+      ...base,
+      status: receipt.status === 1 ? 'confirmed' : 'failed',
+      blockNumber: receipt.blockNumber,
+      gasUsed: receipt.gasUsed?.toString(),
+      effectiveGasPrice: receipt.gasPrice?.toString(),
+    };
+  } catch (err) {
+    console.error('[TransactionService] Failed to get transaction details:', err);
+    return {
+      status: 'unknown',
+      hash: txHash,
+      chainId,
+      explorerUrl: getTxExplorerUrl(chainId, txHash),
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Wait for transaction confirmation
  * @param {string} txHash - Transaction hash
  * @param {number} chainId - Chain ID
@@ -409,4 +477,5 @@ module.exports = {
   waitForTransaction,
   signPersonalMessage,
   signTypedData,
+  getTransactionDetails,
 };

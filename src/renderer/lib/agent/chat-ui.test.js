@@ -70,6 +70,7 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
 const loadChatUi = async ({
   initialStatus,
   agent: agentOverride,
+  settings = null,
 } = {}) => {
   jest.resetModules();
 
@@ -78,11 +79,6 @@ const loadChatUi = async ({
   const inputEl = createElement('textarea');
   const sendBtn = createElement('button');
   const stopBtn = createElement('button');
-  const modelSelector = createElement('div');
-  const modelBtn = createElement('button');
-  const modelBtnName = createElement('span');
-  const modelDropdown = createElement('div', { classes: ['hidden'] });
-  const modelList = createElement('ul');
   const clearBtn = createElement('button');
   const statusBadge = createElement('span');
 
@@ -93,11 +89,6 @@ const loadChatUi = async ({
       'agent-input': inputEl,
       'agent-send-btn': sendBtn,
       'agent-stop-btn': stopBtn,
-      'agent-model-selector': modelSelector,
-      'agent-model-btn': modelBtn,
-      'agent-model-btn-name': modelBtnName,
-      'agent-model-dropdown': modelDropdown,
-      'agent-model-list': modelList,
       'agent-clear-btn': clearBtn,
       'agent-status-badge': statusBadge,
     },
@@ -106,7 +97,10 @@ const loadChatUi = async ({
   const { handlers, bridge } =
     agentOverride || createAgentBridge(initialStatus);
 
-  global.window = { agent: bridge };
+  global.window = {
+    agent: bridge,
+    electronAPI: { getSettings: jest.fn(async () => settings || {}) },
+  };
   global.document = document;
   global.marked = { setOptions: jest.fn(), parse: jest.fn((t) => `<p>${t}</p>`) };
   global.DOMPurify = { sanitize: jest.fn((html) => html) };
@@ -130,11 +124,6 @@ const loadChatUi = async ({
     inputEl,
     sendBtn,
     stopBtn,
-    modelSelector,
-    modelBtn,
-    modelBtnName,
-    modelDropdown,
-    modelList,
     clearBtn,
     statusBadge,
   };
@@ -165,52 +154,39 @@ describe('chat-ui', () => {
     expect(statusBadge.classList.contains('error')).toBe(true);
   });
 
-  test('populates model dropdown with installed models, prefers default fallback', async () => {
-    const { modelList, modelBtnName } = await loadChatUi({
+  test('uses the persisted aiSelectedModel from settings on chat start when installed', async () => {
+    const { mod, bridge, inputEl, composerEl } = await loadChatUi({
       initialStatus: {
         running: true,
         version: '0.23.2',
         models: [{ name: 'qwen3:0.6b' }, { name: 'gemma4:e2b' }],
       },
+      settings: { aiSelectedModel: 'qwen3:0.6b' },
     });
-    const itemValues = modelList.children.map((c) => c.dataset.model);
-    expect(itemValues).toEqual(['qwen3:0.6b', 'gemma4:e2b']);
-    expect(modelBtnName.textContent).toBe('gemma4:e2b');
-    const active = modelList.children.find((c) => c.classList.contains('active'));
-    expect(active.dataset.model).toBe('gemma4:e2b');
+    inputEl.value = 'hello';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+    expect(bridge.startChat).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'qwen3:0.6b', prompt: 'hello' })
+    );
+    void mod;
   });
 
-  test('falls back to default model name when no models installed', async () => {
-    const { modelList, modelBtnName } = await loadChatUi({
-      initialStatus: { running: true, version: '0.23.2', models: [] },
-    });
-    expect(modelList.children.map((c) => c.dataset.model)).toEqual(['gemma4:e2b']);
-    expect(modelBtnName.textContent).toBe('gemma4:e2b');
-  });
-
-  test('clicking the model button toggles the dropdown', async () => {
-    const { modelBtn, modelDropdown, modelSelector } = await loadChatUi();
-    expect(modelDropdown.classList.contains('hidden')).toBe(true);
-    modelBtn.dispatch('click');
-    expect(modelDropdown.classList.contains('hidden')).toBe(false);
-    expect(modelSelector.classList.contains('open')).toBe(true);
-    modelBtn.dispatch('click');
-    expect(modelDropdown.classList.contains('hidden')).toBe(true);
-  });
-
-  test('clicking a dropdown item selects the model and closes the dropdown', async () => {
-    const { modelBtn, modelList, modelBtnName, modelDropdown } = await loadChatUi({
+  test('falls back to FALLBACK_MODEL when persisted model is not installed', async () => {
+    const { bridge, inputEl, composerEl } = await loadChatUi({
       initialStatus: {
         running: true,
         version: '0.23.2',
-        models: [{ name: 'qwen3:0.6b' }, { name: 'gemma4:e2b' }],
+        models: [{ name: 'gemma4:e2b' }],
       },
+      settings: { aiSelectedModel: 'someones-private-fork:42b' },
     });
-    modelBtn.dispatch('click');
-    const otherItem = modelList.children.find((c) => c.dataset.model === 'qwen3:0.6b');
-    otherItem.dispatch('click');
-    expect(modelBtnName.textContent).toBe('qwen3:0.6b');
-    expect(modelDropdown.classList.contains('hidden')).toBe(true);
+    inputEl.value = 'hi';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+    expect(bridge.startChat).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gemma4:e2b' })
+    );
   });
 
   test('first submit creates a session, then calls startChat with sessionPath + prompt', async () => {
@@ -539,6 +515,186 @@ describe('chat-ui', () => {
       allowBtn.dispatch('click');
       await flushMicrotasks();
       expect(bridge.respondConsent).toHaveBeenCalledWith('stream-1', 'c1', 'allow');
+    });
+
+    test('consent-request with signDetails:typed-data renders the decoded EIP-712 panel', async () => {
+      const { handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c2',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+      });
+      handlers.consentRequest({
+        streamId: 'stream-1',
+        callId: 'c2',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+        description: 'sign Permit for USD Coin with the active wallet. Reason: r.',
+        signDetails: {
+          kind: 'typed-data',
+          reason: 'permit Uniswap',
+          domain: {
+            name: 'USD Coin',
+            chainId: 1,
+            verifyingContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+            verifyingContractUrl:
+              'https://etherscan.io/address/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+          },
+          primaryType: 'Permit',
+          message: {
+            owner: '0xMAIN',
+            spender: '0xUNI',
+            value: '1000000',
+          },
+          types: { Permit: [{ name: 'value', type: 'uint256' }] },
+        },
+      });
+
+      const card = messagesEl.querySelector('.agent-tool-card');
+      const panel = card.querySelector('.agent-tool-card-typed-data');
+      expect(panel).toBeTruthy();
+      // Domain pills, primary type label, message rows, schema disclosure all present.
+      const headings = card.querySelectorAll('.agent-tool-card-typed-heading');
+      expect(headings.length).toBe(2);
+      expect(headings[0].textContent).toBe('Domain');
+      expect(headings[1].textContent).toBe('Message');
+      expect(card.querySelector('.agent-tool-card-typed-primary').textContent).toBe(
+        'Type: Permit'
+      );
+      const link = card.querySelector('.agent-tool-card-typed-link');
+      expect(link).toBeTruthy();
+      expect(link.href).toContain('etherscan.io');
+      // fake-dom's textContent is a flat property, not recursive — gather
+      // text from every descendant manually to assert the message rows
+      // landed in the panel.
+      const collect = (el) => {
+        let s = el.textContent || '';
+        for (const c of el.children || []) s += ' ' + collect(c);
+        return s;
+      };
+      const panelText = collect(card.querySelector('.agent-tool-card-typed-data'));
+      expect(panelText).toContain('owner');
+      expect(panelText).toContain('0xMAIN');
+      expect(panelText).toContain('value');
+      const schema = card.querySelector('.agent-tool-card-typed-schema');
+      expect(schema).toBeTruthy();
+    });
+
+    test('typed-data consent omits rows with null/undefined/empty values', async () => {
+      const { handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c3',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+      });
+      handlers.consentRequest({
+        streamId: 'stream-1',
+        callId: 'c3',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+        description: 'sign Foo with the active wallet',
+        signDetails: {
+          kind: 'typed-data',
+          domain: { name: 'Test', version: null, chainId: 1, verifyingContract: '' },
+          primaryType: 'Foo',
+          message: { keep: 'value', drop: undefined, also_drop: null, blank: '' },
+          types: {},
+        },
+      });
+      const card = messagesEl.querySelector('.agent-tool-card');
+      const collect = (el) => {
+        let s = el.textContent || '';
+        for (const c of el.children || []) s += ' ' + collect(c);
+        return s;
+      };
+      const panelText = collect(card.querySelector('.agent-tool-card-typed-data'));
+      expect(panelText).toContain('keep');
+      expect(panelText).toContain('value');
+      expect(panelText).not.toContain('drop');
+      expect(panelText).not.toContain('also_drop');
+      expect(panelText).not.toContain('blank');
+      // Empty types object → no schema disclosure rendered
+      expect(card.querySelector('.agent-tool-card-typed-schema')).toBeFalsy();
+    });
+
+    test('typed-data consent shows "(empty)" placeholder when message is empty', async () => {
+      const { handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c4',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+      });
+      handlers.consentRequest({
+        streamId: 'stream-1',
+        callId: 'c4',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+        description: 'sign Foo with the active wallet',
+        signDetails: {
+          kind: 'typed-data',
+          domain: { name: 'Test', chainId: 1 },
+          primaryType: 'Foo',
+          message: {},
+          types: {},
+        },
+      });
+      const card = messagesEl.querySelector('.agent-tool-card');
+      const empty = card.querySelector('.agent-tool-card-typed-empty');
+      expect(empty).toBeTruthy();
+      expect(empty.textContent).toBe('(empty)');
+    });
+
+    test('typed-data consent renders nested message values as a JSON sub-disclosure', async () => {
+      const { handlers, messagesEl } = await startChatAndCapture();
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'c5',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+      });
+      handlers.consentRequest({
+        streamId: 'stream-1',
+        callId: 'c5',
+        name: 'wallet_sign_typed_data',
+        tier: 'identity_or_signing',
+        args: {},
+        description: 'sign Order with the active wallet',
+        signDetails: {
+          kind: 'typed-data',
+          domain: { name: 'Test', chainId: 1 },
+          primaryType: 'Order',
+          message: {
+            maker: '0xMAKER',
+            items: [
+              { token: '0xaaaa', amount: '100' },
+              { token: '0xbbbb', amount: '200' },
+            ],
+          },
+          types: {},
+        },
+      });
+      const card = messagesEl.querySelector('.agent-tool-card');
+      const collect = (el) => {
+        let s = el.textContent || '';
+        for (const c of el.children || []) s += ' ' + collect(c);
+        return s;
+      };
+      const panelText = collect(card.querySelector('.agent-tool-card-typed-data'));
+      // The "[2 items]" summary is the sub-disclosure label for the array.
+      expect(panelText).toContain('[2 items]');
+      // Pretty JSON of the nested value lives inside the disclosure body.
+      expect(panelText).toContain('0xaaaa');
+      expect(panelText).toContain('0xbbbb');
     });
   });
 

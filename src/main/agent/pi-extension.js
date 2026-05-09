@@ -31,9 +31,23 @@ const { executionModeForTier } = require('./tool-tiers');
 const broker = require('./pi-broker');
 const { CONSENT } = require('./pi-broker');
 const { createBrowserTools } = require('./tools/browser-tools');
+const { createSkillTools } = require('./tools/skill-tools');
+const { createTabTools } = require('./tools/tab-tools');
+const { createWalletTools } = require('./tools/wallet-tools');
 const { createSubagentTools } = require('./subagent-tools');
 
 const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
+
+// How long to wait for an async getConsentSignDetails before falling
+// back to the text-only consent path. Tuned generous (5s) — the only
+// current async builder is wallet_send_transaction, which fires two
+// parallel RPCs (estimateGas + getGasPrices) and should resolve well
+// under 1s on a healthy provider; 5s is the "RPC is in trouble"
+// threshold past which the consent prompt should still show even
+// without the gas estimate.
+const CONSENT_FORMATTER_TIMEOUT_MS = 5000;
+
+const { raceWithTimeout } = require('./promise-utils');
 
 // Pi's default system prompt declares the agent a "coding assistant operating
 // inside pi" and points it at pi's docs. That mis-primes a browser agent —
@@ -53,12 +67,26 @@ const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freed
 const STANDARD_MAIN_AGENT_GUIDELINES = `- When the user asks about, summarises, or references the content of a page, call read_current_tab first. Do not infer page content from the URL or a screenshot alone.
 - For visual context (what something looks like, layout, images), use screenshot. For text, use read_current_tab. They are complementary.
 - After navigate / fill / click, the page may have changed — call read_current_tab if you need to know the new state before answering.
+- For questions about current or real-time information — weather, news, prices, scores, recent events — navigate to a search engine (e.g. https://duckduckgo.com/?q=...) and read the result. You have browser tools; do not refuse with "I can't access real-time data".
 - Be concise and direct. The user can see your tool calls in the sidebar; you do not need to narrate every step.`;
+
+function formatSkillsSection(skills) {
+  if (!skills || skills.length === 0) return '';
+  const lines = skills.map((s) => {
+    const sourceTag = s.source ? ` (${s.source})` : '';
+    return `- ${s.name}${sourceTag}: ${s.description || ''}`.trim();
+  });
+  return `
+Available skills (call read_skill with the skill name to load the recipe, then follow it):
+${lines.join('\n')}
+`;
+}
 
 function buildFreedomSystemPrompt({
   selectedTools = [],
   toolSnippets = {},
   promptGuidelines = [],
+  skills = [],
   intro,
   isSubagent = false,
 } = {}) {
@@ -75,13 +103,19 @@ function buildFreedomSystemPrompt({
   const today = new Date().toISOString().slice(0, 10);
   const introText = intro ?? DEFAULT_FREEDOM_INTRO;
   const standardGuidelines = isSubagent ? '' : `${STANDARD_MAIN_AGENT_GUIDELINES}\n`;
+  // Pi only includes its skill section when the agent has the
+  // built-in `read` tool active — we don't ship that, so we surface
+  // skills here instead. The agent loads bodies via our scoped
+  // `read_skill` tool (see tools/skill-tools.js) instead of arbitrary
+  // filesystem reads.
+  const skillsSection = formatSkillsSection(skills);
   return `${introText}
 
 Available tools:
 ${toolsList}
 
 Guidelines:
-${standardGuidelines}${guidelines ? `${guidelines}\n` : ''}
+${standardGuidelines}${guidelines ? `${guidelines}\n` : ''}${skillsSection}
 Current date: ${today}`;
 }
 
@@ -128,6 +162,39 @@ function createFreedomExtension({
       webContentsId: toolCallContext.webContentsId ?? null,
       Type,
     });
+    // Tab management tools reach the host renderer (where the chat
+    // sidebar lives + the tab list is owned) via a different
+    // webContents than the active-tab tools. Subagents see them only
+    // when their profile permits the relevant tier:
+    //   - list_tabs (LOCAL_SENSITIVE) — visible to summarize/extract/research
+    //   - open/close/switch_tab (BROWSER_MUTATION) — visible to research_topic
+    //     (which already has BROWSER_MUTATION for navigate/click/fill)
+    // Worth re-reviewing per-subagent if the tab actions feel out of
+    // scope for a given workflow.
+    const tabTools = createTabTools({
+      hostWebContentsId: toolCallContext.hostWebContentsId ?? null,
+      Type,
+    });
+    // Skill tools work for both main and subagent — skills are
+    // independent of who runs them. Subagents whose profile permits
+    // LOCAL_SAFE see read_skill in their active set; existing
+    // subagent profiles don't include LOCAL_SAFE, so they don't
+    // currently. User-defined subagents (later) can opt in via
+    // their tier filter.
+    const skillTools = createSkillTools({ agentDir, Type });
+    // Wallet read tools have no per-session binding — they call into
+    // identity-manager / balance-service / chains / ens-resolver directly.
+    // wallet_switch_chain rounds-trips into the renderer via
+    // `__agentWalletBridge__`, so the host webContents id is required for
+    // that one tool; the others ignore it. Visible to any agent (main or
+    // future subagent) whose profile permits WALLET_READ /
+    // BROWSER_MUTATION; current v1 subagent profiles include neither
+    // WALLET_READ nor allow wallet_switch_chain, so only the main agent
+    // sees them today.
+    const walletTools = createWalletTools({
+      hostWebContentsId: toolCallContext.hostWebContentsId ?? null,
+      Type,
+    });
     // Orchestration tools are main-agent-only — subagents never get
     // spawn_subagent, so depth = 1 by construction.
     const subagentTools = isSubagent
@@ -139,9 +206,38 @@ function createFreedomExtension({
           Type,
         });
     const toolMeta = new Map();
-    for (const def of [...browserTools, ...subagentTools]) {
-      toolMeta.set(def.name, { tier: def.tier, label: def.label });
-      const { tier, ...piDef } = def;
+    for (const def of [
+      ...browserTools,
+      ...tabTools,
+      ...skillTools,
+      ...walletTools,
+      ...subagentTools,
+    ]) {
+      toolMeta.set(def.name, {
+        tier: def.tier,
+        label: def.label,
+        // Optional per-tool consent description formatter. Tools that
+        // need rich consent text (e.g. wallet_sign_message showing
+        // address + reason + truncated message) export this so the
+        // user sees what they're approving instead of a bare label.
+        formatConsentDescription: def.formatConsentDescription,
+        // Optional structured consent payload — for tools whose consent
+        // card needs a real UI (e.g. wallet_sign_typed_data showing the
+        // EIP-712 domain + decoded message values). Renderer special-
+        // cases on signDetails.kind; absence falls through to the
+        // text-only path.
+        getConsentSignDetails: def.getConsentSignDetails,
+      });
+      // Strip our non-Pi fields before forwarding to registerTool — Pi
+      // would otherwise carry them around as unknown extras. The
+      // formatters were already captured into toolMeta above, hence the
+      // underscore-prefix throwaways.
+      const {
+        tier,
+        formatConsentDescription: _formatConsentDescription,
+        getConsentSignDetails: _getConsentSignDetails,
+        ...piDef
+      } = def;
       pi.registerTool({
         ...piDef,
         executionMode: executionModeForTier(tier),
@@ -201,12 +297,63 @@ function createFreedomExtension({
       }
 
       if (decision.decision === 'ask') {
+        let description = meta.label;
+        if (typeof meta.formatConsentDescription === 'function') {
+          try {
+            const formatted = meta.formatConsentDescription(event.input);
+            if (formatted && typeof formatted === 'string') {
+              description = formatted;
+            }
+          } catch (err) {
+            // Formatter bug shouldn't kill the consent prompt — fall back
+            // to the bare label so the user can still approve / deny.
+            log.warn(
+              `[Pi] formatConsentDescription threw for ${event.toolName}: ${err.message}`
+            );
+          }
+        }
+        let signDetails;
+        if (typeof meta.getConsentSignDetails === 'function') {
+          try {
+            // Awaited so async builders work — wallet_send_transaction
+            // (Phase 7d.5) needs to estimate gas before the consent
+            // card can show "Total: value + gas". Sync formatters keep
+            // working unchanged because await on a non-Promise resolves
+            // immediately to the value.
+            //
+            // Race against a timeout so a hung RPC inside an async
+            // builder can't pin the consent prompt indefinitely. Tools
+            // that need a long prep should handle their own internal
+            // timeouts and surface a clean "(unavailable)" instead of
+            // letting the await stretch — the broader consent flow
+            // shouldn't be held hostage to a flaky provider.
+            signDetails = await raceWithTimeout(
+              meta.getConsentSignDetails(event.input),
+              CONSENT_FORMATTER_TIMEOUT_MS,
+              `getConsentSignDetails for ${event.toolName} timed out`
+            );
+          } catch (err) {
+            // Same fallback rationale as the description formatter — a
+            // bug (or e.g. an RPC failure during gas estimation)
+            // shouldn't suppress the consent prompt itself; renderer
+            // falls through to text-only.
+            log.warn(
+              `[Pi] getConsentSignDetails threw for ${event.toolName}: ${err.message}`
+            );
+          }
+        }
         const userChoice = await toolCallContext.requestConsent({
           callId: event.toolCallId,
           name: event.toolName,
           tier: meta.tier,
+          // Forward the broker's per-call policy (`'always' | 'session-once'
+          // | 'auto'`) so the renderer can hide options the policy doesn't
+          // honour (e.g. "Allow for session" on always-ask tiers like
+          // MONEY) without keeping its own copy of the tier-policy table.
+          policy: decision.policy,
           args: event.input,
-          description: meta.label,
+          description,
+          signDetails,
         });
         if (userChoice === CONSENT.DENY) {
           return denyAndBlock(event.toolCallId, 'denied', 'User denied this tool call');
@@ -371,6 +518,7 @@ module.exports = {
   _internals: {
     buildFreedomSystemPrompt,
     DEFAULT_FREEDOM_INTRO,
+    formatSkillsSection,
     registerFreedomCommands,
     registerCompactionNotices,
     formatSessionStats,

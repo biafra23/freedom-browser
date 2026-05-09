@@ -263,21 +263,18 @@ async function createFreedomPiSession({
 
 /**
  * Read every skill the renderer should know about (bundled + user).
- * Standalone — doesn't require an active session, since skills are
- * static across sessions and this is queried once on renderer init.
+ * Thin wrapper around the skill-catalog so renderer-facing IPC and
+ * read_skill stay aligned on safety + collision rules.
  */
 async function listFreedomSkills({ agentDir } = {}) {
-  if (!agentDir) throw new Error('listFreedomSkills requires an agentDir');
-  const pi = await loadPi();
-  const result = pi.loadSkills({
-    cwd: agentDir,
-    agentDir,
-    skillPaths: resolveSkillPaths(agentDir),
-    includeDefaults: false,
-  });
-  return (result?.skills || []).map((s) => ({
-    name: s.name,
-    description: s.description,
+  // Lazy require to avoid the circular import (skill-catalog requires
+  // pi-runtime for its loadPi cache).
+  const { getSkillCatalog } = require('./skill-catalog');
+  const entries = await getSkillCatalog({ agentDir });
+  return entries.map((e) => ({
+    name: e.name,
+    description: e.description,
+    source: e.source,
   }));
 }
 
