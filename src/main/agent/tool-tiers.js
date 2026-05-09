@@ -27,6 +27,14 @@ const TIERS = Object.freeze({
   // address; consent prompts on every balance read would just train
   // users to click-through.
   WALLET_READ: 'wallet_read',
+  // Distributed-inference consumer surface: peer_run_inference broadcasts
+  // a prompt to a shared XMTP channel (default: Freedom Lobby) for any
+  // willing peer to serve via their local Ollama. peer_list_providers
+  // probes who's online and what models they have. Both leak prompt
+  // content / probe presence to other Freedom users — the consent prompt
+  // makes that visible. session-once so a user who said "yes, ask the
+  // network" once isn't re-prompted on every follow-up turn.
+  PEER_INFERENCE: 'peer_inference',
   BLOCKED: 'blocked',
 });
 
@@ -65,6 +73,7 @@ const TIER_POLICY = Object.freeze({
   // BROWSER_MUTATION (always) per the Pi-permissions research.
   [TIERS.BROWSER_MUTATION]: 'session-once',
   [TIERS.WALLET_READ]: 'auto',
+  [TIERS.PEER_INFERENCE]: 'session-once',
   [TIERS.BLOCKED]: 'never',
 });
 

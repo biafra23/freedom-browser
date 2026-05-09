@@ -539,6 +539,75 @@ function renderWalletReceipt(call) {
   return frag;
 }
 
+// Distributed-inference consumer. Headline shows who served the call,
+// which model they used, and round-trip time. Disclosure carries the
+// full reply text so the user can verify it without trusting the
+// agent's paraphrase.
+function renderPeerRunInference(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Peer inference failed: ${failureText(call)}`));
+    return frag;
+  }
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary('Broadcasting to lobby…'));
+    return frag;
+  }
+  const r = call.result || {};
+  const provider = r.provider || {};
+  const providerLabel = provider.shortAddress || provider.address || provider.inboxId || 'unknown';
+  const seconds = typeof r.elapsedMs === 'number' ? `${(r.elapsedMs / 1000).toFixed(1)}s` : '?';
+  const model = r.model || 'unknown';
+  const headline = r.error
+    ? `Peer ${providerLabel} returned error: ${r.error}`
+    : `Ran on ${providerLabel} in ${seconds} · ${model}`;
+  frag.appendChild(makeSummary(headline));
+  if (r.content) {
+    frag.appendChild(makeDisclosure('Reply', makeMonoBlock(r.content)));
+  }
+  return frag;
+}
+
+function renderPeerListProviders(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Probe failed: ${failureText(call)}`));
+    return frag;
+  }
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary('Probing lobby for providers…'));
+    return frag;
+  }
+  const r = call.result || {};
+  const count = r.providerCount ?? 0;
+  if (count === 0) {
+    frag.appendChild(makeSummary('No providers replied (lobby may be quiet)'));
+    return frag;
+  }
+  // Headline: "3 providers · gemma4:e2b, qwen3:4b" — collapse the model
+  // sets into a unique-by-name list so the user gets a quick read on
+  // what's reachable without expanding the disclosure.
+  const allModels = new Set();
+  for (const p of r.providers || []) {
+    for (const m of p.models || []) {
+      if (m?.name) allModels.add(m.name);
+    }
+  }
+  const modelHint = allModels.size ? ` · ${[...allModels].slice(0, 5).join(', ')}` : '';
+  frag.appendChild(makeSummary(`${count} provider${count === 1 ? '' : 's'}${modelHint}`));
+  const lines = (r.providers || [])
+    .map((p) => {
+      const who = p.shortAddress || p.address || p.inboxId || '?';
+      const models = (p.models || []).map((m) => m.name).join(', ');
+      return `${who} → ${models || '(no models)'}`;
+    })
+    .join('\n');
+  if (lines) {
+    frag.appendChild(makeDisclosure('Providers', makeMonoBlock(lines)));
+  }
+  return frag;
+}
+
 const TOOL_RENDERERS = {
   navigate: renderNavigate,
   read_current_tab: renderReadCurrentTab,
@@ -556,6 +625,8 @@ const TOOL_RENDERERS = {
   wallet_send_transaction: renderWalletSendTransaction,
   wallet_get_transaction: renderWalletReceipt,
   wallet_wait_for_transaction: renderWalletReceipt,
+  peer_run_inference: renderPeerRunInference,
+  peer_list_providers: renderPeerListProviders,
 };
 
 function renderJsonFallback(call) {

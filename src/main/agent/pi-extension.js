@@ -34,6 +34,7 @@ const { createBrowserTools } = require('./tools/browser-tools');
 const { createSkillTools } = require('./tools/skill-tools');
 const { createTabTools } = require('./tools/tab-tools');
 const { createWalletTools } = require('./tools/wallet-tools');
+const { createPeerTools } = require('./tools/peer-tools');
 const { createSubagentTools } = require('./subagent-tools');
 
 const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
@@ -195,6 +196,11 @@ function createFreedomExtension({
       hostWebContentsId: toolCallContext.hostWebContentsId ?? null,
       Type,
     });
+    // Peer inference tools are main-agent-only — subagents shouldn't be
+    // able to broadcast inference requests on their own. Same logic as
+    // spawn_subagent: keep network-broadcast surfaces gated to user-
+    // visible turns.
+    const peerTools = isSubagent ? [] : createPeerTools({ Type });
     // Orchestration tools are main-agent-only — subagents never get
     // spawn_subagent, so depth = 1 by construction.
     const subagentTools = isSubagent
@@ -211,6 +217,7 @@ function createFreedomExtension({
       ...tabTools,
       ...skillTools,
       ...walletTools,
+      ...peerTools,
       ...subagentTools,
     ]) {
       toolMeta.set(def.name, {

@@ -223,6 +223,8 @@ describe('createFreedomPiSession', () => {
         'wallet_send_transaction',
         'wallet_get_transaction',
         'wallet_wait_for_transaction',
+        'peer_run_inference',
+        'peer_list_providers',
       ].sort()
     );
   });

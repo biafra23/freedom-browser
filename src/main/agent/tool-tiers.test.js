@@ -1,9 +1,9 @@
 const { TIERS, ALL_TIERS, TIER_POLICY, isValidTier } = require('./tool-tiers');
 
 describe('tool-tiers', () => {
-  test('TIERS object is frozen and exposes all nine categories', () => {
+  test('TIERS object is frozen and exposes all ten categories', () => {
     expect(Object.isFrozen(TIERS)).toBe(true);
-    expect(ALL_TIERS).toHaveLength(9);
+    expect(ALL_TIERS).toHaveLength(10);
     expect(ALL_TIERS).toEqual(
       expect.arrayContaining([
         'local_safe',
@@ -14,6 +14,7 @@ describe('tool-tiers', () => {
         'identity_or_signing',
         'browser_mutation',
         'wallet_read',
+        'peer_inference',
         'blocked',
       ])
     );
@@ -34,6 +35,10 @@ describe('tool-tiers', () => {
     // signing calls in the same chat thread.
     expect(TIER_POLICY[TIERS.IDENTITY_OR_SIGNING]).toBe('session-once');
     expect(TIER_POLICY[TIERS.WALLET_READ]).toBe('auto');
+    // PEER_INFERENCE is session-once: ask the first time per chat thread,
+    // remember the choice. Avoids re-prompting on every follow-up "ask
+    // the network" turn while keeping the consent surface visible.
+    expect(TIER_POLICY[TIERS.PEER_INFERENCE]).toBe('session-once');
     expect(TIER_POLICY[TIERS.BLOCKED]).toBe('never');
   });
 
