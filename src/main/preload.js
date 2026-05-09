@@ -411,9 +411,9 @@ contextBridge.exposeInMainWorld('swarmFeedStore', {
 contextBridge.exposeInMainWorld('agent', {
   getStatus: () => ipcRenderer.invoke('agent:status'),
   // Chat is one prompt per call. Pi owns the conversation log; pass the
-  // existing sessionPath (from createSession / getRecentSession / getSession
-  // / listSessions) and only the latest user message — Pi auto-restores
-  // prior history from the JSONL.
+  // existing sessionPath (from createSession / getSession / listSessions)
+  // and only the latest user message — Pi auto-restores prior history
+  // from the JSONL.
   startChat: ({ sessionPath, model, prompt, thinkingLevel, activeWebContentsId } = {}) =>
     ipcRenderer.invoke('agent:chat:start', {
       sessionPath,
@@ -464,7 +464,6 @@ contextBridge.exposeInMainWorld('agent', {
   // absolute file path. The renderer treats it as an opaque token.
   listSessions: (limit) => ipcRenderer.invoke('agent:session:list', { limit }),
   getSession: (id) => ipcRenderer.invoke('agent:session:get', { id }),
-  getRecentSession: () => ipcRenderer.invoke('agent:session:get-recent'),
   createSession: (init) => ipcRenderer.invoke('agent:session:create', init),
   renameSession: (id, title) => ipcRenderer.invoke('agent:session:rename', { id, title }),
   deleteSession: (id) => ipcRenderer.invoke('agent:session:delete', { id }),

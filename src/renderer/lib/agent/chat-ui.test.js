@@ -55,7 +55,6 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
         handlers.notice = cb;
         return jest.fn();
       }),
-      getRecentSession: jest.fn().mockResolvedValue(null),
       createSession: jest
         .fn()
         .mockResolvedValue({ id: '/tmp/sessions/abc.jsonl', title: null }),
@@ -291,7 +290,7 @@ describe('chat-ui', () => {
 
   test('restored session with persisted thinking renders the disclosure', async () => {
     const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
-    _bridge.getRecentSession = jest.fn().mockResolvedValue({
+    _bridge.getSession = jest.fn().mockResolvedValue({
       id: '/tmp/sessions/prev.jsonl',
       messages: [
         { role: 'user', content: 'q' },
@@ -304,9 +303,11 @@ describe('chat-ui', () => {
         },
       ],
     });
-    const { messagesEl } = await loadChatUi({
+    const { mod, messagesEl } = await loadChatUi({
       agent: { handlers: _handlers, bridge: _bridge },
     });
+    await mod.loadSessionById('/tmp/sessions/prev.jsonl');
+
     const disclosure = messagesEl.querySelector('.agent-message-thinking');
     expect(disclosure).toBeTruthy();
     expect(disclosure.querySelector('.agent-message-thinking-body').textContent).toBe(
@@ -386,9 +387,19 @@ describe('chat-ui', () => {
     expect(bridge.getStatus).not.toHaveBeenCalled();
   });
 
-  test('resumes the most recent session on init using Pi message shape', async () => {
+  test('does NOT auto-resume the most recent session on init — fresh start instead', async () => {
     const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
-    _bridge.getRecentSession = jest.fn().mockResolvedValue({
+    // Even if a recent session exists on disk, init shouldn't fetch it.
+    _bridge.getSession = jest.fn();
+    const { mod } = await loadChatUi({ agent: { handlers: _handlers, bridge: _bridge } });
+    expect(_bridge.getSession).not.toHaveBeenCalled();
+    expect(mod._internals.state.currentSessionId).toBeNull();
+    expect(mod._internals.state.messages).toEqual([]);
+  });
+
+  test('loadSessionById hydrates from a saved session and surfaces its messages', async () => {
+    const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
+    _bridge.getSession = jest.fn().mockResolvedValue({
       id: '/tmp/sessions/prev.jsonl',
       messages: [
         { role: 'user', content: 'last time I asked' },
@@ -399,6 +410,7 @@ describe('chat-ui', () => {
       ],
     });
     const { mod } = await loadChatUi({ agent: { handlers: _handlers, bridge: _bridge } });
+    await mod.loadSessionById('/tmp/sessions/prev.jsonl');
 
     expect(mod._internals.state.currentSessionId).toBe('/tmp/sessions/prev.jsonl');
     expect(mod._internals.state.messages).toEqual([

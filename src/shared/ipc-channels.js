@@ -209,7 +209,6 @@ module.exports = {
   // Agent sessions (Pi-backed JSONL files; `id` is the file path)
   AGENT_SESSION_LIST: 'agent:session:list',
   AGENT_SESSION_GET: 'agent:session:get',
-  AGENT_SESSION_GET_RECENT: 'agent:session:get-recent',
   AGENT_SESSION_CREATE: 'agent:session:create',
   AGENT_SESSION_RENAME: 'agent:session:rename',
   AGENT_SESSION_DELETE: 'agent:session:delete',

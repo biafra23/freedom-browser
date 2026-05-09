@@ -143,10 +143,6 @@ describe('registerAgentIpc', () => {
     expect(ipcMain.handle).toHaveBeenCalledWith(IPC.AGENT_CHAT_CONSENT, expect.any(Function));
     expect(ipcMain.handle).toHaveBeenCalledWith(IPC.AGENT_SESSION_LIST, expect.any(Function));
     expect(ipcMain.handle).toHaveBeenCalledWith(IPC.AGENT_SESSION_GET, expect.any(Function));
-    expect(ipcMain.handle).toHaveBeenCalledWith(
-      IPC.AGENT_SESSION_GET_RECENT,
-      expect.any(Function)
-    );
     expect(ipcMain.handle).toHaveBeenCalledWith(IPC.AGENT_SESSION_CREATE, expect.any(Function));
     expect(ipcMain.handle).toHaveBeenCalledWith(IPC.AGENT_SESSION_RENAME, expect.any(Function));
     expect(ipcMain.handle).toHaveBeenCalledWith(IPC.AGENT_SESSION_DELETE, expect.any(Function));

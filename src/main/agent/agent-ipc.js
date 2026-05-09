@@ -230,12 +230,6 @@ function extractFirstUserText(messages) {
   return '';
 }
 
-async function getRecentSession() {
-  const list = await listSessions(1);
-  if (list.length === 0) return null;
-  return getSession(list[0].id);
-}
-
 async function createSession({ title = null } = {}) {
   const pi = await loadPi();
   const cwd = getAgentDir();
@@ -607,7 +601,6 @@ function registerAgentIpc() {
   // Sessions (Pi-backed)
   ipcMain.handle(IPC.AGENT_SESSION_LIST, (_e, payload = {}) => listSessions(payload.limit ?? 50));
   ipcMain.handle(IPC.AGENT_SESSION_GET, (_e, payload = {}) => getSession(payload.id));
-  ipcMain.handle(IPC.AGENT_SESSION_GET_RECENT, () => getRecentSession());
   ipcMain.handle(IPC.AGENT_SESSION_CREATE, (_e, payload = {}) => createSession(payload));
   ipcMain.handle(IPC.AGENT_SESSION_RENAME, async (_e, payload = {}) => ({
     ok: await renameSession(payload.id, payload.title),
@@ -634,7 +627,6 @@ module.exports = {
     dropStreamsForSender,
     listSessions,
     getSession,
-    getRecentSession,
     createSession,
     renameSession,
     deleteSession,

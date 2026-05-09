@@ -157,7 +157,10 @@ export function initChatUi() {
 
   refreshStatus();
   renderMessages();
-  loadCurrentSession();
+  // Cold-start always opens a fresh chat — past conversations are
+  // reachable via the history view. Auto-resuming the most recent
+  // session was confusing: opening the sidebar showed yesterday's
+  // chat instead of an empty composer.
   pushDebug('[ChatUi] Initialized');
 }
 
@@ -251,17 +254,6 @@ function hydrateFromSession(session) {
   state.activeCompactionEl = null;
   renderMessages();
   return true;
-}
-
-// On startup, resume the most recent session so conversations survive
-// quit/reopen. Pi's session list is read from JSONL files on disk; the
-// renderer just renders what comes back.
-async function loadCurrentSession() {
-  try {
-    hydrateFromSession(await window.agent.getRecentSession());
-  } catch (err) {
-    pushDebug(`[ChatUi] Could not load recent session: ${err?.message || err}`);
-  }
 }
 
 const TITLE_MAX_LEN = 40;
