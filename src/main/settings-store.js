@@ -39,6 +39,11 @@ const DEFAULT_SETTINGS = {
   enableIdentityWallet: true,
   enableLocalAI: true,
   startOllamaAtLaunch: true,
+  // Default Ollama model the agent uses on chat:start. Null = use the
+  // hardcoded FALLBACK_MODEL (gemma4:e2b). User picks from installed
+  // models via the AI settings page; chat-ui falls back if the chosen
+  // model isn't installed (e.g. user uninstalled it from Ollama).
+  aiSelectedModel: null,
   beeNodeMode: 'ultraLight',
   startBeeAtLaunch: true,
   startIpfsAtLaunch: true,

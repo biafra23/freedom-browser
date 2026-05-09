@@ -68,11 +68,6 @@ let composerEl;
 let inputEl;
 let sendBtn;
 let stopBtn;
-let modelSelector;
-let modelBtn;
-let modelBtnName;
-let modelDropdown;
-let modelList;
 let clearBtn;
 let statusBadge;
 
@@ -82,11 +77,6 @@ export function initChatUi() {
   inputEl = document.getElementById('agent-input');
   sendBtn = document.getElementById('agent-send-btn');
   stopBtn = document.getElementById('agent-stop-btn');
-  modelSelector = document.getElementById('agent-model-selector');
-  modelBtn = document.getElementById('agent-model-btn');
-  modelBtnName = document.getElementById('agent-model-btn-name');
-  modelDropdown = document.getElementById('agent-model-dropdown');
-  modelList = document.getElementById('agent-model-list');
   clearBtn = document.getElementById('agent-clear-btn');
   statusBadge = document.getElementById('agent-status-badge');
 
@@ -140,12 +130,6 @@ export function initChatUi() {
   });
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
-  modelBtn?.addEventListener('click', toggleModelDropdown);
-  document.addEventListener('click', (e) => {
-    if (modelSelector && !modelSelector.contains(e.target)) {
-      closeModelDropdown();
-    }
-  });
 
   window.agent.onChatChunk((data) => handleChunk(data));
   window.agent.onThinkingChunk?.((data) => handleThinkingChunk(data));
@@ -204,64 +188,32 @@ export async function refreshStatus() {
       setStatus('error', 'offline');
     }
 
-    const names = state.models.map((m) => m.name);
-    const choices = names.length > 0 ? names : [FALLBACK_MODEL];
-    const preferred =
-      (state.selectedModel && choices.includes(state.selectedModel)
-        ? state.selectedModel
-        : null) ||
-      (choices.includes(FALLBACK_MODEL) ? FALLBACK_MODEL : choices[0]);
-    state.selectedModel = preferred;
-    renderModelDropdown(choices);
-    if (modelBtnName) modelBtnName.textContent = preferred;
+    // Model picking moved out of the sidebar into the AI settings page
+    // (Phase 7 polish). chat-ui reads the persisted choice from
+    // electronAPI.getSettings().aiSelectedModel on each refresh and
+    // falls back to FALLBACK_MODEL if the persisted choice isn't in
+    // the live installed list (e.g. user uninstalled it from Ollama).
+    state.selectedModel = await resolveSelectedModel(state.models);
   } catch (err) {
     pushDebug(`[ChatUi] Status refresh failed: ${err?.message || err}`);
     setStatus('error', 'offline');
   }
 }
 
-function renderModelDropdown(choices) {
-  if (!modelList) return;
-  modelList.innerHTML = '';
-  for (const name of choices) {
-    const li = document.createElement('li');
-    li.className = 'agent-model-item';
-    if (name === state.selectedModel) li.classList.add('active');
-    li.setAttribute('role', 'option');
-    li.dataset.model = name;
-    li.textContent = name;
-    li.addEventListener('click', () => selectModel(name));
-    modelList.appendChild(li);
+async function resolveSelectedModel(models) {
+  const installed = (models || []).map((m) => m.name).filter(Boolean);
+  let persisted = null;
+  try {
+    const settings = await window.electronAPI?.getSettings?.();
+    persisted = settings?.aiSelectedModel || null;
+  } catch (err) {
+    pushDebug(`[ChatUi] getSettings failed: ${err?.message || err}`);
   }
-}
-
-function selectModel(name) {
-  state.selectedModel = name;
-  if (modelBtnName) modelBtnName.textContent = name;
-  if (modelList) {
-    for (const item of modelList.children) {
-      item.classList.toggle('active', item.dataset.model === name);
-    }
+  if (persisted && installed.includes(persisted)) return persisted;
+  if (persisted) {
+    pushDebug(`[ChatUi] persisted model "${persisted}" not installed; falling back to ${FALLBACK_MODEL}`);
   }
-  closeModelDropdown();
-}
-
-function toggleModelDropdown() {
-  if (!modelSelector || !modelDropdown) return;
-  if (modelSelector.classList.contains('open')) {
-    closeModelDropdown();
-  } else {
-    modelSelector.classList.add('open');
-    modelDropdown.classList.remove('hidden');
-    modelBtn?.setAttribute('aria-expanded', 'true');
-  }
-}
-
-function closeModelDropdown() {
-  if (!modelSelector || !modelDropdown) return;
-  modelSelector.classList.remove('open');
-  modelDropdown.classList.add('hidden');
-  modelBtn?.setAttribute('aria-expanded', 'false');
+  return FALLBACK_MODEL;
 }
 
 function setStatus(level, text) {
