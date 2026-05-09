@@ -866,7 +866,7 @@ describe('wallet_send_transaction', () => {
     transactionService.signAndSendTransaction.mockResolvedValue({
       hash: '0xTXHASH',
       from: ACTIVE,
-      to: '0xRECIPIENTabc',
+      to: '0xCcCcCCccCCccCCccCCccCCccCCccCCccCCccCCcc',
       value: '50000000000000000',
       explorerUrl: 'https://etherscan.io/tx/0xTXHASH',
     });
@@ -875,7 +875,7 @@ describe('wallet_send_transaction', () => {
   test('execute auto-estimates gas + fees and broadcasts via signAndSendTransaction', async () => {
     setupHappyPath();
     const result = await makeTools().wallet_send_transaction.execute('c1', {
-      to: '0xRECIPIENTabc',
+      to: '0xCcCcCCccCCccCCccCCccCCccCCccCCccCCccCCcc',
       value: '50000000000000000',
       chainId: 1,
       reason: 'send 0.05 ETH for testing',
@@ -884,7 +884,7 @@ describe('wallet_send_transaction', () => {
     expect(transactionService.getGasPrices).toHaveBeenCalledWith(1);
     expect(transactionService.signAndSendTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: '0xRECIPIENTabc',
+        to: '0xCcCcCCccCCccCCccCCccCCccCCccCCccCCccCCcc',
         value: '50000000000000000',
         data: '0x',
         gasLimit: '21000',
@@ -897,12 +897,43 @@ describe('wallet_send_transaction', () => {
     expect(result.details).toEqual({
       txHash: '0xTXHASH',
       from: ACTIVE,
-      to: '0xRECIPIENTabc',
+      to: '0xCcCcCCccCCccCCccCCccCCccCCccCCccCCccCCcc',
+      recipientEns: null,
       value: '50000000000000000',
       chainId: 1,
       blockExplorerUrl: 'https://etherscan.io/tx/0xTXHASH',
     });
     expect(vaultTimer.resetVaultAutoLockTimer).toHaveBeenCalledTimes(1);
+  });
+
+  test('execute auto-resolves an ENS name in `to` before broadcasting; result includes recipientEns', async () => {
+    setupHappyPath();
+    ensResolver.resolveEnsAddress.mockResolvedValue({
+      success: true,
+      name: 'meinhard.eth',
+      address: '0x7efaC61c24050F88023ac19fb4abA15c48956A6b',
+    });
+    transactionService.signAndSendTransaction.mockResolvedValue({
+      hash: '0xTXHASH',
+      from: ACTIVE,
+      to: '0x7efaC61c24050F88023ac19fb4abA15c48956A6b',
+      value: '10000000000000000',
+      explorerUrl: 'https://gnosisscan.io/tx/0xTXHASH',
+    });
+    const result = await makeTools().wallet_send_transaction.execute('c1', {
+      to: 'meinhard.eth',
+      chainId: 1,
+      valueNative: '0.01',
+      reason: 'send 0.01 ETH to meinhard.eth',
+    });
+    // Resolved address went to the broadcaster; the ENS name comes back
+    // in the result so the renderer / model can show "Sent to meinhard.eth".
+    expect(transactionService.signAndSendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ to: '0x7efaC61c24050F88023ac19fb4abA15c48956A6b' }),
+      '0xprivatekey'
+    );
+    expect(result.details.recipientEns).toBe('meinhard.eth');
+    expect(result.details.to).toBe('0x7efaC61c24050F88023ac19fb4abA15c48956A6b');
   });
 
   test('execute uses legacy gas price when chain is not EIP-1559', async () => {
@@ -912,7 +943,7 @@ describe('wallet_send_transaction', () => {
       gasPrice: '5000000000',
     });
     await makeTools().wallet_send_transaction.execute('c1', {
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       chainId: 1,
       reason: 'r',
     });
@@ -929,7 +960,7 @@ describe('wallet_send_transaction', () => {
       { index: 1, name: 'Trading', address: ALT },
     ]);
     await makeTools().wallet_send_transaction.execute('c1', {
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       chainId: 1,
       reason: 'r',
       address: ALT.toLowerCase(),
@@ -944,7 +975,7 @@ describe('wallet_send_transaction', () => {
     ]);
     await expect(
       makeTools().wallet_send_transaction.execute('c1', {
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'r',
         address: '0xNOTMINE',
@@ -956,7 +987,7 @@ describe('wallet_send_transaction', () => {
   test('execute converts valueNative ("0.01") to wei using the chain\'s native decimals', async () => {
     setupHappyPath();
     await makeTools().wallet_send_transaction.execute('c1', {
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       chainId: 1,
       reason: 'send 0.01 ETH',
       valueNative: '0.01',
@@ -971,7 +1002,7 @@ describe('wallet_send_transaction', () => {
     setupHappyPath();
     await expect(
       makeTools().wallet_send_transaction.execute('c1', {
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'r',
         value: '1',
@@ -985,7 +1016,7 @@ describe('wallet_send_transaction', () => {
     setupHappyPath();
     await expect(
       makeTools().wallet_send_transaction.execute('c1', {
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'r',
         valueNative: 'not-a-number',
@@ -996,7 +1027,7 @@ describe('wallet_send_transaction', () => {
   test('execute defaults value to "0" and data to "0x" when omitted', async () => {
     setupHappyPath();
     await makeTools().wallet_send_transaction.execute('c1', {
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       chainId: 1,
       reason: 'r',
     });
@@ -1011,7 +1042,7 @@ describe('wallet_send_transaction', () => {
     mockIdentityModule.isUnlocked.mockReturnValueOnce(false).mockReturnValue(true);
     vaultUnlockBridge.requestVaultUnlock.mockResolvedValue();
     await makeTools().wallet_send_transaction.execute('c1', {
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       chainId: 1,
       reason: 'r',
     });
@@ -1030,7 +1061,7 @@ describe('wallet_send_transaction', () => {
     );
     await expect(
       makeTools().wallet_send_transaction.execute('c1', {
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'r',
       })
@@ -1042,15 +1073,15 @@ describe('wallet_send_transaction', () => {
     test('builds a transaction signDetails with from, to, chain, value, gas, total', async () => {
       setupHappyPath();
       const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
-        to: '0xRECIPIENTabc',
+        to: '0xCcCcCCccCCccCCccCCccCCccCCccCCccCCccCCcc',
         value: '50000000000000000',
         chainId: 1,
         reason: 'send 0.05 ETH',
       });
       expect(details.kind).toBe('transaction');
       expect(details.from).toContain('0xMAIN…');
-      expect(details.to).toContain('0xRECI…');
-      expect(details.toUrl).toBe('https://etherscan.io/address/0xRECIPIENTabc');
+      expect(details.to).toContain('0xCcCc…');
+      expect(details.toUrl).toBe('https://etherscan.io/address/0xCcCcCCccCCccCCccCCccCCccCCccCCccCCccCCcc');
       expect(details.chainName).toBe('Ethereum (ETH)');
       expect(details.valueDisplay).toBe('0.05 ETH');
       // gas = 21000 * 100 gwei = 2,100,000 gwei = 0.0021 ETH
@@ -1073,7 +1104,7 @@ describe('wallet_send_transaction', () => {
       const AMT_HEX = '00000000000000000000000000000000000000000000000000000000000f4240'; // 1_000_000
       const data = '0xa9059cbb' + '000000000000000000000000' + RECIP_PADDED + AMT_HEX;
       const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
-        to: '0xUSDC',
+        to: '0xa0b86991C6218B36c1d19D4A2e9Eb0CE3606eB48',
         chainId: 1,
         data,
         reason: 'send 1 USDC',
@@ -1093,7 +1124,7 @@ describe('wallet_send_transaction', () => {
       const AMT_HEX = '00000000000000000000000000000000000000000000000000000000004c4b40'; // 5_000_000
       const data = '0x095ea7b3' + '000000000000000000000000' + SPENDER_PADDED + AMT_HEX;
       const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
-        to: '0xUSDC',
+        to: '0xa0b86991C6218B36c1d19D4A2e9Eb0CE3606eB48',
         chainId: 1,
         data,
         reason: 'approve Uniswap to spend 5 USDC',
@@ -1105,7 +1136,7 @@ describe('wallet_send_transaction', () => {
       setupHappyPath();
       transactionService.estimateGas.mockRejectedValue(new Error('execution reverted'));
       const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'r',
       });
@@ -1118,7 +1149,7 @@ describe('wallet_send_transaction', () => {
     test('valueNative is converted to wei before gas estimation + display', async () => {
       setupHappyPath();
       const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'send 0.01 ETH',
         valueNative: '0.01',
@@ -1131,10 +1162,47 @@ describe('wallet_send_transaction', () => {
       expect(details.valueDisplay).toBe('0.01 ETH');
     });
 
+    test('auto-resolves ENS names in `to` and surfaces both forms in the consent card', async () => {
+      setupHappyPath();
+      ensResolver.resolveEnsAddress.mockResolvedValue({
+        success: true,
+        name: 'meinhard.eth',
+        address: '0x7efaC61c24050F88023ac19fb4abA15c48956A6b',
+      });
+      const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
+        to: 'meinhard.eth',
+        chainId: 1,
+        reason: 'send something',
+      });
+      expect(ensResolver.resolveEnsAddress).toHaveBeenCalledWith('meinhard.eth');
+      // Consent card displays "ensName → 0xshort" so the user sees both.
+      expect(details.to).toBe('meinhard.eth → 0x7efa…6A6b');
+      // toUrl points to the resolved address (not the ENS name).
+      expect(details.toUrl).toBe(
+        'https://etherscan.io/address/0x7efaC61c24050F88023ac19fb4abA15c48956A6b'
+      );
+    });
+
+    test('throws "Could not resolve ENS name" when the ENS lookup has no address record', async () => {
+      setupHappyPath();
+      ensResolver.resolveEnsAddress.mockResolvedValue({
+        success: false,
+        name: 'never.eth',
+        reason: 'NOT_FOUND',
+      });
+      await expect(
+        makeTools().wallet_send_transaction.getConsentSignDetails({
+          to: 'never.eth',
+          chainId: 1,
+          reason: 'r',
+        })
+      ).rejects.toThrow(/Could not resolve ENS name: never\.eth/);
+    });
+
     test('omits Value row when value is 0', async () => {
       setupHappyPath();
       const details = await makeTools().wallet_send_transaction.getConsentSignDetails({
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         chainId: 1,
         reason: 'r',
       });
@@ -1157,7 +1225,7 @@ describe('wallet_get_transaction', () => {
       status: 'confirmed',
       hash: '0xTXHASH',
       from: '0xFROM',
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       valueWei: '50000000000000000', // 0.05 ETH
       data: '0x',
       chainId: 1,
@@ -1174,7 +1242,7 @@ describe('wallet_get_transaction', () => {
         status: 'confirmed',
         hash: '0xTXHASH',
         from: '0xFROM',
-        to: '0xRECIP',
+        to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
         valueWei: '50000000000000000',
         valueFormatted: '0.05',
         chainId: 1,
@@ -1196,7 +1264,7 @@ describe('wallet_get_transaction', () => {
       status: 'confirmed',
       hash: '0xTXHASH',
       from: '0xFROM',
-      to: '0xUSDC',
+      to: '0xa0b86991C6218B36c1d19D4A2e9Eb0CE3606eB48',
       valueWei: '0',
       data,
       chainId: 1,
@@ -1228,7 +1296,7 @@ describe('wallet_get_transaction', () => {
       status: 'confirmed',
       hash: '0xT',
       from: '0xFROM',
-      to: '0xUSDC',
+      to: '0xa0b86991C6218B36c1d19D4A2e9Eb0CE3606eB48',
       valueWei: '0',
       data,
       chainId: 1,
@@ -1259,7 +1327,7 @@ describe('wallet_get_transaction', () => {
       status: 'confirmed',
       hash: '0xT',
       from: '0xFROM',
-      to: '0xUNKNOWNTOKEN',
+      to: '0xfFfFffFFFFFffffFFFfFFFffFFffffFffFFfFFff',
       valueWei: '0',
       data,
       chainId: 1,
@@ -1287,7 +1355,7 @@ describe('wallet_get_transaction', () => {
       status: 'pending',
       hash: '0xPEND',
       from: '0xFROM',
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       valueWei: '0',
       data: '0x',
       chainId: 1,
@@ -1321,7 +1389,7 @@ describe('wallet_wait_for_transaction', () => {
       status: 'confirmed',
       hash: '0xTXHASH',
       from: '0xFROM',
-      to: '0xRECIP',
+      to: '0xdDddDDddDDddDDddDDddDDddDDddDDddDDddDDdd',
       valueWei: '1000000000000000000',
       data: '0x',
       chainId: 1,

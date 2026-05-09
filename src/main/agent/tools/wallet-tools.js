@@ -78,6 +78,42 @@ async function getActiveAddressOrThrow() {
 // Throws with a clear, model-readable error in either failure mode.
 // Default-active path skips getDerivedWallets() to avoid the extra
 // vault-meta.json read + per-wallet derive loop on every signing call.
+// Resolve a recipient input — accepts either a 0x hex address or an
+// ENS name (anything that's not 0x-hex shape). For ENS, calls into
+// ens-resolver and throws a model-friendly error on failure. Returns
+// `{ address, ensName }` where ensName is null for direct hex inputs
+// and the original name for ENS inputs (used by the consent card to
+// surface "ENS → 0x" so the user sees what they're approving).
+//
+// Why auto-resolve in the tool: small models (Gemma 4 e2b in
+// particular) reliably forget to call ens_resolve before
+// wallet_send_transaction. ethers v6 already auto-resolves ENS for
+// `provider.getBalance(name)` so the read tools just work; this
+// brings send up to parity. Failures still surface to the model
+// (NOT_FOUND, INVALID_NAME, RPC) so it can react.
+const HEX_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+async function resolveAddressOrEns(input) {
+  if (typeof input !== 'string' || input.length === 0) {
+    throw new Error('Recipient is required (0x address or ENS name like vitalik.eth)');
+  }
+  if (HEX_ADDRESS_RE.test(input)) {
+    return { address: input, ensName: null };
+  }
+  const result = await ensResolver.resolveEnsAddress(input);
+  if (result?.success) {
+    return { address: result.address, ensName: result.name || input };
+  }
+  const reason = result?.reason || 'UNKNOWN';
+  if (reason === ENS_REASONS.NOT_FOUND) {
+    throw new Error(`Could not resolve ENS name: ${input} (no address record)`);
+  }
+  if (reason === ENS_REASONS.INVALID_NAME) {
+    throw new Error(`Invalid recipient: ${input} is neither a 0x address nor a valid ENS name`);
+  }
+  const detail = result?.error ? `: ${result.error}` : '';
+  throw new Error(`Could not resolve recipient ${input} (${reason})${detail}`);
+}
+
 async function resolveSigningWallet(address) {
   if (!address) {
     const activeAddress = await identityManager.getActiveWalletAddress();
@@ -596,7 +632,9 @@ function createWalletTools({ hostWebContentsId, Type }) {
     promptSnippet: "sign and send a transaction from the user's wallet",
     promptGuidelines: [
       'Always provide a clear `reason` — shown verbatim on the consent card. Be specific about what the transaction does (e.g. "send 0.05 ETH to alice.eth", "swap 100 USDC for ETH on Uniswap"), never generic.',
+      'PICK THE RIGHT CHAIN by token name — do not default to chainId 1. Native-token cheat sheet: ETH → 1 (Ethereum), xDAI → 100 (Gnosis), MATIC → 137 (Polygon), BNB → 56 (BNB Chain), AVAX → 43114 (Avalanche). xDAI is the NATIVE token of Gnosis, NOT the ERC-20 DAI on mainnet — they are different tokens. When the user names a token you don\'t recognise, call wallet_list_chains and match against `nativeSymbol` before guessing.',
       'PREFER `valueNative` for native-currency amounts ("0.01" for 0.01 xDAI / ETH / etc.) — the tool converts to wei using the chain\'s native decimals. `value` is the raw wei integer; only use it if you already have the wei amount. Never multiply decimals yourself — small models reliably miscount the zeros.',
+      '`to` accepts EITHER a 0x address (`0xabc…`) OR an ENS name (`vitalik.eth`). The tool auto-resolves ENS internally; the consent card shows both forms ("vitalik.eth → 0xd8dA…6045") so the user can verify before approving. Pass the ENS name as-is — do NOT pre-resolve it via ens_resolve, the tool handles it.',
       'For ERC-20 transfers, `valueNative` and `value` are both 0 — the token amount lives inside `data` (build with the contract\'s transfer ABI: selector 0xa9059cbb + 32-byte recipient + 32-byte amount). The consent card decodes the calldata so the user sees "Transfer 1.0 USDC to 0x..." instead of raw hex.',
       'Gas estimation runs server-side before the consent prompt — the user sees the estimated gas cost in the consent card. If estimation fails, the prompt still shows but without a Total figure.',
     ],
@@ -625,11 +663,14 @@ function createWalletTools({ hostWebContentsId, Type }) {
     async getConsentSignDetails({ to, value, valueNative, data, chainId, reason, address }) {
       const dataHex = data && data !== '' ? data : '0x';
 
-      // Resolve signing wallet sync-ish — getDerivedWallets is needed
-      // only when an address override is given; the default-active path
-      // skips it. Errors here propagate to the formatter try/catch in
-      // pi-extension and the renderer falls back to text-only consent.
-      const { walletAddress } = await resolveSigningWallet(address);
+      // Resolve signing wallet + recipient (auto-handles ENS) in
+      // parallel — both async, both needed for the consent card.
+      // Errors propagate to the formatter try/catch in pi-extension
+      // and the renderer falls back to text-only consent on throw.
+      const [{ walletAddress }, { address: resolvedTo, ensName: toEns }] = await Promise.all([
+        resolveSigningWallet(address),
+        resolveAddressOrEns(to),
+      ]);
 
       const chain = chainsModule.getChain(chainId);
       const chainName = chain
@@ -645,7 +686,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
       const valueWei = resolveValueWei({ value, valueNative, nativeDecimals });
 
       const toUrl = chain?.blockExplorer
-        ? `${chain.blockExplorer}/address/${to}`
+        ? `${chain.blockExplorer}/address/${resolvedTo}`
         : null;
 
       // Best-effort gas estimate. If the RPC is flaky or the tx would
@@ -659,7 +700,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
       const [gasResult, priceResult] = await Promise.allSettled([
         transactionService.estimateGas({
           from: walletAddress,
-          to,
+          to: resolvedTo,
           value: valueWei,
           data: dataHex,
           chainId,
@@ -701,7 +742,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
       // Calldata decode — only ERC-20 transfer / approve today. Other
       // selectors fall through to a "Show calldata" disclosure on the
       // raw hex (handled in the renderer).
-      const decoded = decodeKnownAction({ to, data: dataHex, chainId });
+      const decoded = decodeKnownAction({ to: resolvedTo, data: dataHex, chainId });
       let action = null;
       if (decoded?.kind === 'erc20-transfer') {
         const amt = decoded.formattedAmount ?? `${decoded.rawAmount} (raw)`;
@@ -713,11 +754,18 @@ function createWalletTools({ hostWebContentsId, Type }) {
         action = `Approve ${shortAddr(decoded.spender)} to spend ${amt} ${sym}`;
       }
 
+      // When `to` was an ENS name, surface "ensName → 0xshort" so the
+      // user sees what was resolved before approving. Same `toUrl`
+      // (block explorer link on the resolved address) either way.
+      const toDisplay = toEns
+        ? `${toEns} → ${shortAddr(resolvedTo)}`
+        : shortAddr(resolvedTo);
+
       return {
         kind: 'transaction',
         reason,
         from: shortAddr(walletAddress),
-        to: shortAddr(to),
+        to: toDisplay,
         toUrl,
         chainId,
         chainName,
@@ -729,7 +777,15 @@ function createWalletTools({ hostWebContentsId, Type }) {
       };
     },
     async execute(_id, { to, value, valueNative, data, chainId, reason, address }, signal) {
-      const { walletIndex, walletAddress } = await resolveSigningWallet(address);
+      // Resolve signing wallet + recipient (auto-handles ENS) up front.
+      // Doing it here too (not just in getConsentSignDetails) keeps the
+      // contract simple: model can pass an ENS name OR a 0x address,
+      // either path lands at the same on-chain tx.
+      const [{ walletIndex, walletAddress }, { address: resolvedTo, ensName: toEns }] =
+        await Promise.all([
+          resolveSigningWallet(address),
+          resolveAddressOrEns(to),
+        ]);
       await ensureVaultUnlocked({
         hostWebContentsId,
         reason: `Send transaction — ${reason}`,
@@ -747,7 +803,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
       const [{ gasLimit }, gasPrices] = await Promise.all([
         transactionService.estimateGas({
           from: walletAddress,
-          to,
+          to: resolvedTo,
           value: valueWei,
           data: dataHex,
           chainId,
@@ -759,7 +815,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
       const privateKey = identity.exportPrivateKey(walletIndex);
 
       const sendParams = {
-        to,
+        to: resolvedTo,
         value: valueWei,
         data: dataHex,
         gasLimit,
@@ -777,6 +833,10 @@ function createWalletTools({ hostWebContentsId, Type }) {
         txHash: result.hash,
         from: result.from,
         to: result.to,
+        // When the recipient was an ENS name, surface both forms in the
+        // result so the model + renderer can show "sent to meinhard.eth"
+        // without hand-tracking the original input.
+        recipientEns: toEns,
         value: result.value,
         chainId,
         blockExplorerUrl: result.explorerUrl,

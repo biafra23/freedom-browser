@@ -25,6 +25,27 @@ Before any wallet operation:
    mainnet", "Base"), use `wallet_list_chains` to translate to the
    numeric id. **Never invent or guess a chainId.**
 
+## Native vs ERC-20 — DON'T conflate similarly-named tokens
+
+Token names that look related are often on different chains and
+behave differently. Always cross-reference `wallet_list_chains`
+`nativeSymbol` before deciding whether to send native value or build
+ERC-20 calldata. A few specific traps:
+
+- **xDAI** is the **native** token of Gnosis (chainId 100). Use
+  `valueNative` and no `data`. It is NOT the ERC-20 DAI.
+- **DAI** is an ERC-20 stablecoin on Ethereum (chainId 1) and other
+  chains. Use `value: "0"` and a transfer-ABI calldata.
+- **ETH** is native on Ethereum (1), Base (8453), Arbitrum (42161),
+  etc. — same symbol, different chains.
+- **WETH** is the ERC-20 wrapped form, not native.
+- **USDC** is always an ERC-20, never native — but the contract
+  address differs per chain; look it up via `wallet_get_chain` or
+  the chain registry.
+
+Heuristic: if the token symbol matches the chain's `nativeSymbol`,
+treat it as native. Otherwise it's an ERC-20.
+
 ## Send native currency (ETH, xDAI, etc.)
 
 The user wants to send 0.05 ETH on mainnet:
@@ -38,6 +59,14 @@ The user wants to send 0.05 ETH on mainnet:
 string ("0.05"), never multiply by 10^18 yourself. Small models
 miscount zeros.** `value` (raw wei) exists for callers that already
 have the integer.
+
+**`to` accepts ENS names directly** — pass `vitalik.eth` or
+`meinhard.eth` as-is, the tool resolves it internally and the
+consent card shows both forms ("vitalik.eth → 0xd8dA…6045") so the
+user can verify the resolution before approving. Do NOT pre-resolve
+via `ens_resolve` — that's only for when the user wants the address
+without sending. If resolution fails the tool throws a clear error
+("Could not resolve ENS name: x.eth").
 
 ## Send an ERC-20 token (USDC, BZZ, etc.)
 
