@@ -27,6 +27,10 @@ const state = {
   messages: [],
   activeStreamId: null,
   activeAssistantEl: null,
+  // Cached ref to the active assistant's thinking-disclosure body so
+  // per-chunk thinking updates don't have to querySelector through the
+  // bubble's growing descendant tree.
+  activeAssistantThinkingBodyEl: null,
   // Tool-call cards live inside the active assistant message's bubble.
   // toolCallEls maps callId → { wrapEl, headerEl, bodyEl } so the
   // tool-result + consent-response handlers can update the card in
@@ -96,6 +100,7 @@ export function initChatUi() {
   });
 
   window.agent.onChatChunk((data) => handleChunk(data));
+  window.agent.onThinkingChunk?.((data) => handleThinkingChunk(data));
   window.agent.onChatDone((data) => handleDone(data));
   window.agent.onToolCall((data) => handleToolCall(data));
   window.agent.onToolResult((data) => handleToolResult(data));
@@ -199,6 +204,7 @@ function hydrateFromSession(session) {
   state.currentSessionId = session.id;
   state.messages = adaptMessages(session.messages);
   state.activeToolCallEls.clear();
+  state.activeAssistantThinkingBodyEl = null;
   renderMessages();
   return true;
 }
@@ -319,6 +325,15 @@ function handleChunk(data) {
   scheduleAssistantRender();
 }
 
+function handleThinkingChunk(data) {
+  if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
+  if (!state.activeAssistantEl) return;
+  const last = state.messages[state.messages.length - 1];
+  if (!last || last.role !== 'assistant') return;
+  last.thinking = (last.thinking || '') + data.content;
+  ensureThinkingDisclosure(state.activeAssistantEl, last);
+}
+
 function ensureToolCallsArray(message) {
   if (!Array.isArray(message.toolCalls)) message.toolCalls = [];
   return message.toolCalls;
@@ -405,6 +420,7 @@ function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
 
   state.activeStreamId = null;
   state.activeAssistantEl = null;
+  state.activeAssistantThinkingBodyEl = null;
   state.activeToolCallEls.clear();
   setComposerBusy(false);
   inputEl?.focus();
@@ -427,6 +443,7 @@ export function startNewSession() {
   state.currentSessionId = null;
   state.messages = [];
   state.activeToolCallEls.clear();
+  state.activeAssistantThinkingBodyEl = null;
   renderMessages();
   return true;
 }
@@ -497,6 +514,13 @@ function appendMessage(msg, opts = {}) {
   }
 
   wrap.appendChild(role);
+  // Thinking goes BEFORE content — it's collapsible, so it doesn't
+  // dominate, and putting it above signals "this is reasoning that
+  // came before the answer". Surfaces both during live streaming and
+  // when restoring sessions where Pi persisted ThinkingContent blocks.
+  if (msg.role === 'assistant' && msg.thinking) {
+    wrap.appendChild(buildThinkingDisclosure(msg.thinking).details);
+  }
   wrap.appendChild(content);
 
   // Restore historical tool-call cards when re-rendering. Phase 3 will
@@ -512,6 +536,35 @@ function appendMessage(msg, opts = {}) {
   messagesEl.appendChild(wrap);
   scrollToBottom();
   return wrap;
+}
+
+function buildThinkingDisclosure(thinkingText) {
+  const details = document.createElement('details');
+  details.className = 'agent-message-thinking';
+  const summary = document.createElement('summary');
+  summary.className = 'agent-message-thinking-summary';
+  summary.textContent = 'Thinking';
+  const body = document.createElement('div');
+  body.className = 'agent-message-thinking-body';
+  body.textContent = thinkingText;
+  details.appendChild(summary);
+  details.appendChild(body);
+  return { details, body };
+}
+
+// During streaming, we get thinking chunks before the assistant has
+// finished its text response. Insert the disclosure on the first chunk
+// and cache its body ref so subsequent chunks skip the querySelector
+// walk through the bubble's descendant tree.
+function ensureThinkingDisclosure(wrap, msg) {
+  if (!state.activeAssistantThinkingBodyEl) {
+    const { details, body } = buildThinkingDisclosure(msg.thinking);
+    const content = wrap.querySelector('.agent-message-content');
+    wrap.insertBefore(details, content);
+    state.activeAssistantThinkingBodyEl = body;
+  } else {
+    state.activeAssistantThinkingBodyEl.textContent = msg.thinking;
+  }
 }
 
 function renderToolCallShell(call) {

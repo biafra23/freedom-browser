@@ -77,7 +77,11 @@ async function flushAsyncQueue() {
   }
 }
 
-function makeFakeSession({ promptBehavior = 'resolve', promptText = 'Hello!' } = {}) {
+function makeFakeSession({
+  promptBehavior = 'resolve',
+  promptText = 'Hello!',
+  thinkingText = '',
+} = {}) {
   let subscriber = null;
   const session = {
     subscribe: jest.fn((cb) => {
@@ -88,7 +92,13 @@ function makeFakeSession({ promptBehavior = 'resolve', promptText = 'Hello!' } =
     }),
     setActiveToolsByName: jest.fn(),
     prompt: jest.fn(async () => {
-      // Drive a couple of text deltas + agent_end through the subscriber.
+      // Optional thinking deltas first (Gemma streams reasoning before text).
+      for (const ch of thinkingText) {
+        subscriber?.({
+          type: 'message_update',
+          assistantMessageEvent: { type: 'thinking_delta', delta: ch },
+        });
+      }
       for (const ch of promptText) {
         subscriber?.({
           type: 'message_update',
@@ -206,6 +216,9 @@ describe('startChatStream + pumpChat', () => {
       sessionPath: '/tmp/s.jsonl',
     });
     await flushAsyncQueue();
+    // The 16ms coalescing timer hasn't fired in fake-timer-free tests; force
+    // an extra wait so chunks flush before assertion.
+    await new Promise((r) => setTimeout(r, 25));
 
     const chunkText = sender.send.mock.calls
       .filter((c) => c[0] === IPC.AGENT_CHAT_CHUNK)
@@ -220,6 +233,33 @@ describe('startChatStream + pumpChat', () => {
     expect(doneCalls[0][1].stats.finishReason).toBe('stop');
     expect(dispose).toHaveBeenCalled();
     expect(_internals.activeStreams.size).toBe(0);
+  });
+
+  test('routes thinking_delta events to AGENT_CHAT_THINKING_CHUNK', async () => {
+    const session = makeFakeSession({
+      promptText: 'final',
+      thinkingText: 'reasoning',
+    });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    await new Promise((r) => setTimeout(r, 25));
+
+    const thinkingText = sender.send.mock.calls
+      .filter((c) => c[0] === IPC.AGENT_CHAT_THINKING_CHUNK)
+      .map((c) => c[1].content)
+      .join('');
+    const visibleText = sender.send.mock.calls
+      .filter((c) => c[0] === IPC.AGENT_CHAT_CHUNK)
+      .map((c) => c[1].content)
+      .join('');
+    expect(thinkingText).toBe('reasoning');
+    expect(visibleText).toBe('final');
   });
 
   test('emits error done event when createFreedomPiSession throws', async () => {

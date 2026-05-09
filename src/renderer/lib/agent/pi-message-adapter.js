@@ -28,6 +28,22 @@ function extractText(content) {
   return out;
 }
 
+// Pi's `ThinkingContent` block uses `.thinking` (not `.text`) to carry
+// the model's reasoning for models that stream it (Gemma 4, etc.).
+// We surface this in the renderer as a collapsible disclosure inside
+// the assistant message so the user can peek without it overwhelming
+// the visible response.
+function extractThinking(content) {
+  if (!Array.isArray(content)) return '';
+  let out = '';
+  for (const block of content) {
+    if (block?.type === 'thinking' && typeof block.thinking === 'string') {
+      out += block.thinking;
+    }
+  }
+  return out;
+}
+
 function adaptUserMessage(message) {
   const text = extractText(message.content);
   return { role: 'user', content: text };
@@ -35,8 +51,11 @@ function adaptUserMessage(message) {
 
 function adaptAssistantMessage(message) {
   const text = extractText(message.content);
-  if (!text) return null; // Pure-thinking / pure-toolCall messages are hidden in Phase 2.
-  return { role: 'assistant', content: text };
+  const thinking = extractThinking(message.content);
+  if (!text && !thinking) return null;
+  const view = { role: 'assistant', content: text };
+  if (thinking) view.thinking = thinking;
+  return view;
 }
 
 function adaptMessage(message) {
@@ -78,4 +97,4 @@ function adaptEntries(entries) {
   return adaptMessages(messages);
 }
 
-export { adaptMessages, adaptEntries, adaptMessage, extractText };
+export { adaptMessages, adaptEntries, adaptMessage, extractText, extractThinking };

@@ -208,6 +208,22 @@ class FakeElement {
     return child;
   }
 
+  insertBefore(child, referenceNode) {
+    if (referenceNode === null || referenceNode === undefined) {
+      return this.appendChild(child);
+    }
+    if (child.parentNode) {
+      child.remove();
+    }
+    const index = this.children.indexOf(referenceNode);
+    if (index < 0) {
+      throw new Error('insertBefore: reference node is not a child');
+    }
+    child.parentNode = this;
+    this.children.splice(index, 0, child);
+    return child;
+  }
+
   prepend(child) {
     if (child.parentNode) {
       child.remove();

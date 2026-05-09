@@ -416,13 +416,31 @@ async function pumpChat({ model, prompt, ctx }) {
   ctx.session = session;
   ctx.dispose = dispose;
 
-  let pendingDelta = '';
+  // Two coalesced delta streams: `text` (visible assistant output) and
+  // `thinking` (the model's reasoning, surfaced separately as a
+  // collapsible disclosure in the renderer). Both share one 16ms timer
+  // so we batch IPC traffic and let the renderer handle the matching
+  // delivery rate cleanly.
+  const buffers = {
+    text: { content: '', channel: IPC.AGENT_CHAT_CHUNK },
+    thinking: { content: '', channel: IPC.AGENT_CHAT_THINKING_CHUNK },
+  };
   let flushTimer = null;
   const flushPending = () => {
-    if (!pendingDelta) return;
-    const content = pendingDelta;
-    pendingDelta = '';
-    sendIfAlive(ctx, IPC.AGENT_CHAT_CHUNK, { streamId: ctx.streamId, content });
+    for (const buf of Object.values(buffers)) {
+      if (!buf.content) continue;
+      const content = buf.content;
+      buf.content = '';
+      sendIfAlive(ctx, buf.channel, { streamId: ctx.streamId, content });
+    }
+  };
+  const scheduleFlush = () => {
+    if (!flushTimer) {
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        flushPending();
+      }, CHUNK_FLUSH_MS);
+    }
   };
   const cancelFlushTimer = () => {
     if (flushTimer) {
@@ -434,19 +452,15 @@ async function pumpChat({ model, prompt, ctx }) {
   let agentEndEvent = null;
 
   ctx.unsubscribe = session.subscribe((evt) => {
-    if (
-      evt.type === 'message_update' &&
-      evt.assistantMessageEvent?.type === 'text_delta'
-    ) {
-      const delta = evt.assistantMessageEvent.delta;
-      if (!delta) return;
-      ctx.fullText += delta;
-      pendingDelta += delta;
-      if (!flushTimer) {
-        flushTimer = setTimeout(() => {
-          flushTimer = null;
-          flushPending();
-        }, CHUNK_FLUSH_MS);
+    if (evt.type === 'message_update') {
+      const sub = evt.assistantMessageEvent;
+      if (sub?.type === 'text_delta' && sub.delta) {
+        ctx.fullText += sub.delta;
+        buffers.text.content += sub.delta;
+        scheduleFlush();
+      } else if (sub?.type === 'thinking_delta' && sub.delta) {
+        buffers.thinking.content += sub.delta;
+        scheduleFlush();
       }
     } else if (evt.type === 'agent_end') {
       agentEndEvent = evt;

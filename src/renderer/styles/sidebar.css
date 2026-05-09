@@ -5953,6 +5953,54 @@
   margin-top: 2px;
 }
 
+.agent-message-thinking {
+  margin: 4px 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.agent-message-thinking-summary {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.08);
+  display: inline-block;
+  user-select: none;
+  list-style: none;
+}
+
+.agent-message-thinking-summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-message-thinking-summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform 120ms ease;
+}
+
+.agent-message-thinking[open] > .agent-message-thinking-summary::before {
+  transform: rotate(90deg);
+}
+
+.agent-message-thinking-summary:hover {
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.agent-message-thinking-body {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border);
+  white-space: pre-wrap;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .agent-tool-card {
   margin-top: 6px;
   padding: 6px 8px;
@@ -5960,6 +6008,15 @@
   border-radius: 6px;
   background: rgba(127, 127, 127, 0.05);
   font-size: 12px;
+}
+
+@keyframes agent-tool-card-pulse {
+  0%, 100% { background: rgba(127, 127, 127, 0.05); }
+  50%      { background: rgba(127, 127, 127, 0.14); }
+}
+
+.agent-tool-card.pending {
+  animation: agent-tool-card-pulse 1.4s ease-in-out infinite;
 }
 
 .agent-tool-card.allowed {

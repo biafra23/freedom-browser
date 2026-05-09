@@ -193,6 +193,7 @@ module.exports = {
   AGENT_STATUS: 'agent:status',
   AGENT_CHAT_START: 'agent:chat:start',
   AGENT_CHAT_CHUNK: 'agent:chat:chunk',
+  AGENT_CHAT_THINKING_CHUNK: 'agent:chat:thinking-chunk',
   AGENT_CHAT_DONE: 'agent:chat:done',
   AGENT_CHAT_CANCEL: 'agent:chat:cancel',
   // Tool-call lifecycle (Phase 5a-iii)

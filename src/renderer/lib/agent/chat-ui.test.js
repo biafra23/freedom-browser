@@ -11,7 +11,14 @@ const flushMicrotasks = async () => {
 };
 
 function createAgentBridge(initialStatus = { running: true, version: '0.23.2', models: [] }) {
-  const handlers = { chunk: null, done: null, toolCall: null, toolResult: null, consentRequest: null };
+  const handlers = {
+    chunk: null,
+    thinking: null,
+    done: null,
+    toolCall: null,
+    toolResult: null,
+    consentRequest: null,
+  };
   return {
     handlers,
     bridge: {
@@ -21,6 +28,10 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
       respondConsent: jest.fn().mockResolvedValue({ ok: true }),
       onChatChunk: jest.fn((cb) => {
         handlers.chunk = cb;
+        return jest.fn();
+      }),
+      onThinkingChunk: jest.fn((cb) => {
+        handlers.thinking = cb;
         return jest.fn();
       }),
       onChatDone: jest.fn((cb) => {
@@ -239,6 +250,58 @@ describe('chat-ui', () => {
     await flushMicrotasks();
     handlers.chunk({ streamId: 'stream-OTHER', content: 'X' });
     expect(mod._internals.state.messages[1].content).toBe('');
+  });
+
+  test('thinking chunks accumulate on the active assistant + render a disclosure', async () => {
+    const { mod, handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+    inputEl.value = 'hi';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+
+    handlers.thinking({ streamId: 'stream-1', content: 'reasoning ' });
+    handlers.thinking({ streamId: 'stream-1', content: 'about it...' });
+
+    const last = mod._internals.state.messages[1];
+    expect(last.thinking).toBe('reasoning about it...');
+    const disclosure = messagesEl.querySelector('.agent-message-thinking');
+    expect(disclosure).toBeTruthy();
+    const body = disclosure.querySelector('.agent-message-thinking-body');
+    expect(body.textContent).toBe('reasoning about it...');
+  });
+
+  test('thinking chunks for stale streamIds are ignored', async () => {
+    const { mod, handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+    inputEl.value = 'hi';
+    composerEl.dispatch('submit', { preventDefault: jest.fn() });
+    await flushMicrotasks();
+    handlers.thinking({ streamId: 'stream-OTHER', content: 'leak' });
+    expect(mod._internals.state.messages[1].thinking).toBeUndefined();
+    expect(messagesEl.querySelector('.agent-message-thinking')).toBeFalsy();
+  });
+
+  test('restored session with persisted thinking renders the disclosure', async () => {
+    const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
+    _bridge.getRecentSession = jest.fn().mockResolvedValue({
+      id: '/tmp/sessions/prev.jsonl',
+      messages: [
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'recalled reasoning' },
+            { type: 'text', text: 'recalled answer' },
+          ],
+        },
+      ],
+    });
+    const { messagesEl } = await loadChatUi({
+      agent: { handlers: _handlers, bridge: _bridge },
+    });
+    const disclosure = messagesEl.querySelector('.agent-message-thinking');
+    expect(disclosure).toBeTruthy();
+    expect(disclosure.querySelector('.agent-message-thinking-body').textContent).toBe(
+      'recalled reasoning'
+    );
   });
 
   test('done event finalises the assistant message and re-enables composer', async () => {

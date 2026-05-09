@@ -429,6 +429,11 @@ contextBridge.exposeInMainWorld('agent', {
     ipcRenderer.on('agent:chat:chunk', handler);
     return () => ipcRenderer.removeListener('agent:chat:chunk', handler);
   },
+  onThinkingChunk: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:thinking-chunk', handler);
+    return () => ipcRenderer.removeListener('agent:chat:thinking-chunk', handler);
+  },
   onChatDone: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('agent:chat:done', handler);

@@ -3,6 +3,7 @@ const {
   adaptEntries,
   adaptMessage,
   extractText,
+  extractThinking,
 } = require('./pi-message-adapter.js');
 
 describe('extractText', () => {
@@ -38,6 +39,25 @@ describe('extractText', () => {
   });
 });
 
+describe('extractThinking', () => {
+  test('joins ThinkingContent blocks via .thinking field', () => {
+    expect(
+      extractThinking([
+        { type: 'thinking', thinking: 'first ' },
+        { type: 'text', text: 'visible' },
+        { type: 'thinking', thinking: 'and second' },
+      ])
+    ).toBe('first and second');
+  });
+
+  test('returns "" when no thinking blocks present', () => {
+    expect(extractThinking([{ type: 'text', text: 'hi' }])).toBe('');
+    expect(extractThinking('just a string')).toBe('');
+    expect(extractThinking([])).toBe('');
+    expect(extractThinking(null)).toBe('');
+  });
+});
+
 describe('adaptMessage', () => {
   test('user message with string content', () => {
     expect(adaptMessage({ role: 'user', content: 'hi' })).toEqual({
@@ -55,7 +75,7 @@ describe('adaptMessage', () => {
     ).toEqual({ role: 'user', content: 'hello' });
   });
 
-  test('assistant message with mixed blocks keeps only text', () => {
+  test('assistant message with mixed blocks splits text vs thinking', () => {
     expect(
       adaptMessage({
         role: 'assistant',
@@ -65,19 +85,39 @@ describe('adaptMessage', () => {
           { type: 'text', text: '4.' },
         ],
       })
-    ).toEqual({ role: 'assistant', content: '2+2=4.' });
+    ).toEqual({ role: 'assistant', content: '2+2=4.', thinking: 'reasoning…' });
   });
 
-  test('returns null for assistant message with no text content', () => {
+  test('keeps thinking-only assistant messages so the disclosure renders', () => {
+    const view = adaptMessage({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: 'reasoning…' }],
+    });
+    expect(view).toEqual({ role: 'assistant', content: '', thinking: 'reasoning…' });
+  });
+
+  test('returns null for assistant message with no text and no thinking', () => {
     expect(
       adaptMessage({
         role: 'assistant',
-        content: [
-          { type: 'thinking', thinking: 'silent' },
-          { type: 'toolCall', id: 'x', name: 'navigate', arguments: {} },
-        ],
+        content: [{ type: 'toolCall', id: 'x', name: 'navigate', arguments: {} }],
       })
     ).toBeNull();
+  });
+
+  test('assistant message with both text and thinking gets a thinking field', () => {
+    const view = adaptMessage({
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'let me think...' },
+        { type: 'text', text: 'final answer' },
+      ],
+    });
+    expect(view).toEqual({
+      role: 'assistant',
+      content: 'final answer',
+      thinking: 'let me think...',
+    });
   });
 
   test('skips toolResult, bashExecution, custom roles in Phase 2', () => {
@@ -108,14 +148,19 @@ describe('adaptMessages', () => {
     ]);
   });
 
-  test('drops invisible-only assistant messages but keeps other turns', () => {
+  test('keeps thinking-only assistant messages; drops fully-empty ones', () => {
     const result = adaptMessages([
       { role: 'user', content: 'q' },
-      { role: 'assistant', content: [{ type: 'thinking', thinking: '…' }] },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'reasoning' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'x', name: 'navigate', arguments: {} }],
+      }, // no text and no thinking → dropped
       { role: 'assistant', content: [{ type: 'text', text: 'a' }] },
     ]);
     expect(result).toEqual([
       { role: 'user', content: 'q' },
+      { role: 'assistant', content: '', thinking: 'reasoning' },
       { role: 'assistant', content: 'a' },
     ]);
   });
