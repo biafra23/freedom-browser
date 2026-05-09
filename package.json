@@ -18,6 +18,7 @@
   "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
+    "start:profile": "scripts/start-profile.sh",
     "test": "npm run test:unit",
     "test:unit": "jest",
     "test:coverage": "jest --coverage --runInBand --forceExit",
