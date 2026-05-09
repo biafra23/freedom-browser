@@ -195,7 +195,7 @@ describe('createFreedomPiSession', () => {
     };
     await factory(fakePi);
     expect(fakePi.tools.map((t) => t.name).sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot', 'spawn_subagent'].sort()
+      ['click', 'fill', 'navigate', 'read_current_tab', 'read_skill', 'screenshot', 'spawn_subagent'].sort()
     );
   });
 
@@ -291,8 +291,13 @@ describe('createFreedomPiSession', () => {
 });
 
 describe('listFreedomSkills', () => {
+  // listFreedomSkills delegates to skill-catalog, which owns its own
+  // pi cache (it can't share pi-runtime's because of a CJS require
+  // cycle). Inject the mock via skill-catalog's setPiModule.
+  const skillCatalog = require('./skill-catalog');
+
   beforeEach(() => {
-    _internals.setPiModule({
+    skillCatalog._internals.setPiModule({
       loadSkills: jest.fn(({ skillPaths }) => ({
         skills: [
           {
@@ -308,18 +313,14 @@ describe('listFreedomSkills', () => {
   });
 
   afterEach(() => {
-    _internals.setPiModule(null);
+    skillCatalog._internals.setPiModule(null);
   });
 
-  test('returns the parsed skills with name + description', async () => {
+  test('returns parsed skills with name, description, and source tag', async () => {
     const skills = await runtime.listFreedomSkills({ agentDir: '/tmp/x' });
     expect(skills).toEqual([
-      { name: 'tldr', description: 'Short summary' },
+      { name: 'tldr', description: 'Short summary', source: 'builtin' },
     ]);
-  });
-
-  test('throws when agentDir is missing', async () => {
-    await expect(runtime.listFreedomSkills({})).rejects.toThrow(/agentDir/);
   });
 });
 

@@ -175,6 +175,46 @@ describe('tool-card-renderers', () => {
     });
   });
 
+  describe('read_skill', () => {
+    test('shows "Loaded skill /<name> (source)" + a recipe disclosure on success', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'read_skill',
+        status: 'allowed',
+        args: { name: 'tldr' },
+        result: { name: 'tldr', source: 'builtin', body: 'do the thing' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain('Loaded skill ');
+      expect(host.querySelector('.agent-tool-title').textContent).toBe('/tldr');
+      const disclosure = host.querySelector('.agent-tool-disclosure');
+      expect(disclosure).toBeTruthy();
+      expect(host.querySelector('.agent-tool-mono').textContent).toBe('do the thing');
+    });
+
+    test('reports a not_found error with the requested name', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'read_skill',
+        status: 'allowed',
+        args: { name: 'nope' },
+        result: { name: 'nope', error: 'not_found' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Skill "nope" not found'
+      );
+    });
+
+    test('pending state shows the skill name being loaded', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'read_skill',
+        status: 'pending',
+        args: { name: 'tldr' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain('Loading skill tldr');
+    });
+  });
+
   test('falls back to JSON args block for unknown tool names', async () => {
     const { mod } = await loadRenderers();
     const host = into(mod.renderToolBody({

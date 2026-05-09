@@ -228,6 +228,34 @@ function renderScreenshot(call) {
   return frag;
 }
 
+function renderReadSkill(call) {
+  const frag = document.createDocumentFragment();
+  const requested = call.args?.name;
+  if (isFailure(call) || call.result?.error) {
+    const reason = call.result?.error === 'not_found'
+      ? `Skill "${requested}" not found in the catalog`
+      : `Read failed: ${failureText(call)}`;
+    frag.appendChild(makeSummary(reason));
+    return frag;
+  }
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Loading skill ${requested || ''}…`.trim()));
+    return frag;
+  }
+  const { name, source, body } = call.result || {};
+  const summary = makeSummary('Loaded skill ');
+  const strong = document.createElement('strong');
+  strong.className = 'agent-tool-title';
+  strong.textContent = `/${name || requested}`;
+  summary.appendChild(strong);
+  if (source) summary.append(` (${source})`);
+  frag.appendChild(summary);
+  if (body) {
+    frag.appendChild(makeDisclosure(`Recipe (${body.length} chars)`, makeMonoBlock(body)));
+  }
+  return frag;
+}
+
 function renderSpawnSubagent(call) {
   const frag = document.createDocumentFragment();
   const id = call.args?.subagent_id || 'subagent';
@@ -273,6 +301,7 @@ const TOOL_RENDERERS = {
   fill: renderFill,
   screenshot: renderScreenshot,
   spawn_subagent: renderSpawnSubagent,
+  read_skill: renderReadSkill,
 };
 
 function renderJsonFallback(call) {

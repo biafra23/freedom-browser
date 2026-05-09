@@ -149,9 +149,10 @@ describe('Phase 3 — tool registration', () => {
     await handler({});
     expect(pi.setActiveCalls).toHaveLength(1);
     // For the all-tiers default profile we expect everything pi-extension
-    // registered to be enabled — the five browser tools AND spawn_subagent.
+    // registered to be enabled — the five browser tools, read_skill, and
+    // spawn_subagent.
     expect(pi.setActiveCalls[0].sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot', 'spawn_subagent'].sort()
+      ['click', 'fill', 'navigate', 'read_current_tab', 'read_skill', 'screenshot', 'spawn_subagent'].sort()
     );
   });
 
@@ -253,6 +254,25 @@ describe('Phase 3.1 — buildFreedomSystemPrompt', () => {
   test('appends current date last', () => {
     const prompt = _internals.buildFreedomSystemPrompt({});
     expect(prompt).toMatch(/Current date: \d{4}-\d{2}-\d{2}\s*$/);
+  });
+
+  test('omits the skills section when no skills are loaded', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({ skills: [] });
+    expect(prompt).not.toMatch(/Available skills/);
+    expect(prompt).not.toMatch(/read_skill/);
+  });
+
+  test('renders the skills section with name, source, and description', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({
+      skills: [
+        { name: 'tldr', description: 'Short summary', source: 'builtin' },
+        { name: 'mine', description: 'Custom recipe', source: 'user' },
+      ],
+    });
+    expect(prompt).toMatch(/Available skills/);
+    expect(prompt).toMatch(/call read_skill with the skill name/);
+    expect(prompt).toMatch(/- tldr \(builtin\): Short summary/);
+    expect(prompt).toMatch(/- mine \(user\): Custom recipe/);
   });
 });
 

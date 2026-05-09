@@ -31,6 +31,7 @@ const { executionModeForTier } = require('./tool-tiers');
 const broker = require('./pi-broker');
 const { CONSENT } = require('./pi-broker');
 const { createBrowserTools } = require('./tools/browser-tools');
+const { createSkillTools } = require('./tools/skill-tools');
 const { createSubagentTools } = require('./subagent-tools');
 
 const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
@@ -55,10 +56,23 @@ const STANDARD_MAIN_AGENT_GUIDELINES = `- When the user asks about, summarises, 
 - After navigate / fill / click, the page may have changed — call read_current_tab if you need to know the new state before answering.
 - Be concise and direct. The user can see your tool calls in the sidebar; you do not need to narrate every step.`;
 
+function formatSkillsSection(skills) {
+  if (!skills || skills.length === 0) return '';
+  const lines = skills.map((s) => {
+    const sourceTag = s.source ? ` (${s.source})` : '';
+    return `- ${s.name}${sourceTag}: ${s.description || ''}`.trim();
+  });
+  return `
+Available skills (call read_skill with the skill name to load the recipe, then follow it):
+${lines.join('\n')}
+`;
+}
+
 function buildFreedomSystemPrompt({
   selectedTools = [],
   toolSnippets = {},
   promptGuidelines = [],
+  skills = [],
   intro,
   isSubagent = false,
 } = {}) {
@@ -75,13 +89,19 @@ function buildFreedomSystemPrompt({
   const today = new Date().toISOString().slice(0, 10);
   const introText = intro ?? DEFAULT_FREEDOM_INTRO;
   const standardGuidelines = isSubagent ? '' : `${STANDARD_MAIN_AGENT_GUIDELINES}\n`;
+  // Pi only includes its skill section when the agent has the
+  // built-in `read` tool active — we don't ship that, so we surface
+  // skills here instead. The agent loads bodies via our scoped
+  // `read_skill` tool (see tools/skill-tools.js) instead of arbitrary
+  // filesystem reads.
+  const skillsSection = formatSkillsSection(skills);
   return `${introText}
 
 Available tools:
 ${toolsList}
 
 Guidelines:
-${standardGuidelines}${guidelines ? `${guidelines}\n` : ''}
+${standardGuidelines}${guidelines ? `${guidelines}\n` : ''}${skillsSection}
 Current date: ${today}`;
 }
 
@@ -128,6 +148,13 @@ function createFreedomExtension({
       webContentsId: toolCallContext.webContentsId ?? null,
       Type,
     });
+    // Skill tools work for both main and subagent — skills are
+    // independent of who runs them. Subagents whose profile permits
+    // LOCAL_SAFE see read_skill in their active set; existing
+    // subagent profiles don't include LOCAL_SAFE, so they don't
+    // currently. User-defined subagents (later) can opt in via
+    // their tier filter.
+    const skillTools = createSkillTools({ agentDir, Type });
     // Orchestration tools are main-agent-only — subagents never get
     // spawn_subagent, so depth = 1 by construction.
     const subagentTools = isSubagent
@@ -139,7 +166,7 @@ function createFreedomExtension({
           Type,
         });
     const toolMeta = new Map();
-    for (const def of [...browserTools, ...subagentTools]) {
+    for (const def of [...browserTools, ...skillTools, ...subagentTools]) {
       toolMeta.set(def.name, { tier: def.tier, label: def.label });
       const { tier, ...piDef } = def;
       pi.registerTool({
@@ -371,6 +398,7 @@ module.exports = {
   _internals: {
     buildFreedomSystemPrompt,
     DEFAULT_FREEDOM_INTRO,
+    formatSkillsSection,
     registerFreedomCommands,
     registerCompactionNotices,
     formatSessionStats,
