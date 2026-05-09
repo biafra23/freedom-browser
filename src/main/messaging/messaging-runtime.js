@@ -48,9 +48,11 @@ const state = {
   error: null,
   // channelId -> { channel, unsubscribe }
   subscriptions: new Map(),
-  // Global message handler set by IPC layer. Called on every received
-  // message across every channel.
-  globalHandler: null,
+  // Set of message listeners. Fired on every received message across every
+  // channel. Multi-listener so the IPC layer (renderer fan-out) and main-side
+  // consumers (e.g. inference-provider, peer-tools' pending-response waits)
+  // can coexist without stepping on each other.
+  listeners: new Set(),
   // Storage root (for the XMTP DB). Captured at start() time.
   dataDir: null,
   // Test seam — lets messaging-runtime.test.js inject mock implementations
@@ -274,14 +276,39 @@ async function publish(channelId, payload) {
 }
 
 /**
- * Set the global message handler. Replaces any previously-set handler.
- * The handler receives `{channelId, message}` for every received message
- * on every channel (own messages are filtered out by channel.subscribe).
+ * Register a message listener. Returns an unsubscribe function. Multiple
+ * listeners can be active concurrently — each receives every message on
+ * every channel (own messages are filtered out by channel.subscribe). A
+ * listener that throws is logged and isolated; other listeners still fire.
  *
- * @param {(arg: {channelId: string, message: object}) => void|Promise<void>} handler
+ * @param {(arg: {channelId: string, message: object}) => void|Promise<void>} listener
+ * @returns {() => void} unsubscribe
  */
-function onMessage(handler) {
-  state.globalHandler = handler || null;
+function addMessageListener(listener) {
+  if (typeof listener !== 'function') {
+    throw new TypeError('addMessageListener: listener must be a function');
+  }
+  state.listeners.add(listener);
+  return () => {
+    state.listeners.delete(listener);
+  };
+}
+
+/**
+ * Returns the cached Freedom Lobby group ID for the active identity, or
+ * null if the install hasn't completed the lobby join handshake yet (or if
+ * the cache references a different env / inboxId, in which case the lobby
+ * client will rerun the handshake on next start).
+ *
+ * @returns {string|null}
+ */
+function getLobbyChannelId() {
+  if (!state.dataDir || !state.identity) return null;
+  const cache = getLobbyClient().readLobbyCache?.(state.dataDir);
+  if (!cache?.groupId) return null;
+  if (cache.env && cache.env !== state.identity.env) return null;
+  if (cache.inboxId && cache.inboxId !== state.identity.inboxId) return null;
+  return cache.groupId;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,11 +332,13 @@ async function subscribeChannel(channel) {
   if (state.subscriptions.has(channel.id)) return;
   const channelId = channel.id;
   const unsubscribe = await channel.subscribe(async (message) => {
-    if (!state.globalHandler) return;
-    try {
-      await state.globalHandler({ channelId, message });
-    } catch (err) {
-      log.warn(`[MessagingRuntime] globalHandler(${channelId}) threw:`, err);
+    if (state.listeners.size === 0) return;
+    for (const listener of state.listeners) {
+      try {
+        await listener({ channelId, message });
+      } catch (err) {
+        log.warn(`[MessagingRuntime] listener(${channelId}) threw:`, err);
+      }
     }
   });
   state.subscriptions.set(channelId, { channel, unsubscribe });
@@ -368,7 +397,7 @@ function _resetForTesting() {
   state.identity = null;
   state.error = null;
   state.subscriptions.clear();
-  state.globalHandler = null;
+  state.listeners.clear();
   state.dataDir = null;
   state.__overrides = null;
 }
@@ -382,7 +411,8 @@ module.exports = {
   createChannel,
   getChannelMessages,
   publish,
-  onMessage,
+  addMessageListener,
+  getLobbyChannelId,
   getMessagingDataDir,
   _setOverridesForTesting,
   _resetForTesting,

@@ -56,9 +56,10 @@ function makeMockChannelMod({ existingChannels = [], openByIdImpl, createImpl } 
   };
 }
 
-function makeMockLobbyClient(impl) {
+function makeMockLobbyClient(impl, { readLobbyCacheImpl } = {}) {
   return {
     ensureLobbyMembership: jest.fn(impl || (async () => null)),
+    readLobbyCache: jest.fn(readLobbyCacheImpl || (() => null)),
   };
 }
 
@@ -294,11 +295,11 @@ describe('getChannelMessages', () => {
 });
 
 // ---------------------------------------------------------------------------
-// onMessage / global handler fanout
+// addMessageListener — multi-listener fan-out
 // ---------------------------------------------------------------------------
 
-describe('onMessage', () => {
-  test('global handler fires for messages on existing channels', async () => {
+describe('addMessageListener', () => {
+  async function setupWithChannel() {
     let capturedHandler;
     const ch = makeChannelObj({
       id: 'cX',
@@ -309,22 +310,137 @@ describe('onMessage', () => {
     });
     const xmtp = makeMockXmtpClient();
     const channelMod = makeMockChannelMod({ existingChannels: [ch] });
-    runtime._setOverridesForTesting({ xmtpClient: xmtp, channelMod });
-
-    const received = [];
-    runtime.onMessage((arg) => received.push(arg));
+    applyOverrides({ xmtp, channelMod });
 
     await runtime.start({ privateKey: '0xa', address: '0xA', dataDir: '/tmp/m' });
-    // Wait for background subscribeAllExistingChannels.
+    // Two ticks for the background subscribeAllExistingChannels.
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    expect(capturedHandler).toBeInstanceOf(Function);
-    await capturedHandler({ id: 'm1', from: 'inbox-bob', content: '{}', parsed: {} });
+    return { capturedHandler: () => capturedHandler };
+  }
 
-    expect(received).toEqual([
-      { channelId: 'cX', message: { id: 'm1', from: 'inbox-bob', content: '{}', parsed: {} } },
-    ]);
+  test('every registered listener fires for received messages', async () => {
+    const { capturedHandler } = await setupWithChannel();
+
+    const a = [];
+    const b = [];
+    runtime.addMessageListener((arg) => a.push(arg));
+    runtime.addMessageListener((arg) => b.push(arg));
+
+    await capturedHandler()({ id: 'm1', from: 'inbox-bob', content: '{}', parsed: {} });
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    expect(a[0]).toEqual({
+      channelId: 'cX',
+      message: { id: 'm1', from: 'inbox-bob', content: '{}', parsed: {} },
+    });
+  });
+
+  test('unsubscribe stops further deliveries to that listener', async () => {
+    const { capturedHandler } = await setupWithChannel();
+
+    const seen = [];
+    const unsubscribe = runtime.addMessageListener((arg) => seen.push(arg));
+
+    await capturedHandler()({ id: 'm1', from: 'inbox-bob', content: '{}', parsed: {} });
+    unsubscribe();
+    await capturedHandler()({ id: 'm2', from: 'inbox-bob', content: '{}', parsed: {} });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].message.id).toBe('m1');
+  });
+
+  test('a throwing listener does not break sibling listeners', async () => {
+    const { capturedHandler } = await setupWithChannel();
+
+    const good = [];
+    runtime.addMessageListener(() => {
+      throw new Error('boom');
+    });
+    runtime.addMessageListener((arg) => good.push(arg));
+
+    await capturedHandler()({ id: 'm1', from: 'inbox-bob', content: '{}', parsed: {} });
+
+    expect(good).toHaveLength(1);
+  });
+
+  test('rejects non-function listeners', () => {
+    expect(() => runtime.addMessageListener(null)).toThrow(TypeError);
+    expect(() => runtime.addMessageListener('not a fn')).toThrow(TypeError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getLobbyChannelId — cache reader with identity guards
+// ---------------------------------------------------------------------------
+
+describe('getLobbyChannelId', () => {
+  test('returns null before start', () => {
+    expect(runtime.getLobbyChannelId()).toBeNull();
+  });
+
+  test('returns the cached groupId when env + inboxId match', async () => {
+    const xmtp = makeMockXmtpClient();
+    const channelMod = makeMockChannelMod();
+    const lobby = makeMockLobbyClient(undefined, {
+      readLobbyCacheImpl: () => ({
+        groupId: 'lobby-id-1',
+        env: 'dev',
+        inboxId: 'inbox-0xAlice',
+      }),
+    });
+    applyOverrides({ xmtp, channelMod, lobby });
+
+    await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
+
+    expect(runtime.getLobbyChannelId()).toBe('lobby-id-1');
+  });
+
+  test('returns null when env mismatches (e.g. dev → production wallet swap)', async () => {
+    const xmtp = makeMockXmtpClient();
+    const channelMod = makeMockChannelMod();
+    const lobby = makeMockLobbyClient(undefined, {
+      readLobbyCacheImpl: () => ({
+        groupId: 'lobby-id-1',
+        env: 'production',
+        inboxId: 'inbox-0xAlice',
+      }),
+    });
+    applyOverrides({ xmtp, channelMod, lobby });
+
+    await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
+
+    expect(runtime.getLobbyChannelId()).toBeNull();
+  });
+
+  test('returns null when inboxId mismatches (e.g. wallet swap)', async () => {
+    const xmtp = makeMockXmtpClient();
+    const channelMod = makeMockChannelMod();
+    const lobby = makeMockLobbyClient(undefined, {
+      readLobbyCacheImpl: () => ({
+        groupId: 'lobby-id-1',
+        env: 'dev',
+        inboxId: 'inbox-0xCarol',
+      }),
+    });
+    applyOverrides({ xmtp, channelMod, lobby });
+
+    await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
+
+    expect(runtime.getLobbyChannelId()).toBeNull();
+  });
+
+  test('returns null when no cache exists yet', async () => {
+    const xmtp = makeMockXmtpClient();
+    const channelMod = makeMockChannelMod();
+    const lobby = makeMockLobbyClient(undefined, { readLobbyCacheImpl: () => null });
+    applyOverrides({ xmtp, channelMod, lobby });
+
+    await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
+
+    expect(runtime.getLobbyChannelId()).toBeNull();
   });
 });
 

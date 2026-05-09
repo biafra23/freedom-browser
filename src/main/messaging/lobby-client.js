@@ -259,8 +259,23 @@ async function ensureLobbyMembership(client, dataDir, env) {
   return { groupId, fromCache: false };
 }
 
+/**
+ * Read the on-disk lobby cache for callers that need the current group
+ * ID (e.g. messaging-runtime.getLobbyChannelId so peer-tools can default
+ * to broadcasting in the lobby). Returns the parsed JSON or null if no
+ * cache exists or it's unreadable. Callers must validate env / inboxId
+ * against their current identity before trusting the groupId.
+ *
+ * @param {string} dataDir
+ * @returns {{ groupId, env, inboxId, address, joinedAt } | null}
+ */
+function readLobbyCache(dataDir) {
+  return readCache(dataDir);
+}
+
 module.exports = {
   ensureLobbyMembership,
+  readLobbyCache,
   // Test seams.
   _internals: {
     cachePath,

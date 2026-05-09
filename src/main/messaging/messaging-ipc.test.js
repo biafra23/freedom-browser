@@ -20,9 +20,9 @@ jest.mock('electron', () => ({
 }));
 
 jest.mock('./messaging-runtime', () => {
-  const onMessage = jest.fn();
+  const addMessageListener = jest.fn(() => () => {});
   return {
-    onMessage,
+    addMessageListener,
     getStatus: jest.fn(() => ({ started: true, address: '0xA', inboxId: 'inbox-self' })),
     listChannels: jest.fn(async () => [{ id: 'c1', name: 'X', memberCount: 1, memberInboxIds: [] }]),
     createChannel: jest.fn(async (args) => ({
@@ -65,7 +65,8 @@ function fakeWindow() {
 beforeEach(() => {
   mockHandlers.clear();
   mockAllWindows.length = 0;
-  runtime.onMessage.mockReset();
+  runtime.addMessageListener.mockReset();
+  runtime.addMessageListener.mockImplementation(() => () => {});
   messagingIpc._resetForTesting();
 });
 
@@ -173,20 +174,20 @@ describe('registerMessagingIpc', () => {
 });
 
 // ---------------------------------------------------------------------------
-// runtime.onMessage handler — broadcasts to all windows
+// addMessageListener registration — broadcasts to all windows
 // ---------------------------------------------------------------------------
 
-describe('global onMessage broadcast', () => {
+describe('renderer fan-out listener', () => {
   test('forwards messages to every BrowserWindow', () => {
     const w1 = fakeWindow();
     const w2 = fakeWindow();
     mockAllWindows.push(w1, w2);
 
     registerMessagingIpc();
-    expect(runtime.onMessage).toHaveBeenCalledTimes(1);
-    const handler = runtime.onMessage.mock.calls[0][0];
+    expect(runtime.addMessageListener).toHaveBeenCalledTimes(1);
+    const listener = runtime.addMessageListener.mock.calls[0][0];
 
-    handler({
+    listener({
       channelId: 'cZ',
       message: {
         id: 'm5',
@@ -222,8 +223,8 @@ describe('global onMessage broadcast', () => {
     mockAllWindows.push(live, dead);
 
     registerMessagingIpc();
-    const handler = runtime.onMessage.mock.calls[0][0];
-    handler({ channelId: 'c', message: { id: 'm', from: 'x', sentAt: new Date() } });
+    const listener = runtime.addMessageListener.mock.calls[0][0];
+    listener({ channelId: 'c', message: { id: 'm', from: 'x', sentAt: new Date() } });
 
     expect(live._sends).toHaveLength(1);
     expect(dead._sends).toHaveLength(0);

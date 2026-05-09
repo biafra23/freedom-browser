@@ -77,10 +77,12 @@ function registerMessagingIpc() {
   if (registered) return;
   registered = true;
 
-  // Wire the runtime's global handler exactly once. The runtime guarantees
-  // own-message filtering via the underlying channel.subscribe(); this
-  // handler simply fans out to every renderer window.
-  runtime.onMessage(({ channelId, message }) => {
+  // Register the renderer fan-out listener. The runtime handles own-message
+  // filtering via the underlying channel.subscribe(); this listener forwards
+  // every received message to every BrowserWindow. Other listeners (e.g.
+  // inference-provider, peer-tools' pending-response waits) plug in
+  // independently via addMessageListener.
+  runtime.addMessageListener(({ channelId, message }) => {
     broadcast(IPC.MESSAGING_MESSAGE, { channelId, message: serializeMessage(message) });
   });
 
