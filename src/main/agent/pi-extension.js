@@ -55,6 +55,7 @@ const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freed
 const STANDARD_MAIN_AGENT_GUIDELINES = `- When the user asks about, summarises, or references the content of a page, call read_current_tab first. Do not infer page content from the URL or a screenshot alone.
 - For visual context (what something looks like, layout, images), use screenshot. For text, use read_current_tab. They are complementary.
 - After navigate / fill / click, the page may have changed — call read_current_tab if you need to know the new state before answering.
+- For questions about current or real-time information — weather, news, prices, scores, recent events — navigate to a search engine (e.g. https://duckduckgo.com/?q=...) and read the result. You have browser tools; do not refuse with "I can't access real-time data".
 - Be concise and direct. The user can see your tool calls in the sidebar; you do not need to narrate every step.`;
 
 function formatSkillsSection(skills) {

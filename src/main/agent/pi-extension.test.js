@@ -278,6 +278,16 @@ describe('Phase 3.1 — buildFreedomSystemPrompt', () => {
     expect(prompt).not.toMatch(/visual context/i);
   });
 
+  test('main-agent prompt explicitly enables web lookup for real-time info', () => {
+    // Pushes back on Gemma's "I can't access real-time data" reflex —
+    // the agent has navigate + read_current_tab and should reach for
+    // them on weather / news / prices questions.
+    const prompt = _internals.buildFreedomSystemPrompt({});
+    expect(prompt).toMatch(/real-time information/i);
+    expect(prompt).toMatch(/search engine/i);
+    expect(prompt).toMatch(/do not refuse/i);
+  });
+
   test('intro overrides the Freedom default lede', () => {
     const prompt = _internals.buildFreedomSystemPrompt({
       intro: 'You are an extraction subagent inside the Freedom browser.',
