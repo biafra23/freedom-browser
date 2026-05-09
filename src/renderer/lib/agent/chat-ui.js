@@ -19,7 +19,7 @@
 import { renderMarkdown } from './markdown.js';
 import { adaptMessages } from './pi-message-adapter.js';
 import { initThinkingChip, getThinkingLevel } from './composer-thinking-chip.js';
-import { initSlashPalette } from './composer-slash-palette.js';
+import { initSlashPalette, isPaletteVisible, hidePalette } from './composer-slash-palette.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -110,6 +110,18 @@ export function initChatUi() {
   const slashBtn = document.getElementById('agent-slash-btn');
   slashBtn?.addEventListener('click', () => {
     if (state.activeStreamId) return;
+    if (isPaletteVisible()) {
+      hidePalette();
+      // If the input is just the bare `/` we typed when opening, clear
+      // it — saves the user a backspace. Otherwise leave whatever they
+      // typed alone.
+      if (inputEl.value === '/') {
+        inputEl.value = '';
+        syncSendDisabled();
+        autoGrowInput();
+      }
+      return;
+    }
     inputEl.value = '/';
     inputEl.dispatchEvent(new Event('input', { bubbles: true }));
     inputEl.focus();
@@ -294,10 +306,10 @@ async function handleSubmit(e) {
   autoGrowInput();
   setComposerBusy(true);
 
-  // Insert an empty assistant message that we'll stream into.
-  const assistantMsg = { role: 'assistant', content: '' };
-  state.messages.push(assistantMsg);
-  state.activeAssistantEl = appendMessage(assistantMsg, { streaming: true });
+  // The assistant bubble is created lazily by ensureActiveAssistant()
+  // on the first chunk / thinking / tool event. Slash commands fire
+  // none of those (they post `notice` IPCs only) so no empty bubble
+  // appears for command-only turns.
 
   try {
     const result = await window.agent.startChat({
@@ -343,9 +355,21 @@ function scheduleAssistantRender() {
   }
 }
 
+// Idempotent — first call (per turn) inserts an empty assistant message
+// and its DOM bubble; subsequent calls are no-ops. Splitting bubble
+// creation out of handleSubmit lets slash commands (which produce no
+// chunks) finish without rendering an empty bubble.
+function ensureActiveAssistant() {
+  if (state.activeAssistantEl) return state.activeAssistantEl;
+  const assistantMsg = { role: 'assistant', content: '' };
+  state.messages.push(assistantMsg);
+  state.activeAssistantEl = appendMessage(assistantMsg, { streaming: true });
+  return state.activeAssistantEl;
+}
+
 function handleChunk(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
-  if (!state.activeAssistantEl) return;
+  if (!ensureActiveAssistant()) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== 'assistant') return;
   last.content += data.content;
@@ -354,7 +378,7 @@ function handleChunk(data) {
 
 function handleThinkingChunk(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
-  if (!state.activeAssistantEl) return;
+  if (!ensureActiveAssistant()) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== 'assistant') return;
   last.thinking = (last.thinking || '') + data.content;
@@ -368,7 +392,7 @@ function ensureToolCallsArray(message) {
 
 function handleToolCall(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
-  if (!state.activeAssistantEl) return;
+  if (!ensureActiveAssistant()) return;
   const last = state.messages[state.messages.length - 1];
   if (!last || last.role !== 'assistant') return;
   const record = {
@@ -404,10 +428,16 @@ function handleConsentRequest(data) {
 // No-arg commands auto-submit on pick — the user already chose; making
 // them press Enter again is friction. Commands with args land in the
 // input so the user can type them.
+//
+// We do NOT dispatch an `input` event after assigning to inputEl.value,
+// because the palette listens for `input` and would re-show itself
+// against the freshly-set `/cmd` value (the bug from Phase 6.4 follow-up
+// smoke). Call the input-derived helpers directly instead.
 function handleSlashCommandPick(cmd) {
   if (!cmd || !inputEl) return;
   inputEl.value = cmd.argsHint ? `/${cmd.name} ` : `/${cmd.name}`;
-  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  syncSendDisabled();
+  autoGrowInput();
   if (!cmd.argsHint && composerEl) {
     composerEl.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     return;
@@ -440,6 +470,11 @@ function handleDone(data) {
 }
 
 function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
+  // Errors and cancellations need a visible bubble even when no chunks
+  // ever arrived (e.g. startChat rejected before the first delta) so
+  // the user sees what happened. Slash-command turns finish without
+  // chunks and without errors — those legitimately need no bubble.
+  if (error || cancelled) ensureActiveAssistant();
   const el = state.activeAssistantEl;
   const last = state.messages[state.messages.length - 1];
 
@@ -460,7 +495,7 @@ function finalizeAssistant({ fullContent, cancelled, error, stats } = {}) {
       }
       appendMeta(el, 'cancelled');
     } else {
-      if (typeof fullContent === 'string' && fullContent && last) {
+      if (typeof fullContent === 'string' && fullContent && last?.role === 'assistant') {
         last.content = fullContent;
         const contentEl = el.querySelector('.agent-message-content');
         if (contentEl) contentEl.innerHTML = renderMarkdown(fullContent);

@@ -227,9 +227,11 @@ describe('chat-ui', () => {
       thinkingLevel: 'medium',
       activeWebContentsId: 99,
     });
+    // Assistant message is created lazily on the first chunk / tool /
+    // thinking event — no chunks have arrived yet, so only the user
+    // message is in state.messages.
     expect(mod._internals.state.messages).toEqual([
       { role: 'user', content: 'hello' },
-      { role: 'assistant', content: '' },
     ]);
     expect(mod._internals.state.activeStreamId).toBe('stream-1');
     expect(mod._internals.state.currentSessionId).toBe('/tmp/sessions/abc.jsonl');
@@ -249,13 +251,15 @@ describe('chat-ui', () => {
     expect(global.marked.parse).toHaveBeenCalledWith('Hello!');
   });
 
-  test('ignores chunks for stale streamIds', async () => {
+  test('ignores chunks for stale streamIds (no assistant bubble created)', async () => {
     const { mod, handlers, inputEl, composerEl } = await loadChatUi();
     inputEl.value = 'hi';
     composerEl.dispatch('submit', { preventDefault: jest.fn() });
     await flushMicrotasks();
     handlers.chunk({ streamId: 'stream-OTHER', content: 'X' });
-    expect(mod._internals.state.messages[1].content).toBe('');
+    // Stale chunk → ensureActiveAssistant is gated behind the active
+    // streamId check, so no assistant message is created.
+    expect(mod._internals.state.messages).toHaveLength(1);
   });
 
   test('thinking chunks accumulate on the active assistant + render a disclosure', async () => {
@@ -281,7 +285,7 @@ describe('chat-ui', () => {
     composerEl.dispatch('submit', { preventDefault: jest.fn() });
     await flushMicrotasks();
     handlers.thinking({ streamId: 'stream-OTHER', content: 'leak' });
-    expect(mod._internals.state.messages[1].thinking).toBeUndefined();
+    expect(mod._internals.state.messages).toHaveLength(1);
     expect(messagesEl.querySelector('.agent-message-thinking')).toBeFalsy();
   });
 
@@ -613,6 +617,72 @@ describe('chat-ui', () => {
 
       expect(inputEl.value).toBe('/compact');
       expect(submitHandler).toHaveBeenCalledTimes(1);
+    });
+
+    test('slash-pick does NOT dispatch an input event (would re-open the palette)', async () => {
+      const { mod, inputEl, composerEl } = await loadChatUi();
+      composerEl.addEventListener('submit', jest.fn()); // swallow the auto-submit
+      const inputHandler = jest.fn();
+      inputEl.addEventListener('input', inputHandler);
+
+      mod._internals.handleSlashCommandPick({ name: 'compact', argsHint: null });
+
+      // Must not synthesize an input event — the palette listens for one
+      // and would re-show itself against the freshly-set `/compact`.
+      expect(inputHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lazy assistant bubble', () => {
+    test('no assistant bubble appears until the first chunk / tool / thinking event', async () => {
+      const { inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = 'hello';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      const assistantBubbles = messagesEl.querySelectorAll('.agent-message.assistant');
+      expect(assistantBubbles).toHaveLength(0);
+    });
+
+    test('first chunk lazily creates the assistant bubble', async () => {
+      const { handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = 'hello';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      handlers.chunk({ streamId: 'stream-1', content: 'Hi!' });
+
+      const assistantBubbles = messagesEl.querySelectorAll('.agent-message.assistant');
+      expect(assistantBubbles).toHaveLength(1);
+    });
+
+    test('done with no chunks (slash command) leaves no assistant bubble in the message list', async () => {
+      const { mod, handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = '/compact';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      handlers.done({ streamId: 'stream-1', fullContent: '', stats: {} });
+
+      // User message stayed; no empty assistant bubble was created.
+      expect(messagesEl.querySelectorAll('.agent-message.assistant')).toHaveLength(0);
+      expect(mod._internals.state.messages).toEqual([{ role: 'user', content: '/compact' }]);
+    });
+
+    test('error result still creates a bubble so the user sees the failure', async () => {
+      const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
+      _bridge.startChat = jest.fn().mockResolvedValue({ error: 'Ollama not running' });
+      const { inputEl, composerEl, messagesEl } = await loadChatUi({
+        agent: { handlers: _handlers, bridge: _bridge },
+      });
+      inputEl.value = 'hi';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      const assistantBubbles = messagesEl.querySelectorAll('.agent-message.assistant.error');
+      expect(assistantBubbles).toHaveLength(1);
+      const contentEl = assistantBubbles[0].querySelector('.agent-message-content');
+      expect(contentEl.textContent).toContain('Ollama not running');
     });
   });
 });

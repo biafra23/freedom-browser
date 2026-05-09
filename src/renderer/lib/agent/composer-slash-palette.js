@@ -165,6 +165,14 @@ function hide() {
   visible = false;
 }
 
+export function isPaletteVisible() {
+  return visible;
+}
+
+export function hidePalette() {
+  hide();
+}
+
 function selectAndClose(cmd) {
   if (!cmd) return;
   hide();
