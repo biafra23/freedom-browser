@@ -164,9 +164,24 @@ describe('Phase 3.1 — buildFreedomSystemPrompt', () => {
     expect(prompt).toMatch(/Available tools:\n\(none\)/);
   });
 
-  test('always asserts the read-first guideline up front', () => {
+  test('always asserts the read-first guideline up front (main agent)', () => {
     const prompt = _internals.buildFreedomSystemPrompt({});
     expect(prompt).toMatch(/read_current_tab first/i);
+  });
+
+  test('isSubagent: true drops the main-agent guideline block', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({ isSubagent: true });
+    expect(prompt).not.toMatch(/read_current_tab first/i);
+    expect(prompt).not.toMatch(/visual context/i);
+  });
+
+  test('intro overrides the Freedom default lede', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({
+      intro: 'You are an extraction subagent inside the Freedom browser.',
+      isSubagent: true,
+    });
+    expect(prompt).toMatch(/extraction subagent/);
+    expect(prompt).not.toMatch(/privacy-respecting browser/);
   });
 
   test('appends current date last', () => {

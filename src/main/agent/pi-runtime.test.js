@@ -184,8 +184,41 @@ describe('createFreedomPiSession', () => {
     };
     await factory(fakePi);
     expect(fakePi.tools.map((t) => t.name).sort()).toEqual(
-      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot'].sort()
+      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot', 'spawn_subagent'].sort()
     );
+  });
+
+  test('isSubagent: true skips spawn_subagent so depth stays 1', async () => {
+    listModels.mockResolvedValue({ models: [{ name: 'gemma4:e2b' }] });
+    const toolCallContext = {
+      profile: { allowed_tool_tiers: ['local_sensitive'] },
+      sessionId: 's1',
+      webContentsId: 42,
+      onToolCall: jest.fn(),
+      requestConsent: jest.fn(),
+      onToolResult: jest.fn(),
+    };
+    await runtime.createFreedomPiSession({
+      agentDir: '/tmp/x',
+      toolCallContext,
+      isSubagent: true,
+    });
+    const loaderInstance = piMock.DefaultResourceLoader.mock.instances[0];
+    const factory = loaderInstance.opts.extensionFactories[0];
+    const fakePi = {
+      handlers: new Map(),
+      tools: [],
+      on(e, h) {
+        const list = this.handlers.get(e) ?? [];
+        list.push(h);
+        this.handlers.set(e, list);
+      },
+      registerTool(d) {
+        this.tools.push(d);
+      },
+    };
+    await factory(fakePi);
+    expect(fakePi.tools.map((t) => t.name)).not.toContain('spawn_subagent');
   });
 
   test('pre-registers the Ollama provider on the modelRegistry', async () => {

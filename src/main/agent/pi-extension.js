@@ -31,15 +31,37 @@ const { executionModeForTier } = require('./tool-tiers');
 const broker = require('./pi-broker');
 const { CONSENT } = require('./pi-broker');
 const { createBrowserTools } = require('./tools/browser-tools');
+const { createSubagentTools } = require('./subagent-tools');
+
+const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
 
 // Pi's default system prompt declares the agent a "coding assistant operating
 // inside pi" and points it at pi's docs. That mis-primes a browser agent —
 // Gemma 4 e2b in particular tries to fit user requests into a coding-assistant
 // frame and misses obvious tool-use moves like "read the page before
-// summarising it". We replace the prompt entirely with Freedom framing,
-// re-using Pi's own toolSnippets/promptGuidelines metadata so per-tool
-// usage hints (set on each ToolDefinition) still flow through.
-function buildFreedomSystemPrompt({ selectedTools = [], toolSnippets = {}, promptGuidelines = [] } = {}) {
+// summarising it". We replace the prompt entirely, re-using Pi's own
+// toolSnippets/promptGuidelines metadata so per-tool usage hints (set on
+// each ToolDefinition) still flow through.
+//
+// `intro` (optional) overrides the Freedom framing — used by subagents
+// whose specialised system prompt becomes the lede.
+//
+// `isSubagent` (optional) controls whether the main-agent "browser-aware"
+// guidelines block is added. Subagents already carry their own focused
+// guidance in their intro + promptGuidelines; the main-agent block would
+// dilute it.
+const STANDARD_MAIN_AGENT_GUIDELINES = `- When the user asks about, summarises, or references the content of a page, call read_current_tab first. Do not infer page content from the URL or a screenshot alone.
+- For visual context (what something looks like, layout, images), use screenshot. For text, use read_current_tab. They are complementary.
+- After navigate / fill / click, the page may have changed — call read_current_tab if you need to know the new state before answering.
+- Be concise and direct. The user can see your tool calls in the sidebar; you do not need to narrate every step.`;
+
+function buildFreedomSystemPrompt({
+  selectedTools = [],
+  toolSnippets = {},
+  promptGuidelines = [],
+  intro,
+  isSubagent = false,
+} = {}) {
   const visible = selectedTools.filter((name) => !!toolSnippets[name]);
   const toolsList =
     visible.length > 0
@@ -51,24 +73,30 @@ function buildFreedomSystemPrompt({ selectedTools = [], toolSnippets = {}, promp
     .map((g) => `- ${g}`)
     .join('\n');
   const today = new Date().toISOString().slice(0, 10);
-  return `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.
+  const introText = intro ?? DEFAULT_FREEDOM_INTRO;
+  const standardGuidelines = isSubagent ? '' : `${STANDARD_MAIN_AGENT_GUIDELINES}\n`;
+  return `${introText}
 
 Available tools:
 ${toolsList}
 
 Guidelines:
-- When the user asks about, summarises, or references the content of a page, call read_current_tab first. Do not infer page content from the URL or a screenshot alone.
-- For visual context (what something looks like, layout, images), use screenshot. For text, use read_current_tab. They are complementary.
-- After navigate / fill / click, the page may have changed — call read_current_tab if you need to know the new state before answering.
-- Be concise and direct. The user can see your tool calls in the sidebar; you do not need to narrate every step.
-${guidelines ? `${guidelines}\n` : ''}
+${standardGuidelines}${guidelines ? `${guidelines}\n` : ''}
 Current date: ${today}`;
 }
 
-function createFreedomExtension({ toolCallContext } = {}) {
+function createFreedomExtension({
+  toolCallContext,
+  isSubagent = false,
+  overrideSystemPrompt,
+  modelId,
+  agentDir,
+} = {}) {
   return async function freedomExtension(pi) {
     pi.on('session_start', async () => {
-      log.info('[Pi] Freedom extension bound to session');
+      log.info(
+        `[Pi] Freedom extension bound to ${isSubagent ? 'subagent' : 'session'}`
+      );
     });
 
     pi.on('session_shutdown', async (event) => {
@@ -77,7 +105,11 @@ function createFreedomExtension({ toolCallContext } = {}) {
 
     pi.on('before_agent_start', async (event) => {
       return {
-        systemPrompt: buildFreedomSystemPrompt(event.systemPromptOptions),
+        systemPrompt: buildFreedomSystemPrompt({
+          ...event.systemPromptOptions,
+          intro: overrideSystemPrompt,
+          isSubagent,
+        }),
       };
     });
 
@@ -87,8 +119,18 @@ function createFreedomExtension({ toolCallContext } = {}) {
       webContentsId: toolCallContext.webContentsId ?? null,
       Type,
     });
+    // Orchestration tools are main-agent-only — subagents never get
+    // spawn_subagent, so depth = 1 by construction.
+    const subagentTools = isSubagent
+      ? []
+      : createSubagentTools({
+          parentToolCallContext: toolCallContext,
+          modelId,
+          agentDir,
+          Type,
+        });
     const toolMeta = new Map();
-    for (const def of browserTools) {
+    for (const def of [...browserTools, ...subagentTools]) {
       toolMeta.set(def.name, { tier: def.tier, label: def.label });
       const { tier, ...piDef } = def;
       pi.registerTool({
@@ -164,4 +206,7 @@ function createFreedomExtension({ toolCallContext } = {}) {
   };
 }
 
-module.exports = { createFreedomExtension, _internals: { buildFreedomSystemPrompt } };
+module.exports = {
+  createFreedomExtension,
+  _internals: { buildFreedomSystemPrompt, DEFAULT_FREEDOM_INTRO },
+};

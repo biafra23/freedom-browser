@@ -104,6 +104,13 @@ function buildOllamaProviderConfig({ baseUrl, models }) {
  *                                          forwards consent / result
  *                                          events to the renderer.
  *                                          See `pi-extension.js`.
+ * @param {boolean} [options.isSubagent]    Phase 5: when true, the
+ *                                          extension skips registering
+ *                                          spawn_subagent so subagents
+ *                                          can't recurse (depth = 1).
+ * @param {string} [options.overrideSystemPrompt] Phase 5: subagent path
+ *                                          replaces the Freedom default
+ *                                          intro with the subagent's own.
  * @param {Function} [options.fetchImpl]    Override `fetch` for `listModels`.
  * @returns {Promise<{session, dispose, modelId}>}
  */
@@ -114,6 +121,8 @@ async function createFreedomPiSession({
   sessionPath,
   uiContext,
   toolCallContext,
+  isSubagent = false,
+  overrideSystemPrompt,
   fetchImpl,
 } = {}) {
   if (!agentDir) {
@@ -150,7 +159,13 @@ async function createFreedomPiSession({
   const cwd = agentDir;
   const settingsManager = pi.SettingsManager.create(cwd, agentDir);
 
-  const freedomExtension = createFreedomExtension({ toolCallContext });
+  const freedomExtension = createFreedomExtension({
+    toolCallContext,
+    isSubagent,
+    overrideSystemPrompt,
+    modelId: resolvedModelId,
+    agentDir,
+  });
   const resourceLoader = new pi.DefaultResourceLoader({
     cwd,
     agentDir,
