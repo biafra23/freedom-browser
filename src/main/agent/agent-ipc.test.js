@@ -27,16 +27,6 @@ jest.mock('../service-registry', () => ({
   getOllamaApiUrl: jest.fn(() => 'http://127.0.0.1:11434'),
 }));
 
-jest.mock('./agent-profiles', () => ({
-  getDefaultProfile: jest.fn(() => ({
-    id: 'default',
-    allowed_tool_tiers: [
-      'local_safe',
-      'local_sensitive',
-      'browser_mutation',
-    ],
-  })),
-}));
 
 const mockCreateSession = jest.fn();
 jest.mock('./pi-runtime', () => {

@@ -43,6 +43,18 @@ const CONSENT = Object.freeze({
 });
 const CONSENT_VALUES = Object.freeze(Object.values(CONSENT));
 
+// Freedom's default capability set: every tier the broker recognises is
+// allowed at the visibility-filter layer. Per-call gating still applies
+// based on TIER_POLICY (auto / session-once / always / never), so this is
+// not a policy weakening — just the absence of a per-user persona filter.
+// We rejected user-pickable "agent profiles" as wrong-shape for browser
+// chat (see research/pi-roadmap.md). When subagents land (Phase 5) they
+// will carry their own restricted profiles; the main agent uses this one.
+const { ALL_TIERS } = require('./tool-tiers');
+const DEFAULT_PROFILE = Object.freeze({
+  allowed_tool_tiers: Object.freeze([...ALL_TIERS]),
+});
+
 // chatId -> Set<tier>
 const sessionGrants = new Map();
 
@@ -128,5 +140,6 @@ module.exports = {
   clearSession,
   CONSENT,
   CONSENT_VALUES,
+  DEFAULT_PROFILE,
   _internals: { clearAll },
 };

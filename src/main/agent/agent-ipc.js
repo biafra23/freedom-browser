@@ -43,7 +43,6 @@ const {
 const broker = require('./pi-broker');
 const { CONSENT_VALUES } = require('./pi-broker');
 const { getBrowserToolMeta } = require('./tools/browser-tools');
-const profilesStore = require('./agent-profiles');
 
 // streamId -> {
 //   streamId, senderId, sender, sessionPath, activeWebContentsId,
@@ -386,9 +385,10 @@ async function pumpChat({ model, prompt, ctx }) {
       ...extra,
     });
 
-  // Phase 4 will redo profiles per chat; for Phase 3 we use the default
-  // profile so all five browser tools are visible.
-  const profile = profilesStore.getDefaultProfile();
+  // The main agent runs with all tier-allowlist defaults — every tier
+  // visible at the broker. Per-call consent still applies via TIER_POLICY.
+  // Specialised subagents (Phase 5) will spawn with restricted profiles.
+  const profile = broker.DEFAULT_PROFILE;
   const toolCallContext = buildToolCallContext({ ctx, profile });
 
   let session;

@@ -2,9 +2,9 @@
  * Tool Permission Tiers
  *
  * Single source of truth for the tier strings used by:
- * - agent-profiles.js (which tiers a profile is allowed to use at all)
+ * - pi-broker.js (visibility filter + per-call consent decision)
  * - tools/browser-tools.js (which tier each tool falls under)
- * - agent-permissions.js (per-call consent decision based on tier policy)
+ * - pi-extension.js (executionMode policy via TIER_EXECUTION_MODE)
  *
  * Adopted from the Pi permissions research (research/o5-pi-permissions-
  * research.md): a flat enum of risk-bracketed categories, each mapped to
