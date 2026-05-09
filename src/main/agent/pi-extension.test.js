@@ -8,6 +8,31 @@ jest.mock('electron', () => ({
   webContents: { fromId: jest.fn() },
 }));
 
+// Avoid pulling in identity-manager / balance-service / chain-registry
+// (and through them ethers + electron.app) just to verify wiring. Wallet
+// tool *behaviour* is covered in tools/wallet-tools.test.js.
+jest.mock('./tools/wallet-tools', () => {
+  const stub = (name) => ({
+    name,
+    label: name,
+    description: 'wallet stub',
+    tier: 'wallet_read',
+    promptSnippet: 'wallet stub',
+    promptGuidelines: ['stub'],
+    parameters: { type: 'object', properties: {} },
+    execute: async () => ({ content: [], details: {} }),
+  });
+  return {
+    createWalletTools: () => [
+      'wallet_get_account',
+      'wallet_get_balance',
+      'wallet_get_token_balances',
+      'wallet_list_chains',
+      'wallet_get_chain',
+    ].map(stub),
+  };
+});
+
 const log = require('../logger');
 const { createFreedomExtension } = require('./pi-extension');
 const broker = require('./pi-broker');
@@ -52,6 +77,7 @@ const ALL_TIERS_PROFILE = {
     TIERS.BROWSER_MUTATION,
     TIERS.MONEY,
     TIERS.IDENTITY_OR_SIGNING,
+    TIERS.WALLET_READ,
   ],
 };
 
@@ -118,6 +144,22 @@ describe('Phase 3 — tool registration', () => {
     }
   });
 
+  test('registers the five wallet read tools', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    const names = pi.tools.map((t) => t.name);
+    for (const expected of [
+      'wallet_get_account',
+      'wallet_get_balance',
+      'wallet_get_token_balances',
+      'wallet_list_chains',
+      'wallet_get_chain',
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
   test('skips tab tools when hostWebContentsId is missing (no host renderer)', async () => {
     const ctx = makeContext({ hostWebContentsId: undefined });
     const pi = makeFakePiApi();
@@ -172,7 +214,7 @@ describe('Phase 3 — tool registration', () => {
     expect(pi.setActiveCalls).toHaveLength(1);
     // For the all-tiers default profile we expect everything pi-extension
     // registered to be enabled — the five browser tools, four tab tools,
-    // read_skill, and spawn_subagent.
+    // read_skill, the five wallet read tools, and spawn_subagent.
     expect(pi.setActiveCalls[0].sort()).toEqual(
       [
         'click',
@@ -186,6 +228,11 @@ describe('Phase 3 — tool registration', () => {
         'screenshot',
         'spawn_subagent',
         'switch_tab',
+        'wallet_get_account',
+        'wallet_get_balance',
+        'wallet_get_chain',
+        'wallet_get_token_balances',
+        'wallet_list_chains',
       ].sort()
     );
   });

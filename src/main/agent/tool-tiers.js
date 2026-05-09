@@ -20,6 +20,13 @@ const TIERS = Object.freeze({
   MONEY: 'money',
   IDENTITY_OR_SIGNING: 'identity_or_signing',
   BROWSER_MUTATION: 'browser_mutation',
+  // Read-only wallet surface: active address, balances, chain registry.
+  // No private keys, no signing, no chain-changing — those land in 7d.3+
+  // under IDENTITY_OR_SIGNING / MONEY. Auto-approved because the data is
+  // public chain state plus the user's own (already-publicly-tied)
+  // address; consent prompts on every balance read would just train
+  // users to click-through.
+  WALLET_READ: 'wallet_read',
   BLOCKED: 'blocked',
 });
 
@@ -49,6 +56,7 @@ const TIER_POLICY = Object.freeze({
   // proves too coarse, split into BROWSER_NAVIGATION (session-once) +
   // BROWSER_MUTATION (always) per the Pi-permissions research.
   [TIERS.BROWSER_MUTATION]: 'session-once',
+  [TIERS.WALLET_READ]: 'auto',
   [TIERS.BLOCKED]: 'never',
 });
 

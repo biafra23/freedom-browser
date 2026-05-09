@@ -33,6 +33,7 @@ const { CONSENT } = require('./pi-broker');
 const { createBrowserTools } = require('./tools/browser-tools');
 const { createSkillTools } = require('./tools/skill-tools');
 const { createTabTools } = require('./tools/tab-tools');
+const { createWalletTools } = require('./tools/wallet-tools');
 const { createSubagentTools } = require('./subagent-tools');
 
 const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.`;
@@ -170,6 +171,12 @@ function createFreedomExtension({
     // currently. User-defined subagents (later) can opt in via
     // their tier filter.
     const skillTools = createSkillTools({ agentDir, Type });
+    // Wallet read tools have no per-session binding — they call into
+    // identity-manager / balance-service / chains directly. Visible to
+    // any agent (main or future subagent) whose profile permits
+    // WALLET_READ; current v1 subagent profiles do not, so only the
+    // main agent sees them.
+    const walletTools = createWalletTools({ Type });
     // Orchestration tools are main-agent-only — subagents never get
     // spawn_subagent, so depth = 1 by construction.
     const subagentTools = isSubagent
@@ -181,7 +188,13 @@ function createFreedomExtension({
           Type,
         });
     const toolMeta = new Map();
-    for (const def of [...browserTools, ...tabTools, ...skillTools, ...subagentTools]) {
+    for (const def of [
+      ...browserTools,
+      ...tabTools,
+      ...skillTools,
+      ...walletTools,
+      ...subagentTools,
+    ]) {
       toolMeta.set(def.name, { tier: def.tier, label: def.label });
       const { tier, ...piDef } = def;
       pi.registerTool({

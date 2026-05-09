@@ -159,6 +159,45 @@ async function getAllBalances(address) {
 }
 
 /**
+ * Get ERC-20 token balances for an address on a single chain. Skips the
+ * native token (callers should use `getNativeBalance` for that). Failed
+ * per-token fetches are logged and dropped from the result rather than
+ * rejecting the whole call — mirrors `getAllBalances`'s best-effort shape
+ * without its persistent-cache machinery (this helper is used by the
+ * agent tool surface, where the wallet sidebar's cache isn't relevant).
+ *
+ * @param {string} address
+ * @param {number} chainId
+ * @returns {Promise<Array<{tokenAddress: string, symbol: string, decimals: number, formatted: string, raw: string}>>}
+ */
+async function getTokenBalancesForChain(address, chainId) {
+  const tokens = getTokens(chainId);
+  const tasks = [];
+  for (const tokenInfo of Object.values(tokens)) {
+    if (tokenInfo.address === null) continue;
+    tasks.push(
+      getTokenBalance(address, tokenInfo.address, chainId, tokenInfo)
+        .then((b) => ({
+          tokenAddress: tokenInfo.address,
+          symbol: b.symbol,
+          decimals: b.decimals,
+          formatted: b.formatted,
+          raw: b.raw,
+        }))
+        .catch((err) => {
+          console.error(
+            `[BalanceService] ${tokenInfo.symbol} balance error on chain ${chainId}:`,
+            err.message
+          );
+          return null;
+        })
+    );
+  }
+  const results = await Promise.all(tasks);
+  return results.filter((r) => r !== null);
+}
+
+/**
  * Get balances with cache-first strategy
  * Returns cached data immediately if available, with flag indicating source.
  * Optionally fetches fresh data in background.
@@ -240,6 +279,7 @@ function formatBalanceForDisplay(formatted, maxDecimals = 4) {
 module.exports = {
   getNativeBalance,
   getTokenBalance,
+  getTokenBalancesForChain,
   getAllBalances,
   getBalancesWithCache,
   clearBalanceCache,
