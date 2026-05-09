@@ -32,6 +32,39 @@ const broker = require('./pi-broker');
 const { CONSENT } = require('./pi-broker');
 const { createBrowserTools } = require('./tools/browser-tools');
 
+// Pi's default system prompt declares the agent a "coding assistant operating
+// inside pi" and points it at pi's docs. That mis-primes a browser agent —
+// Gemma 4 e2b in particular tries to fit user requests into a coding-assistant
+// frame and misses obvious tool-use moves like "read the page before
+// summarising it". We replace the prompt entirely with Freedom framing,
+// re-using Pi's own toolSnippets/promptGuidelines metadata so per-tool
+// usage hints (set on each ToolDefinition) still flow through.
+function buildFreedomSystemPrompt({ selectedTools = [], toolSnippets = {}, promptGuidelines = [] } = {}) {
+  const visible = selectedTools.filter((name) => !!toolSnippets[name]);
+  const toolsList =
+    visible.length > 0
+      ? visible.map((name) => `- ${name}: ${toolSnippets[name]}`).join('\n')
+      : '(none)';
+  const guidelines = promptGuidelines
+    .map((g) => g.trim())
+    .filter(Boolean)
+    .map((g) => `- ${g}`)
+    .join('\n');
+  const today = new Date().toISOString().slice(0, 10);
+  return `You are an AI assistant integrated into the Freedom browser, a privacy-respecting browser for the decentralised web. You help the user by working with their currently active browser tab through a small set of tools.
+
+Available tools:
+${toolsList}
+
+Guidelines:
+- When the user asks about, summarises, or references the content of a page, call read_current_tab first. Do not infer page content from the URL or a screenshot alone.
+- For visual context (what something looks like, layout, images), use screenshot. For text, use read_current_tab. They are complementary.
+- After navigate / fill / click, the page may have changed — call read_current_tab if you need to know the new state before answering.
+- Be concise and direct. The user can see your tool calls in the sidebar; you do not need to narrate every step.
+${guidelines ? `${guidelines}\n` : ''}
+Current date: ${today}`;
+}
+
 function createFreedomExtension({ toolCallContext } = {}) {
   return async function freedomExtension(pi) {
     pi.on('session_start', async () => {
@@ -40,6 +73,12 @@ function createFreedomExtension({ toolCallContext } = {}) {
 
     pi.on('session_shutdown', async (event) => {
       log.info(`[Pi] Freedom extension shutting down (reason: ${event.reason})`);
+    });
+
+    pi.on('before_agent_start', async (event) => {
+      return {
+        systemPrompt: buildFreedomSystemPrompt(event.systemPromptOptions),
+      };
     });
 
     if (!toolCallContext) return; // Phase 1 / Phase 2 path: no tool wiring.
@@ -125,4 +164,4 @@ function createFreedomExtension({ toolCallContext } = {}) {
   };
 }
 
-module.exports = { createFreedomExtension };
+module.exports = { createFreedomExtension, _internals: { buildFreedomSystemPrompt } };

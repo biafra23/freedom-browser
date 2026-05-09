@@ -52,6 +52,31 @@ describe('tool catalog', () => {
     }
   });
 
+  test('every tool ships a promptSnippet (Pi system-prompt visibility)', () => {
+    const tools = makeTools();
+    for (const t of Object.values(tools)) {
+      expect(typeof t.promptSnippet).toBe('string');
+      expect(t.promptSnippet.length).toBeGreaterThan(5);
+    }
+  });
+
+  test('every tool ships at least one promptGuideline (usage hint)', () => {
+    const tools = makeTools();
+    for (const t of Object.values(tools)) {
+      expect(Array.isArray(t.promptGuidelines)).toBe(true);
+      expect(t.promptGuidelines.length).toBeGreaterThan(0);
+      for (const guideline of t.promptGuidelines) {
+        expect(typeof guideline).toBe('string');
+      }
+    }
+  });
+
+  test('read_current_tab guideline tells the model to read first', () => {
+    const { read_current_tab: tool } = makeTools();
+    const joined = tool.promptGuidelines.join(' ');
+    expect(joined).toMatch(/read_current_tab first|read.*page|do not infer/i);
+  });
+
   test('reads-and-screenshot are local_sensitive; mutations are browser_mutation', () => {
     const tools = makeTools();
     expect(tools.read_current_tab.tier).toBe(TIERS.LOCAL_SENSITIVE);

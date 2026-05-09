@@ -95,6 +95,12 @@ function createBrowserTools({ webContentsId, Type }) {
       "Read the visible text of the user's currently active browser tab. " +
       'Returns up to 32k characters of plain text, no markup.',
     tier: TOOL_TIER_BY_NAME.read_current_tab,
+    promptSnippet:
+      "fetch the visible text of the user's current browser tab",
+    promptGuidelines: [
+      'When the user asks about, summarises, quotes, or references the current page, call read_current_tab first.',
+      'Do not infer page content from the URL or a screenshot alone — read the text.',
+    ],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params) {
       const wc = getActiveWebContents(webContentsId);
@@ -115,6 +121,10 @@ function createBrowserTools({ webContentsId, Type }) {
     description:
       'Load a URL into the active browser tab. Accepts http/https/bzz/ipfs/ipns/rad and ENS-style hosts.',
     tier: TOOL_TIER_BY_NAME.navigate,
+    promptSnippet: 'load a URL in the active tab',
+    promptGuidelines: [
+      'After navigating, the page text is available via read_current_tab — call it before answering questions about the new page.',
+    ],
     parameters: Type.Object({
       url: Type.String({
         minLength: 1,
@@ -142,6 +152,10 @@ function createBrowserTools({ webContentsId, Type }) {
       'Click the first element matching the given CSS selector in the active tab. ' +
       'Returns whether an element was found and clicked.',
     tier: TOOL_TIER_BY_NAME.click,
+    promptSnippet: 'click an element in the active tab by CSS selector',
+    promptGuidelines: [
+      'If you do not know the page structure, call read_current_tab first to find a stable selector.',
+    ],
     parameters: Type.Object({
       selector: Type.String({ minLength: 1, maxLength: 500 }),
     }),
@@ -164,6 +178,10 @@ function createBrowserTools({ webContentsId, Type }) {
     description:
       'Set the value of the first form input matching the given CSS selector and dispatch input/change events.',
     tier: TOOL_TIER_BY_NAME.fill,
+    promptSnippet: 'set the value of a form input in the active tab',
+    promptGuidelines: [
+      'After filling a form, you usually need to click a submit button or another control.',
+    ],
     parameters: Type.Object({
       selector: Type.String({ minLength: 1, maxLength: 500 }),
       value: Type.String({ maxLength: 10_000 }),
@@ -189,6 +207,10 @@ function createBrowserTools({ webContentsId, Type }) {
     description:
       'Capture the visible portion of the active tab as a JPEG image the model can see.',
     tier: TOOL_TIER_BY_NAME.screenshot,
+    promptSnippet: 'capture an image of the active tab so you can see it',
+    promptGuidelines: [
+      'Use screenshot when the user wants visual context (layout, images, what something looks like). For text content, use read_current_tab.',
+    ],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params) {
       const wc = getActiveWebContents(webContentsId);

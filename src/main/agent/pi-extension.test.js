@@ -48,11 +48,15 @@ beforeEach(() => {
 });
 
 describe('lifecycle hooks (Phase 1 path)', () => {
-  test('returns a factory that registers session_start + session_shutdown', async () => {
+  test('without toolCallContext registers lifecycle + before_agent_start (system-prompt override) only', async () => {
     const factory = createFreedomExtension();
     const pi = makeFakePiApi();
     await factory(pi);
-    expect([...pi.handlers.keys()].sort()).toEqual(['session_shutdown', 'session_start']);
+    expect([...pi.handlers.keys()].sort()).toEqual([
+      'before_agent_start',
+      'session_shutdown',
+      'session_start',
+    ]);
   });
 
   test('does not register tools or tool hooks without toolCallContext', async () => {
@@ -113,6 +117,61 @@ describe('Phase 3 — tool registration', () => {
     await createFreedomExtension({ toolCallContext: ctx })(pi);
     expect(pi.handlers.has('tool_call')).toBe(true);
     expect(pi.handlers.has('tool_result')).toBe(true);
+  });
+
+  test('registers a before_agent_start hook that overrides the system prompt', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({ toolCallContext: ctx })(pi);
+    expect(pi.handlers.has('before_agent_start')).toBe(true);
+    const hook = pi.handlers.get('before_agent_start')[0];
+    const result = await hook({
+      systemPromptOptions: {
+        selectedTools: ['read_current_tab', 'navigate'],
+        toolSnippets: {
+          read_current_tab: 'fetch the visible text',
+          navigate: 'load a URL',
+        },
+        promptGuidelines: ['Be concise.'],
+      },
+    });
+    expect(result.systemPrompt).toMatch(/Freedom browser/);
+    expect(result.systemPrompt).toMatch(/read_current_tab.*fetch the visible text/);
+    expect(result.systemPrompt).toMatch(/navigate.*load a URL/);
+    expect(result.systemPrompt).toMatch(/Be concise\./);
+    // Pi's coding-agent intro must NOT survive — that was the whole point.
+    expect(result.systemPrompt).not.toMatch(/coding assistant|pi documentation/i);
+  });
+});
+
+describe('Phase 3.1 — buildFreedomSystemPrompt', () => {
+  const { _internals } = require('./pi-extension');
+
+  test('omits tools that have no promptSnippet', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({
+      selectedTools: ['read_current_tab', 'unknown_thing'],
+      toolSnippets: { read_current_tab: 'fetch text' },
+    });
+    expect(prompt).toMatch(/read_current_tab: fetch text/);
+    expect(prompt).not.toMatch(/unknown_thing/);
+  });
+
+  test('renders "(none)" when no tools have snippets', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({
+      selectedTools: ['x'],
+      toolSnippets: {},
+    });
+    expect(prompt).toMatch(/Available tools:\n\(none\)/);
+  });
+
+  test('always asserts the read-first guideline up front', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({});
+    expect(prompt).toMatch(/read_current_tab first/i);
+  });
+
+  test('appends current date last', () => {
+    const prompt = _internals.buildFreedomSystemPrompt({});
+    expect(prompt).toMatch(/Current date: \d{4}-\d{2}-\d{2}\s*$/);
   });
 });
 
