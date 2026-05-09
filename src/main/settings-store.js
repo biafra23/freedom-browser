@@ -55,6 +55,13 @@ const DEFAULT_SETTINGS = {
   // models via the AI settings page; chat-ui falls back if the chosen
   // model isn't installed (e.g. user uninstalled it from Ollama).
   aiSelectedModel: null,
+  // Distributed inference provider mode. When true, this install will
+  // serve `inference:request` envelopes received in any channel by
+  // running the requested model through the local Ollama. When the
+  // toggle is on, ANY peer in a shared channel (notably the global
+  // Freedom Lobby) can drive inference on this machine — silent serve,
+  // no per-request consent. Off by default.
+  aiSharedInferenceEnabled: false,
   beeNodeMode: 'ultraLight',
   startBeeAtLaunch: true,
   startIpfsAtLaunch: true,

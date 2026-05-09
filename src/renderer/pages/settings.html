@@ -879,6 +879,18 @@
                 <select id="ai-selected-model"></select>
               </div>
             </div>
+            <div class="row sub" id="ai-shared-inference-row">
+              <div class="row-body">
+                <p class="row-label">Share my Ollama with Freedom Lobby peers</p>
+                <p class="row-help">When on, anyone in the global Freedom Lobby can run inference on your machine using your local models. Useful for the distributed-inference demo. Off by default.</p>
+              </div>
+              <div class="row-control">
+                <label class="toggle">
+                  <input type="checkbox" id="ai-shared-inference" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
           </div>
 
           <h2 class="section-title" style="margin-top: 32px">Models</h2>
@@ -939,6 +951,7 @@
         startOllama: $('start-ollama-at-launch'),
         localAIModelsList: $('local-ai-models-list'),
         aiSelectedModel: $('ai-selected-model'),
+        aiSharedInference: $('ai-shared-inference'),
         autoUpdate: $('auto-update'),
       };
 
@@ -1320,6 +1333,7 @@
         localAIInstalledModels: [...installedSimulated],
         localAIDisabledModels: [...disabledModels],
         aiSelectedModel: fields.aiSelectedModel.value || null,
+        aiSharedInferenceEnabled: fields.aiSharedInference.checked,
         autoUpdate: fields.autoUpdate.checked,
         enableEnsCustomRpc: fields.enableEnsCustomRpc.checked,
         ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
@@ -1354,6 +1368,7 @@
         // pre-select the persisted choice. Async — fire-and-forget so it
         // doesn't block the rest of the form from rendering.
         populateModelDropdown(settings.aiSelectedModel || null);
+        fields.aiSharedInference.checked = settings.aiSharedInferenceEnabled === true;
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.enableEnsCustomRpc.checked = settings.enableEnsCustomRpc === true;
         fields.ensRpcUrl.value = settings.ensRpcUrl || '';
@@ -1543,6 +1558,7 @@
       fields.enableLocalAI.addEventListener('change', save);
       fields.startOllama.addEventListener('change', save);
       fields.aiSelectedModel.addEventListener('change', save);
+      fields.aiSharedInference.addEventListener('change', save);
 
       // Build the Default-model <select>. Pulls installed models from
       // the running Ollama daemon via window.agent.getStatus(); pre-

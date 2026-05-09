@@ -15,6 +15,9 @@ const crypto = require('crypto');
 const IPC = require('../shared/ipc-channels');
 const messagingRuntime = require('./messaging/messaging-runtime');
 const messagingIpc = require('./messaging/messaging-ipc');
+const inferenceProvider = require('./messaging/inference-provider');
+const { loadSettings } = require('./settings-store');
+const { getOllamaApiUrl } = require('./service-registry');
 
 // Identity module - loaded lazily
 let identityModule = null;
@@ -251,6 +254,7 @@ async function lockVault() {
   console.log('[IdentityManager] Vault locked');
 
   try {
+    inferenceProvider.stop();
     await messagingRuntime.stop();
     messagingIpc.emitStatusUpdate();
   } catch (err) {
@@ -281,6 +285,21 @@ async function startMessagingForCurrentIdentity() {
     dataDir,
     env,
   });
+  // Boot the distributed-inference provider listener alongside messaging.
+  // Idempotent — start() is a no-op if already running. The aiSharedInferenceEnabled
+  // toggle is read per-message inside the listener, so flipping it in
+  // settings takes effect immediately without restarting messaging.
+  if (status?.started) {
+    try {
+      inferenceProvider.start({
+        runtime: messagingRuntime,
+        loadSettings,
+        getOllamaApiUrl,
+      });
+    } catch (err) {
+      console.warn('[IdentityManager] inference-provider start failed:', err?.message || err);
+    }
+  }
   messagingIpc.emitStatusUpdate();
   return status;
 }
