@@ -16,7 +16,7 @@
  * that make sense in a browser chat context. TUI-only ones (login,
  * logout, hotkeys, quit, scoped-models, reload) and ones already
  * covered by dedicated UI (model dropdown, + New chat) are omitted.
- * Phase 7 (skills) will extend dynamically via pi.getCommands().
+ * Skills support will extend this dynamically via `pi.getCommands()`.
  */
 
 const COMMANDS = [
@@ -56,19 +56,21 @@ const SLASH_QUERY_RE = /^\/(\w*)$/;
 
 let popoverEl = null;
 let inputEl = null;
+let onSelectCb = null;
 let optionEls = [];
 let visible = false;
 let selectedIdx = -1;
 
 export const _internals = { COMMANDS };
 
-export function initSlashPalette({ popover, input } = {}) {
+export function initSlashPalette({ popover, input, onSelect } = {}) {
   if (!popover || !input) return;
   // Singleton — re-init would double-bind the input and orphan the
   // prior option DOM.
   if (popoverEl) return;
   popoverEl = popover;
   inputEl = input;
+  onSelectCb = typeof onSelect === 'function' ? onSelect : null;
 
   inputEl.addEventListener('input', refresh);
   // Capture phase so we intercept Enter / arrows before the composer's
@@ -129,7 +131,7 @@ function render(matches) {
     descEl.textContent = cmd.description;
 
     opt.append(head, descEl);
-    opt.addEventListener('click', () => insert(cmd));
+    opt.addEventListener('click', () => selectAndClose(cmd));
     opt.addEventListener('mouseenter', () => setSelected(i));
     popoverEl.appendChild(opt);
     optionEls.push(opt);
@@ -163,18 +165,10 @@ function hide() {
   visible = false;
 }
 
-function insert(cmd) {
-  if (!cmd || !inputEl) return;
-  // Trailing space only when args are expected — keeps no-arg commands
-  // (compact, clone, copy, session) clean to submit with one Enter.
-  inputEl.value = cmd.argsHint ? `/${cmd.name} ` : `/${cmd.name}`;
-  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+function selectAndClose(cmd) {
+  if (!cmd) return;
   hide();
-  inputEl.focus?.();
-  if (typeof inputEl.setSelectionRange === 'function') {
-    const pos = inputEl.value.length;
-    inputEl.setSelectionRange(pos, pos);
-  }
+  onSelectCb?.(cmd);
 }
 
 function handleKeydown(e) {
@@ -194,7 +188,7 @@ function handleKeydown(e) {
     e.stopImmediatePropagation();
     const cmdName = optionEls[selectedIdx].dataset.cmd;
     const cmd = COMMANDS.find((c) => c.name === cmdName);
-    insert(cmd);
+    selectAndClose(cmd);
   } else if (e.key === 'Escape') {
     e.preventDefault();
     e.stopImmediatePropagation();

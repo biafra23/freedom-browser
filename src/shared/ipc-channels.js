@@ -201,6 +201,10 @@ module.exports = {
   AGENT_CHAT_TOOL_RESULT: 'agent:chat:tool-result',
   AGENT_CHAT_CONSENT_REQUEST: 'agent:chat:consent-request',
   AGENT_CHAT_CONSENT: 'agent:chat:consent',
+  // Out-of-band notice from main → renderer (slash command output, future
+  // compaction indicators, errors). Distinct from CHUNK so the renderer
+  // can render notices as system bubbles instead of assistant prose.
+  AGENT_CHAT_NOTICE: 'agent:chat:notice',
 
   // Agent sessions (Pi-backed JSONL files; `id` is the file path)
   AGENT_SESSION_LIST: 'agent:session:list',

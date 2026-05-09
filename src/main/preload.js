@@ -455,6 +455,11 @@ contextBridge.exposeInMainWorld('agent', {
     ipcRenderer.on('agent:chat:consent-request', handler);
     return () => ipcRenderer.removeListener('agent:chat:consent-request', handler);
   },
+  onChatNotice: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('agent:chat:notice', handler);
+    return () => ipcRenderer.removeListener('agent:chat:notice', handler);
+  },
   // Sessions are Pi JSONL files; the `id` field returned here is the
   // absolute file path. The renderer treats it as an opaque token.
   listSessions: (limit) => ipcRenderer.invoke('agent:session:list', { limit }),

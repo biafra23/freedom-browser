@@ -17,17 +17,16 @@ const loadPalette = async () => {
   inputEl.value = '';
   inputEl.focus = jest.fn();
   inputEl.setSelectionRange = jest.fn();
-  // Tie the existing dispatch fake to the addEventListener handlers map:
-  // the palette dispatches 'input' to drive itself + the host listeners.
   const document = createDocument({ body: createElement('body') });
   document.body.appendChild(popoverEl);
   document.body.appendChild(inputEl);
   global.document = document;
   global.Event = FakeEvent;
 
+  const onSelect = jest.fn();
   const mod = await import('./composer-slash-palette.js');
-  mod.initSlashPalette({ popover: popoverEl, input: inputEl });
-  return { mod, popoverEl, inputEl };
+  mod.initSlashPalette({ popover: popoverEl, input: inputEl, onSelect });
+  return { mod, popoverEl, inputEl, onSelect };
 };
 
 const typeAndDispatch = (inputEl, value) => {
@@ -91,28 +90,24 @@ describe('composer-slash-palette', () => {
     expect(popoverEl.classList.contains('hidden')).toBe(true);
   });
 
-  test('clicking a command that takes args inserts /<name> with trailing space', async () => {
-    const { popoverEl, inputEl } = await loadPalette();
+  test('clicking an option calls onSelect with the chosen command and hides the palette', async () => {
+    const { popoverEl, inputEl, onSelect } = await loadPalette();
     typeAndDispatch(inputEl, '/');
 
     const exportOpt = popoverEl.querySelector('[data-cmd="export"]');
     exportOpt.dispatch('click');
 
-    expect(inputEl.value).toBe('/export ');
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'export', argsHint: '[path]' }));
     expect(popoverEl.classList.contains('hidden')).toBe(true);
-    expect(inputEl.focus).toHaveBeenCalled();
-    expect(inputEl.setSelectionRange).toHaveBeenCalledWith(8, 8);
   });
 
-  test('clicking a no-arg command inserts /<name> without trailing space', async () => {
-    const { popoverEl, inputEl } = await loadPalette();
+  test('clicking a no-arg command also calls onSelect (the host owns insert vs auto-submit)', async () => {
+    const { popoverEl, inputEl, onSelect } = await loadPalette();
     typeAndDispatch(inputEl, '/');
 
-    const compactOpt = popoverEl.querySelector('[data-cmd="compact"]');
-    compactOpt.dispatch('click');
+    popoverEl.querySelector('[data-cmd="compact"]').dispatch('click');
 
-    expect(inputEl.value).toBe('/compact');
-    expect(popoverEl.classList.contains('hidden')).toBe(true);
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'compact', argsHint: null }));
   });
 
   test('arrow-down advances the selection and arrow-up wraps backwards', async () => {
@@ -137,8 +132,8 @@ describe('composer-slash-palette', () => {
     expect(popoverEl.children[2].classList.contains('selected')).toBe(true);
   });
 
-  test('Enter on a highlighted option inserts it and stops propagation', async () => {
-    const { popoverEl, inputEl } = await loadPalette();
+  test('Enter on a highlighted option calls onSelect and stops propagation', async () => {
+    const { popoverEl, inputEl, onSelect } = await loadPalette();
     typeAndDispatch(inputEl, '/c');
     keydown(inputEl, 'ArrowDown'); // select clone
 
@@ -149,19 +144,19 @@ describe('composer-slash-palette', () => {
     };
     inputEl.dispatch('keydown', evt);
 
-    expect(inputEl.value).toBe('/clone');
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'clone' }));
     expect(evt.preventDefault).toHaveBeenCalled();
     expect(evt.stopImmediatePropagation).toHaveBeenCalled();
     expect(popoverEl.classList.contains('hidden')).toBe(true);
   });
 
-  test('Tab also inserts the highlighted option', async () => {
-    const { popoverEl, inputEl } = await loadPalette();
+  test('Tab also calls onSelect for the highlighted option', async () => {
+    const { popoverEl, inputEl, onSelect } = await loadPalette();
     typeAndDispatch(inputEl, '/co');
 
     keydown(inputEl, 'Tab');
 
-    expect(inputEl.value).toBe('/compact');
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'compact' }));
     expect(popoverEl.classList.contains('hidden')).toBe(true);
   });
 

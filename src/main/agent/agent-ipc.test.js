@@ -9,6 +9,9 @@ jest.mock('electron', () => {
       on: jest.fn(),
       getPath: jest.fn(() => '/tmp/freedom-test-userdata'),
     },
+    clipboard: {
+      writeText: jest.fn(),
+    },
   };
 });
 
@@ -564,6 +567,50 @@ describe('toolCallContext (Phase 3 wiring)', () => {
     expect(sends[0][1]).toEqual(
       expect.objectContaining({ callId: 'c1', status: 'allowed' })
     );
+  });
+
+  test('onNotice forwards info notices to AGENT_CHAT_NOTICE without touching the clipboard', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    const { streamId } = await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    sender.send.mockClear();
+    toolCallContext.onNotice({ kind: 'info', text: 'Compaction started.' });
+
+    const notices = sender.send.mock.calls.filter((c) => c[0] === IPC.AGENT_CHAT_NOTICE);
+    expect(notices).toHaveLength(1);
+    expect(notices[0][1]).toEqual({
+      streamId,
+      kind: 'info',
+      text: 'Compaction started.',
+    });
+  });
+
+  test('onNotice with kind=clipboard writes via electron clipboard and forwards a confirmation', async () => {
+    const { clipboard } = require('electron');
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    sender.send.mockClear();
+    toolCallContext.onNotice({ kind: 'clipboard', payload: 'hello world', text: 'Copied.' });
+
+    expect(clipboard.writeText).toHaveBeenCalledWith('hello world');
+    const notices = sender.send.mock.calls.filter((c) => c[0] === IPC.AGENT_CHAT_NOTICE);
+    expect(notices[0][1].kind).toBe('clipboard');
+    expect(notices[0][1].text).toBe('Copied.');
   });
 
   test('dropStream resolves outstanding consents as deny', async () => {

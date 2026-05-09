@@ -159,12 +159,19 @@ async function createFreedomPiSession({
   const cwd = agentDir;
   const settingsManager = pi.SettingsManager.create(cwd, agentDir);
 
+  // Captured below once `createAgentSession` returns, so command
+  // handlers registered inside the extension factory can reach the
+  // live AgentSession (Pi exposes a few command-relevant methods like
+  // `getLastAssistantText` / `exportToHtml` only on AgentSession).
+  const sessionRef = { session: null };
+
   const freedomExtension = createFreedomExtension({
     toolCallContext,
     isSubagent,
     overrideSystemPrompt,
     modelId: resolvedModelId,
     agentDir,
+    sessionRef,
   });
   const resourceLoader = new pi.DefaultResourceLoader({
     cwd,
@@ -211,10 +218,13 @@ async function createFreedomPiSession({
     onError: (err) => log.error('[Pi] extension error', err),
   });
 
+  sessionRef.session = session;
+
   return {
     session,
     modelId: resolvedModelId,
     dispose: () => {
+      sessionRef.session = null;
       try {
         session.dispose();
       } catch (err) {

@@ -105,6 +105,14 @@ export function initChatUi() {
   initSlashPalette({
     popover: document.getElementById('agent-composer-popover'),
     input: inputEl,
+    onSelect: handleSlashCommandPick,
+  });
+  const slashBtn = document.getElementById('agent-slash-btn');
+  slashBtn?.addEventListener('click', () => {
+    if (state.activeStreamId) return;
+    inputEl.value = '/';
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+    inputEl.focus();
   });
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
@@ -121,6 +129,7 @@ export function initChatUi() {
   window.agent.onToolCall((data) => handleToolCall(data));
   window.agent.onToolResult((data) => handleToolResult(data));
   window.agent.onConsentRequest((data) => handleConsentRequest(data));
+  window.agent.onChatNotice?.((data) => handleNotice(data));
 
   document.addEventListener('sidebar-opened', (event) => {
     if (event.detail?.id === 'ai-sidebar') refreshStatus();
@@ -390,6 +399,34 @@ function handleToolResult(data) {
 function handleConsentRequest(data) {
   if (!state.activeStreamId || data.streamId !== state.activeStreamId) return;
   updateToolCallCardForConsent(data.callId, data);
+}
+
+// No-arg commands auto-submit on pick — the user already chose; making
+// them press Enter again is friction. Commands with args land in the
+// input so the user can type them.
+function handleSlashCommandPick(cmd) {
+  if (!cmd || !inputEl) return;
+  inputEl.value = cmd.argsHint ? `/${cmd.name} ` : `/${cmd.name}`;
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  if (!cmd.argsHint && composerEl) {
+    composerEl.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    return;
+  }
+  inputEl.focus?.();
+  if (typeof inputEl.setSelectionRange === 'function') {
+    const pos = inputEl.value.length;
+    inputEl.setSelectionRange(pos, pos);
+  }
+}
+
+function handleNotice(data) {
+  if (!data?.text || !messagesEl) return;
+  const kind = data.kind === 'error' ? 'error' : 'info';
+  const el = document.createElement('div');
+  el.className = `agent-notice agent-notice-${kind}`;
+  el.textContent = data.text;
+  messagesEl.appendChild(el);
+  scrollToBottom();
 }
 
 function handleDone(data) {
@@ -725,4 +762,4 @@ function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-export const _internals = { state, hydrateFromSession };
+export const _internals = { state, hydrateFromSession, handleSlashCommandPick };

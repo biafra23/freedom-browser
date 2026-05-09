@@ -27,7 +27,7 @@
  * sessionPath restores history automatically via Pi's session context.
  */
 
-const { ipcMain, app } = require('electron');
+const { ipcMain, app, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const log = require('../logger');
@@ -383,6 +383,24 @@ function buildToolCallContext({ ctx, profile }) {
         callId,
         status,
         result,
+      });
+    },
+
+    // Out-of-band notice from the extension (slash command output, future
+    // compaction events). `kind` drives renderer rendering; `clipboard`
+    // is special-cased here so the main process owns the actual write.
+    onNotice: ({ kind, text, payload } = {}) => {
+      if (kind === 'clipboard' && typeof payload === 'string' && payload.length > 0) {
+        try {
+          clipboard.writeText(payload);
+        } catch (err) {
+          log.warn(`[Agent] clipboard.writeText failed: ${err?.message || err}`);
+        }
+      }
+      sendIfAlive(ctx, IPC.AGENT_CHAT_NOTICE, {
+        streamId: ctx.streamId,
+        kind,
+        text: text ?? null,
       });
     },
   };

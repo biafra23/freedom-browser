@@ -173,6 +173,7 @@ describe('createFreedomPiSession', () => {
     const fakePi = {
       handlers: new Map(),
       tools: [],
+      commands: new Map(),
       on(event, handler) {
         const list = this.handlers.get(event) ?? [];
         list.push(handler);
@@ -181,6 +182,10 @@ describe('createFreedomPiSession', () => {
       registerTool(def) {
         this.tools.push(def);
       },
+      registerCommand(name, options) {
+        this.commands.set(name, options);
+      },
+      setSessionName() {},
     };
     await factory(fakePi);
     expect(fakePi.tools.map((t) => t.name).sort()).toEqual(

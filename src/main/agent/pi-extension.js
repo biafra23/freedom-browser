@@ -91,6 +91,7 @@ function createFreedomExtension({
   overrideSystemPrompt,
   modelId,
   agentDir,
+  sessionRef,
 } = {}) {
   return async function freedomExtension(pi) {
     pi.on('session_shutdown', async (event) => {
@@ -113,6 +114,13 @@ function createFreedomExtension({
         log.info('[Pi] Freedom extension bound to session (no tools)');
       });
       return;
+    }
+
+    // Slash commands are user-facing controls and shouldn't be exposed
+    // by subagent sessions. The subagent path runs autonomously inside
+    // a tool call — it has no UI and no notice pipe.
+    if (!isSubagent) {
+      registerFreedomCommands({ pi, sessionRef, toolCallContext });
     }
 
     const browserTools = createBrowserTools({
@@ -225,7 +233,117 @@ function createFreedomExtension({
   };
 }
 
+// Slash commands are registered via Pi's extension command API so that
+// `session.prompt('/<name>')` invokes them through `_tryExecuteExtensionCommand`
+// instead of being sent to the LLM as a literal user message. (The
+// BUILTIN_SLASH_COMMANDS Pi exposes are handled by Pi's TUI/RPC harnesses,
+// not by AgentSession — embedding hosts must register their own.)
+//
+// `notify({ kind, text, payload })` is the toolCallContext callback that
+// flows results to the renderer over AGENT_CHAT_NOTICE.
+function registerFreedomCommands({ pi, sessionRef, toolCallContext }) {
+  const notify = (msg) => toolCallContext.onNotice?.(msg);
+  const session = () => sessionRef?.session;
+
+  pi.registerCommand('compact', {
+    description: 'Manually compact the session context',
+    handler: async (_args, ctx) => {
+      ctx.compact();
+      notify({ kind: 'info', text: 'Compaction started.' });
+    },
+  });
+
+  pi.registerCommand('copy', {
+    description: 'Copy the last assistant message to clipboard',
+    handler: async () => {
+      const s = session();
+      const text = s ? s.getLastAssistantText() : null;
+      if (!text) {
+        notify({ kind: 'error', text: 'No assistant message to copy yet.' });
+        return;
+      }
+      notify({ kind: 'clipboard', payload: text, text: 'Copied last reply.' });
+    },
+  });
+
+  pi.registerCommand('clone', {
+    description: 'Duplicate this chat at the current position',
+    handler: async (_args, ctx) => {
+      const leafId = ctx.sessionManager.getLeafId();
+      if (!leafId) {
+        notify({ kind: 'error', text: 'No entry to clone from yet.' });
+        return;
+      }
+      const result = await ctx.fork(leafId, { position: 'at' });
+      if (result?.cancelled) return;
+      notify({ kind: 'info', text: 'Session cloned.' });
+    },
+  });
+
+  pi.registerCommand('export', {
+    description: 'Export this session (default HTML; pass a path for .html/.jsonl)',
+    handler: async (args) => {
+      const s = session();
+      if (!s) {
+        notify({ kind: 'error', text: 'Export is unavailable.' });
+        return;
+      }
+      const target = args?.trim() || undefined;
+      try {
+        const path = await s.exportToHtml(target);
+        notify({ kind: 'info', text: `Exported to ${path}` });
+      } catch (err) {
+        notify({ kind: 'error', text: `Export failed: ${err?.message || err}` });
+      }
+    },
+  });
+
+  pi.registerCommand('session', {
+    description: 'Show session info and stats',
+    handler: async () => {
+      const s = session();
+      const stats = s ? s.getSessionStats() : null;
+      if (!stats) {
+        notify({ kind: 'error', text: 'No session stats available.' });
+        return;
+      }
+      notify({ kind: 'info', text: formatSessionStats(stats) });
+    },
+  });
+
+  pi.registerCommand('name', {
+    description: 'Set this session display name',
+    handler: async (args) => {
+      const name = args?.trim();
+      if (!name) {
+        notify({ kind: 'error', text: 'Usage: /name <new name>' });
+        return;
+      }
+      pi.setSessionName(name);
+      notify({ kind: 'info', text: `Session renamed to "${name}".` });
+    },
+  });
+}
+
+function formatSessionStats(stats) {
+  const parts = [];
+  if (stats.messageCount != null) parts.push(`${stats.messageCount} messages`);
+  if (stats.totalTokens != null) parts.push(`${stats.totalTokens} tokens`);
+  if (stats.contextWindow != null) {
+    const pct = stats.totalTokens != null
+      ? ` (${Math.round((stats.totalTokens / stats.contextWindow) * 100)}%)`
+      : '';
+    parts.push(`context ${stats.contextWindow}${pct}`);
+  }
+  return parts.length > 0 ? `Session: ${parts.join(' · ')}` : 'Session: (no stats)';
+}
+
 module.exports = {
   createFreedomExtension,
-  _internals: { buildFreedomSystemPrompt, DEFAULT_FREEDOM_INTRO },
+  _internals: {
+    buildFreedomSystemPrompt,
+    DEFAULT_FREEDOM_INTRO,
+    registerFreedomCommands,
+    formatSessionStats,
+  },
 };

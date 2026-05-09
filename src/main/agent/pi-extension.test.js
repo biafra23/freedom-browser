@@ -16,11 +16,15 @@ const { TIERS } = require('./tool-tiers');
 function makeFakePiApi() {
   const handlers = new Map();
   const tools = [];
+  const commands = new Map();
   const setActiveCalls = [];
+  const sessionNameSet = [];
   return {
     handlers,
     tools,
+    commands,
     setActiveCalls,
+    sessionNameSet,
     on(event, handler) {
       const list = handlers.get(event) ?? [];
       list.push(handler);
@@ -29,8 +33,14 @@ function makeFakePiApi() {
     registerTool(def) {
       tools.push(def);
     },
+    registerCommand(name, options) {
+      commands.set(name, options);
+    },
     setActiveTools(names) {
       setActiveCalls.push([...names]);
+    },
+    setSessionName(name) {
+      sessionNameSet.push(name);
     },
   };
 }
@@ -473,5 +483,163 @@ describe('Phase 3 — tool_result hook', () => {
       isError: false,
     });
     expect(ctx.onToolResult).not.toHaveBeenCalled();
+  });
+});
+
+describe('Phase 6.4 — slash command handlers', () => {
+  function makeContext(overrides = {}) {
+    return {
+      profile: ALL_TIERS_PROFILE,
+      sessionId: '/tmp/sessions/x.jsonl',
+      webContentsId: 42,
+      onToolCall: jest.fn(),
+      requestConsent: jest.fn(async () => 'allow'),
+      onToolResult: jest.fn(),
+      onNotice: jest.fn(),
+      ...overrides,
+    };
+  }
+
+  function makeCmdCtx(overrides = {}) {
+    return {
+      compact: jest.fn(),
+      sessionManager: { getLeafId: jest.fn(() => 'leaf-1') },
+      fork: jest.fn(async () => ({ cancelled: false })),
+      ...overrides,
+    };
+  }
+
+  async function setup({ session = null, isSubagent = false } = {}) {
+    const ctx = makeContext();
+    const sessionRef = { session };
+    const pi = makeFakePiApi();
+    await createFreedomExtension({
+      toolCallContext: ctx,
+      sessionRef,
+      isSubagent,
+    })(pi);
+    return { ctx, sessionRef, pi };
+  }
+
+  test('registers all six commands on the main session', async () => {
+    const { pi } = await setup();
+    expect([...pi.commands.keys()].sort()).toEqual(
+      ['clone', 'compact', 'copy', 'export', 'name', 'session'].sort()
+    );
+  });
+
+  test('subagent sessions register zero commands', async () => {
+    const { pi } = await setup({ isSubagent: true });
+    expect(pi.commands.size).toBe(0);
+  });
+
+  test('/compact triggers ctx.compact and posts an info notice', async () => {
+    const { pi, ctx } = await setup();
+    const cmdCtx = makeCmdCtx();
+    await pi.commands.get('compact').handler('', cmdCtx);
+    expect(cmdCtx.compact).toHaveBeenCalled();
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'info', text: expect.stringMatching(/Compaction/) })
+    );
+  });
+
+  test('/copy with no last assistant text emits an error notice', async () => {
+    const { pi, ctx } = await setup({
+      session: { getLastAssistantText: () => undefined },
+    });
+    await pi.commands.get('copy').handler('', makeCmdCtx());
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error', text: expect.stringMatching(/No assistant message/) })
+    );
+  });
+
+  test('/copy with text emits a clipboard notice carrying the payload', async () => {
+    const { pi, ctx } = await setup({
+      session: { getLastAssistantText: () => 'hello world' },
+    });
+    await pi.commands.get('copy').handler('', makeCmdCtx());
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'clipboard', payload: 'hello world' })
+    );
+  });
+
+  test('/clone uses the leaf id and forks at-position', async () => {
+    const { pi, ctx } = await setup();
+    const cmdCtx = makeCmdCtx();
+    await pi.commands.get('clone').handler('', cmdCtx);
+    expect(cmdCtx.fork).toHaveBeenCalledWith('leaf-1', { position: 'at' });
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'info', text: expect.stringMatching(/cloned/i) })
+    );
+  });
+
+  test('/clone bails with an error when there is no leaf yet', async () => {
+    const { pi, ctx } = await setup();
+    const cmdCtx = makeCmdCtx({ sessionManager: { getLeafId: () => null } });
+    await pi.commands.get('clone').handler('', cmdCtx);
+    expect(cmdCtx.fork).not.toHaveBeenCalled();
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error' })
+    );
+  });
+
+  test('/clone respects user cancellation (no notice on cancel)', async () => {
+    const { pi, ctx } = await setup();
+    const cmdCtx = makeCmdCtx({ fork: jest.fn(async () => ({ cancelled: true })) });
+    await pi.commands.get('clone').handler('', cmdCtx);
+    expect(ctx.onNotice).not.toHaveBeenCalled();
+  });
+
+  test('/export forwards args to session.exportToHtml and reports the path', async () => {
+    const { pi, ctx } = await setup({
+      session: { exportToHtml: jest.fn(async (p) => p ?? '/tmp/default.html') },
+    });
+    await pi.commands.get('export').handler('  /tmp/out.html  ', makeCmdCtx());
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'info', text: expect.stringMatching(/Exported to \/tmp\/out\.html/) })
+    );
+  });
+
+  test('/export reports a failure as an error notice', async () => {
+    const { pi, ctx } = await setup({
+      session: { exportToHtml: jest.fn(async () => { throw new Error('disk full'); }) },
+    });
+    await pi.commands.get('export').handler('', makeCmdCtx());
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error', text: expect.stringMatching(/disk full/) })
+    );
+  });
+
+  test('/session emits formatted stats when available', async () => {
+    const { pi, ctx } = await setup({
+      session: {
+        getSessionStats: () => ({ messageCount: 3, totalTokens: 1200, contextWindow: 4000 }),
+      },
+    });
+    await pi.commands.get('session').handler('', makeCmdCtx());
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'info',
+        text: expect.stringMatching(/3 messages.*1200 tokens.*context 4000/),
+      })
+    );
+  });
+
+  test('/name calls pi.setSessionName with the trimmed args', async () => {
+    const { pi, ctx } = await setup();
+    await pi.commands.get('name').handler('  My Chat  ', makeCmdCtx());
+    expect(pi.sessionNameSet).toEqual(['My Chat']);
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'info', text: expect.stringMatching(/renamed to "My Chat"/) })
+    );
+  });
+
+  test('/name without args emits a usage error', async () => {
+    const { pi, ctx } = await setup();
+    await pi.commands.get('name').handler('', makeCmdCtx());
+    expect(pi.sessionNameSet).toEqual([]);
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'error', text: expect.stringMatching(/Usage/) })
+    );
   });
 });

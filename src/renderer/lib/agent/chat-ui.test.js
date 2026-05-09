@@ -18,6 +18,7 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
     toolCall: null,
     toolResult: null,
     consentRequest: null,
+    notice: null,
   };
   return {
     handlers,
@@ -48,6 +49,10 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
       }),
       onConsentRequest: jest.fn((cb) => {
         handlers.consentRequest = cb;
+        return jest.fn();
+      }),
+      onChatNotice: jest.fn((cb) => {
+        handlers.notice = cb;
         return jest.fn();
       }),
       getRecentSession: jest.fn().mockResolvedValue(null),
@@ -564,6 +569,50 @@ describe('chat-ui', () => {
       inputEl.scrollHeight = 500;
       inputEl.dispatch('input');
       expect(inputEl.style.height).toBe('200px');
+    });
+
+    test('notice handler renders an info bubble into the message stream', async () => {
+      const { handlers, messagesEl } = await loadChatUi();
+      handlers.notice({ kind: 'info', text: 'Compaction started.' });
+      const notice = messagesEl.querySelector('.agent-notice.agent-notice-info');
+      expect(notice).toBeTruthy();
+      expect(notice.textContent).toBe('Compaction started.');
+    });
+
+    test('notice handler renders an error bubble with the error variant class', async () => {
+      const { handlers, messagesEl } = await loadChatUi();
+      handlers.notice({ kind: 'error', text: 'Boom.' });
+      const notice = messagesEl.querySelector('.agent-notice.agent-notice-error');
+      expect(notice).toBeTruthy();
+      expect(notice.textContent).toBe('Boom.');
+    });
+
+    test('notice with no text is silently ignored', async () => {
+      const { handlers, messagesEl } = await loadChatUi();
+      handlers.notice({ kind: 'info' });
+      expect(messagesEl.querySelector('.agent-notice')).toBeNull();
+    });
+
+    test('slash-pick handler inserts /cmd with trailing space for arg-taking commands and does NOT submit', async () => {
+      const { mod, inputEl, composerEl } = await loadChatUi();
+      const submitHandler = jest.fn();
+      composerEl.addEventListener('submit', submitHandler);
+
+      mod._internals.handleSlashCommandPick({ name: 'export', argsHint: '[path]' });
+
+      expect(inputEl.value).toBe('/export ');
+      expect(submitHandler).not.toHaveBeenCalled();
+    });
+
+    test('slash-pick handler auto-submits no-arg commands without the trailing space', async () => {
+      const { mod, inputEl, composerEl } = await loadChatUi();
+      const submitHandler = jest.fn();
+      composerEl.addEventListener('submit', submitHandler);
+
+      mod._internals.handleSlashCommandPick({ name: 'compact', argsHint: null });
+
+      expect(inputEl.value).toBe('/compact');
+      expect(submitHandler).toHaveBeenCalledTimes(1);
     });
   });
 });
