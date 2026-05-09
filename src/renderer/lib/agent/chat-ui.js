@@ -465,6 +465,29 @@ function handleConsentRequest(data) {
   updateToolCallCardForConsent(data.callId, data);
 }
 
+// Trailing imperative we append to no-arg skill invocations so Pi's
+// `<skill>` wrapper doesn't read as "remember this definition" but as
+// "apply this recipe now". Pi's `_expandSkillCommand` puts the skill
+// block first and any args after `\n\n` — without args, the model has
+// no action signal and just acknowledges the skill.
+const SKILL_INVOKE_SUFFIX = 'Apply now.';
+
+const SKILL_INVOKE_RE = /^\/skill:(\S+)(?:\s+(.*))?$/;
+
+// Cosmetic: the JSONL persists `/skill:foo Apply now.` (Pi's contract)
+// but the user picked `/foo` from the palette. Show the friendly form
+// in their bubble: `/foo` for the no-arg invocation, `/foo <args>`
+// when the user typed something. Falls through to the original text
+// for anything that isn't a skill invocation.
+function displaySkillInvocation(text) {
+  const m = SKILL_INVOKE_RE.exec(text);
+  if (!m) return text;
+  const [, name, rest = ''] = m;
+  const args = rest.trim();
+  if (!args || args === SKILL_INVOKE_SUFFIX) return `/${name}`;
+  return `/${name} ${args}`;
+}
+
 // No-arg commands auto-submit on pick — the user already chose; making
 // them press Enter again is friction. Commands with args land in the
 // input so the user can type them.
@@ -478,7 +501,21 @@ function handleSlashCommandPick(cmd) {
   // `insertName` covers the case where the display label and the actual
   // typed token diverge (skills show as `/foo` but submit as `/skill:foo`).
   const typed = cmd.insertName || cmd.name;
-  inputEl.value = cmd.argsHint ? `/${typed} ` : `/${typed}`;
+  const isSkill = typed.startsWith('skill:');
+
+  let value;
+  if (cmd.argsHint) {
+    // The user has args to type — insert with trailing space, leave
+    // submission to them.
+    value = `/${typed} `;
+  } else if (isSkill) {
+    // No-arg skill: append the imperative so Pi expands to body + "Apply now."
+    value = `/${typed} ${SKILL_INVOKE_SUFFIX}`;
+  } else {
+    // Built-in extension command (compact, copy, etc.) — Pi handles it directly.
+    value = `/${typed}`;
+  }
+  inputEl.value = value;
   syncSendDisabled();
   autoGrowInput();
   if (!cmd.argsHint && composerEl) {
@@ -691,6 +728,8 @@ function appendMessage(msg, opts = {}) {
   content.className = 'agent-message-content';
   if (msg.role === 'assistant' && msg.content) {
     content.innerHTML = renderMarkdown(msg.content);
+  } else if (msg.role === 'user') {
+    content.textContent = displaySkillInvocation(msg.content || '');
   } else {
     content.textContent = msg.content || '';
   }

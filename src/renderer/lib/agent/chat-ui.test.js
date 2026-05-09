@@ -676,7 +676,7 @@ describe('chat-ui', () => {
       expect(submitHandler).toHaveBeenCalledTimes(1);
     });
 
-    test('slash-pick uses cmd.insertName when present so skills submit as /skill:<name>', async () => {
+    test('slash-pick uses cmd.insertName + appends "Apply now." imperative for no-arg skills', async () => {
       const { mod, inputEl, composerEl } = await loadChatUi();
       const submitHandler = jest.fn();
       composerEl.addEventListener('submit', submitHandler);
@@ -687,8 +687,67 @@ describe('chat-ui', () => {
         argsHint: null,
       });
 
-      expect(inputEl.value).toBe('/skill:tldr');
+      // Pi's `_expandSkillCommand` only injects the imperative when args
+      // follow the `/skill:foo` token — without them the model treats the
+      // expanded skill body as a definition and just acknowledges.
+      expect(inputEl.value).toBe('/skill:tldr Apply now.');
       expect(submitHandler).toHaveBeenCalledTimes(1);
+    });
+
+    test('slash-pick on a skill that takes args inserts /skill:<name> with trailing space (no imperative)', async () => {
+      const { mod, inputEl, composerEl } = await loadChatUi();
+      const submitHandler = jest.fn();
+      composerEl.addEventListener('submit', submitHandler);
+
+      mod._internals.handleSlashCommandPick({
+        name: 'research',
+        insertName: 'skill:research',
+        argsHint: '<topic>',
+      });
+
+      expect(inputEl.value).toBe('/skill:research ');
+      expect(submitHandler).not.toHaveBeenCalled();
+    });
+
+    test('user bubble for a /skill:foo Apply now. submission renders as /foo (imperative stripped)', async () => {
+      const { handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      // Simulate the auto-submit path: handleSlashCommandPick sets the value
+      // to "/skill:tldr Apply now." then dispatches submit.
+      inputEl.value = '/skill:tldr Apply now.';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+      handlers.done({ streamId: 'stream-1', fullContent: 'short answer.', stats: {} });
+
+      const userBubble = messagesEl
+        .querySelector('.agent-message.user')
+        .querySelector('.agent-message-content');
+      expect(userBubble.textContent).toBe('/tldr');
+    });
+
+    test('user bubble for /skill:research <topic> renders as /research <topic>', async () => {
+      const { handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = '/skill:research seahorses';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+      handlers.done({ streamId: 'stream-1', fullContent: '...', stats: {} });
+
+      const userBubble = messagesEl
+        .querySelector('.agent-message.user')
+        .querySelector('.agent-message-content');
+      expect(userBubble.textContent).toBe('/research seahorses');
+    });
+
+    test('regular user messages render unchanged (no skill prefix to strip)', async () => {
+      const { handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = 'who are ninja turtles';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+      handlers.done({ streamId: 'stream-1', fullContent: '...', stats: {} });
+
+      const userBubble = messagesEl
+        .querySelector('.agent-message.user')
+        .querySelector('.agent-message-content');
+      expect(userBubble.textContent).toBe('who are ninja turtles');
     });
 
     test('slash-pick does NOT dispatch an input event (would re-open the palette)', async () => {
