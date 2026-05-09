@@ -66,7 +66,7 @@
     "dapp:reset": "node scripts/reset-dapp-permissions.js",
     "serve:updates": "node scripts/serve-updates.js",
     "start:test-updater": "ENABLE_DEV_UPDATER=true npm start",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps && node scripts/fix-xmtp-darwin-binding.js"
   },
   "build": {
     "appId": "baby.freedom.browser",
