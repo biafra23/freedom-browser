@@ -19,6 +19,7 @@
 import { renderMarkdown } from './markdown.js';
 import { adaptMessages } from './pi-message-adapter.js';
 import { initThinkingChip, getThinkingLevel } from './composer-thinking-chip.js';
+import { initSlashPalette } from './composer-slash-palette.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -101,6 +102,10 @@ export function initChatUi() {
   });
   syncSendDisabled();
   initThinkingChip(document.getElementById('agent-composer-chips'));
+  initSlashPalette({
+    popover: document.getElementById('agent-composer-popover'),
+    input: inputEl,
+  });
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
   modelBtn?.addEventListener('click', toggleModelDropdown);

@@ -199,6 +199,13 @@ class FakeElement {
     listeners.forEach((listener) => listener(payload));
   }
 
+  dispatchEvent(event) {
+    if (!event || typeof event.type !== 'string') return false;
+    const listeners = this.handlers[event.type] || [];
+    listeners.forEach((listener) => listener(event));
+    return true;
+  }
+
   appendChild(child) {
     if (child.parentNode) {
       child.remove();
