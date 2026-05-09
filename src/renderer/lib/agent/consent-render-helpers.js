@@ -1,3 +1,5 @@
+import { createTab } from '../tabs.js';
+
 /**
  * Shared DOM helpers for the consent card's structured panels.
  *
@@ -59,6 +61,13 @@ export function addConsentRow(list, key, value, opts = {}) {
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
     a.textContent = String(value);
+    // Open in a new Freedom tab on click instead of falling through to
+    // Electron's default new-window handler. target=_blank + rel stay
+    // as a fallback for keyboard middle-click and accessibility.
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (opts.url) createTab(opts.url);
+    });
     dd.appendChild(a);
   } else {
     dd.textContent = String(value);

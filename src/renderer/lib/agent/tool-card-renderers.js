@@ -18,6 +18,7 @@
  */
 
 import { shortAddress } from '../address-utils.js';
+import { createTab } from '../tabs.js';
 
 const URL_DISPLAY_MAX = 60;
 const SELECTOR_DISPLAY_MAX = 80;
@@ -36,6 +37,20 @@ function truncateMiddle(text, max) {
   return `${text.slice(0, half)}…${text.slice(-half)}`;
 }
 
+// Click on an agent UI anchor → open in a new Freedom tab via the
+// existing tabs.js API instead of falling through to Electron's
+// default new-window behaviour (which spawns a bare BrowserWindow
+// outside the tab strip). target=_blank + rel stay as a fallback for
+// keyboard middle-click and accessibility.
+function openInTabOnClick(anchor) {
+  anchor.addEventListener('click', (e) => {
+    e.preventDefault();
+    const url = anchor.href;
+    if (url && url !== '#') createTab(url);
+  });
+  return anchor;
+}
+
 function makeUrlPill(url) {
   const a = document.createElement('a');
   a.className = 'agent-tool-url-pill';
@@ -44,7 +59,7 @@ function makeUrlPill(url) {
   a.rel = 'noopener noreferrer';
   a.title = url;
   a.textContent = truncateMiddle(url, URL_DISPLAY_MAX);
-  return a;
+  return openInTabOnClick(a);
 }
 
 function makeSelectorPill(selector) {
@@ -456,7 +471,7 @@ function renderWalletSendTransaction(call) {
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = truncateMiddle(txHash, 18);
-      summary.appendChild(link);
+      summary.appendChild(openInTabOnClick(link));
     } else {
       const code = document.createElement('code');
       code.textContent = truncateMiddle(txHash, 18);

@@ -1,3 +1,5 @@
+jest.mock('../tabs.js', () => ({ createTab: jest.fn() }));
+
 const { createElement, createDocument } = require('../../../../test/helpers/fake-dom.js');
 
 const originalDocument = global.document;
