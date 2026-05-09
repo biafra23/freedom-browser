@@ -669,6 +669,58 @@ describe('chat-ui', () => {
       expect(mod._internals.state.messages).toEqual([{ role: 'user', content: '/compact' }]);
     });
 
+    test('subagent inner tool calls nest inside the spawn_subagent card (Phase 6.7)', async () => {
+      const { handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = 'kick off';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'parent-1',
+        name: 'spawn_subagent',
+        tier: 'local_safe',
+        args: { subagent_id: 'research_topic', prompt: 'investigate X' },
+      });
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'inner-1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://example.com' },
+        subagentCallId: 'parent-1',
+      });
+
+      const parentCard = messagesEl.querySelector('[data-call-id="parent-1"]');
+      const nestedSlot = parentCard.querySelector('.agent-tool-subagent-children');
+      const innerCard = nestedSlot.querySelector('[data-call-id="inner-1"]');
+      expect(innerCard).toBeTruthy();
+      // Inner card lives under the spawn_subagent card, not as a sibling.
+      const siblings = messagesEl.querySelectorAll('[data-call-id="inner-1"]');
+      expect(siblings).toHaveLength(1);
+    });
+
+    test('a tool call without subagentCallId attaches to the assistant bubble as a top-level sibling', async () => {
+      const { handlers, inputEl, composerEl, messagesEl } = await loadChatUi();
+      inputEl.value = 'go';
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      handlers.toolCall({
+        streamId: 'stream-1',
+        callId: 'top-1',
+        name: 'navigate',
+        tier: 'browser_mutation',
+        args: { url: 'https://example.com' },
+      });
+
+      const card = messagesEl.querySelector('[data-call-id="top-1"]');
+      // Parent should be the assistant bubble (.agent-message.assistant), not nested.
+      let p = card.parentNode;
+      while (p && !p.classList?.contains('agent-message')) p = p.parentNode;
+      expect(p?.classList?.contains('assistant')).toBe(true);
+    });
+
     test('error result still creates a bubble so the user sees the failure', async () => {
       const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
       _bridge.startChat = jest.fn().mockResolvedValue({ error: 'Ollama not running' });

@@ -155,6 +155,54 @@ describe('makeSubagentToolCallContext', () => {
     );
     expect(log.info).toHaveBeenCalled();
   });
+
+  test('tags inner events with subagentCallId when parentCallId is provided (Phase 6.7 nesting)', () => {
+    const parentOnToolCall = jest.fn();
+    const parentOnToolResult = jest.fn();
+    const requestConsent = jest.fn();
+    const subCtx = _internals.makeSubagentToolCallContext({
+      parentToolCallContext: {
+        sessionId: 's',
+        webContentsId: 1,
+        requestConsent,
+        onToolCall: parentOnToolCall,
+        onToolResult: parentOnToolResult,
+      },
+      parentCallId: 'spawn-123',
+      subagentDef: SUBAGENT_DEFINITIONS.summarize_current_page,
+    });
+
+    subCtx.onToolCall({ callId: 'c1', name: 'read_current_tab', args: {} });
+    subCtx.onToolResult({ callId: 'c1', status: 'allowed', result: {} });
+    subCtx.requestConsent({ callId: 'c1', name: 'read_current_tab', args: {}, description: 'd' });
+
+    expect(parentOnToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: 'c1', subagentCallId: 'spawn-123' })
+    );
+    expect(parentOnToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: 'c1', subagentCallId: 'spawn-123' })
+    );
+    expect(requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: 'c1', subagentCallId: 'spawn-123' })
+    );
+  });
+
+  test('does NOT add subagentCallId when parentCallId is omitted (legacy callers stay sibling-rendered)', () => {
+    const parentOnToolCall = jest.fn();
+    const subCtx = _internals.makeSubagentToolCallContext({
+      parentToolCallContext: {
+        sessionId: 's',
+        webContentsId: 1,
+        requestConsent: jest.fn(),
+        onToolCall: parentOnToolCall,
+        onToolResult: jest.fn(),
+      },
+      subagentDef: SUBAGENT_DEFINITIONS.summarize_current_page,
+    });
+    subCtx.onToolCall({ callId: 'c1', name: 'read_current_tab', args: {} });
+    const event = parentOnToolCall.mock.calls[0][0];
+    expect('subagentCallId' in event).toBe(false);
+  });
 });
 
 describe('runSubagent', () => {

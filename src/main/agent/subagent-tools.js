@@ -71,11 +71,15 @@ function createSubagentTools({
           'The task for the subagent — a self-contained instruction including any topic, URL, or extraction target it needs.',
       }),
     }),
-    async execute(_toolCallId, { subagent_id, prompt }, signal) {
+    async execute(toolCallId, { subagent_id, prompt }, signal) {
       const result = await runSubagent({
         subagentId: subagent_id,
         prompt,
         parentToolCallContext,
+        // The renderer uses this to nest the subagent's inner tool
+        // cards under the spawn_subagent card instead of appending
+        // them as siblings in the assistant bubble.
+        parentCallId: toolCallId,
         modelId,
         agentDir,
         signal,

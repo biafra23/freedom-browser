@@ -20,6 +20,7 @@ import { renderMarkdown } from './markdown.js';
 import { adaptMessages } from './pi-message-adapter.js';
 import { initThinkingChip, getThinkingLevel } from './composer-thinking-chip.js';
 import { initSlashPalette, isPaletteVisible, hidePalette } from './composer-slash-palette.js';
+import { renderToolBody, SUBAGENT_CHILDREN_CLASS } from './tool-card-renderers.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -402,9 +403,23 @@ function handleToolCall(data) {
     args: data.args,
     status: 'pending',
     result: null,
+    subagentCallId: data.subagentCallId ?? null,
   };
   ensureToolCallsArray(last).push(record);
-  appendToolCallCard(state.activeAssistantEl, record);
+  appendToolCallCard(targetForToolCard(record), record);
+}
+
+// Inner subagent calls nest under the parent spawn_subagent card's
+// children container (built by tool-card-renderers' renderSpawnSubagent
+// — see SUBAGENT_CHILDREN_CLASS). Top-level cards attach directly to
+// the assistant bubble.
+function targetForToolCard(record) {
+  if (record.subagentCallId) {
+    const parentCard = state.activeToolCallEls.get(record.subagentCallId);
+    const nested = parentCard?.bodyEl.querySelector(`.${SUBAGENT_CHILDREN_CLASS}`);
+    if (nested) return nested;
+  }
+  return state.activeAssistantEl;
 }
 
 function handleToolResult(data) {
@@ -628,8 +643,11 @@ function appendMessage(msg, opts = {}) {
   }
   wrap.appendChild(content);
 
-  // Restore historical tool-call cards when re-rendering. Phase 3 will
-  // emit live cards via handleToolCall once tool wiring lands.
+  // Restore historical tool-call cards when re-rendering. Subagent
+  // nesting (the live path's targetForToolCard routing) is intentionally
+  // not honoured here: Pi's JSONL doesn't persist subagentCallId, so a
+  // restored conversation renders inner cards as siblings — known
+  // cosmetic gap, not a correctness one.
   if (msg.role === 'assistant' && Array.isArray(msg.toolCalls) && !opts.streaming) {
     for (const call of msg.toolCalls) {
       const card = renderToolCallShell(call);
@@ -702,20 +720,7 @@ function renderToolCallBody(card, call) {
   card.statusEl.textContent = call.status || 'pending';
   card.wrapEl.classList.remove('pending', 'allowed', 'denied', 'blocked', 'error', 'consent');
   card.wrapEl.classList.add(call.status || 'pending');
-
-  if (call.args && Object.keys(call.args).length > 0) {
-    const argsEl = document.createElement('pre');
-    argsEl.className = 'agent-tool-card-args';
-    argsEl.textContent = JSON.stringify(call.args, null, 2);
-    card.bodyEl.appendChild(argsEl);
-  }
-
-  if (call.result?.error) {
-    const errEl = document.createElement('div');
-    errEl.className = 'agent-tool-card-error';
-    errEl.textContent = call.result.error;
-    card.bodyEl.appendChild(errEl);
-  }
+  card.bodyEl.appendChild(renderToolBody(call));
 }
 
 function appendToolCallCard(assistantWrap, record) {

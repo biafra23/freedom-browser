@@ -348,14 +348,23 @@ function buildToolCallContext({ ctx, profile }) {
     sessionId: ctx.sessionPath,
     webContentsId: ctx.activeWebContentsId,
 
-    onToolCall: ({ callId, name, tier, args }) => {
-      ctx.toolCalls.push({ id: callId, name, tier, args, status: 'pending', result: null });
+    onToolCall: ({ callId, name, tier, args, subagentCallId }) => {
+      ctx.toolCalls.push({
+        id: callId,
+        name,
+        tier,
+        args,
+        status: 'pending',
+        result: null,
+        subagentCallId: subagentCallId ?? null,
+      });
       sendIfAlive(ctx, IPC.AGENT_CHAT_TOOL_CALL, {
         streamId: ctx.streamId,
         callId,
         name,
         tier,
         args,
+        subagentCallId: subagentCallId ?? null,
       });
     },
 

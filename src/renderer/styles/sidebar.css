@@ -6035,38 +6035,51 @@
   overflow-y: auto;
 }
 
+/* Tool cards default to a "log line" treatment: a thin status-coloured
+   left border, no surrounding box, tight padding. The chat sidebar is
+   narrow and the agent's prose is the focus — tool activity is context,
+   not the headline. The consent state still gets a prominent box
+   (it needs eyeballs).
+
+   `pending` keeps a subtle pulse on the background so an in-flight
+   call doesn't visually disappear into the prose. */
 .agent-tool-card {
   margin-top: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(127, 127, 127, 0.05);
+  padding: 4px 8px;
+  border-left: 3px solid var(--border);
+  border-radius: 0;
+  background: transparent;
   font-size: 12px;
+  color: var(--text);
 }
 
 @keyframes agent-tool-card-pulse {
-  0%, 100% { background: rgba(127, 127, 127, 0.05); }
-  50%      { background: rgba(127, 127, 127, 0.14); }
+  0%, 100% { background: transparent; }
+  50%      { background: rgba(127, 127, 127, 0.10); }
 }
 
 .agent-tool-card.pending {
   animation: agent-tool-card-pulse 1.4s ease-in-out infinite;
+  border-left-color: var(--muted);
 }
 
 .agent-tool-card.allowed {
-  border-color: rgba(60, 180, 100, 0.4);
-  background: rgba(60, 180, 100, 0.06);
+  border-left-color: rgba(60, 180, 100, 0.55);
 }
 
 .agent-tool-card.denied,
 .agent-tool-card.blocked,
 .agent-tool-card.error {
-  border-color: rgba(220, 80, 80, 0.4);
-  background: rgba(220, 80, 80, 0.06);
+  border-left-color: rgba(220, 80, 80, 0.6);
+  color: rgb(200, 60, 60);
 }
 
+/* Consent state escalates back to a full card — the user needs to
+   notice the prompt and act on it. */
 .agent-tool-card.consent {
-  border-color: var(--accent);
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
   background: var(--accent-muted, rgba(64, 128, 255, 0.08));
 }
 
@@ -6075,17 +6088,23 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-weight: 600;
   color: var(--text);
+  opacity: 0.75;
+}
+
+.agent-tool-card.consent .agent-tool-card-header {
+  font-weight: 600;
+  opacity: 1;
 }
 
 .agent-tool-card-name {
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-family: var(--font-mono, 'SF Mono', Menlo, Consolas, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
 }
 
 .agent-tool-card-status {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -6093,24 +6112,98 @@
 }
 
 .agent-tool-card-body {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
-.agent-tool-card-args {
-  margin: 0;
-  padding: 6px 8px;
-  background: rgba(127, 127, 127, 0.10);
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-  white-space: pre-wrap;
+.agent-tool-card.consent .agent-tool-card-body {
+  margin-top: 6px;
+}
+
+/* --- Per-tool body elements --- */
+
+.agent-tool-summary {
+  display: inline;
+  line-height: 1.45;
   word-break: break-word;
 }
 
-.agent-tool-card-error {
+.agent-tool-url-pill {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.agent-tool-url-pill:hover {
+  text-decoration: underline;
+}
+
+.agent-tool-selector-pill {
+  display: inline;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.agent-tool-disclosure {
+  margin-top: 4px;
+}
+
+.agent-tool-disclosure-summary {
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.agent-tool-disclosure[open] .agent-tool-disclosure-summary {
+  color: var(--text);
+}
+
+.agent-tool-mono {
+  margin: 4px 0 0 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.agent-tool-screenshot img {
+  display: block;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.agent-tool-screenshot-caption {
   margin-top: 4px;
   font-size: 11px;
-  color: rgb(200, 60, 60);
+}
+
+/* Container for nested subagent tool cards. Indented so the visual
+   parent/child relationship is obvious; the parent card's left-border
+   provides the spine. Always rendered so cards can attach to it; the
+   `:empty` rule below hides the slot when no inner calls have fired. */
+.agent-tool-subagent-children {
+  margin-top: 4px;
+  padding-left: 10px;
+}
+
+.agent-tool-subagent-children:empty {
+  display: none;
 }
 
 .agent-tool-card-consent {

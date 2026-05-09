@@ -88,8 +88,10 @@ describe('createSubagentTools', () => {
       subagentId: 'summarize_current_page',
       prompt: 'summarise the page',
       parentToolCallContext: args.parentToolCallContext,
+      parentCallId: 'call-1',
       modelId: 'gemma4:e2b',
       agentDir: '/tmp/agentdir',
+      signal: undefined,
     });
     expect(result.content[0].text).toBe('subagent did the thing');
     expect(result.details).toEqual(

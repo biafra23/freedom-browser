@@ -132,6 +132,7 @@ async function runSubagent({
   subagentId,
   prompt,
   parentToolCallContext,
+  parentCallId,
   modelId,
   agentDir,
   createFreedomPiSession,
@@ -151,6 +152,7 @@ async function runSubagent({
 
   const subagentToolCallContext = makeSubagentToolCallContext({
     parentToolCallContext,
+    parentCallId,
     subagentDef: def,
   });
 
@@ -226,8 +228,13 @@ function collectTextContent(content) {
   return out;
 }
 
-function makeSubagentToolCallContext({ parentToolCallContext, subagentDef }) {
+function makeSubagentToolCallContext({ parentToolCallContext, parentCallId, subagentDef }) {
   const subagentLabel = subagentDef.name;
+  // Tag every inner event with the parent spawn_subagent's callId so
+  // the renderer can group inner cards under it. Falsy → "render as a
+  // sibling" (legacy callers that don't pass parentCallId, plus
+  // restored sessions whose JSONL doesn't persist this field).
+  const tag = (event) => (parentCallId ? { ...event, subagentCallId: parentCallId } : event);
   return {
     profile: { allowed_tool_tiers: [...subagentDef.allowedToolTiers] },
     // Share the parent's chat-thread sessionId so any session-grants the
@@ -243,17 +250,17 @@ function makeSubagentToolCallContext({ parentToolCallContext, subagentDef }) {
     // would never appear and the subagent would deadlock.
     onToolCall: (event) => {
       log.info(`[Subagent ${subagentDef.id}] tool_call: ${event.name}`);
-      parentToolCallContext.onToolCall(event);
+      parentToolCallContext.onToolCall(tag(event));
     },
     onToolResult: (event) => {
       log.info(
         `[Subagent ${subagentDef.id}] tool_result: ${event.callId} (${event.status})`
       );
-      parentToolCallContext.onToolResult(event);
+      parentToolCallContext.onToolResult(tag(event));
     },
     requestConsent: (event) =>
       parentToolCallContext.requestConsent({
-        ...event,
+        ...tag(event),
         description: `[${subagentLabel}] ${event.description ?? event.name}`,
       }),
   };

@@ -207,6 +207,19 @@ class FakeElement {
   }
 
   appendChild(child) {
+    // Mirror the DOM contract: a DocumentFragment is "transparent" —
+    // its children are moved to the parent and the fragment itself is
+    // not inserted. Tests querying through the parent see the
+    // fragment's children directly, matching real-browser behaviour.
+    if (child && child.tagName === '#DOCUMENT-FRAGMENT') {
+      const moved = [...child.children];
+      child.children = [];
+      for (const grand of moved) {
+        grand.parentNode = this;
+        this.children.push(grand);
+      }
+      return child;
+    }
     if (child.parentNode) {
       child.remove();
     }
@@ -342,6 +355,8 @@ class FakeElement {
 
 const createElement = (tagName = 'div', options = {}) => new FakeElement(tagName, options);
 
+const createDocumentFragment = () => new FakeElement('#document-fragment');
+
 const createDocument = ({ elementsById = {}, createElementOverride, body } = {}) => {
   const documentHandlers = {};
   const documentBody = body || createElement('body');
@@ -361,6 +376,7 @@ const createDocument = ({ elementsById = {}, createElementOverride, body } = {})
       }
       return createElement(tagName);
     }),
+    createDocumentFragment: jest.fn(() => createDocumentFragment()),
     getElementById: jest.fn((id) => elementsById[id] || null),
     querySelector: jest.fn((selector) => documentBody.querySelector(selector)),
     querySelectorAll: jest.fn((selector) => documentBody.querySelectorAll(selector)),
@@ -375,4 +391,5 @@ module.exports = {
   createClassList,
   createDocument,
   createElement,
+  createDocumentFragment,
 };
