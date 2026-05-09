@@ -4,62 +4,55 @@ jest.mock('../logger', () => ({
   error: jest.fn(),
 }));
 
-const { z } = require('zod');
-const registry = require('./tools/registry');
-const broker = require('./agent-permissions');
+const broker = require('./pi-broker');
 const { TIERS } = require('./tool-tiers');
-
-function makeTool(overrides = {}) {
-  return {
-    name: 'noop',
-    description: 'Does nothing.',
-    tier: TIERS.LOCAL_SAFE,
-    inputSchema: z.object({}),
-    execute: jest.fn(async () => 'ok'),
-    ...overrides,
-  };
-}
 
 const profile = (tiers) => ({ allowed_tool_tiers: tiers });
 
 beforeEach(() => {
-  registry._internals.clear();
   broker._internals.clearAll();
 });
 
-describe('listToolsForProfile', () => {
-  test('returns the subset of registered tools whose tier is in the profile allowlist', () => {
-    registry.registerAll([
-      makeTool({ name: 'safe', tier: TIERS.LOCAL_SAFE }),
-      makeTool({ name: 'sens', tier: TIERS.LOCAL_SENSITIVE }),
-      makeTool({ name: 'pay', tier: TIERS.MONEY }),
-    ]);
-    const visible = broker.listToolsForProfile(profile([TIERS.LOCAL_SAFE, TIERS.MONEY]));
-    expect(visible.map((t) => t.name).sort()).toEqual(['pay', 'safe']);
+describe('visibleToolNames', () => {
+  test('returns the subset whose tier is in the profile allowlist', () => {
+    const visible = broker.visibleToolNames(
+      profile([TIERS.LOCAL_SAFE, TIERS.MONEY]),
+      [
+        { name: 'safe', tier: TIERS.LOCAL_SAFE },
+        { name: 'sens', tier: TIERS.LOCAL_SENSITIVE },
+        { name: 'pay', tier: TIERS.MONEY },
+      ]
+    );
+    expect(visible.sort()).toEqual(['pay', 'safe']);
   });
 
   test('returns [] for null / malformed profile', () => {
-    expect(broker.listToolsForProfile(null)).toEqual([]);
-    expect(broker.listToolsForProfile({})).toEqual([]);
-    expect(broker.listToolsForProfile({ allowed_tool_tiers: 'local_safe' })).toEqual([]);
+    expect(broker.visibleToolNames(null, [])).toEqual([]);
+    expect(broker.visibleToolNames({}, [])).toEqual([]);
+    expect(
+      broker.visibleToolNames({ allowed_tool_tiers: 'local_safe' }, [
+        { name: 't', tier: TIERS.LOCAL_SAFE },
+      ])
+    ).toEqual([]);
   });
 });
 
 describe('evaluate — block paths', () => {
-  test('unknown tool', () => {
+  test('unknown tier', () => {
     const result = broker.evaluate({
-      toolName: 'nope',
+      toolName: 'x',
+      tier: 'bogus',
       profile: profile([TIERS.LOCAL_SAFE]),
       sessionId: 's1',
     });
     expect(result.decision).toBe('block');
-    expect(result.reason).toMatch(/unknown tool/);
+    expect(result.reason).toMatch(/unknown tier/);
   });
 
   test('tier not in profile', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.MONEY }));
     const result = broker.evaluate({
       toolName: 't',
+      tier: TIERS.MONEY,
       profile: profile([TIERS.LOCAL_SAFE]),
       sessionId: 's1',
     });
@@ -68,9 +61,9 @@ describe('evaluate — block paths', () => {
   });
 
   test('blocked tier even if allow-listed (defense in depth)', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.BLOCKED }));
     const result = broker.evaluate({
       toolName: 't',
+      tier: TIERS.BLOCKED,
       profile: profile([TIERS.BLOCKED]),
       sessionId: 's1',
     });
@@ -80,9 +73,9 @@ describe('evaluate — block paths', () => {
 
 describe('evaluate — allow paths', () => {
   test('local_safe is auto-approved', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.LOCAL_SAFE }));
     const result = broker.evaluate({
       toolName: 't',
+      tier: TIERS.LOCAL_SAFE,
       profile: profile([TIERS.LOCAL_SAFE]),
       sessionId: 's1',
     });
@@ -90,9 +83,9 @@ describe('evaluate — allow paths', () => {
   });
 
   test('session-once tier auto-approves once a session grant exists', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.LOCAL_SENSITIVE }));
     const before = broker.evaluate({
       toolName: 't',
+      tier: TIERS.LOCAL_SENSITIVE,
       profile: profile([TIERS.LOCAL_SENSITIVE]),
       sessionId: 's1',
     });
@@ -102,6 +95,7 @@ describe('evaluate — allow paths', () => {
 
     const after = broker.evaluate({
       toolName: 't',
+      tier: TIERS.LOCAL_SENSITIVE,
       profile: profile([TIERS.LOCAL_SENSITIVE]),
       sessionId: 's1',
     });
@@ -110,11 +104,10 @@ describe('evaluate — allow paths', () => {
   });
 
   test('session grant is per-session, not global', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.LOCAL_SENSITIVE }));
     broker.grantForSession('s1', TIERS.LOCAL_SENSITIVE);
-
     const otherSession = broker.evaluate({
       toolName: 't',
+      tier: TIERS.LOCAL_SENSITIVE,
       profile: profile([TIERS.LOCAL_SENSITIVE]),
       sessionId: 's-other',
     });
@@ -123,19 +116,16 @@ describe('evaluate — allow paths', () => {
 });
 
 describe('evaluate — ask paths', () => {
-  test('always-ask tiers prompt even with previous calls', () => {
-    // MONEY stays at 'always' policy — every spend is a fresh prompt.
-    // (BROWSER_MUTATION used to be the example here but moved to
-    // 'session-once' because navigate/click/fill chains in normal use
-    // made re-prompting too noisy.)
-    registry.register(makeTool({ name: 't', tier: TIERS.MONEY }));
+  test('always-ask tiers prompt every call', () => {
     const r1 = broker.evaluate({
       toolName: 't',
+      tier: TIERS.MONEY,
       profile: profile([TIERS.MONEY]),
       sessionId: 's1',
     });
     const r2 = broker.evaluate({
       toolName: 't',
+      tier: TIERS.MONEY,
       profile: profile([TIERS.MONEY]),
       sessionId: 's1',
     });
@@ -143,19 +133,18 @@ describe('evaluate — ask paths', () => {
     expect(r2.decision).toBe('ask');
   });
 
-  test('browser_mutation honours session grants like local_sensitive', () => {
-    registry.register(makeTool({ name: 'navigate', tier: TIERS.BROWSER_MUTATION }));
+  test('browser_mutation honours session grants', () => {
     const before = broker.evaluate({
       toolName: 'navigate',
+      tier: TIERS.BROWSER_MUTATION,
       profile: profile([TIERS.BROWSER_MUTATION]),
       sessionId: 's1',
     });
     expect(before.decision).toBe('ask');
-
     broker.grantForSession('s1', TIERS.BROWSER_MUTATION);
-
     const after = broker.evaluate({
       toolName: 'navigate',
+      tier: TIERS.BROWSER_MUTATION,
       profile: profile([TIERS.BROWSER_MUTATION]),
       sessionId: 's1',
     });
@@ -166,10 +155,8 @@ describe('evaluate — ask paths', () => {
 
 describe('clearSession', () => {
   test('removes all grants for the session', () => {
-    registry.register(makeTool({ name: 't', tier: TIERS.LOCAL_SENSITIVE }));
     broker.grantForSession('s1', TIERS.LOCAL_SENSITIVE);
     expect(broker.hasSessionGrant('s1', TIERS.LOCAL_SENSITIVE)).toBe(true);
-
     broker.clearSession('s1');
     expect(broker.hasSessionGrant('s1', TIERS.LOCAL_SENSITIVE)).toBe(false);
   });

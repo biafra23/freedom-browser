@@ -52,8 +52,29 @@ const TIER_POLICY = Object.freeze({
   [TIERS.BLOCKED]: 'never',
 });
 
+// Pi runs sibling tool calls concurrently in the default mode. Browser
+// mutations, payments, and identity actions would all break in surprising
+// ways if they ran in parallel, so they get pinned to sequential. Anything
+// not listed defaults to parallel.
+const TIER_EXECUTION_MODE = Object.freeze({
+  [TIERS.BROWSER_MUTATION]: 'sequential',
+  [TIERS.MONEY]: 'sequential',
+  [TIERS.IDENTITY_OR_SIGNING]: 'sequential',
+});
+
 function isValidTier(tier) {
   return ALL_TIERS.includes(tier);
 }
 
-module.exports = { TIERS, ALL_TIERS, TIER_POLICY, isValidTier };
+function executionModeForTier(tier) {
+  return TIER_EXECUTION_MODE[tier] || 'parallel';
+}
+
+module.exports = {
+  TIERS,
+  ALL_TIERS,
+  TIER_POLICY,
+  TIER_EXECUTION_MODE,
+  executionModeForTier,
+  isValidTier,
+};

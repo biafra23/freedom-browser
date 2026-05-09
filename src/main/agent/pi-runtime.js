@@ -10,9 +10,12 @@
  *      Freedom extension is passed via `extensionFactories: [factory]`.
  *      Phase 6+ may opt back in to specific scanning paths.
  *
- *   2. **No Pi built-in tools.** `noTools: 'all'` keeps `read`, `bash`,
- *      `edit`, `write`, `grep`, `find`, `ls` invisible to the LLM. Tools
- *      come from our Phase-3 registrations exclusively.
+ *   2. **No Pi built-in tools.** `noTools: 'builtin'` keeps `read`,
+ *      `bash`, `edit`, `write`, `grep`, `find`, `ls` invisible to the
+ *      LLM while leaving extension-registered tools enabled. Phase 3+
+ *      registers Freedom's browser tools via `pi-extension.js` and the
+ *      caller calls `session.setActiveToolsByName(visibleNames)` to
+ *      apply profile-driven filtering after `bindExtensions`.
  *
  *   3. **Pre-registered Ollama provider.** Pi's `findInitialModel` runs
  *      before extension `bindCore`, when extension provider registrations
@@ -93,6 +96,14 @@ function buildOllamaProviderConfig({ baseUrl, models }) {
  * @param {object} [options.uiContext]      Override `createPiUIContext()`.
  *                                          Phase 2+ uses this to inject a
  *                                          renderer-IPC-bridged impl.
+ * @param {object} [options.toolCallContext] Per-stream tool plumbing for
+ *                                          Phase 3+. When provided,
+ *                                          pi-extension registers the
+ *                                          browser tools, gates them
+ *                                          through the broker, and
+ *                                          forwards consent / result
+ *                                          events to the renderer.
+ *                                          See `pi-extension.js`.
  * @param {Function} [options.fetchImpl]    Override `fetch` for `listModels`.
  * @returns {Promise<{session, dispose, modelId}>}
  */
@@ -102,6 +113,7 @@ async function createFreedomPiSession({
   ollamaBaseUrl,
   sessionPath,
   uiContext,
+  toolCallContext,
   fetchImpl,
 } = {}) {
   if (!agentDir) {
@@ -138,7 +150,7 @@ async function createFreedomPiSession({
   const cwd = agentDir;
   const settingsManager = pi.SettingsManager.create(cwd, agentDir);
 
-  const freedomExtension = createFreedomExtension();
+  const freedomExtension = createFreedomExtension({ toolCallContext });
   const resourceLoader = new pi.DefaultResourceLoader({
     cwd,
     agentDir,
@@ -173,7 +185,9 @@ async function createFreedomPiSession({
     sessionManager,
     resourceLoader,
     model,
-    noTools: 'all',
+    // 'builtin' (not 'all') so extension-registered tools survive while
+    // Pi's read/bash/edit/write/grep/find/ls stay disabled.
+    noTools: 'builtin',
   });
 
   const effectiveUiContext = uiContext ?? createPiUIContext();

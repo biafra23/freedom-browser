@@ -27,6 +27,17 @@ jest.mock('../service-registry', () => ({
   getOllamaApiUrl: jest.fn(() => 'http://127.0.0.1:11434'),
 }));
 
+jest.mock('./agent-profiles', () => ({
+  getDefaultProfile: jest.fn(() => ({
+    id: 'default',
+    allowed_tool_tiers: [
+      'local_safe',
+      'local_sensitive',
+      'browser_mutation',
+    ],
+  })),
+}));
+
 const mockCreateSession = jest.fn();
 jest.mock('./pi-runtime', () => {
   const piModule = {
@@ -85,6 +96,7 @@ function makeFakeSession({ promptBehavior = 'resolve', promptText = 'Hello!' } =
         subscriber = null;
       };
     }),
+    setActiveToolsByName: jest.fn(),
     prompt: jest.fn(async () => {
       // Drive a couple of text deltas + agent_end through the subscriber.
       for (const ch of promptText) {
@@ -310,14 +322,173 @@ describe('dropStreamsForSender', () => {
 });
 
 describe('handleConsentResponse', () => {
-  test('Phase 2 returns ok:false (no tools wired yet)', () => {
+  test('returns ok:false for unknown streamId', () => {
     const result = _internals.handleConsentResponse(null, {
-      streamId: 'x',
+      streamId: 'nope',
       callId: 'y',
       decision: 'allow',
     });
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/Phase 2/);
+  });
+
+  test('returns ok:false when there is no pending consent for the callId', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    const { streamId } = await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const result = _internals.handleConsentResponse(null, {
+      streamId,
+      callId: 'never-existed',
+      decision: 'allow',
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  test('resolves the pending consent Promise with the user choice', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    const { streamId } = await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+
+    // Fish out the toolCallContext that was passed to createFreedomPiSession,
+    // simulate a `requestConsent` call from the extension, then resolve it.
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    expect(toolCallContext).toBeDefined();
+
+    const consentPromise = toolCallContext.requestConsent({
+      callId: 'c1',
+      name: 'navigate',
+      tier: 'browser_mutation',
+      args: { url: 'https://x' },
+      description: 'Navigate',
+    });
+
+    const result = _internals.handleConsentResponse(null, {
+      streamId,
+      callId: 'c1',
+      decision: 'allow-session',
+    });
+    expect(result.ok).toBe(true);
+    await expect(consentPromise).resolves.toBe('allow-session');
+  });
+
+  test('drops invalid decision strings down to deny', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    const { streamId } = await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    const consentPromise = toolCallContext.requestConsent({
+      callId: 'c1',
+      name: 'navigate',
+      tier: 'browser_mutation',
+      args: {},
+      description: 'Navigate',
+    });
+    _internals.handleConsentResponse(null, {
+      streamId,
+      callId: 'c1',
+      decision: 'unknown-string',
+    });
+    await expect(consentPromise).resolves.toBe('deny');
+  });
+});
+
+describe('toolCallContext (Phase 3 wiring)', () => {
+  test('builds a context that emits AGENT_CHAT_TOOL_CALL via sender.send', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    toolCallContext.onToolCall({
+      callId: 'c1',
+      name: 'navigate',
+      tier: 'browser_mutation',
+      args: { url: 'https://x' },
+    });
+    const sends = sender.send.mock.calls.filter((c) => c[0] === IPC.AGENT_CHAT_TOOL_CALL);
+    expect(sends).toHaveLength(1);
+    expect(sends[0][1]).toEqual(
+      expect.objectContaining({ callId: 'c1', name: 'navigate', tier: 'browser_mutation' })
+    );
+  });
+
+  test('onToolResult pushes status onto matching tool-call record + emits IPC', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    const { streamId } = await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    toolCallContext.onToolCall({
+      callId: 'c1',
+      name: 'navigate',
+      tier: 'browser_mutation',
+      args: {},
+    });
+    toolCallContext.onToolResult({
+      callId: 'c1',
+      status: 'allowed',
+      result: { url: 'https://x' },
+    });
+    const ctx = _internals.activeStreams.get(streamId);
+    expect(ctx.toolCalls[0]).toEqual(
+      expect.objectContaining({ id: 'c1', status: 'allowed', result: { url: 'https://x' } })
+    );
+    const sends = sender.send.mock.calls.filter(
+      (c) => c[0] === IPC.AGENT_CHAT_TOOL_RESULT
+    );
+    expect(sends[0][1]).toEqual(
+      expect.objectContaining({ callId: 'c1', status: 'allowed' })
+    );
+  });
+
+  test('dropStream resolves outstanding consents as deny', async () => {
+    const session = makeFakeSession({ promptBehavior: 'hang' });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    const { streamId } = await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+    const toolCallContext = mockCreateSession.mock.calls[0][0].toolCallContext;
+    const consentPromise = toolCallContext.requestConsent({
+      callId: 'c1',
+      name: 'navigate',
+      tier: 'browser_mutation',
+      args: {},
+      description: 'Navigate',
+    });
+    _internals.dropStreamsForSender(sender.id);
+    await expect(consentPromise).resolves.toBe('deny');
+    expect(_internals.activeStreams.has(streamId)).toBe(false);
   });
 });
 

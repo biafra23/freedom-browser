@@ -40,11 +40,17 @@ const {
   getFreedomAgentDir,
   _internals: piInternals,
 } = require('./pi-runtime');
+const broker = require('./pi-broker');
+const { CONSENT_VALUES } = require('./pi-broker');
+const { getBrowserToolMeta } = require('./tools/browser-tools');
+const profilesStore = require('./agent-profiles');
 
 // streamId -> {
 //   streamId, senderId, sender, sessionPath, activeWebContentsId,
 //   session?, dispose?, unsubscribe?,
-//   fullText, cancelled
+//   fullText, cancelled,
+//   toolCalls,         // accumulated for AGENT_CHAT_DONE payload
+//   pendingConsent,    // Map<callId, resolveFn>
 // }
 const activeStreams = new Map();
 
@@ -85,6 +91,12 @@ function sendIfAlive(ctx, channel, payload) {
 function dropStream(streamId) {
   const ctx = activeStreams.get(streamId);
   if (!ctx) return;
+  // Reject any outstanding consent prompts so the agent unwinds rather
+  // than waiting forever for a renderer that's gone.
+  if (ctx.pendingConsent) {
+    for (const resolve of ctx.pendingConsent.values()) resolve('deny');
+    ctx.pendingConsent.clear();
+  }
   try {
     ctx.unsubscribe?.();
   } catch (err) {
@@ -266,6 +278,11 @@ function deleteSession(sessionPath) {
   if (!sessionPath) return false;
   try {
     fs.unlinkSync(sessionPath);
+    // Drop the broker's session-grant cache for this chat — otherwise the
+    // sessionGrants Map grows unbounded across app uptime as users delete
+    // and recreate chats. Per-stream grants are scoped to sessionPath, so
+    // a stale path can't accidentally re-authorize a brand-new chat.
+    broker.clearSession(sessionPath);
     return true;
   } catch (err) {
     log.warn(`[Agent] deleteSession failed for ${sessionPath}: ${err.message}`);
@@ -293,6 +310,8 @@ async function startChatStream(event, payload = {}) {
     activeWebContentsId,
     fullText: '',
     cancelled: false,
+    toolCalls: [],
+    pendingConsent: new Map(),
   };
   activeStreams.set(streamId, ctx);
 
@@ -303,7 +322,7 @@ async function startChatStream(event, payload = {}) {
     sendIfAlive(ctx, IPC.AGENT_CHAT_DONE, {
       streamId,
       fullContent: ctx.fullText,
-      toolCalls: [],
+      toolCalls: ctx.toolCalls,
       error: err?.message || String(err),
     });
     dropStream(streamId);
@@ -312,14 +331,65 @@ async function startChatStream(event, payload = {}) {
   return { streamId };
 }
 
+function buildToolCallContext({ ctx, profile }) {
+  return {
+    profile,
+    sessionId: ctx.sessionPath,
+    webContentsId: ctx.activeWebContentsId,
+
+    onToolCall: ({ callId, name, tier, args }) => {
+      ctx.toolCalls.push({ id: callId, name, tier, args, status: 'pending', result: null });
+      sendIfAlive(ctx, IPC.AGENT_CHAT_TOOL_CALL, {
+        streamId: ctx.streamId,
+        callId,
+        name,
+        tier,
+        args,
+      });
+    },
+
+    requestConsent: ({ callId, name, tier, args, description }) =>
+      new Promise((resolve) => {
+        ctx.pendingConsent.set(callId, resolve);
+        sendIfAlive(ctx, IPC.AGENT_CHAT_CONSENT_REQUEST, {
+          streamId: ctx.streamId,
+          callId,
+          name,
+          tier,
+          args,
+          description,
+        });
+      }).finally(() => ctx.pendingConsent.delete(callId)),
+
+    onToolResult: ({ callId, status, result }) => {
+      const record = ctx.toolCalls.find((c) => c.id === callId);
+      if (record) {
+        record.status = status;
+        record.result = result;
+      }
+      sendIfAlive(ctx, IPC.AGENT_CHAT_TOOL_RESULT, {
+        streamId: ctx.streamId,
+        callId,
+        status,
+        result,
+      });
+    },
+  };
+}
+
 async function pumpChat({ model, prompt, ctx }) {
   const emitDone = (extra = {}) =>
     sendIfAlive(ctx, IPC.AGENT_CHAT_DONE, {
       streamId: ctx.streamId,
       fullContent: ctx.fullText,
-      toolCalls: [],
+      toolCalls: ctx.toolCalls,
       ...extra,
     });
+
+  // Phase 4 will redo profiles per chat; for Phase 3 we use the default
+  // profile so all five browser tools are visible.
+  const profile = profilesStore.getDefaultProfile();
+  const toolCallContext = buildToolCallContext({ ctx, profile });
 
   let session;
   let dispose;
@@ -328,6 +398,7 @@ async function pumpChat({ model, prompt, ctx }) {
       agentDir: getAgentDir(),
       modelId: model,
       sessionPath: ctx.sessionPath,
+      toolCallContext,
     });
     session = created.session;
     dispose = created.dispose;
@@ -335,6 +406,17 @@ async function pumpChat({ model, prompt, ctx }) {
     emitDone({ error: err?.message || String(err) });
     dropStream(ctx.streamId);
     return;
+  }
+
+  // Profile-driven tool visibility. Pi's default with `noTools: 'builtin'`
+  // is no active tools at all; setActiveToolsByName makes our extension
+  // tools visible to the LLM. Defense-in-depth — even if the model picks
+  // a tool not in this list, the broker's `tool_call` hook re-checks tier.
+  try {
+    const visibleNames = broker.visibleToolNames(profile, getBrowserToolMeta());
+    session.setActiveToolsByName(visibleNames);
+  } catch (err) {
+    log.warn(`[Agent] setActiveToolsByName threw: ${err.message}`);
   }
 
   ctx.session = session;
@@ -438,11 +520,16 @@ async function cancelChatStream(_event, { streamId } = {}) {
   return { cancelled: true };
 }
 
-function handleConsentResponse(_event, _payload = {}) {
-  // Phase 2 has no tool calls yet — Phase 3 wires the real consent flow
-  // through this channel. Returning ok:false keeps the renderer's optimistic
-  // UI from hanging if a stale consent response arrives.
-  return { ok: false, reason: 'no pending consent (Phase 2: tools not wired)' };
+function handleConsentResponse(_event, { streamId, callId, decision } = {}) {
+  const ctx = activeStreams.get(streamId);
+  if (!ctx || !ctx.pendingConsent.has(callId)) {
+    return { ok: false, reason: 'no pending consent for this callId' };
+  }
+  const choice = CONSENT_VALUES.includes(decision) ? decision : 'deny';
+  const resolve = ctx.pendingConsent.get(callId);
+  ctx.pendingConsent.delete(callId);
+  resolve(choice);
+  return { ok: true };
 }
 
 let agentIpcRegistered = false;

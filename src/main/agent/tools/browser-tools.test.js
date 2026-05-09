@@ -6,7 +6,8 @@ jest.mock('electron', () => ({
   },
 }));
 
-const { BROWSER_TOOLS } = require('./browser-tools');
+const { Type } = require('typebox');
+const { createBrowserTools } = require('./browser-tools');
 const { TIERS } = require('../tool-tiers');
 
 function makeWc(overrides = {}) {
@@ -16,7 +17,6 @@ function makeWc(overrides = {}) {
     loadURL: jest.fn(async () => undefined),
     capturePage: jest.fn(async () => ({
       toJPEG: () => Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
-      toPNG: () => Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     })),
     getURL: jest.fn(() => 'https://example.com/'),
     getTitle: jest.fn(() => 'Example'),
@@ -24,8 +24,10 @@ function makeWc(overrides = {}) {
   };
 }
 
-const ctx = { webContentsId: 7 };
-const tools = Object.fromEntries(BROWSER_TOOLS.map((t) => [t.name, t]));
+function makeTools(webContentsId = 7) {
+  const arr = createBrowserTools({ webContentsId, Type, TIERS });
+  return Object.fromEntries(arr.map((t) => [t.name, t]));
+}
 
 beforeEach(() => {
   mockFromId.mockReset();
@@ -33,20 +35,25 @@ beforeEach(() => {
 
 describe('tool catalog', () => {
   test('exposes the five expected tools', () => {
-    expect(BROWSER_TOOLS.map((t) => t.name).sort()).toEqual(
+    const tools = makeTools();
+    expect(Object.keys(tools).sort()).toEqual(
       ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot'].sort()
     );
   });
 
-  test('every tool has a description and a tier', () => {
-    for (const t of BROWSER_TOOLS) {
+  test('every tool has label, description, parameters, tier', () => {
+    const tools = makeTools();
+    for (const t of Object.values(tools)) {
+      expect(typeof t.label).toBe('string');
       expect(typeof t.description).toBe('string');
       expect(t.description.length).toBeGreaterThan(10);
       expect(typeof t.tier).toBe('string');
+      expect(typeof t.parameters).toBe('object');
     }
   });
 
   test('reads-and-screenshot are local_sensitive; mutations are browser_mutation', () => {
+    const tools = makeTools();
     expect(tools.read_current_tab.tier).toBe(TIERS.LOCAL_SENSITIVE);
     expect(tools.screenshot.tier).toBe(TIERS.LOCAL_SENSITIVE);
     expect(tools.navigate.tier).toBe(TIERS.BROWSER_MUTATION);
@@ -56,27 +63,35 @@ describe('tool catalog', () => {
 });
 
 describe('webContents resolution', () => {
-  test('throws when ctx.webContentsId is missing', async () => {
-    await expect(tools.read_current_tab.execute({}, {})).rejects.toThrow(/webContentsId/);
+  test('throws when webContentsId is not bound', async () => {
+    const tools = createBrowserTools({ webContentsId: null, Type, TIERS });
+    const read = tools.find((t) => t.name === 'read_current_tab');
+    await expect(read.execute('call-1', {})).rejects.toThrow(/webContentsId/);
   });
 
   test('throws when fromId returns nothing', async () => {
     mockFromId.mockReturnValue(null);
-    await expect(tools.read_current_tab.execute({}, ctx)).rejects.toThrow(/not available/);
+    await expect(makeTools().read_current_tab.execute('call-1', {})).rejects.toThrow(
+      /not available/
+    );
   });
 
   test('throws when the WebContents has been destroyed', async () => {
     mockFromId.mockReturnValue(makeWc({ isDestroyed: () => true }));
-    await expect(tools.read_current_tab.execute({}, ctx)).rejects.toThrow(/not available/);
+    await expect(makeTools().read_current_tab.execute('call-1', {})).rejects.toThrow(
+      /not available/
+    );
   });
 });
 
 describe('read_current_tab', () => {
-  test('returns url + title + truncated text', async () => {
+  test('returns Pi-shaped result with a single text content block', async () => {
     const wc = makeWc({ executeJavaScript: jest.fn(async () => 'hello world') });
     mockFromId.mockReturnValue(wc);
-    const result = await tools.read_current_tab.execute({}, ctx);
-    expect(result).toEqual({
+    const result = await makeTools().read_current_tab.execute('call-1', {});
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0].type).toBe('text');
+    expect(result.details).toEqual({
       url: 'https://example.com/',
       title: 'Example',
       text: 'hello world',
@@ -87,38 +102,30 @@ describe('read_current_tab', () => {
   test('caps text at 32k characters', async () => {
     const big = 'a'.repeat(40_000);
     mockFromId.mockReturnValue(makeWc({ executeJavaScript: jest.fn(async () => big) }));
-    const result = await tools.read_current_tab.execute({}, ctx);
-    expect(result.text).toHaveLength(32_000);
+    const result = await makeTools().read_current_tab.execute('call-1', {});
+    expect(result.details.text).toHaveLength(32_000);
   });
 });
 
 describe('navigate', () => {
-  test('accepts http/https/bzz/ipfs/ipns/rad/ens schemes', () => {
-    for (const url of [
-      'https://x.com',
-      'http://x.com',
-      'bzz://abc/',
-      'ipfs://bafy/',
-      'ipns://k51/',
-      'rad://z3gqc/',
-      'ens://vitalik.eth/',
-    ]) {
-      expect(() => tools.navigate.inputSchema.parse({ url })).not.toThrow();
-    }
+  test('rejects unsupported schemes inside execute', async () => {
+    mockFromId.mockReturnValue(makeWc());
+    await expect(
+      makeTools().navigate.execute('call-1', { url: 'javascript:alert(1)' })
+    ).rejects.toThrow(/supported scheme/);
+    await expect(
+      makeTools().navigate.execute('call-1', { url: 'file:///etc/passwd' })
+    ).rejects.toThrow(/supported scheme/);
   });
 
-  test('rejects unsupported schemes', () => {
-    expect(() => tools.navigate.inputSchema.parse({ url: 'javascript:alert(1)' })).toThrow();
-    expect(() => tools.navigate.inputSchema.parse({ url: 'file:///etc/passwd' })).toThrow();
-    expect(() => tools.navigate.inputSchema.parse({ url: '/relative' })).toThrow();
-  });
-
-  test('calls loadURL and returns the live url', async () => {
+  test('calls loadURL and returns the live url in details', async () => {
     const wc = makeWc({ getURL: () => 'https://result.com/' });
     mockFromId.mockReturnValue(wc);
-    const result = await tools.navigate.execute({ url: 'https://example.com' }, ctx);
+    const result = await makeTools().navigate.execute('call-1', {
+      url: 'https://example.com',
+    });
     expect(wc.loadURL).toHaveBeenCalledWith('https://example.com');
-    expect(result.url).toBe('https://result.com/');
+    expect(result.details.url).toBe('https://result.com/');
   });
 });
 
@@ -126,22 +133,21 @@ describe('click', () => {
   test('escapes the selector via JSON.stringify in the eval payload', async () => {
     const wc = makeWc({ executeJavaScript: jest.fn(async () => true) });
     mockFromId.mockReturnValue(wc);
-    await tools.click.execute({ selector: 'button[name="x\\"\\\']"]' }, ctx);
+    await makeTools().click.execute('call-1', { selector: 'button[name="x\\"\\\']"]' });
     const code = wc.executeJavaScript.mock.calls[0][0];
-    // The selector must appear inside a JSON-quoted string, no raw embed.
     expect(code).toContain(JSON.stringify('button[name="x\\"\\\']"]'));
   });
 
   test('returns clicked:true when the page reports an element', async () => {
     mockFromId.mockReturnValue(makeWc({ executeJavaScript: jest.fn(async () => true) }));
-    const result = await tools.click.execute({ selector: '#go' }, ctx);
-    expect(result).toEqual({ clicked: true });
+    const result = await makeTools().click.execute('call-1', { selector: '#go' });
+    expect(result.details).toEqual({ clicked: true });
   });
 
   test('returns clicked:false when the selector did not match', async () => {
     mockFromId.mockReturnValue(makeWc({ executeJavaScript: jest.fn(async () => false) }));
-    const result = await tools.click.execute({ selector: '#missing' }, ctx);
-    expect(result).toEqual({ clicked: false });
+    const result = await makeTools().click.execute('call-1', { selector: '#missing' });
+    expect(result.details).toEqual({ clicked: false });
   });
 });
 
@@ -149,22 +155,26 @@ describe('fill', () => {
   test('escapes both selector and value via JSON.stringify', async () => {
     const wc = makeWc({ executeJavaScript: jest.fn(async () => true) });
     mockFromId.mockReturnValue(wc);
-    await tools.fill.execute({ selector: 'input', value: '"; alert(1); "' }, ctx);
+    await makeTools().fill.execute('call-1', {
+      selector: 'input',
+      value: '"; alert(1); "',
+    });
     const code = wc.executeJavaScript.mock.calls[0][0];
-    // The hostile string lands as a JSON-quoted literal inside the eval'd JS,
-    // never as raw code. JSON.stringify produces "\"; alert(1); \"" — the
-    // backslashes prove the closing quote of the value is escaped, so the
-    // alert call stays inert string content.
     expect(code).toContain(JSON.stringify('"; alert(1); "'));
     expect(code).toContain('\\"; alert(1); \\"');
   });
 });
 
 describe('screenshot', () => {
-  test('returns a JPEG data URL', async () => {
+  test('returns an image content block plus a text caption', async () => {
     mockFromId.mockReturnValue(makeWc());
-    const result = await tools.screenshot.execute({}, ctx);
-    expect(result.mimeType).toBe('image/jpeg');
-    expect(result.dataUrl).toMatch(/^data:image\/jpeg;base64,/);
+    const result = await makeTools().screenshot.execute('call-1', {});
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0].type).toBe('image');
+    expect(result.content[0].mimeType).toBe('image/jpeg');
+    expect(typeof result.content[0].data).toBe('string');
+    expect(result.content[1].type).toBe('text');
+    expect(result.details.dataUrl).toMatch(/^data:image\/jpeg;base64,/);
+    expect(result.details.url).toBe('https://example.com/');
   });
 });

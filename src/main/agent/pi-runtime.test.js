@@ -149,7 +149,42 @@ describe('createFreedomPiSession', () => {
     expect(typeof loaderInstance.opts.extensionFactories[0]).toBe('function');
 
     expect(piMock.createAgentSession).toHaveBeenCalledWith(
-      expect.objectContaining({ noTools: 'all' })
+      expect.objectContaining({ noTools: 'builtin' })
+    );
+  });
+
+  test('threads toolCallContext into the extension factory', async () => {
+    listModels.mockResolvedValue({ models: [{ name: 'gemma4:e2b' }] });
+    const toolCallContext = {
+      profile: { allowed_tool_tiers: ['local_safe'] },
+      sessionId: 's1',
+      webContentsId: 42,
+      onToolCall: jest.fn(),
+      requestConsent: jest.fn(),
+      onToolResult: jest.fn(),
+    };
+    await runtime.createFreedomPiSession({ agentDir: '/tmp/x', toolCallContext });
+
+    // Run the factory against a fake Pi API and verify it tries to register
+    // browser tools — proves the toolCallContext made it through, since the
+    // extension's tool-registration code only runs when the context is set.
+    const loaderInstance = piMock.DefaultResourceLoader.mock.instances[0];
+    const factory = loaderInstance.opts.extensionFactories[0];
+    const fakePi = {
+      handlers: new Map(),
+      tools: [],
+      on(event, handler) {
+        const list = this.handlers.get(event) ?? [];
+        list.push(handler);
+        this.handlers.set(event, list);
+      },
+      registerTool(def) {
+        this.tools.push(def);
+      },
+    };
+    await factory(fakePi);
+    expect(fakePi.tools.map((t) => t.name).sort()).toEqual(
+      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot'].sort()
     );
   });
 
