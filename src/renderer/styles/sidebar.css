@@ -6224,6 +6224,93 @@
   min-width: 0;
 }
 
+/* Composer chips are inline pill controls anchored in the toolbar
+   (e.g. thinking-level). Each chip owns a small popover that floats
+   above its button — chip wrapper is `position: relative` so the
+   popover anchors to the chip, not the whole composer. */
+.agent-chip {
+  position: relative;
+  display: inline-flex;
+}
+
+.agent-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.agent-chip-btn:hover,
+.agent-chip-btn[aria-expanded='true'] {
+  background-color: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--text) 25%, transparent);
+}
+
+.agent-chip-stem {
+  opacity: 0.7;
+}
+
+.agent-chip-value {
+  font-weight: 600;
+}
+
+.agent-chip-chevron {
+  font-size: 9px;
+  opacity: 0.6;
+  margin-left: 1px;
+}
+
+.agent-chip-popover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 110px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.agent-chip-option {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.agent-chip-option:hover {
+  background-color: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.agent-chip-option.active {
+  background-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .agent-composer-actions {
   display: flex;
   align-items: center;

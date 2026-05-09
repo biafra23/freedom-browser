@@ -290,6 +290,14 @@ function deleteSession(sessionPath) {
 
 // --- Chat IPC --------------------------------------------------------------
 
+// Pi's `ThinkingLevel` (pi-ai/types). Mirrors composer-thinking-chip.js
+// in the renderer — the renderer can't import CJS shared modules, so a
+// shared file would still need a parallel ESM copy.
+const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+
+const coerceEnum = (value, allowed, fallback) =>
+  allowed.includes(value) ? value : fallback;
+
 async function startChatStream(event, payload = {}) {
   const { model, prompt, sessionPath, activeWebContentsId = null } = payload;
   if (!model || typeof model !== 'string') return { error: 'model is required' };
@@ -297,6 +305,11 @@ async function startChatStream(event, payload = {}) {
   if (!sessionPath || typeof sessionPath !== 'string') {
     return { error: 'sessionPath is required' };
   }
+
+  // Drop unknown values silently rather than rejecting — the chip's enum
+  // is the contract, anything else is a renderer bug we don't want to
+  // surface as a chat failure.
+  const thinkingLevel = coerceEnum(payload.thinkingLevel, THINKING_LEVELS, null);
 
   const streamId = newStreamId();
   const sender = event.sender;
@@ -315,7 +328,7 @@ async function startChatStream(event, payload = {}) {
 
   // Fire-and-forget: pumpChat owns the lifecycle, including emitting the
   // terminal AGENT_CHAT_DONE and dropping the stream from the map.
-  pumpChat({ model, prompt, ctx }).catch((err) => {
+  pumpChat({ model, prompt, thinkingLevel, ctx }).catch((err) => {
     log.error(`[Agent] pumpChat ${streamId} fatal:`, err);
     sendIfAlive(ctx, IPC.AGENT_CHAT_DONE, {
       streamId,
@@ -375,7 +388,7 @@ function buildToolCallContext({ ctx, profile }) {
   };
 }
 
-async function pumpChat({ model, prompt, ctx }) {
+async function pumpChat({ model, prompt, thinkingLevel = null, ctx }) {
   const emitDone = (extra = {}) =>
     sendIfAlive(ctx, IPC.AGENT_CHAT_DONE, {
       streamId: ctx.streamId,
@@ -405,6 +418,17 @@ async function pumpChat({ model, prompt, ctx }) {
     emitDone({ error: err?.message || String(err) });
     dropStream(ctx.streamId);
     return;
+  }
+
+  if (thinkingLevel) {
+    try {
+      session.setThinkingLevel(thinkingLevel);
+    } catch (err) {
+      // Pi clamps to model capabilities and only throws on truly
+      // invalid input. Log and continue — falling back to Pi's default
+      // is preferable to failing the whole turn.
+      log.warn(`[Agent] setThinkingLevel(${thinkingLevel}) failed: ${err?.message || err}`);
+    }
   }
 
   // Tool visibility is set inside pi-extension's session_start hook,
@@ -533,7 +557,7 @@ function handleConsentResponse(_event, { streamId, callId, decision } = {}) {
   if (!ctx || !ctx.pendingConsent.has(callId)) {
     return { ok: false, reason: 'no pending consent for this callId' };
   }
-  const choice = CONSENT_VALUES.includes(decision) ? decision : 'deny';
+  const choice = coerceEnum(decision, CONSENT_VALUES, 'deny');
   const resolve = ctx.pendingConsent.get(callId);
   ctx.pendingConsent.delete(callId);
   resolve(choice);

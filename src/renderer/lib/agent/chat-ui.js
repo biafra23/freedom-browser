@@ -18,6 +18,7 @@
 
 import { renderMarkdown } from './markdown.js';
 import { adaptMessages } from './pi-message-adapter.js';
+import { initThinkingChip, getThinkingLevel } from './composer-thinking-chip.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
@@ -99,6 +100,7 @@ export function initChatUi() {
     syncSendDisabled();
   });
   syncSendDisabled();
+  initThinkingChip(document.getElementById('agent-composer-chips'));
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
   modelBtn?.addEventListener('click', toggleModelDropdown);
@@ -288,6 +290,7 @@ async function handleSubmit(e) {
       sessionPath,
       model,
       prompt: text,
+      thinkingLevel: getThinkingLevel(),
       activeWebContentsId: getActiveWebContentsId(),
     });
     if (result?.error) {

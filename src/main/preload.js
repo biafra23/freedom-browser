@@ -414,11 +414,12 @@ contextBridge.exposeInMainWorld('agent', {
   // existing sessionPath (from createSession / getRecentSession / getSession
   // / listSessions) and only the latest user message — Pi auto-restores
   // prior history from the JSONL.
-  startChat: ({ sessionPath, model, prompt, activeWebContentsId } = {}) =>
+  startChat: ({ sessionPath, model, prompt, thinkingLevel, activeWebContentsId } = {}) =>
     ipcRenderer.invoke('agent:chat:start', {
       sessionPath,
       model,
       prompt,
+      thinkingLevel,
       activeWebContentsId,
     }),
   cancelChat: (streamId) => ipcRenderer.invoke('agent:chat:cancel', { streamId }),

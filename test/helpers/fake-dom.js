@@ -208,6 +208,12 @@ class FakeElement {
     return child;
   }
 
+  append(...children) {
+    for (const child of children) {
+      this.appendChild(child);
+    }
+  }
+
   insertBefore(child, referenceNode) {
     if (referenceNode === null || referenceNode === undefined) {
       return this.appendChild(child);

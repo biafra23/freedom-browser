@@ -91,6 +91,7 @@ function makeFakeSession({
       };
     }),
     setActiveToolsByName: jest.fn(),
+    setThinkingLevel: jest.fn(),
     prompt: jest.fn(async () => {
       // Optional thinking deltas first (Gemma streams reasoning before text).
       for (const ch of thinkingText) {
@@ -260,6 +261,73 @@ describe('startChatStream + pumpChat', () => {
       .join('');
     expect(thinkingText).toBe('reasoning');
     expect(visibleText).toBe('final');
+  });
+
+  test('forwards a valid thinkingLevel to session.setThinkingLevel before prompt', async () => {
+    const session = makeFakeSession();
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+      thinkingLevel: 'high',
+    });
+    await flushAsyncQueue();
+
+    expect(session.setThinkingLevel).toHaveBeenCalledWith('high');
+    expect(session.setThinkingLevel.mock.invocationCallOrder[0]).toBeLessThan(
+      session.prompt.mock.invocationCallOrder[0]
+    );
+  });
+
+  test('drops an invalid thinkingLevel without calling setThinkingLevel', async () => {
+    const session = makeFakeSession();
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+      thinkingLevel: 'extreme',
+    });
+    await flushAsyncQueue();
+
+    expect(session.setThinkingLevel).not.toHaveBeenCalled();
+  });
+
+  test('skips setThinkingLevel when no level is provided', async () => {
+    const session = makeFakeSession();
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+    });
+    await flushAsyncQueue();
+
+    expect(session.setThinkingLevel).not.toHaveBeenCalled();
+  });
+
+  test('continues normally when setThinkingLevel throws', async () => {
+    const session = makeFakeSession();
+    session.setThinkingLevel = jest.fn(() => {
+      throw new Error('clamp failed');
+    });
+    mockCreateSession.mockResolvedValueOnce({ session, dispose: jest.fn(), modelId: 'm' });
+    const sender = makeSender();
+    await _internals.startChatStream(makeEvent(sender), {
+      model: 'm',
+      prompt: 'hi',
+      sessionPath: '/tmp/s.jsonl',
+      thinkingLevel: 'xhigh',
+    });
+    await flushAsyncQueue();
+
+    expect(session.prompt).toHaveBeenCalled();
+    const done = sender.send.mock.calls.find((c) => c[0] === IPC.AGENT_CHAT_DONE);
+    expect(done[1].error).toBeUndefined();
   });
 
   test('emits error done event when createFreedomPiSession throws', async () => {

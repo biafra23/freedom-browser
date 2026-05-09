@@ -219,6 +219,7 @@ describe('chat-ui', () => {
       sessionPath: '/tmp/sessions/abc.jsonl',
       model: 'gemma4:e2b',
       prompt: 'hello',
+      thinkingLevel: 'medium',
       activeWebContentsId: 99,
     });
     expect(mod._internals.state.messages).toEqual([
