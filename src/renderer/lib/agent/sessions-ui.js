@@ -14,8 +14,10 @@ import { pushDebug } from '../debug.js';
 import { loadSessionById, getCurrentSessionId } from './chat-ui.js';
 
 let toggleBtn;
+let channelsToggleBtn;
 let chatView;
 let sessionsView;
+let channelsView;
 let listEl;
 let emptyEl;
 
@@ -23,8 +25,10 @@ let isOpen = false;
 
 export function initSessionsUi() {
   toggleBtn = document.getElementById('agent-sessions-toggle-btn');
+  channelsToggleBtn = document.getElementById('agent-channels-toggle-btn');
   chatView = document.getElementById('agent-chat-view');
   sessionsView = document.getElementById('agent-sessions-view');
+  channelsView = document.getElementById('agent-channels-view');
   listEl = document.getElementById('agent-sessions-list');
   emptyEl = document.getElementById('agent-sessions-empty');
 
@@ -51,7 +55,9 @@ export function initSessionsUi() {
 async function showSessionsView() {
   isOpen = true;
   toggleBtn.setAttribute('aria-pressed', 'true');
+  channelsToggleBtn?.setAttribute('aria-pressed', 'false');
   chatView.classList.add('hidden');
+  channelsView?.classList.add('hidden');
   sessionsView.classList.remove('hidden');
   await refreshList();
 }

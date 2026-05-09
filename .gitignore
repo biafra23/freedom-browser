@@ -24,6 +24,8 @@ dev-app-update.yml
 CLAUDE.md
 .codex
 identity-data/
+messaging-data/
+lobby-admin-keys/
 research/
 playwright-report/
 test-results/

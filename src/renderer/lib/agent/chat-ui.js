@@ -60,6 +60,12 @@ const state = {
   // The Pi JSONL path of the open session. null = "fresh chat, no JSONL
   // exists yet" — first user prompt creates one via createSession.
   currentSessionId: null,
+  // Channel mode: when set, the chat view is showing an XMTP channel
+  // instead of a Pi session. Composer publishes via window.messaging
+  // instead of starting an Ollama chat. Sessions UI and Channels UI
+  // toggle between the two by calling loadSessionById / loadChannel.
+  activeChannel: null, // { id, name, memberInboxIds }
+  channelUnsubscribe: null,
 };
 
 let messagesEl;
@@ -317,6 +323,13 @@ async function handleSubmit(e) {
   const text = inputEl.value.trim();
   if (!text) return;
 
+  // Channel mode: composer publishes to the active XMTP channel instead
+  // of starting a Pi/Ollama turn. Outgoing messages are added optimistically;
+  // the channel.subscribe path filters our own echo so we don't double-render.
+  if (state.activeChannel) {
+    return submitToChannel(text);
+  }
+
   const model = state.selectedModel || FALLBACK_MODEL;
   // Auto-title from the first user message of a fresh chat. Existing
   // sessions keep their stored name.
@@ -353,6 +366,48 @@ async function handleSubmit(e) {
   } catch (err) {
     finalizeAssistant({ error: err?.message || String(err) });
   }
+}
+
+async function submitToChannel(text) {
+  const channel = state.activeChannel;
+  inputEl.value = '';
+  autoGrowInput();
+
+  // Optimistic local echo. Stamp with `__pendingId` so we can dedupe
+  // against the eventual XMTP echo if the runtime ever stops filtering
+  // own messages — currently channel.subscribe drops them, so this is
+  // belt-and-braces.
+  const localId = `local-${Date.now().toString(36)}`;
+  const message = {
+    role: 'channel',
+    isOwn: true,
+    from: 'you',
+    content: text,
+    pending: true,
+    localId,
+  };
+  state.messages.push(message);
+  appendMessage(message);
+
+  try {
+    const res = await window.messaging.publish({
+      channelId: channel.id,
+      payload: { v: 1, kind: 'chat', text, sentAt: new Date().toISOString() },
+    });
+    if (!res?.ok) {
+      message.pending = false;
+      message.error = res?.error || 'publish failed';
+      pushDebug(`[ChatUi] channel publish failed: ${message.error}`);
+    } else {
+      message.pending = false;
+    }
+  } catch (err) {
+    message.pending = false;
+    message.error = err?.message || String(err);
+    pushDebug(`[ChatUi] channel publish threw: ${message.error}`);
+  }
+  renderMessages();
+  inputEl?.focus();
 }
 
 // Per-chunk re-rendering of the full assistant message is O(n²) in
@@ -640,9 +695,10 @@ async function handleStop() {
 
 // Forget the current session id — the next user message creates a fresh
 // JSONL via createSession. The old session remains on disk and shows up
-// in the sessions list.
+// in the sessions list. Also exits channel mode if active.
 export function startNewSession() {
   if (state.activeStreamId) return false;
+  exitChannelMode();
   state.currentSessionId = null;
   state.messages = [];
   state.activeToolCallEls.clear();
@@ -655,6 +711,7 @@ export function startNewSession() {
 // Load a saved session into the chat view. Used by the sessions UI.
 export async function loadSessionById(id) {
   if (state.activeStreamId) return false;
+  exitChannelMode();
   try {
     return hydrateFromSession(await window.agent.getSession(id));
   } catch (err) {
@@ -665,6 +722,86 @@ export async function loadSessionById(id) {
 
 export function getCurrentSessionId() {
   return state.currentSessionId;
+}
+
+export function getActiveChannelId() {
+  return state.activeChannel?.id || null;
+}
+
+// Load an XMTP channel into the chat view. Replaces any open Pi session;
+// composer.submit is rerouted to publish messages to the channel.
+//
+// channelInfo: { id, name, memberInboxIds }
+export async function loadChannel(channelInfo) {
+  if (state.activeStreamId) return false;
+  if (!channelInfo?.id) return false;
+
+  exitChannelMode();
+  state.currentSessionId = null;
+  state.messages = [];
+  state.activeToolCallEls.clear();
+  state.activeAssistantThinkingBodyEl = null;
+  state.activeCompactionEl = null;
+  state.activeChannel = channelInfo;
+
+  // Backfill recent messages from the channel's local XMTP DB.
+  try {
+    const res = await window.messaging.getMessages({ channelId: channelInfo.id, limit: 100 });
+    if (res?.ok && Array.isArray(res.data)) {
+      for (const msg of res.data) {
+        state.messages.push(channelMessageToBubble(msg));
+      }
+    } else if (res && !res.ok) {
+      pushDebug(`[ChatUi] getMessages failed: ${res.error}`);
+    }
+  } catch (err) {
+    pushDebug(`[ChatUi] getMessages threw: ${err?.message || err}`);
+  }
+
+  renderMessages();
+
+  // Live updates: a single onMessage subscription forwards every channel's
+  // messages; we filter by id here.
+  state.channelUnsubscribe = window.messaging.onMessage(({ channelId, message }) => {
+    if (!state.activeChannel || channelId !== state.activeChannel.id) return;
+    const bubble = channelMessageToBubble(message);
+    state.messages.push(bubble);
+    appendMessage(bubble);
+  });
+
+  return true;
+}
+
+function exitChannelMode() {
+  if (state.channelUnsubscribe) {
+    try {
+      state.channelUnsubscribe();
+    } catch (err) {
+      pushDebug(`[ChatUi] channel unsubscribe threw: ${err?.message || err}`);
+    }
+    state.channelUnsubscribe = null;
+  }
+  state.activeChannel = null;
+}
+
+function channelMessageToBubble(msg) {
+  // Prefer a parsed `text` field (our chat envelope: { v, kind:'chat', text }).
+  // Fall back to the raw content only if it's a string — non-string fallthroughs
+  // (system messages, opaque payloads) used to render as `[object Object]`;
+  // coerce defensively + leave the bubble empty rather than show garbage.
+  let text = '';
+  if (typeof msg.parsed?.text === 'string') {
+    text = msg.parsed.text;
+  } else if (typeof msg.content === 'string') {
+    text = msg.content;
+  }
+  return {
+    role: 'channel',
+    isOwn: !!msg.isOwn,
+    from: msg.from || msg.sender || 'unknown',
+    content: text,
+    raw: msg,
+  };
 }
 
 function setComposerBusy(busy) {
@@ -700,8 +837,14 @@ function renderMessages() {
   if (state.messages.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'agent-empty-state';
-    empty.innerHTML =
-      '<strong>Local AI Chat</strong><span>Ask the model anything. Conversations persist as Pi sessions on disk and survive restarts.</span>';
+    if (state.activeChannel) {
+      const memberCount = state.activeChannel.memberInboxIds?.length ?? '?';
+      const name = state.activeChannel.name || 'Channel';
+      empty.innerHTML = `<strong>${escapeHtml(name)}</strong><span>${memberCount} member(s) · messages send over XMTP, end-to-end encrypted.</span>`;
+    } else {
+      empty.innerHTML =
+        '<strong>Local AI Chat</strong><span>Ask the model anything. Conversations persist as Pi sessions on disk and survive restarts.</span>';
+    }
     messagesEl.appendChild(empty);
     return;
   }
@@ -709,6 +852,21 @@ function renderMessages() {
     appendMessage(msg);
   }
   scrollToBottom();
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Truncate XMTP inbox IDs (long hex strings) or 0x addresses to a glanceable
+// form. Inbox IDs are ~64-char lowercase hex; addresses are 42-char checksum.
+function shortenInboxOrAddress(s) {
+  if (!s || typeof s !== 'string') return 'unknown';
+  if (s.length <= 12) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
 }
 
 function appendMessage(msg, opts = {}) {
@@ -719,10 +877,17 @@ function appendMessage(msg, opts = {}) {
   const wrap = document.createElement('div');
   wrap.className = `agent-message ${msg.role}`;
   if (opts.streaming) wrap.classList.add('streaming');
+  if (msg.role === 'channel' && msg.isOwn) wrap.classList.add('own');
+  if (msg.role === 'channel' && msg.pending) wrap.classList.add('pending');
+  if (msg.role === 'channel' && msg.error) wrap.classList.add('error');
 
   const role = document.createElement('div');
   role.className = 'agent-message-role';
-  role.textContent = msg.role === 'user' ? 'You' : msg.role === 'assistant' ? 'Model' : msg.role;
+  if (msg.role === 'channel') {
+    role.textContent = msg.isOwn ? 'You' : shortenInboxOrAddress(msg.from);
+  } else {
+    role.textContent = msg.role === 'user' ? 'You' : msg.role === 'assistant' ? 'Model' : msg.role;
+  }
 
   const content = document.createElement('div');
   content.className = 'agent-message-content';
@@ -730,6 +895,14 @@ function appendMessage(msg, opts = {}) {
     content.innerHTML = renderMarkdown(msg.content);
   } else if (msg.role === 'user') {
     content.textContent = displaySkillInvocation(msg.content || '');
+  } else if (msg.role === 'channel') {
+    content.textContent = msg.content || '';
+    if (msg.error) {
+      const errorEl = document.createElement('div');
+      errorEl.className = 'agent-message-error';
+      errorEl.textContent = `failed: ${msg.error}`;
+      content.appendChild(errorEl);
+    }
   } else {
     content.textContent = msg.content || '';
   }

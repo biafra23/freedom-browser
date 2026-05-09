@@ -470,6 +470,36 @@ contextBridge.exposeInMainWorld('agent', {
   deleteSession: (id) => ipcRenderer.invoke('agent:session:delete', { id }),
 });
 
+contextBridge.exposeInMainWorld('messaging', {
+  // Snapshot of runtime state (started? identity? error?). Returns the
+  // wrapped envelope { ok: true, data: { started, address, inboxId, env, error } }.
+  getStatus: () => ipcRenderer.invoke('messaging:get-status'),
+  // Explicit (re)start trigger. Errors with "Vault is locked" if the
+  // vault hasn't been unlocked yet — callers should surface an unlock UI.
+  start: () => ipcRenderer.invoke('messaging:start'),
+
+  // Channel operations. Each returns { ok, data } | { ok:false, error }.
+  listChannels: () => ipcRenderer.invoke('messaging:list-channels'),
+  createChannel: ({ peerAddresses, name } = {}) =>
+    ipcRenderer.invoke('messaging:create-channel', { peerAddresses, name }),
+  getMessages: ({ channelId, limit } = {}) =>
+    ipcRenderer.invoke('messaging:get-messages', { channelId, limit }),
+  publish: ({ channelId, payload } = {}) =>
+    ipcRenderer.invoke('messaging:publish', { channelId, payload }),
+
+  // Push events from main → renderer.
+  onMessage: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('messaging:message', handler);
+    return () => ipcRenderer.removeListener('messaging:message', handler);
+  },
+  onStatusUpdate: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('messaging:status-update', handler);
+    return () => ipcRenderer.removeListener('messaging:status-update', handler);
+  },
+});
+
 contextBridge.exposeInMainWorld('ollama', {
   start: () => ipcRenderer.invoke('ollama:start'),
   stop: () => ipcRenderer.invoke('ollama:stop'),

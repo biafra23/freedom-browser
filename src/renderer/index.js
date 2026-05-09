@@ -55,6 +55,7 @@ import { initSidebar } from './lib/sidebar.js';
 import { initAiSidebar } from './lib/ai-sidebar.js';
 import { initChatUi } from './lib/agent/chat-ui.js';
 import { initSessionsUi } from './lib/agent/sessions-ui.js';
+import { initChannelsUi } from './lib/agent/channels-ui.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
 
 const electronAPI = window.electronAPI;
@@ -228,6 +229,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initAiSidebar();   // Local AI chat sidebar
   initChatUi();      // Chat panel inside the AI sidebar
   initSessionsUi();  // Sessions list / master-detail swap
+  initChannelsUi();  // XMTP channels list (master-detail, sibling to sessions)
   initWalletUi();    // Wallet & identity display in sidebar
   loadBookmarks();
   initPlatformUI();

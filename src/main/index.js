@@ -98,6 +98,7 @@ const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
 const { registerAgentIpc } = require('./agent/agent-ipc');
 const { registerOllamaIpc, startOllama, stopOllama } = require('./agent/ollama-manager');
+const { registerMessagingIpc } = require('./messaging/messaging-ipc');
 const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
 const { migrateUserData } = require('./migrate-user-data');
 const { initUpdater } = require('./updater');
@@ -159,6 +160,7 @@ async function bootstrap() {
   registerFeedStoreIpc();
   registerAgentIpc();
   registerOllamaIpc();
+  registerMessagingIpc();
   if (!TEST_MODE) {
     // Skip registering the real bzz/ipfs/ipns handlers in test mode —
     // installTestHarness() registers fixture-driven stubs on the same

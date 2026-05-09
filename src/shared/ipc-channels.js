@@ -216,6 +216,16 @@ module.exports = {
   AGENT_SESSION_RENAME: 'agent:session:rename',
   AGENT_SESSION_DELETE: 'agent:session:delete',
 
+  // Messaging (XMTP-backed channels between Freedom installs)
+  MESSAGING_GET_STATUS: 'messaging:get-status',
+  MESSAGING_START: 'messaging:start',
+  MESSAGING_LIST_CHANNELS: 'messaging:list-channels',
+  MESSAGING_CREATE_CHANNEL: 'messaging:create-channel',
+  MESSAGING_GET_MESSAGES: 'messaging:get-messages',
+  MESSAGING_PUBLISH: 'messaging:publish',
+  MESSAGING_MESSAGE: 'messaging:message',
+  MESSAGING_STATUS_UPDATE: 'messaging:status-update',
+
   // Ollama sidecar lifecycle
   OLLAMA_START: 'ollama:start',
   OLLAMA_STOP: 'ollama:stop',

@@ -13,6 +13,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const IPC = require('../shared/ipc-channels');
+const messagingRuntime = require('./messaging/messaging-runtime');
+const messagingIpc = require('./messaging/messaging-ipc');
 
 // Identity module - loaded lazily
 let identityModule = null;
@@ -153,6 +155,10 @@ async function createNewVault(password, strength = 256, userKnowsPassword = true
     },
   });
 
+  startMessagingForCurrentIdentity().catch((err) => {
+    console.warn('[IdentityManager] messaging start failed:', err?.message || err);
+  });
+
   return mnemonic;
 }
 
@@ -188,6 +194,10 @@ async function importExistingMnemonic(password, mnemonic, userKnowsPassword = tr
       beeWallet: derivedKeys.beeWallet.address,
     },
   });
+
+  startMessagingForCurrentIdentity().catch((err) => {
+    console.warn('[IdentityManager] messaging start failed:', err?.message || err);
+  });
 }
 
 /**
@@ -221,6 +231,14 @@ async function unlockVault(password) {
       },
     });
   }
+
+  // Boot the messaging runtime (XMTP) using the user wallet identity. Done
+  // in the background so unlock latency stays predictable — XMTP needs a
+  // network round-trip to register / fetch the inbox state, which can be
+  // slow or fail offline. Failures are surfaced via getStatus().
+  startMessagingForCurrentIdentity().catch((err) => {
+    console.warn('[IdentityManager] messaging start failed:', err?.message || err);
+  });
 }
 
 /**
@@ -231,6 +249,40 @@ async function lockVault() {
   identity.lockVault();
   derivedKeys = null;
   console.log('[IdentityManager] Vault locked');
+
+  try {
+    await messagingRuntime.stop();
+    messagingIpc.emitStatusUpdate();
+  } catch (err) {
+    console.warn('[IdentityManager] messaging stop failed:', err?.message || err);
+  }
+}
+
+/**
+ * Boot the messaging runtime for the currently-derived user wallet.
+ * Safe to call when the runtime is already started (no-op).
+ *
+ * Notification: emits a status-update IPC after either success or
+ * failure so the renderer can refresh its Channels UI without polling.
+ *
+ * Returns the runtime status snapshot so callers (the messaging:start
+ * IPC, retry buttons) can surface success / error directly without
+ * waiting for the broadcast to round-trip.
+ */
+async function startMessagingForCurrentIdentity() {
+  if (!derivedKeys?.userWallet) {
+    throw new Error('Vault is locked');
+  }
+  const dataDir = messagingRuntime.getMessagingDataDir(app);
+  const env = process.env.FREEDOM_XMTP_ENV || 'dev';
+  const status = await messagingRuntime.start({
+    privateKey: derivedKeys.userWallet.privateKey,
+    address: derivedKeys.userWallet.address,
+    dataDir,
+    env,
+  });
+  messagingIpc.emitStatusUpdate();
+  return status;
 }
 
 /**
@@ -1258,4 +1310,9 @@ module.exports = {
   getBeeDataDir,
   getIpfsDataDir,
   getRadicleDataDir,
+
+  // Messaging boot trigger (called from messaging-ipc when the renderer
+  // wants to (re)start the runtime explicitly — e.g. after a vault unlock
+  // that didn't auto-start, or as a retry after a network failure).
+  startMessagingForCurrentIdentity,
 };

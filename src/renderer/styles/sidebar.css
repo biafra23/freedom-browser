@@ -5982,6 +5982,152 @@
   align-self: flex-end;
 }
 
+/* Channel messages: peer messages on the left, own messages on the right.
+   Visually distinct from Model bubbles (greyish) so users at a glance know
+   they're looking at a peer rather than the local AI. */
+.agent-message.channel .agent-message-content {
+  background-color: rgba(120, 200, 120, 0.10);
+  border: 1px solid color-mix(in srgb, rgb(120, 200, 120) 30%, var(--border));
+  align-self: flex-start;
+  max-width: 85%;
+  white-space: pre-wrap;
+}
+
+.agent-message.channel.own .agent-message-content {
+  background-color: rgba(64, 128, 255, 0.12);
+  border-color: color-mix(in srgb, rgb(64, 128, 255) 30%, var(--border));
+  align-self: flex-end;
+}
+
+.agent-message.channel.own .agent-message-role {
+  align-self: flex-end;
+}
+
+.agent-message.channel.pending .agent-message-content {
+  opacity: 0.6;
+}
+
+.agent-message.channel.error .agent-message-content {
+  border-color: color-mix(in srgb, rgb(220, 80, 80) 40%, var(--border));
+  background-color: color-mix(in srgb, rgb(220, 80, 80) 10%, transparent);
+}
+
+.agent-message-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgb(220, 80, 80);
+}
+
+/* Channels view (master-detail twin of sessions view). The list reuses
+   .agent-session-row and .agent-sessions-list styles; the bits below
+   only style what's unique to channels (status banner + new-channel form). */
+.agent-channels-toggle-btn {
+  /* Inherits .agent-sessions-toggle-btn shape; nothing else needed. */
+}
+
+.agent-channels-status {
+  padding: 8px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-channels-status-note {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.agent-channels-status-note.ready {
+  color: var(--text);
+  background-color: color-mix(in srgb, rgb(120, 200, 120) 12%, transparent);
+}
+
+.agent-channels-error {
+  color: rgb(220, 80, 80);
+  background-color: color-mix(in srgb, rgb(220, 80, 80) 12%, transparent);
+}
+
+.agent-channels-action-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background-color: color-mix(in srgb, var(--accent, #4080ff) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #4080ff) 40%, var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.agent-channels-action-btn:hover {
+  background-color: color-mix(in srgb, var(--accent, #4080ff) 26%, transparent);
+}
+
+.agent-channels-action-btn:disabled,
+.agent-channels-action-btn.busy {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.agent-channel-new-form {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  flex-wrap: wrap;
+}
+
+.agent-channel-peer-input,
+.agent-channel-name-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.agent-channel-name-input {
+  font-family: inherit;
+}
+
+.agent-channel-create-btn {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background-color: color-mix(in srgb, var(--accent, #4080ff) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #4080ff) 35%, var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.agent-channel-create-btn:hover {
+  background-color: color-mix(in srgb, var(--accent, #4080ff) 22%, transparent);
+}
+
+.agent-channel-create-btn:disabled,
+.agent-channel-create-btn.busy {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.agent-channel-row .agent-session-row-title {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.agent-channel-row .agent-session-row-title:not(.untitled) {
+  font-family: inherit;
+  font-size: 13px;
+}
+
 .agent-message.assistant .agent-message-content {
   background-color: rgba(127, 127, 127, 0.08);
   border: 1px solid var(--border);
