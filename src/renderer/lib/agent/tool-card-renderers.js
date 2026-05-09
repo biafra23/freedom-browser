@@ -484,6 +484,61 @@ function renderWalletSendTransaction(call) {
   return frag;
 }
 
+// Shared renderer for wallet_get_transaction and wallet_wait_for_transaction.
+// Both return the same unified receipt shape; same summary line + a
+// disclosure for the full payload.
+function renderWalletReceipt(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Receipt lookup failed: ${failureText(call)}`));
+    return frag;
+  }
+  const status = call.result?.status;
+  const hash = call.result?.hash || call.args?.hash;
+  const explorerUrl = call.result?.blockExplorerUrl;
+  if (call.status === 'pending') {
+    frag.appendChild(makeSummary(`Looking up ${truncateMiddle(hash || '', 18)}…`));
+    return frag;
+  }
+  // Headline: "Confirmed: Transfer 1.0 USDC to 0x… in block 1234"
+  // or "Confirmed: 0.05 ETH to 0x… in block 1234" for native value.
+  const action = call.result?.action;
+  const blockSuffix = call.result?.blockNumber ? ` in block ${call.result.blockNumber}` : '';
+  let line;
+  if (status === 'confirmed' && action?.kind === 'erc20-transfer') {
+    const amt = action.formattedAmount ?? `${action.rawAmount} (raw)`;
+    const sym = action.tokenSymbol || 'tokens';
+    line = `Confirmed: Transfer ${amt} ${sym} to ${shortAddress(action.recipient)}${blockSuffix}`;
+  } else if (status === 'confirmed' && action?.kind === 'erc20-approve') {
+    const amt = action.formattedAmount ?? `${action.rawAmount} (raw)`;
+    const sym = action.tokenSymbol || 'tokens';
+    line = `Confirmed: Approve ${shortAddress(action.spender)} for ${amt} ${sym}${blockSuffix}`;
+  } else if (status === 'confirmed') {
+    const v = call.result?.valueFormatted;
+    const to = call.result?.to;
+    line = v && v !== '0.0'
+      ? `Confirmed: ${v} to ${shortAddress(to)}${blockSuffix}`
+      : `Confirmed: contract call to ${shortAddress(to)}${blockSuffix}`;
+  } else if (status === 'pending') {
+    line = `Pending: ${truncateMiddle(hash || '', 18)} not yet mined`;
+  } else if (status === 'failed') {
+    line = `Failed: tx ${truncateMiddle(hash || '', 18)} reverted${blockSuffix}`;
+  } else if (status === 'not_found') {
+    line = `Not found: no record of ${truncateMiddle(hash || '', 18)}`;
+  } else {
+    line = `Unknown status (${call.result?.error || 'no error'})`;
+  }
+  const summary = makeSummary(line);
+  if (explorerUrl) {
+    const sep = document.createElement('span');
+    sep.textContent = ' · ';
+    summary.appendChild(sep);
+    summary.appendChild(makeUrlPill(explorerUrl));
+  }
+  frag.appendChild(summary);
+  return frag;
+}
+
 const TOOL_RENDERERS = {
   navigate: renderNavigate,
   read_current_tab: renderReadCurrentTab,
@@ -499,6 +554,8 @@ const TOOL_RENDERERS = {
   wallet_sign_message: renderWalletSignMessage,
   wallet_sign_typed_data: renderWalletSignTypedData,
   wallet_send_transaction: renderWalletSendTransaction,
+  wallet_get_transaction: renderWalletReceipt,
+  wallet_wait_for_transaction: renderWalletReceipt,
 };
 
 function renderJsonFallback(call) {

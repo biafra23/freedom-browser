@@ -47,13 +47,7 @@ const DEFAULT_FREEDOM_INTRO = `You are an AI assistant integrated into the Freed
 // without the gas estimate.
 const CONSENT_FORMATTER_TIMEOUT_MS = 5000;
 
-function raceWithTimeout(promise, ms, message) {
-  let timer;
-  const timeoutP = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeoutP]).finally(() => clearTimeout(timer));
-}
+const { raceWithTimeout } = require('./promise-utils');
 
 // Pi's default system prompt declares the agent a "coding assistant operating
 // inside pi" and points it at pi's docs. That mis-primes a browser agent —

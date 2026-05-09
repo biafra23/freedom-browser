@@ -36,6 +36,7 @@ const vaultUnlockBridge = require('../vault-unlock-bridge');
 const { decodeKnownAction } = require('./wallet-tx-decode');
 const { formatUnits, parseUnits } = require('ethers');
 const { shortAddress: shortAddr } = require('../../../shared/address-utils');
+const { raceWithTimeout } = require('../promise-utils');
 
 // Resolve the wei value for wallet_send_transaction. Smoke-flagged
 // failure: small models reliably misconvert decimal native units to
@@ -783,6 +784,126 @@ function createWalletTools({ hostWebContentsId, Type }) {
     },
   };
 
+  // Build the agent-facing receipt shape from a transaction-service
+  // details object. Decodes ERC-20 transfer/approve calldata into a
+  // structured `action` field so the agent can verify "this confirmed
+  // transfer of 1.0 USDC was to my address" without parsing hex.
+  function buildReceiptResult(details) {
+    const chain = chainsModule.getChain(details.chainId);
+    const nativeDecimals = chain?.nativeCurrency?.decimals ?? 18;
+    const valueFormatted = details.valueWei
+      ? formatUnits(details.valueWei, nativeDecimals)
+      : null;
+    let action = null;
+    if (details.to && details.data && details.data !== '0x') {
+      const decoded = decodeKnownAction({
+        to: details.to,
+        data: details.data,
+        chainId: details.chainId,
+      });
+      if (decoded?.kind === 'erc20-transfer') {
+        action = {
+          kind: 'erc20-transfer',
+          tokenAddress: decoded.tokenAddress,
+          tokenSymbol: decoded.tokenSymbol,
+          recipient: decoded.recipient,
+          formattedAmount: decoded.formattedAmount,
+          rawAmount: decoded.rawAmount,
+        };
+      } else if (decoded?.kind === 'erc20-approve') {
+        action = {
+          kind: 'erc20-approve',
+          tokenAddress: decoded.tokenAddress,
+          tokenSymbol: decoded.tokenSymbol,
+          spender: decoded.spender,
+          formattedAmount: decoded.formattedAmount,
+          rawAmount: decoded.rawAmount,
+        };
+      }
+    }
+    return {
+      status: details.status,
+      hash: details.hash,
+      from: details.from ?? null,
+      to: details.to ?? null,
+      valueWei: details.valueWei ?? null,
+      valueFormatted,
+      chainId: details.chainId,
+      blockExplorerUrl: details.explorerUrl ?? null,
+      blockNumber: details.blockNumber ?? null,
+      gasUsed: details.gasUsed ?? null,
+      action,
+      error: details.error ?? null,
+    };
+  }
+
+  const walletGetTransaction = {
+    name: 'wallet_get_transaction',
+    label: 'Get transaction details',
+    description:
+      'Look up a transaction by hash on a chain. Returns the on-chain ' +
+      "details (status, from, to, value, action) so the agent can verify " +
+      "a payment landed and was for the right amount to the right recipient. " +
+      'Read-only.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'fetch a transaction\'s on-chain details (status, from, to, value, action) by hash',
+    promptGuidelines: [
+      'Use wallet_get_transaction to verify "did this payment confirm?" or "what did this tx do?". The `action` field decodes ERC-20 transfer/approve calldata, so for token payments compare action.recipient + action.formattedAmount against expected; for native payments compare to + valueFormatted.',
+      'status values: "confirmed" (success), "failed" (executed but reverted), "pending" (broadcast, not yet mined), "not_found" (RPC has no record), "unknown" (RPC error — `error` field has details).',
+      'For "I just sent it, wait until it lands" use wallet_wait_for_transaction instead — this tool is a one-shot snapshot.',
+    ],
+    parameters: Type.Object({
+      hash: Type.String({ minLength: 1 }),
+      chainId: Type.Number({ minimum: 1 }),
+    }),
+    async execute(_id, { hash, chainId }) {
+      const details = await transactionService.getTransactionDetails(hash, chainId);
+      return jsonResult(buildReceiptResult(details));
+    },
+  };
+
+  const walletWaitForTransaction = {
+    name: 'wallet_wait_for_transaction',
+    label: 'Wait for transaction confirmation',
+    description:
+      'Block until a transaction is confirmed on a chain (or the timeout ' +
+      'expires). Returns the same shape as wallet_get_transaction once ' +
+      'confirmed; throws on timeout. Default timeout 30 seconds, max 120.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'wait until a transaction confirms (or timeout) and return its on-chain details',
+    promptGuidelines: [
+      'Use wallet_wait_for_transaction right after wallet_send_transaction to confirm "did my send land?" — pass the txHash from the send return value.',
+      'For passive verification (the payer says "I paid you"), prefer wallet_get_transaction first; only fall back to wait_for_transaction if status comes back "pending".',
+      'On timeout the tool throws — re-call to keep waiting, or fall back to wallet_get_transaction to check the current status without blocking.',
+    ],
+    parameters: Type.Object({
+      hash: Type.String({ minLength: 1 }),
+      chainId: Type.Number({ minimum: 1 }),
+      confirmations: Type.Optional(Type.Number({ minimum: 1, maximum: 32 })),
+      timeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 120000 })),
+    }),
+    async execute(_id, { hash, chainId, confirmations, timeoutMs }) {
+      const wantConfirmations = confirmations ?? 1;
+      const timeout = timeoutMs ?? 30000;
+      // The underlying transaction-service.waitForTransaction has its
+      // own 60s hardcoded timeout; layer raceWithTimeout on top so the
+      // agent can pick a tighter window. Caveat (documented in the
+      // helper): if our timer wins, the underlying ethers wait keeps
+      // polling until its own 60s — bounded leak, low cost at LLM rate.
+      // Switching to a polling-based wait would close the leak; deferred
+      // because the leak is bounded and rare in practice.
+      await raceWithTimeout(
+        transactionService.waitForTransaction(hash, chainId, wantConfirmations),
+        timeout,
+        `Timed out after ${timeout}ms waiting for ${hash}`
+      );
+      // Re-fetch via getTransactionDetails for the unified shape (the
+      // wait helper returns the receipt only; we want from/to/value too).
+      const details = await transactionService.getTransactionDetails(hash, chainId);
+      return jsonResult(buildReceiptResult(details));
+    },
+  };
+
   return [
     walletGetAccount,
     walletListAccounts,
@@ -797,6 +918,8 @@ function createWalletTools({ hostWebContentsId, Type }) {
     walletSignMessage,
     walletSignTypedData,
     walletSendTransaction,
+    walletGetTransaction,
+    walletWaitForTransaction,
   ];
 }
 

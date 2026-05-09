@@ -40,6 +40,8 @@ jest.mock('../../wallet/transaction-service', () => ({
   estimateGas: jest.fn(),
   getGasPrices: jest.fn(),
   signAndSendTransaction: jest.fn(),
+  getTransactionDetails: jest.fn(),
+  waitForTransaction: jest.fn(),
 }));
 
 jest.mock('../../vault-timer', () => ({
@@ -102,7 +104,7 @@ beforeEach(() => {
 });
 
 describe('tool catalog', () => {
-  test('exposes the thirteen expected tools', () => {
+  test('exposes the fifteen expected tools', () => {
     const tools = makeTools();
     expect(Object.keys(tools).sort()).toEqual(
       [
@@ -119,6 +121,8 @@ describe('tool catalog', () => {
         'wallet_sign_message',
         'wallet_sign_typed_data',
         'wallet_send_transaction',
+        'wallet_get_transaction',
+        'wallet_wait_for_transaction',
       ].sort()
     );
   });
@@ -135,6 +139,8 @@ describe('tool catalog', () => {
       'ens_resolve',
       'ens_reverse',
       'ens_resolve_contenthash',
+      'wallet_get_transaction',
+      'wallet_wait_for_transaction',
     ]) {
       expect(tools[name].tier).toBe(TIERS.WALLET_READ);
     }
@@ -1134,5 +1140,243 @@ describe('wallet_send_transaction', () => {
       });
       expect(details.valueDisplay).toBeNull();
     });
+  });
+});
+
+describe('wallet_get_transaction', () => {
+  const ETH_CHAIN = {
+    chainId: 1,
+    name: 'Ethereum',
+    nativeCurrency: { symbol: 'ETH', decimals: 18 },
+    blockExplorer: 'https://etherscan.io',
+  };
+
+  test('returns the unified receipt shape with valueFormatted in native units', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xTXHASH',
+      from: '0xFROM',
+      to: '0xRECIP',
+      valueWei: '50000000000000000', // 0.05 ETH
+      data: '0x',
+      chainId: 1,
+      explorerUrl: 'https://etherscan.io/tx/0xTXHASH',
+      blockNumber: 123,
+      gasUsed: '21000',
+    });
+    const result = await makeTools().wallet_get_transaction.execute('c1', {
+      hash: '0xTXHASH',
+      chainId: 1,
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        status: 'confirmed',
+        hash: '0xTXHASH',
+        from: '0xFROM',
+        to: '0xRECIP',
+        valueWei: '50000000000000000',
+        valueFormatted: '0.05',
+        chainId: 1,
+        blockExplorerUrl: 'https://etherscan.io/tx/0xTXHASH',
+        blockNumber: 123,
+        gasUsed: '21000',
+        action: null,
+      })
+    );
+  });
+
+  test('decodes ERC-20 transfer calldata into the action field', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    chainRegistry.getToken.mockReturnValue({ symbol: 'USDC', decimals: 6 });
+    const RECIP_PADDED = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const AMT_HEX = '00000000000000000000000000000000000000000000000000000000000f4240';
+    const data = '0xa9059cbb' + '000000000000000000000000' + RECIP_PADDED + AMT_HEX;
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xTXHASH',
+      from: '0xFROM',
+      to: '0xUSDC',
+      valueWei: '0',
+      data,
+      chainId: 1,
+      explorerUrl: 'https://etherscan.io/tx/0xTXHASH',
+      blockNumber: 123,
+      gasUsed: '60000',
+    });
+    const result = await makeTools().wallet_get_transaction.execute('c1', {
+      hash: '0xTXHASH',
+      chainId: 1,
+    });
+    expect(result.details.action).toEqual(
+      expect.objectContaining({
+        kind: 'erc20-transfer',
+        tokenSymbol: 'USDC',
+        formattedAmount: '1.0',
+      })
+    );
+    expect(result.details.action.recipient.toLowerCase()).toBe('0x' + RECIP_PADDED);
+  });
+
+  test('decodes ERC-20 approve calldata into the action field', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    chainRegistry.getToken.mockReturnValue({ symbol: 'USDC', decimals: 6 });
+    const SPENDER = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const AMT_HEX = '00000000000000000000000000000000000000000000000000000000004c4b40'; // 5_000_000
+    const data = '0x095ea7b3' + '000000000000000000000000' + SPENDER + AMT_HEX;
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xT',
+      from: '0xFROM',
+      to: '0xUSDC',
+      valueWei: '0',
+      data,
+      chainId: 1,
+      explorerUrl: 'x',
+      blockNumber: 200,
+      gasUsed: '50000',
+    });
+    const result = await makeTools().wallet_get_transaction.execute('c1', {
+      hash: '0xT',
+      chainId: 1,
+    });
+    expect(result.details.action).toEqual(
+      expect.objectContaining({
+        kind: 'erc20-approve',
+        tokenSymbol: 'USDC',
+        formattedAmount: '5.0',
+      })
+    );
+  });
+
+  test('falls back to nullish formattedAmount/symbol when token is unknown to the registry', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    chainRegistry.getToken.mockReturnValue(null);
+    const RECIP = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const AMT_HEX = '00000000000000000000000000000000000000000000000000000000000f4240';
+    const data = '0xa9059cbb' + '000000000000000000000000' + RECIP + AMT_HEX;
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xT',
+      from: '0xFROM',
+      to: '0xUNKNOWNTOKEN',
+      valueWei: '0',
+      data,
+      chainId: 1,
+      explorerUrl: 'x',
+      blockNumber: 1,
+      gasUsed: '60000',
+    });
+    const result = await makeTools().wallet_get_transaction.execute('c1', {
+      hash: '0xT',
+      chainId: 1,
+    });
+    expect(result.details.action).toEqual(
+      expect.objectContaining({
+        kind: 'erc20-transfer',
+        tokenSymbol: null,
+        formattedAmount: null,
+        rawAmount: '1000000',
+      })
+    );
+  });
+
+  test('passes through pending / failed / not_found / unknown statuses', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'pending',
+      hash: '0xPEND',
+      from: '0xFROM',
+      to: '0xRECIP',
+      valueWei: '0',
+      data: '0x',
+      chainId: 1,
+      explorerUrl: 'https://etherscan.io/tx/0xPEND',
+    });
+    const result = await makeTools().wallet_get_transaction.execute('c1', {
+      hash: '0xPEND',
+      chainId: 1,
+    });
+    expect(result.details.status).toBe('pending');
+    expect(result.details.blockNumber).toBeNull();
+    expect(result.details.gasUsed).toBeNull();
+  });
+});
+
+describe('wallet_wait_for_transaction', () => {
+  const ETH_CHAIN = {
+    chainId: 1,
+    name: 'Ethereum',
+    nativeCurrency: { symbol: 'ETH', decimals: 18 },
+    blockExplorer: 'https://etherscan.io',
+  };
+
+  test('awaits the transaction-service helper, then returns the unified receipt', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    transactionService.waitForTransaction.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xTXHASH',
+    });
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xTXHASH',
+      from: '0xFROM',
+      to: '0xRECIP',
+      valueWei: '1000000000000000000',
+      data: '0x',
+      chainId: 1,
+      explorerUrl: 'https://etherscan.io/tx/0xTXHASH',
+      blockNumber: 999,
+      gasUsed: '21000',
+    });
+    const result = await makeTools().wallet_wait_for_transaction.execute('c1', {
+      hash: '0xTXHASH',
+      chainId: 1,
+    });
+    expect(transactionService.waitForTransaction).toHaveBeenCalledWith('0xTXHASH', 1, 1);
+    expect(result.details.status).toBe('confirmed');
+    expect(result.details.valueFormatted).toBe('1.0');
+  });
+
+  test('honours custom confirmations', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    transactionService.waitForTransaction.mockResolvedValue({ status: 'confirmed' });
+    transactionService.getTransactionDetails.mockResolvedValue({
+      status: 'confirmed',
+      hash: '0xH',
+      chainId: 1,
+      explorerUrl: 'x',
+    });
+    await makeTools().wallet_wait_for_transaction.execute('c1', {
+      hash: '0xH',
+      chainId: 1,
+      confirmations: 3,
+    });
+    expect(transactionService.waitForTransaction).toHaveBeenCalledWith('0xH', 1, 3);
+  });
+
+  test('rejects with a clear timeout error when the wait exceeds timeoutMs', async () => {
+    chainsModule.getChain.mockReturnValue(ETH_CHAIN);
+    // Underlying helper never resolves — our timeout race fires.
+    transactionService.waitForTransaction.mockReturnValue(new Promise(() => {}));
+    jest.useFakeTimers();
+    try {
+      // Catch immediately so the rejection that fires inside the timer
+      // callback isn't reported as an unhandled rejection before our
+      // `expect(...).rejects` assertion has a chance to attach.
+      const settled = makeTools()
+        .wallet_wait_for_transaction.execute('c1', {
+          hash: '0xSLOW',
+          chainId: 1,
+          timeoutMs: 1000,
+        })
+        .then((value) => ({ ok: true, value }), (err) => ({ ok: false, err }));
+      await jest.advanceTimersByTimeAsync(1500);
+      const result = await settled;
+      expect(result.ok).toBe(false);
+      expect(result.err.message).toMatch(/Timed out after 1000ms waiting for 0xSLOW/);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

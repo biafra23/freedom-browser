@@ -221,6 +221,8 @@ describe('createFreedomPiSession', () => {
         'wallet_sign_message',
         'wallet_sign_typed_data',
         'wallet_send_transaction',
+        'wallet_get_transaction',
+        'wallet_wait_for_transaction',
       ].sort()
     );
   });

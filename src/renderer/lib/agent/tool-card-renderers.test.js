@@ -405,6 +405,155 @@ describe('tool-card-renderers', () => {
     });
   });
 
+  describe('wallet_get_transaction (receipt)', () => {
+    test('confirmed native value: "Confirmed: 0.05 ETH to 0x... in block 1234"', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xT', chainId: 1 },
+        result: {
+          status: 'confirmed',
+          hash: '0xTXHASHabc',
+          to: '0xRECIPIENTabcdef',
+          valueFormatted: '0.05',
+          blockNumber: 1234,
+          blockExplorerUrl: 'https://etherscan.io/tx/0xT',
+        },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Confirmed: 0.05 to 0xRECI…cdef in block 1234'
+      );
+      expect(host.querySelector('.agent-tool-url-pill')).toBeTruthy();
+    });
+
+    test('confirmed ERC-20 transfer surfaces decoded amount + recipient + symbol', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xT', chainId: 1 },
+        result: {
+          status: 'confirmed',
+          hash: '0xT',
+          to: '0xUSDC',
+          valueFormatted: '0.0',
+          blockNumber: 9000,
+          action: {
+            kind: 'erc20-transfer',
+            tokenSymbol: 'USDC',
+            recipient: '0xRECIPIENTabcdef',
+            formattedAmount: '1.0',
+          },
+        },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Confirmed: Transfer 1.0 USDC to 0xRECI…cdef in block 9000'
+      );
+    });
+
+    test('pending status renders without a block suffix', async () => {
+      const { mod } = await loadRenderers();
+      const PENDING_HASH = '0xPENDING0000000000000000000000ABC';
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: PENDING_HASH, chainId: 1 },
+        result: { status: 'pending', hash: PENDING_HASH },
+      }));
+      const text = host.querySelector('.agent-tool-summary').textContent;
+      expect(text).toMatch(/^Pending: 0x.+….+ not yet mined$/);
+    });
+
+    test('failed status renders the revert + block suffix', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xFAIL', chainId: 1 },
+        result: { status: 'failed', hash: '0xFAIL', blockNumber: 5 },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Failed: tx 0xFAIL reverted in block 5'
+      );
+    });
+
+    test('not_found status renders "Not found:"', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xMISSING', chainId: 1 },
+        result: { status: 'not_found', hash: '0xMISSINGabcdef0123456' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toMatch(
+        /^Not found: no record of 0x/
+      );
+    });
+
+    test('unknown status with an error routes through the shared failure path', async () => {
+      // The renderer's isFailure() check treats any result.error as failure
+      // (consistent across all wallet renderers), so unknown+error renders
+      // "Receipt lookup failed: <err>" rather than the "Unknown status..."
+      // line. That branch is reserved for status:'unknown' WITHOUT an
+      // error message (rare — RPC misbehaviour where we got a status but
+      // no diagnostic).
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xX', chainId: 1 },
+        result: { status: 'unknown', hash: '0xX', error: 'rpc unreachable' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Receipt lookup failed: rpc unreachable'
+      );
+    });
+
+    test('confirmed ERC-20 approve surfaces decoded spender + amount + symbol', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xT', chainId: 1 },
+        result: {
+          status: 'confirmed',
+          hash: '0xT',
+          to: '0xUSDC',
+          blockNumber: 9001,
+          action: {
+            kind: 'erc20-approve',
+            tokenSymbol: 'USDC',
+            spender: '0xSPENDERabcdef',
+            formattedAmount: '5.0',
+          },
+        },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Confirmed: Approve 0xSPEN…cdef for 5.0 USDC in block 9001'
+      );
+    });
+
+    test('confirmed contract call with no value renders the contract-call branch', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_get_transaction',
+        status: 'allowed',
+        args: { hash: '0xT', chainId: 1 },
+        result: {
+          status: 'confirmed',
+          hash: '0xT',
+          to: '0xCONTRACTabcdef',
+          valueFormatted: '0.0',
+          blockNumber: 42,
+        },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Confirmed: contract call to 0xCONT…cdef in block 42'
+      );
+    });
+  });
+
   describe('switch_tab', () => {
     test('reports switched on success', async () => {
       const { mod } = await loadRenderers();

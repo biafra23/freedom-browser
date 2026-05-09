@@ -69,6 +69,8 @@ jest.mock('./tools/wallet-tools', () => {
       stub('wallet_hang_test', 'identity_or_signing', {
         getConsentSignDetails: () => new Promise(() => {}),
       }),
+      stub('wallet_get_transaction', 'wallet_read'),
+      stub('wallet_wait_for_transaction', 'wallet_read'),
     ],
   };
 });
@@ -203,6 +205,8 @@ describe('Phase 3 — tool registration', () => {
       'wallet_sign_message',
       'wallet_sign_typed_data',
       'wallet_send_transaction',
+      'wallet_get_transaction',
+      'wallet_wait_for_transaction',
     ]) {
       expect(names).toContain(expected);
     }
@@ -283,6 +287,7 @@ describe('Phase 3 — tool registration', () => {
         'wallet_get_balance',
         'wallet_get_chain',
         'wallet_get_token_balances',
+        'wallet_get_transaction',
         'wallet_hang_test',
         'wallet_list_accounts',
         'wallet_list_chains',
@@ -290,6 +295,7 @@ describe('Phase 3 — tool registration', () => {
         'wallet_sign_message',
         'wallet_sign_typed_data',
         'wallet_switch_chain',
+        'wallet_wait_for_transaction',
       ].sort()
     );
   });
