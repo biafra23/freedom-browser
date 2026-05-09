@@ -5915,6 +5915,26 @@
   opacity: 1;
 }
 
+/* Compaction marker — both transient (compacting…) and permanent
+   (after completion). Visually distinct from generic info notices
+   because the user benefits from being able to spot where in the
+   conversation Pi summarised earlier context. */
+.agent-notice-compaction {
+  font-style: italic;
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+  opacity: 0.95;
+}
+
+@keyframes agent-notice-compaction-pulse {
+  0%, 100% { opacity: 0.95; }
+  50%      { opacity: 0.55; }
+}
+
+.agent-notice-compaction.compacting {
+  animation: agent-notice-compaction-pulse 1.4s ease-in-out infinite;
+}
+
 .agent-message-role {
   font-size: 10px;
   font-weight: 600;

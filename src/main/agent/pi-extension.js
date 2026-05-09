@@ -116,11 +116,12 @@ function createFreedomExtension({
       return;
     }
 
-    // Slash commands are user-facing controls and shouldn't be exposed
-    // by subagent sessions. The subagent path runs autonomously inside
-    // a tool call — it has no UI and no notice pipe.
+    // Slash commands and compaction-indicator notices are user-facing
+    // and shouldn't fire from subagent sessions. The subagent path runs
+    // autonomously inside a tool call — no UI, no notice pipe.
     if (!isSubagent) {
       registerFreedomCommands({ pi, sessionRef, toolCallContext });
+      registerCompactionNotices({ pi, toolCallContext });
     }
 
     const browserTools = createBrowserTools({
@@ -325,6 +326,33 @@ function registerFreedomCommands({ pi, sessionRef, toolCallContext }) {
   });
 }
 
+// Pi auto-compacts when context fills, plus the user can trigger
+// `/compact` manually. Both fire `session_before_compact` (start) and
+// `session_compact` (end). We surface a single transient indicator
+// in the chat that morphs from "compacting…" to a permanent marker
+// showing the result, so the user sees where in the conversation
+// the model's earlier context got summarised.
+function registerCompactionNotices({ pi, toolCallContext }) {
+  const notify = (msg) => toolCallContext.onNotice?.(msg);
+
+  pi.on('session_before_compact', async () => {
+    notify({ kind: 'compaction-start', text: 'Compacting context…' });
+  });
+
+  pi.on('session_compact', async (event) => {
+    const tokensBefore = event?.compactionEntry?.tokensBefore;
+    const text = typeof tokensBefore === 'number' && tokensBefore > 0
+      ? `Context compacted (${formatTokens(tokensBefore)} tokens summarised)`
+      : 'Context compacted';
+    notify({ kind: 'compaction-end', text });
+  });
+}
+
+function formatTokens(n) {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
 function formatSessionStats(stats) {
   const parts = [];
   if (stats.messageCount != null) parts.push(`${stats.messageCount} messages`);
@@ -344,6 +372,8 @@ module.exports = {
     buildFreedomSystemPrompt,
     DEFAULT_FREEDOM_INTRO,
     registerFreedomCommands,
+    registerCompactionNotices,
     formatSessionStats,
+    formatTokens,
   },
 };

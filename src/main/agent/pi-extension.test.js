@@ -643,3 +643,75 @@ describe('Phase 6.4 — slash command handlers', () => {
     );
   });
 });
+
+describe('Phase 6.5 — compaction notices', () => {
+  function makeContext(overrides = {}) {
+    return {
+      profile: ALL_TIERS_PROFILE,
+      sessionId: '/tmp/sessions/x.jsonl',
+      webContentsId: 42,
+      onToolCall: jest.fn(),
+      requestConsent: jest.fn(async () => 'allow'),
+      onToolResult: jest.fn(),
+      onNotice: jest.fn(),
+      ...overrides,
+    };
+  }
+
+  async function setupWith({ isSubagent = false } = {}) {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({
+      toolCallContext: ctx,
+      sessionRef: { session: null },
+      isSubagent,
+    })(pi);
+    return { ctx, pi };
+  }
+
+  test('main session registers session_before_compact and session_compact handlers', async () => {
+    const { pi } = await setupWith();
+    expect(pi.handlers.has('session_before_compact')).toBe(true);
+    expect(pi.handlers.has('session_compact')).toBe(true);
+  });
+
+  test('subagent session does NOT register compaction handlers (no UI to show)', async () => {
+    const { pi } = await setupWith({ isSubagent: true });
+    expect(pi.handlers.has('session_before_compact')).toBe(false);
+    expect(pi.handlers.has('session_compact')).toBe(false);
+  });
+
+  test('session_before_compact emits a compaction-start notice', async () => {
+    const { pi, ctx } = await setupWith();
+    const handler = pi.handlers.get('session_before_compact')[0];
+    await handler({ type: 'session_before_compact' });
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'compaction-start', text: expect.stringMatching(/Compacting/) })
+    );
+  });
+
+  test('session_compact emits compaction-end with formatted token count', async () => {
+    const { pi, ctx } = await setupWith();
+    const handler = pi.handlers.get('session_compact')[0];
+    await handler({
+      type: 'session_compact',
+      compactionEntry: { tokensBefore: 12300 },
+      fromExtension: false,
+    });
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'compaction-end',
+        text: expect.stringMatching(/12\.3k tokens summarised/),
+      })
+    );
+  });
+
+  test('session_compact without tokens still emits a generic completion notice', async () => {
+    const { pi, ctx } = await setupWith();
+    const handler = pi.handlers.get('session_compact')[0];
+    await handler({ type: 'session_compact', compactionEntry: {}, fromExtension: false });
+    expect(ctx.onNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'compaction-end', text: 'Context compacted' })
+    );
+  });
+});

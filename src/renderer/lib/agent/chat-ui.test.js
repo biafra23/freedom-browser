@@ -597,6 +597,50 @@ describe('chat-ui', () => {
       expect(messagesEl.querySelector('.agent-notice')).toBeNull();
     });
 
+    test('compaction-start renders a sticky pulsing indicator and end mutates it in place', async () => {
+      const { handlers, messagesEl } = await loadChatUi();
+
+      handlers.notice({ kind: 'compaction-start', text: 'Compacting context…' });
+      const start = messagesEl.querySelector('.agent-notice-compaction');
+      expect(start).toBeTruthy();
+      expect(start.classList.contains('compacting')).toBe(true);
+      expect(start.textContent).toBe('Compacting context…');
+
+      handlers.notice({
+        kind: 'compaction-end',
+        text: 'Context compacted (12.3k tokens summarised)',
+      });
+      const allCompactions = messagesEl.querySelectorAll('.agent-notice-compaction');
+      // Same element — the end mutates the start, doesn't append a new one.
+      expect(allCompactions).toHaveLength(1);
+      expect(allCompactions[0].classList.contains('compacting')).toBe(false);
+      expect(allCompactions[0].textContent).toBe(
+        'Context compacted (12.3k tokens summarised)'
+      );
+    });
+
+    test('compaction-end without a prior start renders a standalone marker', async () => {
+      const { handlers, messagesEl } = await loadChatUi();
+      handlers.notice({ kind: 'compaction-end', text: 'Context compacted' });
+      const el = messagesEl.querySelector('.agent-notice-compaction');
+      expect(el).toBeTruthy();
+      expect(el.classList.contains('compacting')).toBe(false);
+      expect(el.textContent).toBe('Context compacted');
+    });
+
+    test('two back-to-back compaction cycles each get their own marker', async () => {
+      const { handlers, messagesEl } = await loadChatUi();
+      handlers.notice({ kind: 'compaction-start', text: 'Compacting…' });
+      handlers.notice({ kind: 'compaction-end', text: 'Context compacted (3k tokens)' });
+      handlers.notice({ kind: 'compaction-start', text: 'Compacting…' });
+      handlers.notice({ kind: 'compaction-end', text: 'Context compacted (5k tokens)' });
+
+      const markers = messagesEl.querySelectorAll('.agent-notice-compaction');
+      expect(markers).toHaveLength(2);
+      expect(markers[0].textContent).toBe('Context compacted (3k tokens)');
+      expect(markers[1].textContent).toBe('Context compacted (5k tokens)');
+    });
+
     test('slash-pick handler inserts /cmd with trailing space for arg-taking commands and does NOT submit', async () => {
       const { mod, inputEl, composerEl } = await loadChatUi();
       const submitHandler = jest.fn();

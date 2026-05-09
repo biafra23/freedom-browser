@@ -44,6 +44,11 @@ const state = {
   // place without re-rendering the whole message. Phase 3 brings this
   // back to life; Phase 2 leaves the wiring in place but no events fire.
   activeToolCallEls: new Map(),
+  // Held while a session_before_compact has fired but no matching
+  // session_compact has arrived. The end event mutates this element
+  // in place so the conversation gets one permanent compaction
+  // marker, not two stacked notices.
+  activeCompactionEl: null,
   selectedModel: null,
   models: [],
   daemonRunning: false,
@@ -243,6 +248,7 @@ function hydrateFromSession(session) {
   state.messages = adaptMessages(session.messages);
   state.activeToolCallEls.clear();
   state.activeAssistantThinkingBodyEl = null;
+  state.activeCompactionEl = null;
   renderMessages();
   return true;
 }
@@ -465,13 +471,46 @@ function handleSlashCommandPick(cmd) {
 }
 
 function handleNotice(data) {
-  if (!data?.text || !messagesEl) return;
+  if (!data || !messagesEl) return;
+
+  // Compaction is a two-event sequence: the start fires a sticky
+  // indicator we keep a reference to, and the end re-uses that same
+  // element so the conversation gets a single permanent marker
+  // showing where context was summarised — not two stacked bubbles.
+  if (data.kind === 'compaction-start') {
+    state.activeCompactionEl = appendCompactionNotice(data.text || 'Compacting context…', true);
+    return;
+  }
+  if (data.kind === 'compaction-end') {
+    const text = data.text || 'Context compacted';
+    if (state.activeCompactionEl) {
+      state.activeCompactionEl.classList.remove('compacting');
+      state.activeCompactionEl.textContent = text;
+      state.activeCompactionEl = null;
+    } else {
+      // No matching start — render the end as a standalone marker.
+      appendCompactionNotice(text, false);
+    }
+    scrollToBottom();
+    return;
+  }
+
+  if (!data.text) return;
   const kind = data.kind === 'error' ? 'error' : 'info';
   const el = document.createElement('div');
   el.className = `agent-notice agent-notice-${kind}`;
   el.textContent = data.text;
   messagesEl.appendChild(el);
   scrollToBottom();
+}
+
+function appendCompactionNotice(text, compacting) {
+  const el = document.createElement('div');
+  el.className = `agent-notice agent-notice-compaction${compacting ? ' compacting' : ''}`;
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollToBottom();
+  return el;
 }
 
 function handleDone(data) {
@@ -549,6 +588,7 @@ export function startNewSession() {
   state.messages = [];
   state.activeToolCallEls.clear();
   state.activeAssistantThinkingBodyEl = null;
+  state.activeCompactionEl = null;
   renderMessages();
   return true;
 }
