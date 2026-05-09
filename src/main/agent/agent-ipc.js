@@ -42,7 +42,6 @@ const {
 } = require('./pi-runtime');
 const broker = require('./pi-broker');
 const { CONSENT_VALUES } = require('./pi-broker');
-const { getBrowserToolMeta } = require('./tools/browser-tools');
 
 // streamId -> {
 //   streamId, senderId, sender, sessionPath, activeWebContentsId,
@@ -408,16 +407,11 @@ async function pumpChat({ model, prompt, ctx }) {
     return;
   }
 
-  // Profile-driven tool visibility. Pi's default with `noTools: 'builtin'`
-  // is no active tools at all; setActiveToolsByName makes our extension
-  // tools visible to the LLM. Defense-in-depth — even if the model picks
-  // a tool not in this list, the broker's `tool_call` hook re-checks tier.
-  try {
-    const visibleNames = broker.visibleToolNames(profile, getBrowserToolMeta());
-    session.setActiveToolsByName(visibleNames);
-  } catch (err) {
-    log.warn(`[Agent] setActiveToolsByName threw: ${err.message}`);
-  }
+  // Tool visibility is set inside pi-extension's session_start hook,
+  // which runs during bindExtensions above. The hook uses the toolMeta
+  // map it built when registering the tools (browser + spawn_subagent
+  // for the main agent; just browser for subagents) so the active list
+  // matches what's registered.
 
   ctx.session = session;
   ctx.dispose = dispose;

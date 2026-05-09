@@ -93,12 +93,6 @@ function createFreedomExtension({
   agentDir,
 } = {}) {
   return async function freedomExtension(pi) {
-    pi.on('session_start', async () => {
-      log.info(
-        `[Pi] Freedom extension bound to ${isSubagent ? 'subagent' : 'session'}`
-      );
-    });
-
     pi.on('session_shutdown', async (event) => {
       log.info(`[Pi] Freedom extension shutting down (reason: ${event.reason})`);
     });
@@ -113,7 +107,13 @@ function createFreedomExtension({
       };
     });
 
-    if (!toolCallContext) return; // Phase 1 / Phase 2 path: no tool wiring.
+    if (!toolCallContext) {
+      // Phase 1 / Phase 2 path: just lifecycle log, no tool wiring.
+      pi.on('session_start', async () => {
+        log.info('[Pi] Freedom extension bound to session (no tools)');
+      });
+      return;
+    }
 
     const browserTools = createBrowserTools({
       webContentsId: toolCallContext.webContentsId ?? null,
@@ -138,6 +138,25 @@ function createFreedomExtension({
         executionMode: executionModeForTier(tier),
       });
     }
+
+    // Pi's `noTools: 'builtin'` leaves initialActiveToolNames=[] so every
+    // extension-registered tool defaults to OFF — the LLM never sees them
+    // until we explicitly enable them. Do it on session_start so the
+    // active list is established before the first turn for both main
+    // agent and subagent paths. (Pre-fix bug: agent-ipc only enabled the
+    // five browser tools; spawn_subagent was registered-but-invisible.
+    // Subagent sessions never enabled anything at all.)
+    pi.on('session_start', async () => {
+      log.info(
+        `[Pi] Freedom extension bound to ${isSubagent ? 'subagent' : 'session'}`
+      );
+      const meta = [...toolMeta.entries()].map(([name, m]) => ({
+        name,
+        tier: m.tier,
+      }));
+      const visibleNames = broker.visibleToolNames(toolCallContext.profile, meta);
+      pi.setActiveTools(visibleNames);
+    });
 
     // Per-callId dedup: if the broker / consent flow already emitted a
     // tool-result IPC (block / deny path), don't double-emit when Pi

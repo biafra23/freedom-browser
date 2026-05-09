@@ -16,9 +16,11 @@ const { TIERS } = require('./tool-tiers');
 function makeFakePiApi() {
   const handlers = new Map();
   const tools = [];
+  const setActiveCalls = [];
   return {
     handlers,
     tools,
+    setActiveCalls,
     on(event, handler) {
       const list = handlers.get(event) ?? [];
       list.push(handler);
@@ -26,6 +28,9 @@ function makeFakePiApi() {
     },
     registerTool(def) {
       tools.push(def);
+    },
+    setActiveTools(names) {
+      setActiveCalls.push([...names]);
     },
   };
 }
@@ -117,6 +122,57 @@ describe('Phase 3 — tool registration', () => {
     await createFreedomExtension({ toolCallContext: ctx })(pi);
     expect(pi.handlers.has('tool_call')).toBe(true);
     expect(pi.handlers.has('tool_result')).toBe(true);
+  });
+
+  test('session_start enables every registered tool that the profile permits', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({
+      toolCallContext: ctx,
+      modelId: 'm',
+      agentDir: '/tmp/x',
+    })(pi);
+    // Pi has registered tools but not yet activated any.
+    expect(pi.setActiveCalls).toEqual([]);
+    // Fire the session_start hook.
+    const handler = pi.handlers.get('session_start')[0];
+    await handler({});
+    expect(pi.setActiveCalls).toHaveLength(1);
+    // For the all-tiers default profile we expect everything pi-extension
+    // registered to be enabled — the five browser tools AND spawn_subagent.
+    expect(pi.setActiveCalls[0].sort()).toEqual(
+      ['click', 'fill', 'navigate', 'read_current_tab', 'screenshot', 'spawn_subagent'].sort()
+    );
+  });
+
+  test('subagent path: session_start excludes spawn_subagent (depth=1)', async () => {
+    const ctx = makeContext();
+    const pi = makeFakePiApi();
+    await createFreedomExtension({
+      toolCallContext: ctx,
+      modelId: 'm',
+      agentDir: '/tmp/x',
+      isSubagent: true,
+    })(pi);
+    const handler = pi.handlers.get('session_start')[0];
+    await handler({});
+    expect(pi.setActiveCalls[0]).not.toContain('spawn_subagent');
+  });
+
+  test('session_start filters by profile.allowed_tool_tiers', async () => {
+    // A subagent restricted to local_sensitive only should see read+screenshot
+    // — not navigate/click/fill (browser_mutation).
+    const ctx = makeContext({ profile: { allowed_tool_tiers: ['local_sensitive'] } });
+    const pi = makeFakePiApi();
+    await createFreedomExtension({
+      toolCallContext: ctx,
+      modelId: 'm',
+      agentDir: '/tmp/x',
+      isSubagent: true,
+    })(pi);
+    const handler = pi.handlers.get('session_start')[0];
+    await handler({});
+    expect(pi.setActiveCalls[0].sort()).toEqual(['read_current_tab', 'screenshot'].sort());
   });
 
   test('registers a before_agent_start hook that overrides the system prompt', async () => {
