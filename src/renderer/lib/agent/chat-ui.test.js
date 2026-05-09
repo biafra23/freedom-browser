@@ -518,4 +518,51 @@ describe('chat-ui', () => {
       expect(bridge.respondConsent).toHaveBeenCalledWith('stream-1', 'c1', 'allow');
     });
   });
+
+  describe('composer behaviour', () => {
+    test('send button starts disabled and toggles with input value', async () => {
+      const { inputEl, sendBtn } = await loadChatUi();
+
+      expect(sendBtn.disabled).toBe(true);
+
+      inputEl.value = 'hello';
+      inputEl.dispatch('input');
+      expect(sendBtn.disabled).toBe(false);
+
+      inputEl.value = '   ';
+      inputEl.dispatch('input');
+      expect(sendBtn.disabled).toBe(true);
+    });
+
+    test('send button re-disables after submit clears the input', async () => {
+      const { inputEl, sendBtn, composerEl, handlers } = await loadChatUi();
+      inputEl.value = 'hi';
+      inputEl.dispatch('input');
+      expect(sendBtn.disabled).toBe(false);
+
+      composerEl.dispatch('submit', { preventDefault: jest.fn() });
+      await flushMicrotasks();
+
+      handlers.done({
+        streamId: 'stream-1',
+        fullContent: 'hi',
+        stats: { usage: { totalTokens: 1, outputTokens: 1 } },
+      });
+
+      expect(inputEl.value).toBe('');
+      expect(sendBtn.disabled).toBe(true);
+    });
+
+    test('input event auto-grows textarea height to its scrollHeight, clamped at 200px', async () => {
+      const { inputEl } = await loadChatUi();
+
+      inputEl.scrollHeight = 80;
+      inputEl.dispatch('input');
+      expect(inputEl.style.height).toBe('80px');
+
+      inputEl.scrollHeight = 500;
+      inputEl.dispatch('input');
+      expect(inputEl.style.height).toBe('200px');
+    });
+  });
 });

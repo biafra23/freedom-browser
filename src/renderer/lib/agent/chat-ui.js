@@ -22,6 +22,10 @@ import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
 
 const FALLBACK_MODEL = 'gemma4:e2b';
+// Mirror of `.agent-input { max-height }` in sidebar.css. The two must
+// stay in lockstep — the JS clamp prevents the textarea from growing
+// past what CSS will scroll.
+const MAX_TEXTAREA_HEIGHT_PX = 200;
 
 const state = {
   messages: [],
@@ -90,6 +94,11 @@ export function initChatUi() {
       handleSubmit(e);
     }
   });
+  inputEl.addEventListener('input', () => {
+    autoGrowInput();
+    syncSendDisabled();
+  });
+  syncSendDisabled();
   stopBtn.addEventListener('click', handleStop);
   clearBtn?.addEventListener('click', startNewSession);
   modelBtn?.addEventListener('click', toggleModelDropdown);
@@ -266,6 +275,7 @@ async function handleSubmit(e) {
   state.messages.push({ role: 'user', content: text });
   appendMessage({ role: 'user', content: text });
   inputEl.value = '';
+  autoGrowInput();
   setComposerBusy(true);
 
   // Insert an empty assistant message that we'll stream into.
@@ -472,6 +482,21 @@ function setComposerBusy(busy) {
     sendBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
     inputEl.disabled = false;
+    syncSendDisabled();
+  }
+}
+
+function syncSendDisabled() {
+  if (!sendBtn || !inputEl) return;
+  sendBtn.disabled = inputEl.value.trim().length === 0;
+}
+
+function autoGrowInput() {
+  if (!inputEl) return;
+  inputEl.style.height = 'auto';
+  const next = Math.min(inputEl.scrollHeight || 0, MAX_TEXTAREA_HEIGHT_PX);
+  if (next > 0) {
+    inputEl.style.height = `${next}px`;
   }
 }
 
