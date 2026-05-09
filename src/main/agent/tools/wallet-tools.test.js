@@ -1,4 +1,10 @@
-jest.mock('electron', () => ({}), { virtual: true });
+const mockFromId = jest.fn();
+
+jest.mock('electron', () => ({
+  webContents: {
+    fromId: (...args) => mockFromId(...args),
+  },
+}));
 
 jest.mock('../../identity-manager', () => ({
   getActiveWalletAddress: jest.fn(),
@@ -20,18 +26,45 @@ jest.mock('../../chain-registry', () => ({
   isChainAvailable: jest.fn(),
 }));
 
+jest.mock('../../ens-resolver', () => ({
+  resolveEnsAddress: jest.fn(),
+  resolveEnsReverse: jest.fn(),
+  resolveEnsContent: jest.fn(),
+  ENS_REASONS: Object.freeze({
+    NOT_FOUND: 'NOT_FOUND',
+    INVALID_NAME: 'INVALID_NAME',
+    INVALID_ADDRESS: 'INVALID_ADDRESS',
+    RESOLUTION_ERROR: 'RESOLUTION_ERROR',
+  }),
+  ENS_RESULT_TYPES: Object.freeze({
+    OK: 'ok',
+    NOT_FOUND: 'not_found',
+    UNSUPPORTED: 'unsupported',
+    CONFLICT: 'conflict',
+    ERROR: 'error',
+  }),
+}));
+
 const { Type } = require('typebox');
 const identityManager = require('../../identity-manager');
 const balanceService = require('../../wallet/balance-service');
 const chainsModule = require('../../wallet/chains');
 const chainRegistry = require('../../chain-registry');
+const ensResolver = require('../../ens-resolver');
 
 const { createWalletTools, _internals } = require('./wallet-tools');
 const { TIERS } = require('../tool-tiers');
 
-function makeTools() {
-  const arr = createWalletTools({ Type });
+function makeTools(opts = {}) {
+  const arr = createWalletTools({ hostWebContentsId: 7, Type, ...opts });
   return Object.fromEntries(arr.map((t) => [t.name, t]));
+}
+
+function fakeWalletBridge() {
+  return {
+    isDestroyed: () => false,
+    executeJavaScript: jest.fn(async () => true),
+  };
 }
 
 beforeEach(() => {
@@ -39,23 +72,40 @@ beforeEach(() => {
 });
 
 describe('tool catalog', () => {
-  test('exposes the five expected tools', () => {
+  test('exposes the ten expected tools', () => {
     const tools = makeTools();
     expect(Object.keys(tools).sort()).toEqual(
       [
         'wallet_get_account',
+        'wallet_list_accounts',
         'wallet_get_balance',
         'wallet_get_token_balances',
         'wallet_list_chains',
         'wallet_get_chain',
+        'wallet_switch_chain',
+        'ens_resolve',
+        'ens_reverse',
+        'ens_resolve_contenthash',
       ].sort()
     );
   });
 
-  test('every tool is tier WALLET_READ', () => {
-    for (const t of Object.values(makeTools())) {
-      expect(t.tier).toBe(TIERS.WALLET_READ);
+  test('read tools are WALLET_READ; switch_chain is BROWSER_MUTATION', () => {
+    const tools = makeTools();
+    for (const name of [
+      'wallet_get_account',
+      'wallet_list_accounts',
+      'wallet_get_balance',
+      'wallet_get_token_balances',
+      'wallet_list_chains',
+      'wallet_get_chain',
+      'ens_resolve',
+      'ens_reverse',
+      'ens_resolve_contenthash',
+    ]) {
+      expect(tools[name].tier).toBe(TIERS.WALLET_READ);
     }
+    expect(tools.wallet_switch_chain.tier).toBe(TIERS.BROWSER_MUTATION);
   });
 
   test('every tool has label, description, parameters, snippet, and at least one guideline', () => {
@@ -99,6 +149,31 @@ describe('wallet_get_account', () => {
     await expect(makeTools().wallet_get_account.execute('c1', {})).rejects.toThrow(
       _internals.VAULT_LOCKED_HINT
     );
+  });
+});
+
+describe('wallet_list_accounts', () => {
+  test('returns the derived wallet list and the active index', async () => {
+    identityManager.getDerivedWallets.mockResolvedValue([
+      { index: 0, name: 'Main Wallet', address: '0xmain' },
+      { index: 1, name: 'Trading', address: '0xabc' },
+    ]);
+    identityManager.getActiveWalletIndex.mockReturnValue(1);
+    const result = await makeTools().wallet_list_accounts.execute('c1', {});
+    expect(result.details).toEqual({
+      activeIndex: 1,
+      wallets: [
+        { index: 0, name: 'Main Wallet', address: '0xmain' },
+        { index: 1, name: 'Trading', address: '0xabc' },
+      ],
+    });
+  });
+
+  test('returns an empty wallet list with activeIndex defaulting to 0 when no vault exists yet', async () => {
+    identityManager.getDerivedWallets.mockResolvedValue([]);
+    identityManager.getActiveWalletIndex.mockReturnValue(0);
+    const result = await makeTools().wallet_list_accounts.execute('c1', {});
+    expect(result.details).toEqual({ activeIndex: 0, wallets: [] });
   });
 });
 
@@ -216,6 +291,194 @@ describe('error propagation', () => {
     await expect(
       makeTools().wallet_get_balance.execute('c1', { chainId: 1 })
     ).rejects.toThrow(/rpc unreachable/);
+  });
+});
+
+describe('wallet_switch_chain', () => {
+  test('validates chainId and routes through the wallet bridge with a true result', async () => {
+    chainsModule.getChain.mockReturnValue({ chainId: 100, name: 'Gnosis' });
+    const wc = fakeWalletBridge();
+    mockFromId.mockReturnValue(wc);
+    const result = await makeTools().wallet_switch_chain.execute('c1', { chainId: 100 });
+    expect(result.details).toEqual({ chainId: 100, name: 'Gnosis' });
+    const code = wc.executeJavaScript.mock.calls[0][0];
+    expect(code).toContain("window.__agentWalletBridge__");
+    expect(code).toContain('setActiveChain(100)');
+  });
+
+  test('rejects unknown chainId before touching the bridge', async () => {
+    chainsModule.getChain.mockReturnValue(null);
+    const wc = fakeWalletBridge();
+    mockFromId.mockReturnValue(wc);
+    await expect(
+      makeTools().wallet_switch_chain.execute('c1', { chainId: 9999 })
+    ).rejects.toThrow(/unknown chainId 9999/);
+    expect(wc.executeJavaScript).not.toHaveBeenCalled();
+  });
+
+  test('rejects when the bridge returns falsy (refused)', async () => {
+    chainsModule.getChain.mockReturnValue({ chainId: 100, name: 'Gnosis' });
+    const wc = fakeWalletBridge();
+    wc.executeJavaScript.mockResolvedValue(false);
+    mockFromId.mockReturnValue(wc);
+    await expect(
+      makeTools().wallet_switch_chain.execute('c1', { chainId: 100 })
+    ).rejects.toThrow(/refused chain 100/);
+  });
+
+  test('rejects with the bridge __error sentinel from the renderer', async () => {
+    chainsModule.getChain.mockReturnValue({ chainId: 100, name: 'Gnosis' });
+    const wc = fakeWalletBridge();
+    wc.executeJavaScript.mockResolvedValue({ __error: 'wallet bridge unavailable' });
+    mockFromId.mockReturnValue(wc);
+    await expect(
+      makeTools().wallet_switch_chain.execute('c1', { chainId: 100 })
+    ).rejects.toThrow(/wallet bridge unavailable/);
+  });
+});
+
+describe('ens_resolve', () => {
+  test('returns name and address on success', async () => {
+    ensResolver.resolveEnsAddress.mockResolvedValue({
+      success: true,
+      name: 'vitalik.eth',
+      address: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    });
+    const result = await makeTools().ens_resolve.execute('c1', { name: 'vitalik.eth' });
+    expect(result.details).toEqual({
+      name: 'vitalik.eth',
+      address: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    });
+  });
+
+  test('throws "no address record" on NOT_FOUND', async () => {
+    ensResolver.resolveEnsAddress.mockResolvedValue({
+      success: false,
+      name: 'never-registered.eth',
+      reason: 'NOT_FOUND',
+    });
+    await expect(
+      makeTools().ens_resolve.execute('c1', { name: 'never-registered.eth' })
+    ).rejects.toThrow(/No address record for never-registered\.eth/);
+  });
+
+  test('throws "Invalid ENS name" on INVALID_NAME', async () => {
+    ensResolver.resolveEnsAddress.mockResolvedValue({
+      success: false,
+      name: '!!bad!!',
+      reason: 'INVALID_NAME',
+      error: 'disallowed character',
+    });
+    await expect(
+      makeTools().ens_resolve.execute('c1', { name: '!!bad!!' })
+    ).rejects.toThrow(/Invalid ENS name: !!bad!!.*disallowed character/);
+  });
+
+  test('throws with the resolver reason on other failures', async () => {
+    ensResolver.resolveEnsAddress.mockResolvedValue({
+      success: false,
+      name: 'x.eth',
+      reason: 'RESOLUTION_ERROR',
+      error: 'all providers timed out',
+    });
+    await expect(
+      makeTools().ens_resolve.execute('c1', { name: 'x.eth' })
+    ).rejects.toThrow(/ENS resolve failed \(RESOLUTION_ERROR\).*all providers timed out/);
+  });
+});
+
+describe('ens_reverse', () => {
+  test('returns address and primary name on success', async () => {
+    ensResolver.resolveEnsReverse.mockResolvedValue({
+      success: true,
+      address: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      name: 'vitalik.eth',
+    });
+    const result = await makeTools().ens_reverse.execute('c1', {
+      address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+    });
+    expect(result.details.name).toBe('vitalik.eth');
+  });
+
+  test('throws "no primary ENS name" on NOT_FOUND', async () => {
+    ensResolver.resolveEnsReverse.mockResolvedValue({
+      success: false,
+      address: '0x0000000000000000000000000000000000000001',
+      reason: 'NOT_FOUND',
+    });
+    await expect(
+      makeTools().ens_reverse.execute('c1', {
+        address: '0x0000000000000000000000000000000000000001',
+      })
+    ).rejects.toThrow(/No primary ENS name/);
+  });
+
+  test('throws "Invalid Ethereum address" on INVALID_ADDRESS', async () => {
+    ensResolver.resolveEnsReverse.mockResolvedValue({
+      success: false,
+      address: 'not-an-address',
+      reason: 'INVALID_ADDRESS',
+      error: 'Invalid address: not-an-address',
+    });
+    await expect(
+      makeTools().ens_reverse.execute('c1', { address: 'not-an-address' })
+    ).rejects.toThrow(/Invalid Ethereum address: not-an-address/);
+  });
+});
+
+describe('ens_resolve_contenthash', () => {
+  test('returns name, uri, protocol, decoded on type:ok', async () => {
+    ensResolver.resolveEnsContent.mockResolvedValue({
+      type: 'ok',
+      name: 'vitalik.eth',
+      codec: 'ipfs-ns',
+      protocol: 'ipfs',
+      uri: 'ipfs://QmFoo',
+      decoded: 'QmFoo',
+      trust: 'verified',
+    });
+    const result = await makeTools().ens_resolve_contenthash.execute('c1', {
+      name: 'vitalik.eth',
+    });
+    expect(result.details).toEqual({
+      name: 'vitalik.eth',
+      uri: 'ipfs://QmFoo',
+      protocol: 'ipfs',
+      decoded: 'QmFoo',
+    });
+  });
+
+  test('throws "No contenthash record" on type:not_found', async () => {
+    ensResolver.resolveEnsContent.mockResolvedValue({
+      type: 'not_found',
+      reason: 'NO_RESOLVER',
+      name: 'plain.eth',
+    });
+    await expect(
+      makeTools().ens_resolve_contenthash.execute('c1', { name: 'plain.eth' })
+    ).rejects.toThrow(/No contenthash record for plain\.eth.*NO_RESOLVER/);
+  });
+
+  test('throws "unsupported codec" on type:unsupported', async () => {
+    ensResolver.resolveEnsContent.mockResolvedValue({
+      type: 'unsupported',
+      reason: 'UNSUPPORTED_CONTENTHASH_FORMAT',
+      name: 'weird.eth',
+    });
+    await expect(
+      makeTools().ens_resolve_contenthash.execute('c1', { name: 'weird.eth' })
+    ).rejects.toThrow(/unsupported codec/);
+  });
+
+  test('treats type:conflict as a security signal with an explicit error', async () => {
+    ensResolver.resolveEnsContent.mockResolvedValue({
+      type: 'conflict',
+      name: 'attacked.eth',
+      groups: [{ value: 'a' }, { value: 'b' }],
+    });
+    await expect(
+      makeTools().ens_resolve_contenthash.execute('c1', { name: 'attacked.eth' })
+    ).rejects.toThrow(/RPC quorum failed.*conflicting.*untrusted/);
   });
 });
 

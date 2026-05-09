@@ -172,11 +172,18 @@ function createFreedomExtension({
     // their tier filter.
     const skillTools = createSkillTools({ agentDir, Type });
     // Wallet read tools have no per-session binding — they call into
-    // identity-manager / balance-service / chains directly. Visible to
-    // any agent (main or future subagent) whose profile permits
-    // WALLET_READ; current v1 subagent profiles do not, so only the
-    // main agent sees them.
-    const walletTools = createWalletTools({ Type });
+    // identity-manager / balance-service / chains / ens-resolver directly.
+    // wallet_switch_chain rounds-trips into the renderer via
+    // `__agentWalletBridge__`, so the host webContents id is required for
+    // that one tool; the others ignore it. Visible to any agent (main or
+    // future subagent) whose profile permits WALLET_READ /
+    // BROWSER_MUTATION; current v1 subagent profiles include neither
+    // WALLET_READ nor allow wallet_switch_chain, so only the main agent
+    // sees them today.
+    const walletTools = createWalletTools({
+      hostWebContentsId: toolCallContext.hostWebContentsId ?? null,
+      Type,
+    });
     // Orchestration tools are main-agent-only — subagents never get
     // spawn_subagent, so depth = 1 by construction.
     const subagentTools = isSubagent

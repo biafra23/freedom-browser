@@ -23,11 +23,16 @@
  */
 
 const { TIERS } = require('../tool-tiers');
-const { jsonResult } = require('./_helpers');
+const { jsonResult, makeBridgeCaller } = require('./_helpers');
 const identityManager = require('../../identity-manager');
 const balanceService = require('../../wallet/balance-service');
 const chainsModule = require('../../wallet/chains');
 const chainRegistry = require('../../chain-registry');
+const ensResolver = require('../../ens-resolver');
+const { ENS_REASONS, ENS_RESULT_TYPES } = ensResolver;
+
+const WALLET_BRIDGE_GLOBAL = '__agentWalletBridge__';
+const WALLET_BRIDGE_LABEL = 'wallet';
 
 const VAULT_LOCKED_HINT =
   'This wallet is locked. Open the wallet sidebar to unlock the vault, or call this tool with an explicit address argument.';
@@ -38,7 +43,12 @@ async function getActiveAddressOrThrow() {
   return address;
 }
 
-function createWalletTools({ Type }) {
+function createWalletTools({ hostWebContentsId, Type }) {
+  const callWalletBridge = makeBridgeCaller({
+    globalName: WALLET_BRIDGE_GLOBAL,
+    label: WALLET_BRIDGE_LABEL,
+    hostId: hostWebContentsId,
+  });
   const walletGetAccount = {
     name: 'wallet_get_account',
     label: 'Get active wallet',
@@ -65,6 +75,26 @@ function createWalletTools({ Type }) {
         walletIndex: index,
         name: entry?.name ?? null,
       });
+    },
+  };
+
+  const walletListAccounts = {
+    name: 'wallet_list_accounts',
+    label: 'List wallet accounts',
+    description:
+      'List every derived wallet account the user has: index, name, address. ' +
+      'Returns the active-account index alongside so the model knows which one is currently selected.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'list every derived wallet account the user has',
+    promptGuidelines: [
+      'Call wallet_list_accounts when the user asks "how many wallets do I have", "what wallets do I have", "list my accounts", or wants to switch between accounts.',
+      'wallet_get_account returns only the active wallet — wallet_list_accounts shows all of them.',
+    ],
+    parameters: Type.Object({}),
+    async execute() {
+      const wallets = await identityManager.getDerivedWallets();
+      const activeIndex = identityManager.getActiveWalletIndex();
+      return jsonResult({ wallets, activeIndex });
     },
   };
 
@@ -181,12 +211,157 @@ function createWalletTools({ Type }) {
     },
   };
 
+  // wallet_switch_chain needs to round-trip into the renderer because the
+  // selected chain is renderer-side state (walletState.selectedChainId in
+  // chain-switcher.js). The renderer's selectChainById path is what fires
+  // the dApp `chainChanged` event for any open dApps — silently mutating
+  // state from main would skip that and surprise dApp consumers.
+  const walletSwitchChain = {
+    name: 'wallet_switch_chain',
+    label: 'Switch active chain',
+    description:
+      'Set the wallet sidebar\'s active chain. Updates the wallet UI and ' +
+      'emits an EIP-1193 chainChanged event to any open dApp in the active tab.',
+    tier: TIERS.BROWSER_MUTATION,
+    promptSnippet: 'switch the wallet sidebar to a different chain',
+    promptGuidelines: [
+      'Only call wallet_switch_chain when the user explicitly asks to switch chains, or when an open dApp needs a different chain to function — never as a silent prerequisite for other wallet tools (those take chainId explicitly).',
+      'Pass the chainId as a number (e.g. 1 for Ethereum, 100 for Gnosis). Use wallet_list_chains if the user named a chain by string.',
+    ],
+    parameters: Type.Object({
+      chainId: Type.Number({ minimum: 1 }),
+    }),
+    async execute(_id, { chainId }) {
+      const chain = chainsModule.getChain(chainId);
+      if (!chain) throw new Error(`unknown chainId ${chainId}`);
+      const ok = await callWalletBridge('setActiveChain', [chainId]);
+      if (!ok) throw new Error(`wallet bridge refused chain ${chainId}`);
+      return jsonResult({ chainId, name: chain.name });
+    },
+  };
+
+  const ensResolve = {
+    name: 'ens_resolve',
+    label: 'Resolve ENS name',
+    description:
+      'Resolve an ENS name (e.g. "vitalik.eth") to its primary Ethereum address ' +
+      'via the Universal Resolver, with multi-RPC quorum.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'resolve an ENS name to an Ethereum address',
+    promptGuidelines: [
+      'Call ens_resolve when the user mentions a "*.eth" name and you need its 0x address (e.g. for wallet_get_balance / wallet_get_token_balances on an ENS name).',
+      'Some ENS names have no address record set — the tool throws a clear "no address record" error in that case; surface it plainly to the user instead of guessing.',
+    ],
+    parameters: Type.Object({
+      name: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, { name }) {
+      const result = await ensResolver.resolveEnsAddress(name);
+      if (result?.success) {
+        return jsonResult({ name: result.name, address: result.address });
+      }
+      const reason = result?.reason || 'UNKNOWN';
+      const detail = result?.error ? `: ${result.error}` : '';
+      if (reason === ENS_REASONS.NOT_FOUND) {
+        throw new Error(`No address record for ${result.name || name}`);
+      }
+      if (reason === ENS_REASONS.INVALID_NAME) {
+        throw new Error(`Invalid ENS name: ${name}${detail}`);
+      }
+      throw new Error(`ENS resolve failed (${reason})${detail}`);
+    },
+  };
+
+  const ensReverse = {
+    name: 'ens_reverse',
+    label: 'Reverse-resolve address to ENS',
+    description:
+      'Look up the primary ENS name for an Ethereum address. Many addresses have no primary name set; the tool throws a clear error in that case.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'look up the primary ENS name for an Ethereum address',
+    promptGuidelines: [
+      'Call ens_reverse whenever the user references an Ethereum address (0x...) with phrases like "who owns", "whose address", "who is", or just to surface a human-readable name. Always try ens_reverse BEFORE web search or spawning a research subagent — most "who owns this address" questions are answered by the primary ENS name.',
+      'Treat the absence of a primary name as normal — do not infer one from a partial match. If ens_reverse returns "no primary ENS name", report that plainly; the user can then choose whether to dispatch a web search.',
+    ],
+    parameters: Type.Object({
+      address: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, { address }) {
+      const result = await ensResolver.resolveEnsReverse(address);
+      if (result?.success) {
+        return jsonResult({ address: result.address, name: result.name });
+      }
+      const reason = result?.reason || 'UNKNOWN';
+      const detail = result?.error ? `: ${result.error}` : '';
+      if (reason === ENS_REASONS.NOT_FOUND) {
+        throw new Error(`No primary ENS name for ${result.address || address}`);
+      }
+      if (reason === ENS_REASONS.INVALID_ADDRESS) {
+        throw new Error(`Invalid Ethereum address: ${address}${detail}`);
+      }
+      throw new Error(`ENS reverse failed (${reason})${detail}`);
+    },
+  };
+
+  // Contenthash result shape from ens-resolver:
+  //   ok          → { type: 'ok', name, codec, protocol, uri, decoded, trust }
+  //   not_found   → { type: 'not_found', reason, name, trust }
+  //   unsupported → { type: 'unsupported', reason, name, contentHash, trust }
+  //   conflict    → { type: 'conflict', name, trust, groups }   ← security signal
+  //   error       → { type: 'error', name, reason, error }
+  const ensResolveContenthash = {
+    name: 'ens_resolve_contenthash',
+    label: 'Resolve ENS contenthash',
+    description:
+      'Resolve an ENS name\'s contenthash record to a decentralised-content URI ' +
+      '(bzz://, ipfs://, or ipns://). Uses multi-RPC quorum; surfaces conflicts as errors.',
+    tier: TIERS.WALLET_READ,
+    promptSnippet: 'resolve an ENS name to its decentralised content (bzz / ipfs / ipns) URI',
+    promptGuidelines: [
+      'Call ens_resolve_contenthash when the user wants to visit or inspect the website behind an ENS name, not just its address.',
+      'A "conflict" error means RPC providers returned different contenthash records for the same name — treat it as a security signal and tell the user, do not pick one.',
+    ],
+    parameters: Type.Object({
+      name: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, { name }) {
+      const result = await ensResolver.resolveEnsContent(name);
+      if (result?.type === ENS_RESULT_TYPES.OK) {
+        return jsonResult({
+          name: result.name,
+          uri: result.uri,
+          protocol: result.protocol,
+          decoded: result.decoded,
+        });
+      }
+      const displayName = result?.name || name;
+      if (result?.type === ENS_RESULT_TYPES.NOT_FOUND) {
+        throw new Error(`No contenthash record for ${displayName} (${result.reason || 'NO_RECORD'})`);
+      }
+      if (result?.type === ENS_RESULT_TYPES.UNSUPPORTED) {
+        throw new Error(`Contenthash for ${displayName} uses an unsupported codec`);
+      }
+      if (result?.type === ENS_RESULT_TYPES.CONFLICT) {
+        throw new Error(
+          `RPC quorum failed for ${displayName} — providers returned conflicting contenthash records. Treat as untrusted.`
+        );
+      }
+      const detail = result?.error ? `: ${result.error}` : '';
+      throw new Error(`ENS contenthash resolve failed (${result?.reason || 'UNKNOWN'})${detail}`);
+    },
+  };
+
   return [
     walletGetAccount,
+    walletListAccounts,
     walletGetBalance,
     walletGetTokenBalances,
     walletListChains,
     walletGetChain,
+    walletSwitchChain,
+    ensResolve,
+    ensReverse,
+    ensResolveContenthash,
   ];
 }
 

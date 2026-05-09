@@ -164,6 +164,17 @@ function selectChain(chainId) {
 }
 
 /**
+ * Programmatic chain switch — same effect as the user picking from the
+ * dropdown. Used by the agent's wallet bridge so a `wallet_switch_chain`
+ * tool call triggers the full update path (UI + asset re-render + dApp
+ * `chainChanged` event), not just the silent state mutation that
+ * `setSelectedChainId` does.
+ */
+export function selectChainById(chainId) {
+  selectChain(chainId);
+}
+
+/**
  * Update chain switcher button display
  */
 export function updateChainSwitcherDisplay() {

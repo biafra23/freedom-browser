@@ -1623,6 +1623,24 @@ function clearEnsCachesForTest() {
   inFlightResolves.clear();
 }
 
+// Public string-shape constants for callers (e.g. agent/wallet-tools)
+// that need to branch on `result.reason` / `result.type` without
+// reaching into stringly-typed internal vocabulary. Renaming any value
+// here is a load-bearing change — bump the consumer side too.
+const ENS_REASONS = Object.freeze({
+  NOT_FOUND: 'NOT_FOUND',
+  INVALID_NAME: 'INVALID_NAME',
+  INVALID_ADDRESS: 'INVALID_ADDRESS',
+  RESOLUTION_ERROR: 'RESOLUTION_ERROR',
+});
+const ENS_RESULT_TYPES = Object.freeze({
+  OK: 'ok',
+  NOT_FOUND: 'not_found',
+  UNSUPPORTED: 'unsupported',
+  CONFLICT: 'conflict',
+  ERROR: 'error',
+});
+
 module.exports = {
   registerEnsIpc,
   resolveEnsContent,
@@ -1634,4 +1652,6 @@ module.exports = {
   universalResolverCall,
   isResolverNotFoundError,
   clearEnsCachesForTest,
+  ENS_REASONS,
+  ENS_RESULT_TYPES,
 };

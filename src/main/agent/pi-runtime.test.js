@@ -209,10 +209,15 @@ describe('createFreedomPiSession', () => {
         'spawn_subagent',
         'switch_tab',
         'wallet_get_account',
+        'wallet_list_accounts',
         'wallet_get_balance',
         'wallet_get_token_balances',
         'wallet_list_chains',
         'wallet_get_chain',
+        'wallet_switch_chain',
+        'ens_resolve',
+        'ens_reverse',
+        'ens_resolve_contenthash',
       ].sort()
     );
   });

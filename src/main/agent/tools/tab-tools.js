@@ -21,35 +21,19 @@
  */
 
 const { TIERS } = require('../tool-tiers');
-const { resolveWebContents, jsonResult } = require('./_helpers');
+const { jsonResult, makeBridgeCaller, buildBridgeCallSnippet } = require('./_helpers');
 
-// Build a `window.__agentTabBridge__.<method>(args...)` call string.
-// Args go through `JSON.stringify` so any string the model emits is
-// safely quoted — no possibility of JS injection from a malicious
-// user-typed URL or selector.
-function bridgeCall(method, args = []) {
-  const argList = args.map((a) => JSON.stringify(a)).join(', ');
-  return `(function(){
-    var bridge = window.__agentTabBridge__;
-    if (!bridge || typeof bridge.${method} !== 'function') {
-      return { __error: 'tab bridge unavailable' };
-    }
-    try { return bridge.${method}(${argList}); }
-    catch (e) { return { __error: String(e && e.message || e) }; }
-  })()`;
-}
-
-async function callBridge(hostWebContentsId, method, args = []) {
-  const wc = resolveWebContents(hostWebContentsId, 'host renderer webContents');
-  const result = await wc.executeJavaScript(bridgeCall(method, args));
-  if (result && typeof result === 'object' && result.__error) {
-    throw new Error(`tab bridge: ${result.__error}`);
-  }
-  return result;
-}
+const TAB_BRIDGE_GLOBAL = '__agentTabBridge__';
+const TAB_BRIDGE_LABEL = 'tab';
 
 function createTabTools({ hostWebContentsId, Type }) {
   if (typeof hostWebContentsId !== 'number') return [];
+
+  const callBridge = makeBridgeCaller({
+    globalName: TAB_BRIDGE_GLOBAL,
+    label: TAB_BRIDGE_LABEL,
+    hostId: hostWebContentsId,
+  });
 
   const listTabs = {
     name: 'list_tabs',
@@ -62,7 +46,7 @@ function createTabTools({ hostWebContentsId, Type }) {
     ],
     parameters: Type.Object({}),
     async execute() {
-      const tabs = await callBridge(hostWebContentsId, 'listTabs');
+      const tabs = await callBridge('listTabs');
       return jsonResult({ tabs: Array.isArray(tabs) ? tabs : [] });
     },
   };
@@ -82,7 +66,7 @@ function createTabTools({ hostWebContentsId, Type }) {
       url: Type.String({ minLength: 1 }),
     }),
     async execute(_id, { url }) {
-      const tab = await callBridge(hostWebContentsId, 'openTab', [url]);
+      const tab = await callBridge('openTab', [url]);
       return jsonResult({ tab });
     },
   };
@@ -100,7 +84,7 @@ function createTabTools({ hostWebContentsId, Type }) {
       id: Type.Number({ description: 'Tab id from list_tabs.' }),
     }),
     async execute(_id, { id }) {
-      const ok = await callBridge(hostWebContentsId, 'closeTab', [id]);
+      const ok = await callBridge('closeTab', [id]);
       return jsonResult({ closed: !!ok, id });
     },
   };
@@ -118,12 +102,17 @@ function createTabTools({ hostWebContentsId, Type }) {
       id: Type.Number({ description: 'Tab id from list_tabs.' }),
     }),
     async execute(_id, { id }) {
-      const ok = await callBridge(hostWebContentsId, 'switchTab', [id]);
+      const ok = await callBridge('switchTab', [id]);
       return jsonResult({ switched: !!ok, id });
     },
   };
 
   return [listTabs, openTab, closeTab, switchTab];
 }
+
+// Test seam: lets the existing bridge-script-shape tests call
+// `bridgeCall(method, args)` without knowing the global/label binding.
+const bridgeCall = (method, args) =>
+  buildBridgeCallSnippet(TAB_BRIDGE_GLOBAL, TAB_BRIDGE_LABEL, method, args);
 
 module.exports = { createTabTools, _internals: { bridgeCall } };

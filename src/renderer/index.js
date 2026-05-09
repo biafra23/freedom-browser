@@ -34,6 +34,7 @@ import {
   switchTab,
   getOpenTabs,
 } from './lib/tabs.js';
+import { selectChainById } from './lib/wallet/chain-switcher.js';
 import {
   initNavigation,
   loadTarget,
@@ -255,6 +256,18 @@ window.addEventListener('DOMContentLoaded', async () => {
       const exists = getOpenTabs().some((t) => t.id === id);
       if (!exists) return false;
       switchTab(id);
+      return true;
+    },
+  };
+
+  // Wallet bridge — separate namespace from tab bridge because the
+  // wallet surface will grow (chain switch now, sign/send next). Same
+  // privileged-renderer assumption as __agentTabBridge__: webviews can't
+  // reach this `window` because they run in separate web contents.
+  window.__agentWalletBridge__ = {
+    setActiveChain: (chainId) => {
+      if (typeof chainId !== 'number') return false;
+      selectChainById(chainId);
       return true;
     },
   };

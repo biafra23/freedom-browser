@@ -12,11 +12,11 @@ jest.mock('electron', () => ({
 // (and through them ethers + electron.app) just to verify wiring. Wallet
 // tool *behaviour* is covered in tools/wallet-tools.test.js.
 jest.mock('./tools/wallet-tools', () => {
-  const stub = (name) => ({
+  const stub = (name, tier) => ({
     name,
     label: name,
     description: 'wallet stub',
-    tier: 'wallet_read',
+    tier,
     promptSnippet: 'wallet stub',
     promptGuidelines: ['stub'],
     parameters: { type: 'object', properties: {} },
@@ -24,12 +24,17 @@ jest.mock('./tools/wallet-tools', () => {
   });
   return {
     createWalletTools: () => [
-      'wallet_get_account',
-      'wallet_get_balance',
-      'wallet_get_token_balances',
-      'wallet_list_chains',
-      'wallet_get_chain',
-    ].map(stub),
+      stub('wallet_get_account', 'wallet_read'),
+      stub('wallet_list_accounts', 'wallet_read'),
+      stub('wallet_get_balance', 'wallet_read'),
+      stub('wallet_get_token_balances', 'wallet_read'),
+      stub('wallet_list_chains', 'wallet_read'),
+      stub('wallet_get_chain', 'wallet_read'),
+      stub('wallet_switch_chain', 'browser_mutation'),
+      stub('ens_resolve', 'wallet_read'),
+      stub('ens_reverse', 'wallet_read'),
+      stub('ens_resolve_contenthash', 'wallet_read'),
+    ],
   };
 });
 
@@ -144,17 +149,22 @@ describe('Phase 3 — tool registration', () => {
     }
   });
 
-  test('registers the five wallet read tools', async () => {
+  test('registers all wallet + chain + ENS tools', async () => {
     const ctx = makeContext();
     const pi = makeFakePiApi();
     await createFreedomExtension({ toolCallContext: ctx })(pi);
     const names = pi.tools.map((t) => t.name);
     for (const expected of [
       'wallet_get_account',
+      'wallet_list_accounts',
       'wallet_get_balance',
       'wallet_get_token_balances',
       'wallet_list_chains',
       'wallet_get_chain',
+      'wallet_switch_chain',
+      'ens_resolve',
+      'ens_reverse',
+      'ens_resolve_contenthash',
     ]) {
       expect(names).toContain(expected);
     }
@@ -214,11 +224,14 @@ describe('Phase 3 — tool registration', () => {
     expect(pi.setActiveCalls).toHaveLength(1);
     // For the all-tiers default profile we expect everything pi-extension
     // registered to be enabled — the five browser tools, four tab tools,
-    // read_skill, the five wallet read tools, and spawn_subagent.
+    // read_skill, the wallet/chain/ENS cluster, and spawn_subagent.
     expect(pi.setActiveCalls[0].sort()).toEqual(
       [
         'click',
         'close_tab',
+        'ens_resolve',
+        'ens_resolve_contenthash',
+        'ens_reverse',
         'fill',
         'list_tabs',
         'navigate',
@@ -232,7 +245,9 @@ describe('Phase 3 — tool registration', () => {
         'wallet_get_balance',
         'wallet_get_chain',
         'wallet_get_token_balances',
+        'wallet_list_accounts',
         'wallet_list_chains',
+        'wallet_switch_chain',
       ].sort()
     );
   });
