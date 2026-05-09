@@ -145,6 +145,12 @@ describe('createFreedomPiSession', () => {
         noContextFiles: true,
       })
     );
+    // Skills are loaded only via explicit additionalSkillPaths — never
+    // via Pi's defaults (which would scan ~/.pi/).
+    expect(Array.isArray(loaderInstance.opts.additionalSkillPaths)).toBe(true);
+    expect(loaderInstance.opts.additionalSkillPaths[0]).toBe(
+      _internals.BUNDLED_SKILLS_DIR
+    );
     expect(loaderInstance.opts.extensionFactories).toHaveLength(1);
     expect(typeof loaderInstance.opts.extensionFactories[0]).toBe('function');
 
@@ -281,5 +287,45 @@ describe('createFreedomPiSession', () => {
     const result = await runtime.createFreedomPiSession({ agentDir: '/tmp/x' });
     expect(result.modelId).toBe('llama3.1:8b');
     expect(registryMock.find).toHaveBeenCalledWith('ollama', 'llama3.1:8b');
+  });
+});
+
+describe('listFreedomSkills', () => {
+  beforeEach(() => {
+    _internals.setPiModule({
+      loadSkills: jest.fn(({ skillPaths }) => ({
+        skills: [
+          {
+            name: 'tldr',
+            description: 'Short summary',
+            disableModelInvocation: false,
+            filePath: `${skillPaths[0]}/tldr.md`,
+          },
+        ],
+        diagnostics: [],
+      })),
+    });
+  });
+
+  afterEach(() => {
+    _internals.setPiModule(null);
+  });
+
+  test('returns the parsed skills with name + description', async () => {
+    const skills = await runtime.listFreedomSkills({ agentDir: '/tmp/x' });
+    expect(skills).toEqual([
+      { name: 'tldr', description: 'Short summary' },
+    ]);
+  });
+
+  test('throws when agentDir is missing', async () => {
+    await expect(runtime.listFreedomSkills({})).rejects.toThrow(/agentDir/);
+  });
+});
+
+describe('resolveSkillPaths', () => {
+  test('always includes the bundled directory', () => {
+    const paths = _internals.resolveSkillPaths('/tmp/never-exists-1234');
+    expect(paths).toContain(_internals.BUNDLED_SKILLS_DIR);
   });
 });

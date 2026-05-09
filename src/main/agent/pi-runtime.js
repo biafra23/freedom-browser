@@ -28,11 +28,34 @@
  */
 
 const path = require('node:path');
+const fs = require('node:fs');
 const log = require('../logger');
 const { getOllamaApiUrl } = require('../service-registry');
 const { listModels } = require('./ollama-meta');
 const { createFreedomExtension } = require('./pi-extension');
 const { createPiUIContext } = require('./pi-ui-context');
+
+// Bundled skills ship inside src/ so electron-builder's `files: ['src/**/*']`
+// glob picks them up at packaging time. The `__dirname`-relative path
+// resolves correctly in both dev and packaged mode because the skills
+// directory sits next to this JS file in the same subtree (no need for
+// the `app.isPackaged ? process.resourcesPath/app.asar/... : __dirname`
+// dance chain-registry uses — that pattern is for files reaching from
+// src/main → src/shared, where the relative walk is more fragile).
+const BUNDLED_SKILLS_DIR = path.join(__dirname, 'skills');
+
+// Resolves both skill paths a Pi session should load from. The user
+// path lives under agentDir/skills (created on first write); we only
+// pass it to Pi when it exists so the loader doesn't warn about a
+// missing directory on a fresh install.
+function resolveSkillPaths(agentDir) {
+  const paths = [BUNDLED_SKILLS_DIR];
+  if (agentDir) {
+    const userDir = path.join(agentDir, 'skills');
+    if (fs.existsSync(userDir)) paths.push(userDir);
+  }
+  return paths;
+}
 
 const OLLAMA_PROVIDER_NAME = 'ollama';
 const OLLAMA_API_KEY_PLACEHOLDER = 'ollama'; // Ollama ignores this; Pi requires a value
@@ -178,7 +201,11 @@ async function createFreedomPiSession({
     agentDir,
     settingsManager,
     noExtensions: true,
+    // Pi's defaults would scan ~/.pi/ which we never want, so keep
+    // noSkills on. Explicit additionalSkillPaths keeps us in control:
+    // built-ins ship with the app, user skills live under agentDir.
     noSkills: true,
+    additionalSkillPaths: resolveSkillPaths(agentDir),
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
@@ -234,12 +261,35 @@ async function createFreedomPiSession({
   };
 }
 
+/**
+ * Read every skill the renderer should know about (bundled + user).
+ * Standalone — doesn't require an active session, since skills are
+ * static across sessions and this is queried once on renderer init.
+ */
+async function listFreedomSkills({ agentDir } = {}) {
+  if (!agentDir) throw new Error('listFreedomSkills requires an agentDir');
+  const pi = await loadPi();
+  const result = pi.loadSkills({
+    cwd: agentDir,
+    agentDir,
+    skillPaths: resolveSkillPaths(agentDir),
+    includeDefaults: false,
+  });
+  return (result?.skills || []).map((s) => ({
+    name: s.name,
+    description: s.description,
+  }));
+}
+
 module.exports = {
   createFreedomPiSession,
   getFreedomAgentDir,
+  listFreedomSkills,
   _internals: {
     loadPi,
     buildOllamaProviderConfig,
+    resolveSkillPaths,
+    BUNDLED_SKILLS_DIR,
     setPiModule: (mod) => {
       _piModule = mod;
     },

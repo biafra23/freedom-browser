@@ -465,6 +465,7 @@ contextBridge.exposeInMainWorld('agent', {
   listSessions: (limit) => ipcRenderer.invoke('agent:session:list', { limit }),
   getSession: (id) => ipcRenderer.invoke('agent:session:get', { id }),
   createSession: (init) => ipcRenderer.invoke('agent:session:create', init),
+  listSkills: () => ipcRenderer.invoke('agent:skills:list'),
   renameSession: (id, title) => ipcRenderer.invoke('agent:session:rename', { id, title }),
   deleteSession: (id) => ipcRenderer.invoke('agent:session:delete', { id }),
 });

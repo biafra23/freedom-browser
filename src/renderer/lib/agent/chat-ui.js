@@ -19,7 +19,12 @@
 import { renderMarkdown } from './markdown.js';
 import { adaptMessages } from './pi-message-adapter.js';
 import { initThinkingChip, getThinkingLevel } from './composer-thinking-chip.js';
-import { initSlashPalette, isPaletteVisible, hidePalette } from './composer-slash-palette.js';
+import {
+  initSlashPalette,
+  isPaletteVisible,
+  hidePalette,
+  setSlashExtras,
+} from './composer-slash-palette.js';
 import { renderToolBody, SUBAGENT_CHILDREN_CLASS } from './tool-card-renderers.js';
 import { pushDebug } from '../debug.js';
 import { getActiveWebview } from '../tabs.js';
@@ -157,11 +162,33 @@ export function initChatUi() {
 
   refreshStatus();
   renderMessages();
+  loadSlashSkills();
   // Cold-start always opens a fresh chat — past conversations are
   // reachable via the history view. Auto-resuming the most recent
   // session was confusing: opening the sidebar showed yesterday's
   // chat instead of an empty composer.
   pushDebug('[ChatUi] Initialized');
+}
+
+// Skills are static across sessions — fetched once on init and merged
+// into the slash palette. The display label is `/<name>`; insertion
+// uses `/skill:<name>` so Pi's `_expandSkillCommand` picks them up.
+async function loadSlashSkills() {
+  if (typeof window.agent?.listSkills !== 'function') return;
+  try {
+    const skills = await window.agent.listSkills();
+    if (!Array.isArray(skills)) return;
+    setSlashExtras(
+      skills.map((s) => ({
+        name: s.name,
+        description: s.description || '',
+        argsHint: null,
+        insertName: `skill:${s.name}`,
+      }))
+    );
+  } catch (err) {
+    pushDebug(`[ChatUi] listSkills failed: ${err?.message || err}`);
+  }
 }
 
 export async function refreshStatus() {
@@ -448,7 +475,10 @@ function handleConsentRequest(data) {
 // smoke). Call the input-derived helpers directly instead.
 function handleSlashCommandPick(cmd) {
   if (!cmd || !inputEl) return;
-  inputEl.value = cmd.argsHint ? `/${cmd.name} ` : `/${cmd.name}`;
+  // `insertName` covers the case where the display label and the actual
+  // typed token diverge (skills show as `/foo` but submit as `/skill:foo`).
+  const typed = cmd.insertName || cmd.name;
+  inputEl.value = cmd.argsHint ? `/${typed} ` : `/${typed}`;
   syncSendDisabled();
   autoGrowInput();
   if (!cmd.argsHint && composerEl) {

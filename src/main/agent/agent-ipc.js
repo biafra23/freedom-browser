@@ -38,6 +38,7 @@ const { getOllamaApiUrl } = require('../service-registry');
 const {
   createFreedomPiSession,
   getFreedomAgentDir,
+  listFreedomSkills,
   _internals: piInternals,
 } = require('./pi-runtime');
 const broker = require('./pi-broker');
@@ -228,6 +229,15 @@ function extractFirstUserText(messages) {
     }
   }
   return '';
+}
+
+async function listSkills() {
+  try {
+    return await listFreedomSkills({ agentDir: getAgentDir() });
+  } catch (err) {
+    log.warn(`[Agent] listSkills failed: ${err?.message || err}`);
+    return [];
+  }
 }
 
 async function createSession({ title = null } = {}) {
@@ -602,6 +612,7 @@ function registerAgentIpc() {
   ipcMain.handle(IPC.AGENT_SESSION_LIST, (_e, payload = {}) => listSessions(payload.limit ?? 50));
   ipcMain.handle(IPC.AGENT_SESSION_GET, (_e, payload = {}) => getSession(payload.id));
   ipcMain.handle(IPC.AGENT_SESSION_CREATE, (_e, payload = {}) => createSession(payload));
+  ipcMain.handle(IPC.AGENT_SKILLS_LIST, () => listSkills());
   ipcMain.handle(IPC.AGENT_SESSION_RENAME, async (_e, payload = {}) => ({
     ok: await renameSession(payload.id, payload.title),
   }));
@@ -627,6 +638,7 @@ module.exports = {
     dropStreamsForSender,
     listSessions,
     getSession,
+    listSkills,
     createSession,
     renameSession,
     deleteSession,

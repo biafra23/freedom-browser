@@ -19,7 +19,9 @@
  * Skills support will extend this dynamically via `pi.getCommands()`.
  */
 
-const COMMANDS = [
+// Built-in commands are extension-registered slash commands handled by
+// pi-extension. Their name == what gets typed into the input.
+const BUILTIN_COMMANDS = [
   {
     name: 'compact',
     description: 'Manually compact the session context',
@@ -52,6 +54,12 @@ const COMMANDS = [
   },
 ];
 
+// Each entry in `commands` is `{ name, description, argsHint, insertName? }`.
+// The display label uses `name` (clean for the user); insertion uses
+// `insertName` if present, falling back to `name`. Skills set
+// insertName=`skill:foo` so Pi's `_expandSkillCommand` picks them up.
+let commands = [...BUILTIN_COMMANDS];
+
 const SLASH_QUERY_RE = /^\/(\w*)$/;
 
 let popoverEl = null;
@@ -61,7 +69,7 @@ let optionEls = [];
 let visible = false;
 let selectedIdx = -1;
 
-export const _internals = { COMMANDS };
+export const _internals = { BUILTIN_COMMANDS };
 
 export function initSlashPalette({ popover, input, onSelect } = {}) {
   if (!popover || !input) return;
@@ -84,13 +92,33 @@ function refresh() {
     hide();
     return;
   }
-  const matches = COMMANDS.filter((c) => c.name.startsWith(filter));
+  const matches = commands.filter((c) => c.name.startsWith(filter));
   if (matches.length === 0) {
     hide();
     return;
   }
   render(matches);
   show();
+}
+
+/**
+ * Replace the dynamic-source slot of the command list (skills, future
+ * user-defined entries). Built-ins always come first; extras are
+ * appended after, deduped against built-in names.
+ */
+export function setSlashExtras(extras = []) {
+  const builtinNames = new Set(BUILTIN_COMMANDS.map((c) => c.name));
+  const safe = extras
+    .filter((c) => c && typeof c.name === 'string' && !builtinNames.has(c.name))
+    .map((c) => ({
+      name: c.name,
+      description: c.description || '',
+      argsHint: c.argsHint || null,
+      insertName: c.insertName || c.name,
+    }));
+  commands = [...BUILTIN_COMMANDS, ...safe];
+  // If the palette is currently open, refresh against the new list.
+  if (visible) refresh();
 }
 
 function parseSlashQuery(value) {
@@ -195,7 +223,7 @@ function handleKeydown(e) {
     e.preventDefault();
     e.stopImmediatePropagation();
     const cmdName = optionEls[selectedIdx].dataset.cmd;
-    const cmd = COMMANDS.find((c) => c.name === cmdName);
+    const cmd = commands.find((c) => c.name === cmdName);
     selectAndClose(cmd);
   } else if (e.key === 'Escape') {
     e.preventDefault();

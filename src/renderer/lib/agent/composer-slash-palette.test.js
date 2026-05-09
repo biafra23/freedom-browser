@@ -61,7 +61,7 @@ describe('composer-slash-palette', () => {
     const { mod, popoverEl, inputEl } = await loadPalette();
     typeAndDispatch(inputEl, '/');
     expect(popoverEl.classList.contains('hidden')).toBe(false);
-    expect(popoverEl.children).toHaveLength(mod._internals.COMMANDS.length);
+    expect(popoverEl.children).toHaveLength(mod._internals.BUILTIN_COMMANDS.length);
   });
 
   test('typing /co filters to compact + copy (clone is excluded — does not start with co)', async () => {
@@ -186,5 +186,58 @@ describe('composer-slash-palette', () => {
     const { mod } = await loadPalette();
     expect(() => mod.initSlashPalette({})).not.toThrow();
     expect(() => mod.initSlashPalette({ popover: null, input: null })).not.toThrow();
+  });
+
+  describe('setSlashExtras (skills, future user-defined entries)', () => {
+    test('appends extras after the built-in commands', async () => {
+      const { mod, popoverEl, inputEl } = await loadPalette();
+      mod.setSlashExtras([
+        { name: 'tldr', description: 'Skill: tl;dr', insertName: 'skill:tldr' },
+      ]);
+      typeAndDispatch(inputEl, '/');
+      const names = Array.from(popoverEl.children).map((el) => el.dataset.cmd);
+      expect(names).toEqual([
+        ...mod._internals.BUILTIN_COMMANDS.map((c) => c.name),
+        'tldr',
+      ]);
+    });
+
+    test('drops extras whose name collides with a built-in', async () => {
+      const { mod, popoverEl, inputEl } = await loadPalette();
+      mod.setSlashExtras([
+        { name: 'compact', description: 'malicious override' },
+      ]);
+      typeAndDispatch(inputEl, '/co');
+      const compactCard = popoverEl.querySelector('[data-cmd="compact"]');
+      const desc = compactCard.querySelector('.agent-slash-option-desc');
+      // Built-in description survives; the override was dropped.
+      expect(desc.textContent).toBe('Manually compact the session context');
+      // Still only one entry for `compact` — no duplicate appended.
+      const allCompact = popoverEl.querySelectorAll('[data-cmd="compact"]');
+      expect(allCompact).toHaveLength(1);
+    });
+
+    test('selecting an extra returns the cmd object including insertName', async () => {
+      const { mod, popoverEl, inputEl, onSelect } = await loadPalette();
+      mod.setSlashExtras([
+        { name: 'tldr', description: 'short', insertName: 'skill:tldr' },
+      ]);
+      typeAndDispatch(inputEl, '/tld');
+      popoverEl.querySelector('[data-cmd="tldr"]').dispatch('click');
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'tldr', insertName: 'skill:tldr' })
+      );
+    });
+
+    test('refreshes the visible list when called while the palette is open', async () => {
+      const { mod, popoverEl, inputEl } = await loadPalette();
+      typeAndDispatch(inputEl, '/');
+      const before = popoverEl.children.length;
+
+      mod.setSlashExtras([
+        { name: 'tldr', description: 'Skill: tl;dr' },
+      ]);
+      expect(popoverEl.children.length).toBe(before + 1);
+    });
   });
 });

@@ -55,6 +55,7 @@ function createAgentBridge(initialStatus = { running: true, version: '0.23.2', m
         handlers.notice = cb;
         return jest.fn();
       }),
+      listSkills: jest.fn().mockResolvedValue([]),
       createSession: jest
         .fn()
         .mockResolvedValue({ id: '/tmp/sessions/abc.jsonl', title: null }),
@@ -675,6 +676,21 @@ describe('chat-ui', () => {
       expect(submitHandler).toHaveBeenCalledTimes(1);
     });
 
+    test('slash-pick uses cmd.insertName when present so skills submit as /skill:<name>', async () => {
+      const { mod, inputEl, composerEl } = await loadChatUi();
+      const submitHandler = jest.fn();
+      composerEl.addEventListener('submit', submitHandler);
+
+      mod._internals.handleSlashCommandPick({
+        name: 'tldr',
+        insertName: 'skill:tldr',
+        argsHint: null,
+      });
+
+      expect(inputEl.value).toBe('/skill:tldr');
+      expect(submitHandler).toHaveBeenCalledTimes(1);
+    });
+
     test('slash-pick does NOT dispatch an input event (would re-open the palette)', async () => {
       const { mod, inputEl, composerEl } = await loadChatUi();
       composerEl.addEventListener('submit', jest.fn()); // swallow the auto-submit
@@ -791,6 +807,21 @@ describe('chat-ui', () => {
       expect(assistantBubbles).toHaveLength(1);
       const contentEl = assistantBubbles[0].querySelector('.agent-message-content');
       expect(contentEl.textContent).toContain('Ollama not running');
+    });
+  });
+
+  describe('skills wiring', () => {
+    test('init fetches skills via window.agent.listSkills', async () => {
+      const { bridge } = await loadChatUi();
+      expect(bridge.listSkills).toHaveBeenCalledTimes(1);
+    });
+
+    test('listSkills failure does not throw out of init', async () => {
+      const { handlers: _handlers, bridge: _bridge } = createAgentBridge();
+      _bridge.listSkills = jest.fn().mockRejectedValue(new Error('boom'));
+      await expect(
+        loadChatUi({ agent: { handlers: _handlers, bridge: _bridge } })
+      ).resolves.toBeDefined();
     });
   });
 });

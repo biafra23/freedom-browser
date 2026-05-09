@@ -210,6 +210,9 @@ module.exports = {
   AGENT_SESSION_LIST: 'agent:session:list',
   AGENT_SESSION_GET: 'agent:session:get',
   AGENT_SESSION_CREATE: 'agent:session:create',
+  // Skills are markdown recipes loaded from disk by Pi. The renderer
+  // queries them once on init to populate the slash palette.
+  AGENT_SKILLS_LIST: 'agent:skills:list',
   AGENT_SESSION_RENAME: 'agent:session:rename',
   AGENT_SESSION_DELETE: 'agent:session:delete',
 
