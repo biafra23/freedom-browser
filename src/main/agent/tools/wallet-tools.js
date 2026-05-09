@@ -450,6 +450,112 @@ function createWalletTools({ hostWebContentsId, Type }) {
     },
   };
 
+  // EIP-712 typed-data signing. Same wallet-resolution + unlock flow
+  // as wallet_sign_message; the new bit is the structured consent card
+  // that surfaces the domain + decoded message so the user knows what
+  // they're signing instead of staring at a blob of JSON.
+  //
+  // Tier note: shares IDENTITY_OR_SIGNING (session-once, post-7d.3).
+  // A user who clicked "Allow for session" on a SIWE login could in
+  // principle have a follow-up Permit auto-approved. The decoded card
+  // is the main defense; Permit-aware tier split (`primaryType ===
+  // 'Permit'` → stricter `always` policy) is a documented follow-up.
+  const walletSignTypedData = {
+    name: 'wallet_sign_typed_data',
+    label: 'Sign typed data',
+    description:
+      'Sign EIP-712 typed structured data (Permits, OpenSea listings, ' +
+      'SIWE typed-data variants, ...) with the user\'s wallet. The ' +
+      'consent card decodes the domain + message values so the user ' +
+      'sees what they\'re approving. Defaults to the active wallet.',
+    tier: TIERS.IDENTITY_OR_SIGNING,
+    promptSnippet: 'sign EIP-712 typed structured data with the user\'s wallet',
+    promptGuidelines: [
+      'Always provide a clear `reason` — shown verbatim on the consent card. Be specific about what the signature authorises (e.g. "approve OpenSea listing for X for Y ETH", "permit Uniswap router to spend N USDC").',
+      'Pass `typedData` as the standard EIP-712 object: { domain: { name, version?, chainId?, verifyingContract? }, types: { ... }, primaryType: "...", message: { ... } }. The user sees the domain pills and decoded message values directly.',
+      'Use wallet_sign_message instead for plain string messages (EIP-191) — typed data is for structured payloads with a schema.',
+    ],
+    parameters: Type.Object({
+      typedData: Type.Object(
+        {
+          domain: Type.Object(
+            {
+              name: Type.Optional(Type.String()),
+              version: Type.Optional(Type.String()),
+              chainId: Type.Optional(Type.Number()),
+              verifyingContract: Type.Optional(Type.String()),
+            },
+            { additionalProperties: true }
+          ),
+          types: Type.Object({}, { additionalProperties: true }),
+          primaryType: Type.String({ minLength: 1 }),
+          message: Type.Object({}, { additionalProperties: true }),
+        },
+        { additionalProperties: true }
+      ),
+      reason: Type.String({
+        minLength: 1,
+        description: 'Why the user is being asked to sign — shown verbatim on the consent card.',
+      }),
+      address: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    formatConsentDescription({ typedData, reason, address }) {
+      // Bare-label fallback — the structured card via getConsentSignDetails
+      // is what the user actually sees in the rich path. This text only
+      // shows if the renderer somehow falls back to the text-only path.
+      const target = address ? shortAddr(address) : 'the active wallet';
+      const domainName = typedData?.domain?.name || 'unknown app';
+      const primaryType = typedData?.primaryType || 'data';
+      return `sign ${primaryType} for ${domainName} with ${target}. Reason: ${reason}.`;
+    },
+    getConsentSignDetails({ typedData, reason, address }) {
+      const domain = typedData?.domain || {};
+      // Block-explorer link for verifyingContract — chain.blockExplorer
+      // exists for every registered chain; fall back to null if the
+      // domain.chainId isn't recognised.
+      let verifyingContractUrl = null;
+      if (domain.verifyingContract && typeof domain.chainId === 'number') {
+        const chain = chainsModule.getChain(domain.chainId);
+        if (chain?.blockExplorer) {
+          verifyingContractUrl = `${chain.blockExplorer}/address/${domain.verifyingContract}`;
+        }
+      }
+      return {
+        kind: 'typed-data',
+        reason,
+        address: address || null,
+        domain: {
+          name: domain.name ?? null,
+          version: domain.version ?? null,
+          chainId: typeof domain.chainId === 'number' ? domain.chainId : null,
+          verifyingContract: domain.verifyingContract ?? null,
+          verifyingContractUrl,
+        },
+        primaryType: typedData?.primaryType ?? null,
+        message: typedData?.message ?? {},
+        types: typedData?.types ?? {},
+      };
+    },
+    async execute(_id, { typedData, reason, address }, signal) {
+      const { walletIndex, walletAddress } = await resolveSigningWallet(address);
+      await ensureVaultUnlocked({
+        hostWebContentsId,
+        reason: `Sign typed data — ${reason}`,
+        signal,
+      });
+      const identity = await identityManager.loadIdentityModule();
+      const privateKey = identity.exportPrivateKey(walletIndex);
+      const signature = await transactionService.signTypedData(typedData, privateKey);
+      vaultTimer.resetVaultAutoLockTimer();
+      return jsonResult({
+        address: walletAddress,
+        signature,
+        domain: typedData?.domain ?? {},
+        primaryType: typedData?.primaryType ?? null,
+      });
+    },
+  };
+
   return [
     walletGetAccount,
     walletListAccounts,
@@ -462,6 +568,7 @@ function createWalletTools({ hostWebContentsId, Type }) {
     ensReverse,
     ensResolveContenthash,
     walletSignMessage,
+    walletSignTypedData,
   ];
 }
 

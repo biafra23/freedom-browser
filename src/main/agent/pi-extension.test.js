@@ -39,6 +39,18 @@ jest.mock('./tools/wallet-tools', () => {
         formatConsentDescription: ({ reason }) =>
           `sign a message with the active wallet. Reason: ${reason}.`,
       }),
+      stub('wallet_sign_typed_data', 'identity_or_signing', {
+        formatConsentDescription: ({ reason }) =>
+          `sign typed data with the active wallet. Reason: ${reason}.`,
+        getConsentSignDetails: ({ typedData, reason }) => ({
+          kind: 'typed-data',
+          reason,
+          domain: typedData?.domain || {},
+          primaryType: typedData?.primaryType || null,
+          message: typedData?.message || {},
+          types: typedData?.types || {},
+        }),
+      }),
     ],
   };
 });
@@ -171,6 +183,7 @@ describe('Phase 3 — tool registration', () => {
       'ens_reverse',
       'ens_resolve_contenthash',
       'wallet_sign_message',
+      'wallet_sign_typed_data',
     ]) {
       expect(names).toContain(expected);
     }
@@ -254,6 +267,7 @@ describe('Phase 3 — tool registration', () => {
         'wallet_list_accounts',
         'wallet_list_chains',
         'wallet_sign_message',
+        'wallet_sign_typed_data',
         'wallet_switch_chain',
       ].sort()
     );
@@ -436,6 +450,32 @@ describe('Phase 3 — tool_call hook', () => {
     expect(ctx.requestConsent).toHaveBeenCalledWith(
       expect.objectContaining({
         description: expect.stringContaining('Reason: log in to MySite'),
+      })
+    );
+  });
+
+  test('getConsentSignDetails on a tool attaches a signDetails payload to the consent prompt', async () => {
+    const { ctx, handler } = await setup();
+    await handler({
+      toolCallId: 'c1',
+      toolName: 'wallet_sign_typed_data',
+      input: {
+        typedData: {
+          domain: { name: 'USD Coin', chainId: 1 },
+          types: { Permit: [] },
+          primaryType: 'Permit',
+          message: { value: '1' },
+        },
+        reason: 'permit Uniswap',
+      },
+    });
+    expect(ctx.requestConsent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signDetails: expect.objectContaining({
+          kind: 'typed-data',
+          primaryType: 'Permit',
+          domain: expect.objectContaining({ name: 'USD Coin' }),
+        }),
       })
     );
   });

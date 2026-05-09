@@ -348,6 +348,61 @@ describe('tool-card-renderers', () => {
     });
   });
 
+  describe('wallet_sign_typed_data', () => {
+    const TYPED_DATA = {
+      domain: { name: 'USD Coin', chainId: 1 },
+      types: { Permit: [] },
+      primaryType: 'Permit',
+      message: { value: '1' },
+    };
+    const ADDR = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+    const SIG = '0x' + 'cd'.repeat(65);
+
+    test('pending shows "Signing <primaryType> for <domain> with <addr>…"', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_typed_data',
+        status: 'pending',
+        args: { typedData: TYPED_DATA, reason: 'r', address: ADDR },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toBe(
+        'Signing Permit for USD Coin with 0xd8dA…6045…'
+      );
+    });
+
+    test('allowed renders "Signed Permit for USD Coin" + signature disclosure', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_typed_data',
+        status: 'allowed',
+        args: { typedData: TYPED_DATA, reason: 'r' },
+        result: {
+          address: ADDR,
+          signature: SIG,
+          domain: TYPED_DATA.domain,
+          primaryType: 'Permit',
+        },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toBe(
+        'Signed Permit for USD Coin with 0xd8dA…6045'
+      );
+      expect(host.querySelector('.agent-tool-mono').textContent).toBe(SIG);
+    });
+
+    test('error path surfaces the underlying error', async () => {
+      const { mod } = await loadRenderers();
+      const host = into(mod.renderToolBody({
+        name: 'wallet_sign_typed_data',
+        status: 'error',
+        args: { typedData: TYPED_DATA, reason: 'r' },
+        result: { error: 'Vault unlock cancelled by user' },
+      }));
+      expect(host.querySelector('.agent-tool-summary').textContent).toContain(
+        'Signing failed: Vault unlock cancelled by user'
+      );
+    });
+  });
+
   describe('switch_tab', () => {
     test('reports switched on success', async () => {
       const { mod } = await loadRenderers();

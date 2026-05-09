@@ -411,6 +411,31 @@ function renderWalletSignMessage(call) {
   return frag;
 }
 
+function renderWalletSignTypedData(call) {
+  const frag = document.createDocumentFragment();
+  if (isFailure(call)) {
+    frag.appendChild(makeSummary(`Signing failed: ${failureText(call)}`));
+    return frag;
+  }
+  const address = call.result?.address || call.args?.address;
+  const signature = call.result?.signature;
+  const domainName =
+    call.result?.domain?.name || call.args?.typedData?.domain?.name || 'typed data';
+  const primaryType = call.result?.primaryType || call.args?.typedData?.primaryType;
+  const verb = primaryType ? `${primaryType} for ${domainName}` : domainName;
+  if (call.status === 'pending') {
+    const target = address ? shortAddress(address) : 'active wallet';
+    frag.appendChild(makeSummary(`Signing ${verb} with ${target}…`));
+    return frag;
+  }
+  const summary = makeSummary(`Signed ${verb} with ${shortAddress(address)}`);
+  frag.appendChild(summary);
+  if (signature) {
+    frag.appendChild(makeDisclosure('Signature', makeMonoBlock(signature)));
+  }
+  return frag;
+}
+
 const TOOL_RENDERERS = {
   navigate: renderNavigate,
   read_current_tab: renderReadCurrentTab,
@@ -424,6 +449,7 @@ const TOOL_RENDERERS = {
   close_tab: renderCloseTab,
   switch_tab: renderSwitchTab,
   wallet_sign_message: renderWalletSignMessage,
+  wallet_sign_typed_data: renderWalletSignTypedData,
 };
 
 function renderJsonFallback(call) {

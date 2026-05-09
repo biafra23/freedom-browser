@@ -378,7 +378,7 @@ function buildToolCallContext({ ctx, profile }) {
       });
     },
 
-    requestConsent: ({ callId, name, tier, args, description }) =>
+    requestConsent: ({ callId, name, tier, args, description, signDetails }) =>
       new Promise((resolve) => {
         ctx.pendingConsent.set(callId, resolve);
         sendIfAlive(ctx, IPC.AGENT_CHAT_CONSENT_REQUEST, {
@@ -388,6 +388,7 @@ function buildToolCallContext({ ctx, profile }) {
           tier,
           args,
           description,
+          signDetails,
         });
       }).finally(() => ctx.pendingConsent.delete(callId)),
 

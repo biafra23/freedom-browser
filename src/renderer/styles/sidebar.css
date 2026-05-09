@@ -6266,6 +6266,101 @@
   cursor: not-allowed;
 }
 
+/* EIP-712 typed-data consent panel. Sits between the consent text and
+   the action buttons inside .agent-tool-card-consent. Domain + Message
+   sections share the same dl shape; nested message values get a
+   collapsed JSON sub-disclosure to keep the v1 readable for OpenSea-
+   shaped lists without a recursive renderer. */
+.agent-tool-card-typed-data {
+  margin: 6px 0 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.agent-tool-card-typed-section {
+  margin-bottom: 6px;
+}
+
+.agent-tool-card-typed-section:last-child {
+  margin-bottom: 0;
+}
+
+.agent-tool-card-typed-heading {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.agent-tool-card-typed-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.agent-tool-card-typed-list dt {
+  color: var(--muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.agent-tool-card-typed-list dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
+.agent-tool-card-typed-list dd a {
+  color: var(--accent, var(--text));
+  text-decoration: underline;
+}
+
+.agent-tool-card-typed-list dd details {
+  display: inline-block;
+}
+
+.agent-tool-card-typed-list dd details summary {
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.agent-tool-card-typed-list dd details[open] summary {
+  color: var(--text);
+}
+
+.agent-tool-card-typed-empty {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.agent-tool-card-typed-primary {
+  font-size: 11px;
+  color: var(--text);
+  margin: 4px 0;
+  font-family: var(--font-mono, monospace);
+}
+
+.agent-tool-card-typed-schema {
+  margin-top: 4px;
+}
+
+.agent-tool-card-typed-schema > summary {
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agent-tool-card-typed-schema[open] > summary {
+  color: var(--text);
+}
+
 @keyframes agent-cursor-blink {
   to {
     visibility: hidden;

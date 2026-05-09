@@ -34,6 +34,7 @@ const mockIdentityModule = {
 
 jest.mock('../../wallet/transaction-service', () => ({
   signPersonalMessage: jest.fn(),
+  signTypedData: jest.fn(),
 }));
 
 jest.mock('../../vault-timer', () => ({
@@ -96,7 +97,7 @@ beforeEach(() => {
 });
 
 describe('tool catalog', () => {
-  test('exposes the eleven expected tools', () => {
+  test('exposes the twelve expected tools', () => {
     const tools = makeTools();
     expect(Object.keys(tools).sort()).toEqual(
       [
@@ -111,11 +112,12 @@ describe('tool catalog', () => {
         'ens_reverse',
         'ens_resolve_contenthash',
         'wallet_sign_message',
+        'wallet_sign_typed_data',
       ].sort()
     );
   });
 
-  test('tiers split: read tools WALLET_READ, switch_chain BROWSER_MUTATION, sign IDENTITY_OR_SIGNING', () => {
+  test('tiers split: read tools WALLET_READ, switch_chain BROWSER_MUTATION, sign tools IDENTITY_OR_SIGNING', () => {
     const tools = makeTools();
     for (const name of [
       'wallet_get_account',
@@ -132,6 +134,7 @@ describe('tool catalog', () => {
     }
     expect(tools.wallet_switch_chain.tier).toBe(TIERS.BROWSER_MUTATION);
     expect(tools.wallet_sign_message.tier).toBe(TIERS.IDENTITY_OR_SIGNING);
+    expect(tools.wallet_sign_typed_data.tier).toBe(TIERS.IDENTITY_OR_SIGNING);
   });
 
   test('every tool has label, description, parameters, snippet, and at least one guideline', () => {
@@ -683,5 +686,142 @@ describe('wallet_get_chain', () => {
     await expect(
       makeTools().wallet_get_chain.execute('c1', { chainId: 9999 })
     ).rejects.toThrow(/unknown chainId 9999/);
+  });
+});
+
+describe('wallet_sign_typed_data', () => {
+  const PERMIT_TYPED_DATA = Object.freeze({
+    domain: {
+      name: 'USD Coin',
+      version: '2',
+      chainId: 1,
+      verifyingContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    },
+    types: {
+      Permit: [
+        { name: 'owner', type: 'address' },
+        { name: 'spender', type: 'address' },
+        { name: 'value', type: 'uint256' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+      ],
+    },
+    primaryType: 'Permit',
+    message: {
+      owner: '0xMAINabcdef0123456789',
+      spender: '0xUNIaaaaaaaaaaaaaaaaaaaa',
+      value: '1000000',
+      nonce: 5,
+      deadline: 1234567890,
+    },
+  });
+
+  function setupHappyPath() {
+    identityManager.getActiveWalletAddress.mockResolvedValue('0xMAINabcdef0123456789');
+    identityManager.getActiveWalletIndex.mockReturnValue(0);
+    mockIdentityModule.isUnlocked.mockReturnValue(true);
+    mockIdentityModule.exportPrivateKey.mockReturnValue('0xprivatekey');
+    transactionService.signTypedData.mockResolvedValue('0xTYPEDSIG');
+  }
+
+  test('signs with the active wallet by default and returns address + signature + domain', async () => {
+    setupHappyPath();
+    const result = await makeTools().wallet_sign_typed_data.execute(
+      'c1',
+      { typedData: PERMIT_TYPED_DATA, reason: 'permit Uniswap to spend 1 USDC' }
+    );
+    expect(transactionService.signTypedData).toHaveBeenCalledWith(
+      PERMIT_TYPED_DATA,
+      '0xprivatekey'
+    );
+    expect(result.details).toEqual({
+      address: '0xMAINabcdef0123456789',
+      signature: '0xTYPEDSIG',
+      domain: PERMIT_TYPED_DATA.domain,
+      primaryType: 'Permit',
+    });
+    expect(vaultTimer.resetVaultAutoLockTimer).toHaveBeenCalledTimes(1);
+  });
+
+  test('vault locked → unlock bridge invoked, then signing proceeds', async () => {
+    setupHappyPath();
+    mockIdentityModule.isUnlocked.mockReturnValueOnce(false).mockReturnValue(true);
+    vaultUnlockBridge.requestVaultUnlock.mockResolvedValue();
+    await makeTools().wallet_sign_typed_data.execute(
+      'c1',
+      { typedData: PERMIT_TYPED_DATA, reason: 'r' }
+    );
+    expect(vaultUnlockBridge.requestVaultUnlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostWebContentsId: 7,
+        reason: expect.stringContaining('Sign typed data'),
+      })
+    );
+    expect(transactionService.signTypedData).toHaveBeenCalled();
+  });
+
+  test('user cancels unlock → throws cleanly without signing', async () => {
+    setupHappyPath();
+    mockIdentityModule.isUnlocked.mockReturnValue(false);
+    vaultUnlockBridge.requestVaultUnlock.mockRejectedValue(
+      new Error('Vault unlock cancelled by user')
+    );
+    await expect(
+      makeTools().wallet_sign_typed_data.execute(
+        'c1',
+        { typedData: PERMIT_TYPED_DATA, reason: 'r' }
+      )
+    ).rejects.toThrow(/cancelled by user/);
+    expect(transactionService.signTypedData).not.toHaveBeenCalled();
+  });
+
+  test('formatConsentDescription names the primary type, domain, target wallet, and reason', () => {
+    const fmt = makeTools().wallet_sign_typed_data.formatConsentDescription;
+    const desc = fmt({
+      typedData: PERMIT_TYPED_DATA,
+      reason: 'permit Uniswap to spend 1 USDC',
+      address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+    });
+    expect(desc).toContain('Permit');
+    expect(desc).toContain('USD Coin');
+    expect(desc).toContain('0xd8dA…6045');
+    expect(desc).toContain('permit Uniswap to spend 1 USDC');
+  });
+
+  test('getConsentSignDetails returns kind:typed-data with domain, message, types', () => {
+    const get = makeTools().wallet_sign_typed_data.getConsentSignDetails;
+    const details = get({
+      typedData: PERMIT_TYPED_DATA,
+      reason: 'r',
+    });
+    expect(details.kind).toBe('typed-data');
+    expect(details.primaryType).toBe('Permit');
+    expect(details.domain).toEqual(
+      expect.objectContaining({
+        name: 'USD Coin',
+        chainId: 1,
+        verifyingContract: PERMIT_TYPED_DATA.domain.verifyingContract,
+      })
+    );
+    expect(details.message).toEqual(PERMIT_TYPED_DATA.message);
+    expect(details.types).toEqual(PERMIT_TYPED_DATA.types);
+  });
+
+  test('getConsentSignDetails attaches block-explorer URL for verifyingContract when chain is registered', () => {
+    chainsModule.getChain.mockImplementation((id) =>
+      id === 1 ? { chainId: 1, blockExplorer: 'https://etherscan.io' } : null
+    );
+    const get = makeTools().wallet_sign_typed_data.getConsentSignDetails;
+    const details = get({ typedData: PERMIT_TYPED_DATA, reason: 'r' });
+    expect(details.domain.verifyingContractUrl).toBe(
+      `https://etherscan.io/address/${PERMIT_TYPED_DATA.domain.verifyingContract}`
+    );
+  });
+
+  test('getConsentSignDetails leaves verifyingContractUrl null for unknown chains', () => {
+    chainsModule.getChain.mockReturnValue(null);
+    const get = makeTools().wallet_sign_typed_data.getConsentSignDetails;
+    const details = get({ typedData: PERMIT_TYPED_DATA, reason: 'r' });
+    expect(details.domain.verifyingContractUrl).toBeNull();
   });
 });

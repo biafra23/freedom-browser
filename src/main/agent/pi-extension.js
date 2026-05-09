@@ -210,12 +210,23 @@ function createFreedomExtension({
         // address + reason + truncated message) export this so the
         // user sees what they're approving instead of a bare label.
         formatConsentDescription: def.formatConsentDescription,
+        // Optional structured consent payload — for tools whose consent
+        // card needs a real UI (e.g. wallet_sign_typed_data showing the
+        // EIP-712 domain + decoded message values). Renderer special-
+        // cases on signDetails.kind; absence falls through to the
+        // text-only path.
+        getConsentSignDetails: def.getConsentSignDetails,
       });
       // Strip our non-Pi fields before forwarding to registerTool — Pi
       // would otherwise carry them around as unknown extras. The
-      // formatter was already captured into toolMeta above, hence the
-      // underscore-prefix throwaway.
-      const { tier, formatConsentDescription: _formatConsentDescription, ...piDef } = def;
+      // formatters were already captured into toolMeta above, hence the
+      // underscore-prefix throwaways.
+      const {
+        tier,
+        formatConsentDescription: _formatConsentDescription,
+        getConsentSignDetails: _getConsentSignDetails,
+        ...piDef
+      } = def;
       pi.registerTool({
         ...piDef,
         executionMode: executionModeForTier(tier),
@@ -290,12 +301,26 @@ function createFreedomExtension({
             );
           }
         }
+        let signDetails;
+        if (typeof meta.getConsentSignDetails === 'function') {
+          try {
+            signDetails = meta.getConsentSignDetails(event.input);
+          } catch (err) {
+            // Same fallback rationale as the description formatter — a
+            // bug in the structured-payload builder shouldn't suppress
+            // the consent prompt; renderer falls through to text-only.
+            log.warn(
+              `[Pi] getConsentSignDetails threw for ${event.toolName}: ${err.message}`
+            );
+          }
+        }
         const userChoice = await toolCallContext.requestConsent({
           callId: event.toolCallId,
           name: event.toolName,
           tier: meta.tier,
           args: event.input,
           description,
+          signDetails,
         });
         if (userChoice === CONSENT.DENY) {
           return denyAndBlock(event.toolCallId, 'denied', 'User denied this tool call');
