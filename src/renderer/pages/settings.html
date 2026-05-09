@@ -353,6 +353,135 @@
         color: var(--warn);
       }
 
+      /* Local AI models — installed list + download empty state */
+      .model-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .model-row:last-child {
+        border-bottom: 0;
+      }
+
+      .model-info {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .model-name {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text);
+        margin: 0;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+
+      .model-meta {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin: 4px 0 0 0;
+      }
+
+      .btn.danger {
+        color: var(--danger);
+        border-color: var(--border);
+      }
+
+      .btn.danger:hover:not(:disabled) {
+        border-color: var(--danger);
+        background: rgba(248, 81, 73, 0.08);
+      }
+
+      .model-download {
+        /* Top padding matches .model-row so the header doesn't jump
+           vertically when the empty state swaps in/out after a delete
+           or download. Bottom gets a bit more breathing room because
+           the card carries extra content (buttons + progress bar). */
+        padding: 14px 18px 20px;
+      }
+
+      .model-download-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .model-download-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .model-download-action {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        /* Allow the column to shrink below its content size — without this
+           a long bzz:// URL would force the grid track wider than 1fr. */
+        min-width: 0;
+      }
+
+      .model-download-link {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-decoration: none;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        /* Truncate long URLs (Swarm hashes are 64+ chars) so they don't
+           wrap or push the layout. The full URL is in the link's `href`
+           and `title` so it's still discoverable. */
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .model-download-link:hover {
+        color: var(--accent);
+        text-decoration: underline;
+      }
+
+      .model-download-progress {
+        margin-top: 16px;
+      }
+
+      .model-download-progress.hidden {
+        display: none;
+      }
+
+      .progress-track {
+        width: 100%;
+        height: 6px;
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: var(--accent);
+        transition: width 0.5s linear;
+      }
+
+      .progress-text {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin: 8px 0 0 0;
+      }
+
+      .model-empty-state {
+        font-size: 13px;
+        color: var(--text-muted);
+        padding: 18px;
+        text-align: center;
+      }
+
       /* Light theme */
       @media (prefers-color-scheme: light) {
         :root {
@@ -742,6 +871,11 @@
               </div>
             </div>
           </div>
+
+          <h2 class="section-title" style="margin-top: 32px">Models</h2>
+          <div class="card" id="local-ai-models-card">
+            <div id="local-ai-models-list"></div>
+          </div>
         </section>
 
         <!-- Updates -->
@@ -794,7 +928,27 @@
         enableIdentity: $('enable-identity-wallet'),
         enableLocalAI: $('enable-local-ai'),
         startOllama: $('start-ollama-at-launch'),
+        localAIModelsList: $('local-ai-models-list'),
         autoUpdate: $('auto-update'),
+      };
+
+      // Demo: the only model Freedom currently offers via the empty-state
+      // download card. The card surfaces two download sources — clicking
+      // either kicks off the same simulated download (the actual bytes
+      // aren't fetched in this demo), so the choice is purely about which
+      // network the user prefers.
+      const FEATURED_MODEL = {
+        name: 'gemma4:e2b',
+        description: 'Gemma 4 — 2.3B effective parameters, multimodal, Apache 2.0.',
+        size: '~7.2 GB',
+        sources: [
+          { id: 'ollama', label: 'ollama.com', url: 'https://ollama.com/library/gemma4:e2b' },
+          {
+            id: 'swarm',
+            label: 'Swarm',
+            url: 'bzz://0bf812fcbe8e25905711f82acaeabeedcb221e8f2384887b778d5649cd0c8537',
+          },
+        ],
       };
 
       // Mirrors DEFAULT_ENS_PUBLIC_RPC_PROVIDERS in settings-store.js — kept
@@ -842,16 +996,50 @@
         window.scrollTo({ top: 0 });
       };
 
+      // Refresh the model list whenever the Local AI section becomes
+      // visible so freshly-pulled models surface without a full reload.
+      // The render is a no-op when the list hasn't changed, so this is
+      // safe to call mid-interaction (it won't close an open <select>
+      // picker because the option set is unchanged).
+      let localAIPollTimer = null;
+      const stopLocalAIPoll = () => {
+        if (localAIPollTimer != null) {
+          clearInterval(localAIPollTimer);
+          localAIPollTimer = null;
+        }
+      };
+      const startLocalAIPoll = () => {
+        stopLocalAIPoll();
+        // 5s is a comfortable interval for catching `ollama pull` from
+        // another terminal without burning through battery on idle pages.
+        localAIPollTimer = setInterval(() => refreshLocalAIModels(), 5000);
+      };
+      const onSectionShown = (section) => {
+        if (section === 'local-ai') {
+          refreshLocalAIModels();
+          startLocalAIPoll();
+        } else {
+          stopLocalAIPoll();
+        }
+      };
+
       navItems.forEach((item) => {
         item.addEventListener('click', () => {
           const target = item.dataset.target;
-          if (!target || target === resolveSection(location.hash)) return;
+          if (!target) return;
+          // Refresh on every click of the Local AI nav item, even when
+          // already on that section — matches the "click to see latest"
+          // mental model.
+          if (target === 'local-ai') refreshLocalAIModels();
+          if (target === resolveSection(location.hash)) return;
           location.hash = target;
         });
       });
 
       window.addEventListener('hashchange', () => {
-        showSection(resolveSection(location.hash));
+        const section = resolveSection(location.hash);
+        showSection(section);
+        onSectionShown(section);
       });
 
       // On first load, normalize the URL so freedom://settings becomes
@@ -884,6 +1072,194 @@
       const setProviderStatus = (text, type) => {
         fields.ensProviderStatus.textContent = text;
         fields.ensProviderStatus.className = 'rpc-status' + (type ? ' ' + type : '');
+      };
+
+      // Real models reported by Ollama's `/api/tags`. Refreshed on load
+      // and on a slow poll while the section is visible, so newly-pulled
+      // models surface without reloading the settings page.
+      let cachedOllamaModels = [];
+      // Mirrors of the persisted lists, kept here so renderLocalAIModels
+      // can produce the visible set without touching cachedSettings on
+      // every render.
+      let installedSimulated = new Set();
+      let disabledModels = new Set();
+      // True while the demo download progress bar is animating, so a
+      // re-render mid-animation doesn't blow away the in-progress card.
+      let downloadInFlight = false;
+
+      const getActiveLocalAIModels = () => {
+        const seen = new Set();
+        const merged = [];
+        for (const name of cachedOllamaModels) {
+          if (!name || seen.has(name) || disabledModels.has(name)) continue;
+          seen.add(name);
+          merged.push(name);
+        }
+        for (const name of installedSimulated) {
+          if (!name || seen.has(name) || disabledModels.has(name)) continue;
+          seen.add(name);
+          merged.push(name);
+        }
+        return merged;
+      };
+
+      const renderLocalAIModels = () => {
+        if (downloadInFlight) return;
+        const list = fields.localAIModelsList;
+        list.textContent = '';
+        const active = getActiveLocalAIModels();
+        if (active.length === 0) {
+          list.appendChild(buildDownloadCard());
+        } else {
+          for (const name of active) list.appendChild(buildModelRow(name));
+        }
+      };
+
+      // Single source of truth for the human-readable model description
+      // shared between the active-model row and the download card.
+      const describeModel = (name) =>
+        name === FEATURED_MODEL.name
+          ? `${FEATURED_MODEL.description} ${FEATURED_MODEL.size}.`
+          : 'Active';
+
+      // Shared header used by both the active-model row and the download
+      // card so the two surfaces stay visually identical (same monospace
+      // model name, same description style, same dimensions).
+      const buildModelHeader = (name) => {
+        const info = document.createElement('div');
+        info.className = 'model-info';
+        const nameEl = document.createElement('p');
+        nameEl.className = 'model-name';
+        nameEl.textContent = name;
+        info.appendChild(nameEl);
+        const meta = document.createElement('p');
+        meta.className = 'model-meta';
+        meta.textContent = describeModel(name);
+        info.appendChild(meta);
+        return info;
+      };
+
+      const buildModelRow = (name) => {
+        const row = document.createElement('div');
+        row.className = 'model-row';
+        row.appendChild(buildModelHeader(name));
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn danger';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => removeModel(name));
+        row.appendChild(removeBtn);
+        return row;
+      };
+
+      const buildDownloadCard = () => {
+        const wrap = document.createElement('div');
+        wrap.className = 'model-download';
+
+        const header = document.createElement('div');
+        header.className = 'model-download-header';
+        header.appendChild(buildModelHeader(FEATURED_MODEL.name));
+
+        const progress = document.createElement('div');
+        progress.className = 'model-download-progress hidden';
+        const track = document.createElement('div');
+        track.className = 'progress-track';
+        const fill = document.createElement('div');
+        fill.className = 'progress-fill';
+        track.appendChild(fill);
+        const text = document.createElement('p');
+        text.className = 'progress-text';
+        progress.appendChild(track);
+        progress.appendChild(text);
+
+        const actions = document.createElement('div');
+        actions.className = 'model-download-actions';
+        const buttons = [];
+        for (const source of FEATURED_MODEL.sources) {
+          const action = document.createElement('div');
+          action.className = 'model-download-action';
+
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn';
+          btn.textContent = `Download from ${source.label}`;
+          btn.title = source.url;
+          btn.addEventListener('click', () => simulateDownload({ source, buttons, progress }));
+
+          const link = document.createElement('a');
+          link.className = 'model-download-link';
+          link.href = source.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          // Title carries the full URL so the truncated display still
+          // exposes it on hover.
+          link.title = source.url;
+          link.textContent = source.url;
+
+          action.appendChild(btn);
+          action.appendChild(link);
+          actions.appendChild(action);
+          buttons.push(btn);
+        }
+
+        wrap.appendChild(header);
+        wrap.appendChild(actions);
+        wrap.appendChild(progress);
+        return wrap;
+      };
+
+      const simulateDownload = ({ source, buttons, progress }) => {
+        if (downloadInFlight) return;
+        downloadInFlight = true;
+        for (const btn of buttons) btn.disabled = true;
+        const text = progress.querySelector('.progress-text');
+        text.textContent = `Downloading from ${source.label}…`;
+        progress.classList.remove('hidden');
+        const fill = progress.querySelector('.progress-fill');
+        // Two-frame trick: width starts at 0%, the next frame applies the
+        // 100% target so the CSS `transition: width 0.5s linear` actually
+        // animates instead of snapping. Without the rAF the browser
+        // coalesces both writes and the bar jumps straight to 100%.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            fill.style.width = '100%';
+          });
+        });
+        setTimeout(() => {
+          downloadInFlight = false;
+          // Marking the featured model as installed (and un-disabling it
+          // if it had been previously removed) flips the empty state
+          // into the active list on the next render.
+          installedSimulated.add(FEATURED_MODEL.name);
+          disabledModels.delete(FEATURED_MODEL.name);
+          save();
+          renderLocalAIModels();
+        }, 500);
+      };
+
+      const removeModel = (name) => {
+        if (!name) return;
+        // Drop from both lists: removes simulated entries outright, and
+        // hides real Ollama installs from Freedom's UI without touching
+        // the on-disk weights.
+        installedSimulated.delete(name);
+        disabledModels.add(name);
+        save();
+        renderLocalAIModels();
+      };
+
+      const refreshLocalAIModels = async () => {
+        if (typeof freedomAPI.getLocalAIStatus !== 'function') return;
+        try {
+          const status = await freedomAPI.getLocalAIStatus();
+          cachedOllamaModels = Array.isArray(status?.models)
+            ? status.models.map((m) => m.name).filter(Boolean)
+            : [];
+        } catch {
+          cachedOllamaModels = [];
+        }
+        renderLocalAIModels();
       };
 
       // Shared Test-button runner for the custom-RPC field and per-provider
@@ -931,6 +1307,8 @@
         enableIdentityWallet: fields.enableIdentity.checked,
         enableLocalAI: fields.enableLocalAI.checked,
         startOllamaAtLaunch: fields.startOllama.checked,
+        localAIInstalledModels: [...installedSimulated],
+        localAIDisabledModels: [...disabledModels],
         autoUpdate: fields.autoUpdate.checked,
         enableEnsCustomRpc: fields.enableEnsCustomRpc.checked,
         ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
@@ -954,6 +1332,13 @@
         fields.enableIdentity.checked = settings.enableIdentityWallet === true;
         fields.enableLocalAI.checked = settings.enableLocalAI === true;
         fields.startOllama.checked = settings.startOllamaAtLaunch !== false;
+        installedSimulated = new Set(
+          Array.isArray(settings.localAIInstalledModels) ? settings.localAIInstalledModels : []
+        );
+        disabledModels = new Set(
+          Array.isArray(settings.localAIDisabledModels) ? settings.localAIDisabledModels : []
+        );
+        renderLocalAIModels();
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.enableEnsCustomRpc.checked = settings.enableEnsCustomRpc === true;
         fields.ensRpcUrl.value = settings.ensRpcUrl || '';
@@ -1247,6 +1632,12 @@
           cachedRegistry = registry;
           applyFormState(settings);
           renderSwarmModeRow(settings, registry);
+          // Mirror the hashchange path's "section became visible" hook
+          // for the deep-link / refresh case where the page lands
+          // directly on a section. For Local AI this also kicks off
+          // the poll-while-visible refresh; for other sections it's a
+          // no-op.
+          onSectionShown(initialSection);
         } catch {
           setEnsRpcStatus('Failed to load settings', 'error');
         }

@@ -156,6 +156,7 @@ describe('webview-preload', () => {
       ['getRadicleStatus', [], IPC.RADICLE_GET_STATUS, []],
       ['getRadicleRepoPayload', ['z3abc'], IPC.RADICLE_GET_REPO_PAYLOAD, ['z3abc']],
       ['syncRadicleRepo', ['z3abc'], IPC.RADICLE_SYNC_REPO, ['z3abc']],
+      ['getLocalAIStatus', [], IPC.AGENT_STATUS, []],
     ];
 
     for (const [method, args, channel, expectedArgs] of invokeCases) {

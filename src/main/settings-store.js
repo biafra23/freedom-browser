@@ -39,6 +39,17 @@ const DEFAULT_SETTINGS = {
   enableIdentityWallet: true,
   enableLocalAI: true,
   startOllamaAtLaunch: true,
+  // Demo-only "tracked installed" models — populated by the download
+  // simulator on the settings page. Lets the empty-state UI flip to
+  // "model active" without actually pulling weights from Ollama. The
+  // real source of truth for installed models is `ollama tags`; this
+  // list is unioned with that for display.
+  localAIInstalledModels: [],
+  // Models the user has clicked "Remove" on in the Local AI settings
+  // panel. We don't delete files from disk — we just hide the model
+  // from Freedom's UI surfaces. Names listed here are filtered out of
+  // the visible model list.
+  localAIDisabledModels: [],
   beeNodeMode: 'ultraLight',
   startBeeAtLaunch: true,
   startIpfsAtLaunch: true,
@@ -71,7 +82,11 @@ const DEFAULT_SETTINGS = {
 
 // Settings keys whose value is an array rather than a primitive. The
 // saveSettings validator uses JSON-equality for these instead of ===.
-const ARRAY_SETTINGS_KEYS = new Set(['ensPublicRpcProviders']);
+const ARRAY_SETTINGS_KEYS = new Set([
+  'ensPublicRpcProviders',
+  'localAIInstalledModels',
+  'localAIDisabledModels',
+]);
 
 let cachedSettings = null;
 

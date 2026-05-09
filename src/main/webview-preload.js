@@ -213,6 +213,14 @@ contextBridge.exposeInMainWorld('freedomAPI', {
     ipcRenderer.invoke('favicon:get-cached', url)
   ),
 
+  // Local AI / Ollama. The settings page uses this to list installed
+  // models (intersected with the user's disabled list) for the Models
+  // section; the agent itself talks to `window.agent` from the host
+  // preload.
+  getLocalAIStatus: guardInternal('getLocalAIStatus', () =>
+    ipcRenderer.invoke('agent:status')
+  ),
+
   // Radicle
   seedRadicle: guardInternal('seedRadicle', (rid) => ipcRenderer.invoke('radicle:seed', rid)),
   getRadicleStatus: guardInternal('getRadicleStatus', () => ipcRenderer.invoke('radicle:getStatus')),
