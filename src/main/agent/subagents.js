@@ -235,19 +235,22 @@ function makeSubagentToolCallContext({ parentToolCallContext, subagentDef }) {
     // and the subagent doesn't re-prompt for the same tier.
     sessionId: parentToolCallContext.sessionId,
     webContentsId: parentToolCallContext.webContentsId,
-    // Inner tool calls stay opaque to the main chat in v1 — log them for
-    // debugging but don't surface in the renderer's main flow.
+    // Forward inner tool calls and results into the parent's renderer
+    // pipe so they appear as cards in the main chat. The consent
+    // description already names the subagent so the user can tell where
+    // each call came from. Without this, consent IPC for an inner tool
+    // would target a callId the renderer never saw — the consent buttons
+    // would never appear and the subagent would deadlock.
     onToolCall: (event) => {
       log.info(`[Subagent ${subagentDef.id}] tool_call: ${event.name}`);
+      parentToolCallContext.onToolCall(event);
     },
     onToolResult: (event) => {
       log.info(
         `[Subagent ${subagentDef.id}] tool_result: ${event.callId} (${event.status})`
       );
+      parentToolCallContext.onToolResult(event);
     },
-    // Consent DOES surface to the user — they need to gate each
-    // capability use. Description prefixed with the subagent name so the
-    // consent card makes the source obvious.
     requestConsent: (event) =>
       parentToolCallContext.requestConsent({
         ...event,

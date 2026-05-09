@@ -124,16 +124,35 @@ describe('makeSubagentToolCallContext', () => {
     );
   });
 
-  test('inner onToolCall / onToolResult log only — they do not surface in main chat', () => {
+  test('inner onToolCall and onToolResult forward to parent so cards appear in main chat', () => {
+    const parentOnToolCall = jest.fn();
+    const parentOnToolResult = jest.fn();
     const subCtx = _internals.makeSubagentToolCallContext({
-      parentToolCallContext: { sessionId: 's', webContentsId: 1, requestConsent: jest.fn() },
+      parentToolCallContext: {
+        sessionId: 's',
+        webContentsId: 1,
+        requestConsent: jest.fn(),
+        onToolCall: parentOnToolCall,
+        onToolResult: parentOnToolResult,
+      },
       subagentDef: SUBAGENT_DEFINITIONS.summarize_current_page,
     });
-    expect(typeof subCtx.onToolCall).toBe('function');
-    expect(typeof subCtx.onToolResult).toBe('function');
-    subCtx.onToolCall({ name: 'read_current_tab' });
-    subCtx.onToolResult({ callId: 'c1', status: 'allowed' });
-    // No throw, and they log via our mocked logger.
+    subCtx.onToolCall({
+      callId: 'c1',
+      name: 'read_current_tab',
+      tier: TIERS.LOCAL_SENSITIVE,
+      args: {},
+    });
+    subCtx.onToolResult({ callId: 'c1', status: 'allowed', result: { text: 'page text' } });
+    // Both forward to parent — the renderer needs the tool-call card to
+    // exist before the consent prompt arrives, otherwise consent IPC has
+    // no card to attach to and the subagent deadlocks.
+    expect(parentOnToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: 'c1', name: 'read_current_tab' })
+    );
+    expect(parentOnToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: 'c1', status: 'allowed' })
+    );
     expect(log.info).toHaveBeenCalled();
   });
 });
