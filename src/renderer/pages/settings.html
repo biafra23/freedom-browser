@@ -891,6 +891,21 @@
                 </label>
               </div>
             </div>
+            <div class="row sub" id="ai-inference-channel-row">
+              <div class="row-body">
+                <p class="row-label">Inference channel ID (optional override)</p>
+                <p class="row-help">Channel <code>peer_run_inference</code> broadcasts to by default. Leave blank for the auto-joined Freedom Lobby. Paste a different MLS group ID here if the demo runs on a non-lobby channel.</p>
+              </div>
+              <div class="row-control">
+                <input
+                  type="text"
+                  id="ai-inference-channel-id"
+                  spellcheck="false"
+                  placeholder="Freedom Lobby (default)"
+                  style="width: 280px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px"
+                />
+              </div>
+            </div>
           </div>
 
           <h2 class="section-title" style="margin-top: 32px">Models</h2>
@@ -952,6 +967,7 @@
         localAIModelsList: $('local-ai-models-list'),
         aiSelectedModel: $('ai-selected-model'),
         aiSharedInference: $('ai-shared-inference'),
+        aiInferenceChannelId: $('ai-inference-channel-id'),
         autoUpdate: $('auto-update'),
       };
 
@@ -1334,6 +1350,7 @@
         localAIDisabledModels: [...disabledModels],
         aiSelectedModel: fields.aiSelectedModel.value || null,
         aiSharedInferenceEnabled: fields.aiSharedInference.checked,
+        aiInferenceChannelId: (fields.aiInferenceChannelId.value || '').trim() || null,
         autoUpdate: fields.autoUpdate.checked,
         enableEnsCustomRpc: fields.enableEnsCustomRpc.checked,
         ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
@@ -1369,6 +1386,7 @@
         // doesn't block the rest of the form from rendering.
         populateModelDropdown(settings.aiSelectedModel || null);
         fields.aiSharedInference.checked = settings.aiSharedInferenceEnabled === true;
+        fields.aiInferenceChannelId.value = settings.aiInferenceChannelId || '';
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.enableEnsCustomRpc.checked = settings.enableEnsCustomRpc === true;
         fields.ensRpcUrl.value = settings.ensRpcUrl || '';
@@ -1559,6 +1577,7 @@
       fields.startOllama.addEventListener('change', save);
       fields.aiSelectedModel.addEventListener('change', save);
       fields.aiSharedInference.addEventListener('change', save);
+      fields.aiInferenceChannelId.addEventListener('change', save);
 
       // Build the Default-model <select>. Pulls installed models from
       // the running Ollama daemon via window.agent.getStatus(); pre-

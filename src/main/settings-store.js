@@ -62,6 +62,14 @@ const DEFAULT_SETTINGS = {
   // Freedom Lobby) can drive inference on this machine — silent serve,
   // no per-request consent. Off by default.
   aiSharedInferenceEnabled: false,
+  // Override for the channel `peer_run_inference` / `peer_list_providers`
+  // broadcast to by default. Empty / null = fall back to the auto-joined
+  // Freedom Lobby. Set to a specific MLS group ID (copy from the channels
+  // panel) when the demo is happening in a different channel — useful
+  // when the colleague hosts inference on a hand-rolled group instead of
+  // through the lobby admin daemon. Explicit `channelId` on the tool
+  // call still wins over this setting.
+  aiInferenceChannelId: null,
   beeNodeMode: 'ultraLight',
   startBeeAtLaunch: true,
   startIpfsAtLaunch: true,

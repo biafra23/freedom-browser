@@ -32,6 +32,7 @@ const { TIERS } = require('../tool-tiers');
 const { jsonResult } = require('./_helpers');
 const messagingRuntime = require('../../messaging/messaging-runtime');
 const inferenceProvider = require('../../messaging/inference-provider');
+const { loadSettings } = require('../../settings-store');
 const { shortAddress } = require('../../../shared/address-utils');
 
 const {
@@ -53,14 +54,22 @@ function newRequestId() {
   return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function resolveLobbyOrThrow() {
-  const id = messagingRuntime.getLobbyChannelId();
-  if (!id) {
-    throw new Error(
-      'No Freedom Lobby channel known yet — messaging may still be starting, or the lobby admin daemon is offline. Pass an explicit channelId to target a specific channel instead.'
-    );
-  }
-  return id;
+// Resolve the channel id to broadcast to. Precedence:
+//   1. Explicit `channelId` passed to the tool — always wins.
+//   2. `aiInferenceChannelId` setting — user-pinned override (e.g. when
+//      the demo channel isn't the auto-joined Freedom Lobby).
+//   3. Auto-joined Freedom Lobby groupId.
+//   4. Throw with a model-readable hint.
+function resolveChannelOrThrow(explicit) {
+  if (explicit && typeof explicit === 'string') return explicit;
+  const settings = loadSettings();
+  const pinned = settings?.aiInferenceChannelId;
+  if (pinned && typeof pinned === 'string' && pinned.length > 0) return pinned;
+  const lobbyId = messagingRuntime.getLobbyChannelId();
+  if (lobbyId) return lobbyId;
+  throw new Error(
+    'No inference channel resolved. Either pass an explicit `channelId`, set `aiInferenceChannelId` in AI settings, or wait for the Freedom Lobby auto-join to complete (admin daemon may be offline).'
+  );
 }
 
 function truncate(text, max = 80) {
@@ -191,7 +200,7 @@ function createPeerTools({ Type }) {
       return `Broadcast to ${target} (${modelLabel}). Reason: ${reason}\nPrompt: ${truncate(prompt, 200)}`;
     },
     async execute(_id, params, signal) {
-      const channelId = params.channelId || resolveLobbyOrThrow();
+      const channelId = resolveChannelOrThrow(params.channelId);
       const requestId = newRequestId();
       const timeoutMs = params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const startedAt = Date.now();
@@ -261,7 +270,7 @@ function createPeerTools({ Type }) {
       return `Probe ${target} for online inference providers. Reason: ${reason}`;
     },
     async execute(_id, params, signal) {
-      const channelId = params.channelId || resolveLobbyOrThrow();
+      const channelId = resolveChannelOrThrow(params.channelId);
       const requestId = newRequestId();
       const timeoutMs = params.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
       const startedAt = Date.now();
@@ -313,7 +322,7 @@ module.exports = {
     awaitFirstMatch,
     collectUntilTimeout,
     newRequestId,
-    resolveLobbyOrThrow,
+    resolveChannelOrThrow,
     DEFAULT_REQUEST_TIMEOUT_MS,
     DEFAULT_PROBE_TIMEOUT_MS,
   },

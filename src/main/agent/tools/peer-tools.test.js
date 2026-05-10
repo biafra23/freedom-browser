@@ -5,6 +5,7 @@ jest.mock('../../logger', () => ({ info: jest.fn(), warn: jest.fn(), error: jest
 // envelope deliveries from tests.
 const mockState = {
   lobbyChannelId: 'lobby-id',
+  pinnedChannelId: null,
   listeners: new Set(),
   published: [],
 };
@@ -22,10 +23,14 @@ jest.mock('../../messaging/messaging-runtime', () => ({
     return () => mockState.listeners.delete(fn);
   }),
 }));
+jest.mock('../../settings-store', () => ({
+  loadSettings: jest.fn(() => ({ aiInferenceChannelId: mockState.pinnedChannelId })),
+}));
 
 const { Type } = require('typebox');
 const { createPeerTools } = require('./peer-tools');
 const messagingRuntime = require('../../messaging/messaging-runtime');
+const { loadSettings } = require('../../settings-store');
 
 function getTools() {
   const [run, list] = createPeerTools({ Type });
@@ -34,12 +39,15 @@ function getTools() {
 
 beforeEach(() => {
   mockState.lobbyChannelId = 'lobby-id';
+  mockState.pinnedChannelId = null;
   mockState.listeners.clear();
   mockState.published.length = 0;
   messagingRuntime.publish.mockClear();
   messagingRuntime.addMessageListener.mockClear();
   messagingRuntime.getLobbyChannelId.mockClear();
   messagingRuntime.getLobbyChannelId.mockImplementation(() => mockState.lobbyChannelId);
+  loadSettings.mockClear();
+  loadSettings.mockImplementation(() => ({ aiInferenceChannelId: mockState.pinnedChannelId }));
 });
 
 // ---------------------------------------------------------------------------
@@ -187,12 +195,40 @@ describe('peer_run_inference', () => {
     await expect(promise).rejects.toThrow(/Aborted by caller/);
   });
 
-  test('throws when no lobby is known and no explicit channelId given', async () => {
+  test('throws when no lobby + no setting + no explicit channelId', async () => {
     mockState.lobbyChannelId = null;
+    mockState.pinnedChannelId = null;
     const { run } = getTools();
     await expect(
       run.execute('id-1', { prompt: 'hi', reason: 'x' })
-    ).rejects.toThrow(/No Freedom Lobby channel known/);
+    ).rejects.toThrow(/No inference channel resolved/);
+  });
+
+  test('falls back to aiInferenceChannelId setting when lobby is missing', async () => {
+    mockState.lobbyChannelId = null;
+    mockState.pinnedChannelId = 'pinned-channel-id';
+    const { run } = getTools();
+    const promise = run.execute('id-1', { prompt: 'hi', reason: 'x', timeoutMs: 100 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(messagingRuntime.publish.mock.calls[0][0]).toBe('pinned-channel-id');
+    promise.catch(() => {});
+  });
+
+  test('explicit channelId beats both setting and lobby', async () => {
+    mockState.lobbyChannelId = 'lobby-id';
+    mockState.pinnedChannelId = 'pinned-channel-id';
+    const { run } = getTools();
+    const promise = run.execute('id-1', {
+      prompt: 'hi',
+      reason: 'x',
+      channelId: 'explicit-channel',
+      timeoutMs: 100,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(messagingRuntime.publish.mock.calls[0][0]).toBe('explicit-channel');
+    promise.catch(() => {});
   });
 
   test('honours explicit channelId override', async () => {
@@ -334,11 +370,23 @@ describe('peer_list_providers', () => {
     await expect(promise).rejects.toThrow(/Aborted by caller/);
   });
 
-  test('throws when no lobby is known and no explicit channelId', async () => {
+  test('throws when no channel is resolvable (no lobby, no setting, no explicit id)', async () => {
     mockState.lobbyChannelId = null;
+    mockState.pinnedChannelId = null;
     const { list } = getTools();
     await expect(list.execute('id-1', { reason: 'r' })).rejects.toThrow(
-      /No Freedom Lobby channel known/
+      /No inference channel resolved/
     );
+  });
+
+  test('honours aiInferenceChannelId setting', async () => {
+    mockState.lobbyChannelId = null;
+    mockState.pinnedChannelId = 'pinned-channel-id';
+    const { list } = getTools();
+    const promise = list.execute('id-1', { reason: 'r', timeoutMs: 30 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(messagingRuntime.publish.mock.calls[0][0]).toBe('pinned-channel-id');
+    await promise; // resolves with empty providers after timeout
   });
 });
