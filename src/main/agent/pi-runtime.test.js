@@ -346,10 +346,10 @@ describe('listFreedomSkills', () => {
     skillCatalog._internals.setPiModule(null);
   });
 
-  test('returns parsed skills with name, description, and source tag', async () => {
+  test('returns parsed skills with name, description, source tag, and argsHint', async () => {
     const skills = await runtime.listFreedomSkills({ agentDir: '/tmp/x' });
     expect(skills).toEqual([
-      { name: 'tldr', description: 'Short summary', source: 'builtin' },
+      { name: 'tldr', description: 'Short summary', source: 'builtin', argsHint: null },
     ]);
   });
 });

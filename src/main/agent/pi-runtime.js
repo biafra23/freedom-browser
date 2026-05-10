@@ -275,6 +275,7 @@ async function listFreedomSkills({ agentDir } = {}) {
     name: e.name,
     description: e.description,
     source: e.source,
+    argsHint: e.argsHint || null,
   }));
 }
 

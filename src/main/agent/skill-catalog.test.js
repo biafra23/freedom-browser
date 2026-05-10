@@ -54,6 +54,32 @@ describe('stripFrontmatter', () => {
   });
 });
 
+describe('readFrontmatterField', () => {
+  test('extracts a plain unquoted value', () => {
+    const input = '---\nname: p2p\nargsHint: <prompt>\n---\nbody\n';
+    expect(_internals.readFrontmatterField(input, 'argsHint')).toBe('<prompt>');
+  });
+
+  test('strips surrounding double quotes', () => {
+    const input = '---\nargsHint: "with spaces"\n---\nbody\n';
+    expect(_internals.readFrontmatterField(input, 'argsHint')).toBe('with spaces');
+  });
+
+  test('strips surrounding single quotes', () => {
+    const input = "---\nargsHint: 'single q'\n---\nbody\n";
+    expect(_internals.readFrontmatterField(input, 'argsHint')).toBe('single q');
+  });
+
+  test('returns null when field is absent', () => {
+    const input = '---\nname: foo\n---\nbody\n';
+    expect(_internals.readFrontmatterField(input, 'argsHint')).toBeNull();
+  });
+
+  test('returns null when there is no frontmatter at all', () => {
+    expect(_internals.readFrontmatterField('hello', 'argsHint')).toBeNull();
+  });
+});
+
 describe('classifySource', () => {
   test('returns "builtin" for paths under the bundled dir', () => {
     expect(
@@ -100,8 +126,30 @@ describe('getSkillCatalog', () => {
     );
     const catalog = await skillCatalog.getSkillCatalog({ agentDir: tmpRoot });
     expect(catalog).toEqual([
-      expect.objectContaining({ name: 'mine', source: 'user' }),
+      expect.objectContaining({ name: 'mine', source: 'user', argsHint: null }),
     ]);
+  });
+
+  test('surfaces argsHint from the skill frontmatter', async () => {
+    const userDir = path.join(tmpRoot, 'skills');
+    fs.mkdirSync(userDir);
+    const filePath = path.join(userDir, 'p2p.md');
+    fs.writeFileSync(
+      filePath,
+      '---\nname: p2p\ndescription: distributed inference\nargsHint: <prompt to run on a peer>\n---\nbody\n'
+    );
+    _internals.setPiModule(
+      makeMockPi({
+        [BUNDLED]: [],
+        [userDir]: [{ name: 'p2p', description: 'distributed inference', filePath }],
+      })
+    );
+    const catalog = await skillCatalog.getSkillCatalog({ agentDir: tmpRoot });
+    expect(catalog[0]).toMatchObject({
+      name: 'p2p',
+      source: 'user',
+      argsHint: '<prompt to run on a peer>',
+    });
   });
 
   test('drops a user skill that collides with a bundled name (bundled wins)', async () => {

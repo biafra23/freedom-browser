@@ -173,7 +173,12 @@ async function loadSlashSkills() {
       skills.map((s) => ({
         name: s.name,
         description: s.description || '',
-        argsHint: null,
+        // `argsHint` from the skill's frontmatter (if present) flips the
+        // palette pick into "insert with trailing space, wait for user
+        // to type" mode — needed for skills like /p2p <prompt> where the
+        // args ARE the payload. No frontmatter argsHint = no-arg skill,
+        // gets the auto-submitted "Apply now." treatment.
+        argsHint: s.argsHint || null,
         insertName: `skill:${s.name}`,
       }))
     );

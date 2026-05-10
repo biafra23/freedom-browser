@@ -47,10 +47,33 @@ async function loadPi() {
 // Pi has its own `stripFrontmatter` export; we keep a local copy so
 // this is sync (no `loadPi()` dependency) and so the implementation
 // can't drift if Pi ships a behaviour change. CRLF handled via `\r?`.
-const FRONTMATTER_RE = /^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?/;
+const FRONTMATTER_RE = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/;
 function stripFrontmatter(text) {
   const match = FRONTMATTER_RE.exec(text);
   return match ? text.slice(match[0].length) : text;
+}
+
+// Pull a single named field out of the frontmatter as a trimmed string.
+// Pi's Skill type only surfaces `name` + `description` from frontmatter
+// (other keys live under `[key: string]: unknown` and aren't reflected
+// onto the parsed Skill object), so for fields like `argsHint` we have
+// to re-parse the raw file ourselves. Matches `key: value` on its own
+// line; quotes (single or double) around the value are stripped.
+function readFrontmatterField(rawFile, fieldName) {
+  const m = FRONTMATTER_RE.exec(rawFile);
+  if (!m) return null;
+  const block = m[1];
+  const lineRe = new RegExp(`^${fieldName}\\s*:\\s*(.*)\\s*$`, 'm');
+  const lineMatch = lineRe.exec(block);
+  if (!lineMatch) return null;
+  let value = lineMatch[1].trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return value || null;
 }
 
 // fs.realpathSync that returns null instead of throwing — used to
@@ -118,11 +141,23 @@ async function getSkillCatalog({ agentDir }) {
     // dropped on collision.
     const incomingWins = source === 'builtin' && existing?.source !== 'builtin';
     if (existing && !incomingWins) continue;
+    // Pull `argsHint` out of the frontmatter so the slash palette can
+    // distinguish skills that take a free-form arg (e.g. /p2p <prompt>)
+    // from no-arg skills (auto-submitted with "Apply now."). Read fails
+    // are non-fatal — skill just shows up as no-arg.
+    let argsHint = null;
+    try {
+      const raw = fs.readFileSync(real, 'utf-8');
+      argsHint = readFrontmatterField(raw, 'argsHint');
+    } catch (err) {
+      log.warn(`[skill-catalog] argsHint read failed for ${real}: ${err?.message || err}`);
+    }
     byName.set(skill.name, {
       name: skill.name,
       description: skill.description,
       source,
       filePath: real,
+      argsHint,
     });
   }
   return [...byName.values()];
@@ -161,6 +196,7 @@ module.exports = {
   BUNDLED_SKILLS_DIR,
   _internals: {
     stripFrontmatter,
+    readFrontmatterField,
     classifySource,
     safeRealpath,
     buildSkillPaths,
