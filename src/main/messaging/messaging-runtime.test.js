@@ -373,8 +373,10 @@ describe('addMessageListener', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getLobbyChannelId — cache reader with identity guards
+// getLobbyChannelId — cache reader with hardcoded fallback
 // ---------------------------------------------------------------------------
+
+const { LOBBY_DEFAULT_GROUP_ID } = require('./lobby-config');
 
 describe('getLobbyChannelId', () => {
   test('returns null before start', () => {
@@ -398,7 +400,7 @@ describe('getLobbyChannelId', () => {
     expect(runtime.getLobbyChannelId()).toBe('lobby-id-1');
   });
 
-  test('returns null when env mismatches (e.g. dev → production wallet swap)', async () => {
+  test('falls back to LOBBY_DEFAULT_GROUP_ID when env mismatches', async () => {
     const xmtp = makeMockXmtpClient();
     const channelMod = makeMockChannelMod();
     const lobby = makeMockLobbyClient(undefined, {
@@ -412,10 +414,10 @@ describe('getLobbyChannelId', () => {
 
     await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
 
-    expect(runtime.getLobbyChannelId()).toBeNull();
+    expect(runtime.getLobbyChannelId()).toBe(LOBBY_DEFAULT_GROUP_ID);
   });
 
-  test('returns null when inboxId mismatches (e.g. wallet swap)', async () => {
+  test('falls back to LOBBY_DEFAULT_GROUP_ID when inboxId mismatches', async () => {
     const xmtp = makeMockXmtpClient();
     const channelMod = makeMockChannelMod();
     const lobby = makeMockLobbyClient(undefined, {
@@ -429,10 +431,10 @@ describe('getLobbyChannelId', () => {
 
     await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
 
-    expect(runtime.getLobbyChannelId()).toBeNull();
+    expect(runtime.getLobbyChannelId()).toBe(LOBBY_DEFAULT_GROUP_ID);
   });
 
-  test('returns null when no cache exists yet', async () => {
+  test('falls back to LOBBY_DEFAULT_GROUP_ID when no cache exists yet', async () => {
     const xmtp = makeMockXmtpClient();
     const channelMod = makeMockChannelMod();
     const lobby = makeMockLobbyClient(undefined, { readLobbyCacheImpl: () => null });
@@ -440,7 +442,7 @@ describe('getLobbyChannelId', () => {
 
     await runtime.start({ privateKey: '0xa', address: '0xAlice', dataDir: '/tmp/m', env: 'dev' });
 
-    expect(runtime.getLobbyChannelId()).toBeNull();
+    expect(runtime.getLobbyChannelId()).toBe(LOBBY_DEFAULT_GROUP_ID);
   });
 });
 

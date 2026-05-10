@@ -36,6 +36,7 @@ const log = require('electron-log');
 const xmtpClient = require('./xmtp-client');
 const channelMod = require('./channel');
 const lobbyClient = require('./lobby-client');
+const { LOBBY_DEFAULT_GROUP_ID } = require('./lobby-config');
 
 const DEFAULT_ENV = 'dev';
 
@@ -295,20 +296,27 @@ function addMessageListener(listener) {
 }
 
 /**
- * Returns the cached Freedom Lobby group ID for the active identity, or
- * null if the install hasn't completed the lobby join handshake yet (or if
- * the cache references a different env / inboxId, in which case the lobby
- * client will rerun the handshake on next start).
+ * Returns the Freedom Lobby group ID for the active identity. Tries the
+ * per-install lobby.json cache first (validated against current env +
+ * inboxId), then falls back to the hardcoded `LOBBY_DEFAULT_GROUP_ID`
+ * constant in lobby-config.js — covers the case where an install was
+ * hand-admitted to the lobby without going through the join handshake
+ * (which is the only path that writes the cache). Returns null only if
+ * the runtime hasn't started yet.
  *
  * @returns {string|null}
  */
 function getLobbyChannelId() {
   if (!state.dataDir || !state.identity) return null;
   const cache = getLobbyClient().readLobbyCache?.(state.dataDir);
-  if (!cache?.groupId) return null;
-  if (cache.env && cache.env !== state.identity.env) return null;
-  if (cache.inboxId && cache.inboxId !== state.identity.inboxId) return null;
-  return cache.groupId;
+  if (
+    cache?.groupId &&
+    (!cache.env || cache.env === state.identity.env) &&
+    (!cache.inboxId || cache.inboxId === state.identity.inboxId)
+  ) {
+    return cache.groupId;
+  }
+  return LOBBY_DEFAULT_GROUP_ID || null;
 }
 
 // ---------------------------------------------------------------------------

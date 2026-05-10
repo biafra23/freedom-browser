@@ -32,10 +32,21 @@ const LOBBY_CACHE_FILE = 'lobby.json';
 // Display name for the lobby in the channels list.
 const LOBBY_DEFAULT_NAME = 'Freedom Lobby';
 
+// MLS group ID of the Freedom Lobby on the dev XMTP env, hardcoded so
+// `messaging-runtime.getLobbyChannelId()` has a working fallback when the
+// per-install lobby.json cache is missing or stale (e.g. an install that
+// was hand-admitted by the admin daemon's `addMembers` rather than via
+// the join handshake never wrote the cache). Captured by reading
+// `(await window.messaging.listChannels()).data.find(c => c.name === 'Freedom Lobby').id`
+// against the live admin daemon. If the admin ever recreates the lobby
+// the value changes — update here.
+const LOBBY_DEFAULT_GROUP_ID = '50093f0317ef4032d84861eac39b5887';
+
 module.exports = {
   LOBBY_ADMIN_ADDRESS,
   KIND_LOBBY_JOIN_REQUEST,
   KIND_LOBBY_JOIN_ACK,
   LOBBY_CACHE_FILE,
   LOBBY_DEFAULT_NAME,
+  LOBBY_DEFAULT_GROUP_ID,
 };
