@@ -42,6 +42,15 @@ const STATUS = {
   ERROR: 'error',
 };
 
+// Server-side default context length passed via OLLAMA_CONTEXT_LENGTH.
+// Ollama otherwise defaults to 4096 (the tiered VRAM-based defaults that
+// shipped in 0.15.5+ only kick in for large CUDA setups), which silently
+// truncates prompts the moment a Pi conversation grows past a few turns.
+// Kept aligned with `DEFAULT_CONTEXT_WINDOW` in `pi-runtime.js`, which is
+// what Pi advertises to the model registry — the two have to match or the
+// LLM thinks it has 32K of room while Ollama is dropping the oldest 28K.
+const DEFAULT_CONTEXT_LENGTH = 32768;
+
 let currentState = STATUS.STOPPED;
 let lastError = null;
 let ollamaProcess = null;
@@ -257,6 +266,7 @@ async function startOllama() {
     OLLAMA_MODELS: modelsDir,
     OLLAMA_FLASH_ATTENTION: '1',
     OLLAMA_KV_CACHE_TYPE: 'q8_0',
+    OLLAMA_CONTEXT_LENGTH: String(DEFAULT_CONTEXT_LENGTH),
   };
 
   log.info(`[Ollama] Starting: ${binPath} serve (port ${apiPort}, models ${modelsDir})`);
@@ -439,6 +449,7 @@ module.exports = {
   getOllamaBinaryPath,
   getOllamaModelsPath,
   STATUS,
+  DEFAULT_CONTEXT_LENGTH,
   // Exported for tests.
   _internals: {
     detectExistingDaemon,

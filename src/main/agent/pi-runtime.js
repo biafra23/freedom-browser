@@ -60,6 +60,12 @@ function resolveSkillPaths(agentDir) {
 const OLLAMA_PROVIDER_NAME = 'ollama';
 const OLLAMA_API_KEY_PLACEHOLDER = 'ollama'; // Ollama ignores this; Pi requires a value
 const PI_API_OPENAI_COMPLETIONS = 'openai-completions';
+// What Pi advertises to the model registry. Must match Ollama's
+// `OLLAMA_CONTEXT_LENGTH` (set in `ollama-manager.js`) — if Pi advertises
+// 32K but Ollama only allocates 4K, the runner truncates prompts and Pi
+// loses earlier turns silently. Kept inline rather than imported from
+// ollama-manager so this module can be loaded under tests that stub
+// service-registry to a minimal shape.
 const DEFAULT_CONTEXT_WINDOW = 32768;
 const DEFAULT_MAX_TOKENS = 8192;
 
