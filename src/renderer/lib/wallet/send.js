@@ -7,7 +7,7 @@
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
 import { refreshBalances, getTokensWithBalance, getChainsWithBalance, sortTokens } from './balance-display.js';
-import { TRUST_STATUS_SENTENCE } from '../navigation-utils.js';
+import { TRUST_STATUS_SENTENCE, describeUnverifiedReverse } from '../navigation-utils.js';
 import { createTab } from '../tabs.js';
 
 // DOM references
@@ -1003,20 +1003,16 @@ function renderRecipientReview(container, address, resolution) {
 // tooltip on the warning glyph, so a phisher can't slip a misleading
 // name onto the review screen.
 function renderRecipientUnverified(container, address, claimedName) {
-  const addressSpan = document.createElement('span');
-  addressSpan.className = 'send-review-recipient-address-bare';
-  addressSpan.textContent = address;
-
   const warn = document.createElement('span');
   warn.className = 'send-review-warning';
   warn.textContent = '⚠';
-  const detail = claimedName
-    ? `This address claims to be "${claimedName}", but the name doesn't forward-resolve back to it. Treat the name as untrusted — could be a stale record or a spoofing attempt.`
-    : `This address has a primary ENS name set, but it doesn't forward-verify back. Treat the claim as untrusted.`;
+  const detail = describeUnverifiedReverse(claimedName);
   warn.title = detail;
   warn.setAttribute('aria-label', detail);
 
-  container.replaceChildren(addressSpan, warn);
+  // Address inherits monospace + 11px from the parent .send-review-address
+  // class on #send-review-to — no per-span styling needed for the bare case.
+  container.replaceChildren(document.createTextNode(address), warn);
 }
 
 // Verified checkmark for the recipient cell when trust is verifiable.

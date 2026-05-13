@@ -4350,15 +4350,6 @@
   cursor: help;
 }
 
-/* Bare-address rendering used when no name resolved OR the reverse
-   record was UNVERIFIED. Picks up the monospace baseline from the
-   parent .send-review-address container, but exists as a span so the
-   adjacent warning glyph can sit inline on the same line. */
-.send-review-recipient-address-bare {
-  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
-  font-size: 11px;
-}
-
 .send-review-warning {
   color: var(--warning-fg);
   font-size: 13px;

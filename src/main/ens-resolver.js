@@ -409,6 +409,14 @@ const TTL_BY_LEVEL = {
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
 
 function ttlForResult(result) {
+  // UNVERIFIED outcomes describe a transient on-chain state (e.g. a
+  // reverse record that doesn't forward-verify) even when the underlying
+  // proof was cryptographically sound. Trust.level reads `verified` in
+  // that case — short-cache anyway so the user sees a fresh outcome
+  // when the on-chain state changes. Without this override the level
+  // table would pin the result for 15min.
+  if (result?.reason === 'UNVERIFIED') return TTL_BY_LEVEL.unverified;
+
   const level = result?.trust?.level;
   if (level && Object.prototype.hasOwnProperty.call(TTL_BY_LEVEL, level)) {
     return TTL_BY_LEVEL[level];
@@ -565,10 +573,17 @@ const UR_NOT_FOUND_SELECTORS = new Set([
 ]);
 const REVERSE_MISMATCH_SELECTOR = '0xef9c03ce'; // ReverseAddressMismatch(string,bytes)
 
-function urErrorSelector(err) {
+// ethers v6 stashes contract-revert data at either `.data` (newer wrappers)
+// or `.info.error.data` (the JSON-RPC error envelope). One reader, used by
+// every callsite that wants to inspect the revert payload.
+function getRevertData(err) {
   const data = err?.data || err?.info?.error?.data || '';
-  if (typeof data !== 'string' || data.length < 10) return null;
-  return data.slice(0, 10).toLowerCase();
+  return typeof data === 'string' && data.length >= 10 ? data : null;
+}
+
+function urErrorSelector(err) {
+  const data = getRevertData(err);
+  return data ? data.slice(0, 10).toLowerCase() : null;
 }
 
 function isResolverNotFoundError(err) {
@@ -593,9 +608,8 @@ function isReverseAddressMismatchError(err) {
 // Returns null if the data is missing or malformed — the warning UI then
 // falls back to a name-less "unverified reverse" message.
 function decodeReverseMismatchClaimedName(err) {
-  const data = err?.data || err?.info?.error?.data || '';
-  if (typeof data !== 'string' || data.length < 10) return null;
-  if (data.slice(0, 10).toLowerCase() !== REVERSE_MISMATCH_SELECTOR) return null;
+  const data = getRevertData(err);
+  if (!data || data.slice(0, 10).toLowerCase() !== REVERSE_MISMATCH_SELECTOR) return null;
   try {
     const [name] = ethers.AbiCoder.defaultAbiCoder().decode(
       ['string', 'bytes'],

@@ -34,6 +34,15 @@ export const TRUST_STATUS_SENTENCE = {
   conflict: 'Verification failed: RPCs disagree',
 };
 
+// Long-form warning for a recipient whose reverse record exists but
+// doesn't forward-verify back to the address. The claimed name is NOT
+// rendered as visible text anywhere — only as tooltip text on a warning
+// glyph — so a phisher can't lean on its visual plausibility.
+export const describeUnverifiedReverse = (claimedName) =>
+  claimedName
+    ? `This address claims to be "${claimedName}", but the name doesn't forward-resolve back to it. Treat the name as untrusted — could be a stale record or a spoofing attempt.`
+    : `This address has a primary ENS name set, but it doesn't forward-verify back. Treat the claim as untrusted.`;
+
 // Friendly names for the network row, keyed by the URI's protocol scheme
 // (the `bzz` / `ipfs` / `ipns` prefix from the resolved contenthash URI).
 // Anything not in the table is shown uppercased.
