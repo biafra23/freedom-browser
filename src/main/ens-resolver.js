@@ -821,6 +821,73 @@ function classifyNoAgreement({ results }) {
   return { kind: 'conflict' };
 }
 
+// Colibri primary path: a single cryptographically-verified eth_call against
+// the Universal Resolver via @corpus-core/colibri-stateless. The verifier
+// runs the EVM locally against proven storage, so a successful return is
+// already cross-checked against the Ethereum sync committee (or, with
+// zk_proof, a recursive zk sync proof). No anchor corroboration is needed —
+// Colibri pins to head − 1 by construction (sync committee signature for
+// block N lives in block N+1).
+//
+// Throws on proof-verification failure / network error / prover outage so
+// the orchestrator can fall through to the legacy quorum path when
+// ensFallbackToQuorum is enabled.
+async function tryColibriPath(name, callData, settings) {
+  // Lazy require avoids a load-time cycle: colibri-resolver imports
+  // universalResolverCall + hostOf from this module.
+  const { resolveViaColibri, DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
+  const proverUrl = (settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim();
+  const proverHost = hostOf(proverUrl);
+
+  let result;
+  try {
+    result = await resolveViaColibri(name, callData);
+  } catch (err) {
+    if (isResolverNotFoundError(err)) {
+      return {
+        outcome: 'not_found',
+        reason: 'NO_RESOLVER',
+        trust: buildColibriTrust(proverHost),
+        block: null,
+      };
+    }
+    if (err.code === 'CALL_EXCEPTION') {
+      // Verified revert with an unknown selector — same semantics as the
+      // quorum path's NO_CONTENTHASH bucket. Upstream maps that to
+      // RESOLUTION_ERROR for addr lookups and "no contenthash" for content.
+      return {
+        outcome: 'not_found',
+        reason: 'NO_CONTENTHASH',
+        error: err.message,
+        trust: buildColibriTrust(proverHost),
+        block: null,
+      };
+    }
+    throw err;
+  }
+
+  return {
+    outcome: 'data',
+    resolvedData: result.resolvedData,
+    resolverAddress: result.resolverAddress,
+    trust: buildColibriTrust(proverHost),
+    block: null,
+  };
+}
+
+function buildColibriTrust(proverHost) {
+  return {
+    level: 'verified',
+    method: 'colibri',
+    prover: proverHost,
+    block: null,
+    agreed: [proverHost],
+    dissented: [],
+    queried: [proverHost],
+    quorum: { k: 1, m: 1, achieved: true },
+  };
+}
+
 // Custom-RPC fast path: single leg against the user's own node, labelled
 // trust='user-configured'. On any failure, return null so the caller falls
 // back to the public quorum path (preserving existing graceful-degrade
@@ -907,6 +974,24 @@ async function resolveSingleSourceUnverified(url, name, callData, anchor, timeou
 // Throws when there are no providers or both waves all-errored.
 async function consensusResolve(normalizedName, callData, kind = 'content', options = {}) {
   const settings = loadSettings();
+
+  // Colibri primary: cryptographic verification via the sync committee
+  // (or zk sync proof). On verification failure or network/prover error
+  // we log loudly and fall through to the legacy quorum path below
+  // unless ensFallbackToQuorum is explicitly disabled. Loud-fallback is
+  // load-bearing: a silent fall-through would hide both prover health
+  // regressions and the (rare) "active attack" signal.
+  if (settings.ensResolutionMethod === 'colibri') {
+    try {
+      return await tryColibriPath(normalizedName, callData, settings);
+    } catch (err) {
+      if (settings.ensFallbackToQuorum === false) throw err;
+      log.warn(
+        `[ens] colibri-fallback name=${normalizedName} kind=${kind} ` +
+        `error=${err.message}`
+      );
+    }
+  }
 
   // Custom RPC: try first, fall back to public quorum on any failure so
   // users with a misbehaving own-node still resolve.

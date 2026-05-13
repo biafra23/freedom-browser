@@ -23,6 +23,10 @@ const TEST_PROVIDERS = [
 const mockLoadSettings = jest.fn(() => ({
   enableEnsCustomRpc: false,
   ensRpcUrl: '',
+  ensResolutionMethod: 'quorum',
+  ensFallbackToQuorum: true,
+  ensColibriProverUrl: '',
+  ensColibriZkProof: true,
   enableEnsQuorum: true,
   ensQuorumK: 3,
   ensQuorumM: 2,
@@ -38,6 +42,15 @@ jest.mock('./settings-store', () => ({
     'https://default-b.example.com',
     'https://default-c.example.com',
   ],
+}));
+
+// Mocked Colibri resolver. The orchestrator branch in consensusResolve
+// lazy-requires this; the lazy require sees the mocked module. Tests
+// flip behavior per case via mockResolveViaColibri.
+const mockResolveViaColibri = jest.fn();
+jest.mock('./ens/colibri-resolver', () => ({
+  resolveViaColibri: (...args) => mockResolveViaColibri(...args),
+  DEFAULT_PROVER_URL: 'https://test-prover.example',
 }));
 
 // Mock ethers with controllable provider and resolver behavior.
@@ -160,6 +173,10 @@ beforeEach(() => {
   mockLoadSettings.mockReturnValue({
     enableEnsCustomRpc: false,
     ensRpcUrl: '',
+    ensResolutionMethod: 'quorum',
+    ensFallbackToQuorum: true,
+    ensColibriProverUrl: '',
+    ensColibriZkProof: true,
     enableEnsQuorum: true,
     ensQuorumK: 3,
     ensQuorumM: 2,
@@ -1789,6 +1806,118 @@ describe('ens-resolver', () => {
 
       expect(result.type).toBe('ok');
       expect(result.trust.level).toBe('verified');
+    });
+  });
+
+  // Orchestrator branch added in Step 3 — switches consensusResolve to
+  // the Colibri-backed verifier when ensResolutionMethod === 'colibri'.
+  // The colibri-resolver itself is unit-tested separately; here we cover
+  // the wiring: method routing, trust-shape, error → fallback handoff.
+  describe('colibri orchestrator branch', () => {
+    const IPFS_V0 = 'QmW81r84Aihiqqi2Jw6nM1LnpeMfRCenRxtjwHNkXVkZYa';
+
+    function withColibri(overrides = {}) {
+      mockLoadSettings.mockReturnValue({
+        ...mockLoadSettings(),
+        ensResolutionMethod: 'colibri',
+        ...overrides,
+      });
+    }
+
+    // resolveViaColibri returns { resolvedData, resolverAddress } (object),
+    // not the [bytes, address] tuple the contract mock returns. Adapt.
+    function colibriOk(innerHex) {
+      const [resolvedData, resolverAddress] = urReturnsBytes(innerHex);
+      return { resolvedData, resolverAddress };
+    }
+
+    test('routes through Colibri and returns verified trust with method=colibri', async () => {
+      withColibri();
+      mockResolveViaColibri.mockResolvedValue(colibriOk(ipfsContenthashFor(IPFS_V0)));
+
+      const result = await resolveEnsContent('vitalik.eth');
+
+      expect(mockResolveViaColibri).toHaveBeenCalledTimes(1);
+      expect(result.type).toBe('ok');
+      expect(result.uri).toBe(`ipfs://${IPFS_V0}`);
+      expect(result.trust).toMatchObject({
+        level: 'verified',
+        method: 'colibri',
+        prover: 'test-prover.example',
+        quorum: { k: 1, m: 1, achieved: true },
+      });
+      // No public-RPC quorum legs fired.
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
+    test('uses the user-configured prover URL when set in settings', async () => {
+      withColibri({ ensColibriProverUrl: 'https://my.prover.example/abc' });
+      mockResolveViaColibri.mockResolvedValue(colibriOk(ipfsContenthashFor(IPFS_V0)));
+
+      const result = await resolveEnsContent('a.eth');
+      expect(result.trust.prover).toBe('my.prover.example');
+    });
+
+    test('ResolverNotFound surfaces as a verified NO_RESOLVER (name not registered)', async () => {
+      withColibri();
+      const err = Object.assign(new Error('ResolverNotFound(bytes)'), {
+        data: '0x77209fe8000000',
+      });
+      mockResolveViaColibri.mockRejectedValue(err);
+
+      const result = await resolveEnsContent('not-registered.eth');
+
+      expect(result.type).toBe('not_found');
+      expect(result.reason).toBe('NO_RESOLVER');
+      expect(result.trust.method).toBe('colibri');
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
+    test('CALL_EXCEPTION (verified revert, unknown selector) buckets as NO_CONTENTHASH', async () => {
+      withColibri();
+      const err = Object.assign(new Error('reverted: custom resolver error'), {
+        code: 'CALL_EXCEPTION',
+        data: '0xdeadbeef',
+      });
+      mockResolveViaColibri.mockRejectedValue(err);
+
+      const result = await resolveEnsContent('empty-record.eth');
+
+      expect(result.type).toBe('not_found');
+      expect(result.trust.method).toBe('colibri');
+    });
+
+    test('non-revert error falls through to the quorum path by default', async () => {
+      withColibri();
+      mockResolveViaColibri.mockRejectedValue(new Error('proof verification failed'));
+      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_V0)));
+
+      const result = await resolveEnsContent('proof-failure.eth');
+
+      expect(result.type).toBe('ok');
+      expect(result.uri).toBe(`ipfs://${IPFS_V0}`);
+      // Fell through to the public-RPC quorum — three legs queried.
+      expect(mockUrResolve).toHaveBeenCalled();
+      expect(result.trust.method).not.toBe('colibri');
+      expect(result.trust.quorum).toEqual({ k: 3, m: 2, achieved: true });
+    });
+
+    test('non-revert error rethrows when ensFallbackToQuorum is disabled', async () => {
+      withColibri({ ensFallbackToQuorum: false });
+      mockResolveViaColibri.mockRejectedValue(new Error('prover unreachable'));
+
+      await expect(resolveEnsContent('hard-fail.eth')).rejects.toThrow('prover unreachable');
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
+    test('default ensResolutionMethod=quorum leaves the legacy path untouched (regression)', async () => {
+      // Don't call withColibri — defaults to 'quorum'.
+      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_V0)));
+
+      await resolveEnsContent('legacy.eth');
+
+      expect(mockResolveViaColibri).not.toHaveBeenCalled();
+      expect(mockUrResolve).toHaveBeenCalled();
     });
   });
 });

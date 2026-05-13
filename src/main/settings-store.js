@@ -45,6 +45,21 @@ const DEFAULT_SETTINGS = {
   showBookmarkBar: false,
   enableEnsCustomRpc: false,
   ensRpcUrl: '',
+  // ENS resolution method selector. 'quorum' is the legacy public-RPC
+  // cross-checking path (see below); 'colibri' routes through the
+  // @corpus-core/colibri-stateless verifier for cryptographic proof
+  // rather than heuristic agreement; 'custom-rpc' uses ensRpcUrl as
+  // a single trusted source. Hidden until the settings UI lands —
+  // default keeps the pre-Colibri behaviour intact.
+  ensResolutionMethod: 'quorum',
+  // When 'colibri' is the primary and the prover errors / fails to
+  // verify, fall through to the quorum path instead of surfacing the
+  // failure. Loud-fallback is enforced via a structured log line.
+  ensFallbackToQuorum: true,
+  // Empty → ens/colibri-resolver falls back to its bundled DEFAULT_PROVER_URL.
+  ensColibriProverUrl: '',
+  // ZK consensus proof on the Colibri bootstrap; partner-recommended on.
+  ensColibriZkProof: true,
   // ENS public-RPC quorum resolution (active when enableEnsCustomRpc=false).
   // Detects RPC lying by requiring ensQuorumM of K parallel providers to
   // return byte-identical data at a pinned block. See docs/ens-resolution.md.
