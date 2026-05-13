@@ -4338,6 +4338,27 @@
   word-break: break-all;
 }
 
+/* When the recipient was ENS-resolved we render the name in normal type
+   followed by the address in parens-monospace, with an optional
+   verified-via-Colibri (or quorum/user-RPC) checkmark between them.
+   Parent .send-review-address sets a monospace baseline; the name span
+   opts out, the address span re-asserts. */
+.send-review-name {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+}
+.send-review-recipient-address {
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.send-review-verified {
+  /* Same green as the address-bar trust shield's verified state. */
+  color: #6b9e7a;
+  font-size: 13px;
+  cursor: help;
+}
+
 .send-review-amount {
   font-weight: 600;
   font-size: 15px;

@@ -66,6 +66,10 @@ let sendTxState = {
   recipient: '',
   // Set only when `recipient` was resolved from ENS; review view shows both.
   recipientName: null,
+  // Trust metadata for `recipientName`. Carries the same shape the ENS
+  // resolver returns: { level, method?, prover?, agreed?, queried?, ... }.
+  // Null when the name came from an unverifiable source (or no name resolved).
+  recipientTrust: null,
   amount: '',
   gasLimit: null,
   maxFeePerGas: null,
@@ -164,6 +168,7 @@ function setupSendScreen() {
       // Edits invalidate any previously-resolved ENS address.
       hideResolvedAddress();
       sendTxState.recipientName = null;
+      sendTxState.recipientTrust = null;
     });
   }
 
@@ -259,6 +264,7 @@ function resetSendState() {
     selectedToken: null,
     recipient: '',
     recipientName: null,
+    recipientTrust: null,
     amount: '',
     gasLimit: null,
     maxFeePerGas: null,
@@ -802,7 +808,10 @@ async function handleSendContinue() {
       if (!resolved) return; // error already surfaced on the recipient field
       sendTxState.recipient = resolved.address;
       sendTxState.recipientName = resolved.name;
-      showResolvedAddress(resolved.address);
+      sendTxState.recipientTrust = resolved.trust;
+      // No `showResolvedAddress(...)` here — the address is about to be
+      // shown on the review screen, so painting it under the input field
+      // for a sub-second only flashes a transitional state at the user.
     } else {
       sendTxState.recipient = recipientClass.value;
       hideResolvedAddress();
@@ -815,9 +824,10 @@ async function handleSendContinue() {
     }
 
     if (sendContinueBtn) sendContinueBtn.textContent = 'Loading...';
-    const [, reverseName] = await Promise.all([estimateTransactionGas(), reverseLookup]);
-    if (reverseName && !sendTxState.recipientName) {
-      sendTxState.recipientName = reverseName;
+    const [, reverseResult] = await Promise.all([estimateTransactionGas(), reverseLookup]);
+    if (reverseResult && !sendTxState.recipientName) {
+      sendTxState.recipientName = reverseResult.name;
+      sendTxState.recipientTrust = reverseResult.trust;
     }
     populateSendReview();
     await configureSendUnlockUI();
@@ -833,15 +843,17 @@ async function handleSendContinue() {
   }
 }
 
-// Ask main for the primary ENS name set for an address and return it
-// only if it forward-verifies. Never throws — returns null on any
-// failure or unavailability so the send flow isn't blocked.
+// Ask main for the primary ENS name set for an address. Returns
+// { name, trust } when one is set and forward-verifies, or null
+// otherwise. Never throws — the review flow isn't blocked by a
+// reverse-lookup failure.
 async function lookupPrimaryNameForAddress(address) {
   const api = window.electronAPI;
   if (!api?.resolveEnsReverse) return null;
   try {
     const result = await api.resolveEnsReverse(address);
-    return result?.success && result.name ? result.name : null;
+    if (!result?.success || !result.name) return null;
+    return { name: result.name, trust: result.trust || null };
   } catch {
     return null;
   }
@@ -871,7 +883,11 @@ async function resolveRecipientEns(name) {
     return null;
   }
 
-  return { name: result.name || name, address: result.address };
+  return {
+    name: result.name || name,
+    address: result.address,
+    trust: result.trust || null,
+  };
 }
 
 function showResolvedAddress(address) {
@@ -948,9 +964,9 @@ function populateSendReview() {
 
   if (sendReviewTo) {
     if (sendTxState.recipientName) {
-      sendReviewTo.textContent = `${sendTxState.recipientName} (${sendTxState.recipient})`;
+      renderRecipientReview(sendReviewTo, sendTxState.recipientName, sendTxState.recipient, sendTxState.recipientTrust);
     } else {
-      sendReviewTo.textContent = sendTxState.recipient;
+      sendReviewTo.replaceChildren(document.createTextNode(sendTxState.recipient));
     }
   }
 
@@ -977,6 +993,56 @@ function populateSendReview() {
       sendReviewTotal.textContent = `${sendTxState.amount} ${token?.symbol || ''}`;
     }
   }
+}
+
+// Build the recipient cell on the review screen. Renders the resolved
+// ENS name in normal type, a verification badge when the trust object
+// reports verified/user-configured, then the address in monospace
+// parentheses. Falls back to plain text on null trust — no badge.
+function renderRecipientReview(container, name, address, trust) {
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'send-review-name';
+  nameSpan.textContent = name;
+  const children = [nameSpan];
+
+  const badge = buildRecipientVerifiedBadge(trust);
+  if (badge) children.push(document.createTextNode(' '), badge);
+
+  const addressSpan = document.createElement('span');
+  addressSpan.className = 'send-review-recipient-address';
+  addressSpan.textContent = ` (${address})`;
+  children.push(addressSpan);
+
+  container.replaceChildren(...children);
+}
+
+// Returns a styled checkmark span describing the trust outcome, or null
+// when there's nothing trustworthy to assert (conflict / unverified /
+// missing trust info). Tooltip + aria-label vocabulary matches the
+// address-bar trust shield popover so the surfaces feel consistent.
+function buildRecipientVerifiedBadge(trust) {
+  if (!trust) return null;
+  if (trust.level !== 'verified' && trust.level !== 'user-configured') return null;
+
+  let title;
+  if (trust.method === 'colibri') {
+    title = trust.prover
+      ? `Cryptographically verified via Colibri (${trust.prover})`
+      : 'Cryptographically verified via Colibri';
+  } else if (trust.level === 'user-configured') {
+    title = 'Resolved via your configured RPC';
+  } else if (Array.isArray(trust.agreed) && Array.isArray(trust.queried) && trust.queried.length > 1) {
+    title = `Cross-checked across ${trust.agreed.length} of ${trust.queried.length} public RPCs`;
+  } else {
+    title = 'Verified';
+  }
+
+  const badge = document.createElement('span');
+  badge.className = 'send-review-verified';
+  badge.textContent = '✓';
+  badge.title = title;
+  badge.setAttribute('aria-label', title);
+  return badge;
 }
 
 async function configureSendUnlockUI() {
