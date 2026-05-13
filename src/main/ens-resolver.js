@@ -850,9 +850,8 @@ function classifyNoAgreement({ results }) {
 async function tryColibriPath(name, callData, settings) {
   // Lazy require avoids a load-time cycle: colibri-resolver imports
   // universalResolverCall + hostOf from this module.
-  const { resolveViaColibri, DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
-  const proverUrl = (settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim();
-  const proverHost = hostOf(proverUrl);
+  const { resolveViaColibri } = require('./ens/colibri-resolver');
+  const proverHost = colibriProverHost(settings);
 
   let result;
   try {
@@ -888,6 +887,14 @@ async function tryColibriPath(name, callData, settings) {
     trust: buildColibriTrust(proverHost),
     block: null,
   };
+}
+
+// Read the effective prover URL from settings and return its host.
+// Lazy-requires DEFAULT_PROVER_URL to dodge the load-time cycle between
+// this module and ./ens/colibri-resolver.
+function colibriProverHost(settings) {
+  const { DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
+  return hostOf((settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim());
 }
 
 function buildColibriTrust(proverHost) {
@@ -1546,9 +1553,8 @@ async function resolveEnsReverse(address) {
 // surfaces as UNVERIFIED — the proof was valid but the contract reverted,
 // which is the spoofed-reverse-record signal.
 async function tryColibriReverse(normalizedAddress, settings) {
-  const { resolveReverseViaColibri, DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
-  const proverHost = hostOf((settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim());
-  const trust = buildColibriTrust(proverHost);
+  const { resolveReverseViaColibri } = require('./ens/colibri-resolver');
+  const trust = buildColibriTrust(colibriProverHost(settings));
   const addrBytes = ethers.getBytes(normalizedAddress);
 
   let name;

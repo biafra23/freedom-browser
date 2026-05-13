@@ -1811,20 +1811,22 @@ describe('ens-resolver', () => {
     });
   });
 
-  // Orchestrator branch added in Step 3 — switches consensusResolve to
-  // the Colibri-backed verifier when ensResolutionMethod === 'colibri'.
-  // The colibri-resolver itself is unit-tested separately; here we cover
-  // the wiring: method routing, trust-shape, error → fallback handoff.
+  // Flip the mocked settings into Colibri-primary mode for the orchestrator
+  // tests below. Used by both the forward and reverse branch describes.
+  function withColibri(overrides = {}) {
+    mockLoadSettings.mockReturnValue({
+      ...mockLoadSettings(),
+      ensResolutionMethod: 'colibri',
+      ...overrides,
+    });
+  }
+
+  // Switches consensusResolve to the Colibri-backed verifier when
+  // ensResolutionMethod === 'colibri'. The colibri-resolver itself is
+  // unit-tested separately; here we cover the wiring: method routing,
+  // trust-shape, error → fallback handoff.
   describe('colibri orchestrator branch', () => {
     const IPFS_V0 = 'QmW81r84Aihiqqi2Jw6nM1LnpeMfRCenRxtjwHNkXVkZYa';
-
-    function withColibri(overrides = {}) {
-      mockLoadSettings.mockReturnValue({
-        ...mockLoadSettings(),
-        ensResolutionMethod: 'colibri',
-        ...overrides,
-      });
-    }
 
     // resolveViaColibri returns { resolvedData, resolverAddress } (object),
     // not the [bytes, address] tuple the contract mock returns. Adapt.
@@ -1923,18 +1925,10 @@ describe('ens-resolver', () => {
     });
   });
 
-  // Phase 2 A — same Colibri orchestrator branch, reverse direction.
-  // resolveEnsReverse goes through tryColibriReverse instead of consensusResolve.
+  // Same Colibri orchestrator branch, reverse direction. resolveEnsReverse
+  // goes through tryColibriReverse rather than consensusResolve.
   describe('colibri orchestrator branch — reverse', () => {
     const ADDR = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
-
-    function withColibri(overrides = {}) {
-      mockLoadSettings.mockReturnValue({
-        ...mockLoadSettings(),
-        ensResolutionMethod: 'colibri',
-        ...overrides,
-      });
-    }
 
     test('routes through Colibri and returns name + verified-via-colibri trust', async () => {
       withColibri();
