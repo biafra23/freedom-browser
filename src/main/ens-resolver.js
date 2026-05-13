@@ -611,6 +611,21 @@ async function universalResolverCall(provider, name, callData, overrides = {}) {
   return { resolvedData, resolverAddress };
 }
 
+// Reverse counterpart: call the UR's reverse(bytes, uint256). The UR
+// verifies the claimed primary name forward-resolves back to the input
+// address inside the contract — a successful return is already
+// trust-checked at the contract level. A spoofed reverse record surfaces
+// as `ReverseAddressMismatch` (selector 0xef9c03ce) on the err.data.
+// `addressBytes` is the 20-byte representation produced by `ethers.getBytes`.
+async function universalResolverReverse(provider, addressBytes, overrides = {}) {
+  const ur = new ethers.Contract(UNIVERSAL_RESOLVER_ADDRESS, UR_ABI, provider);
+  const [name] = await ur.reverse(addressBytes, ETH_COIN_TYPE, {
+    enableCcipRead: true,
+    ...overrides,
+  });
+  return { name };
+}
+
 // ---------------------------------------------------------------------------
 // Consensus resolution: hedged-quorum over K public RPCs at a shared pinned
 // block. Detects a lying RPC by requiring M byte-identical responses;
@@ -1525,7 +1540,57 @@ async function resolveEnsReverse(address) {
   return resolveWithCache(address, ensReverseCache, doResolveEnsReverse, 'reverse');
 }
 
+// Colibri reverse path: cryptographically-verified `ur.reverse`. Returns
+// the same result shape as the legacy path, plus a `trust` object so the
+// renderer can surface a "verified" indicator. ReverseAddressMismatch
+// surfaces as UNVERIFIED — the proof was valid but the contract reverted,
+// which is the spoofed-reverse-record signal.
+async function tryColibriReverse(normalizedAddress, settings) {
+  const { resolveReverseViaColibri, DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
+  const proverHost = hostOf((settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim());
+  const trust = buildColibriTrust(proverHost);
+  const addrBytes = ethers.getBytes(normalizedAddress);
+
+  let name;
+  try {
+    ({ name } = await resolveReverseViaColibri(addrBytes));
+  } catch (err) {
+    if (isResolverNotFoundError(err)) {
+      return { ...noReverseResult(normalizedAddress), trust };
+    }
+    if (isReverseAddressMismatchError(err)) {
+      return {
+        success: false,
+        address: normalizedAddress,
+        reason: 'UNVERIFIED',
+        error: `Reverse record for ${normalizedAddress} does not forward-verify`,
+        trust,
+      };
+    }
+    throw err;
+  }
+
+  if (!name) return { ...noReverseResult(normalizedAddress), trust };
+  return { success: true, address: normalizedAddress, name, trust };
+}
+
 async function doResolveEnsReverse(normalizedAddress) {
+  const settings = loadSettings();
+
+  if (settings.ensResolutionMethod === 'colibri') {
+    try {
+      return cacheReverseResult(
+        normalizedAddress,
+        await tryColibriReverse(normalizedAddress, settings)
+      );
+    } catch (err) {
+      if (settings.ensFallbackToQuorum === false) throw err;
+      log.warn(
+        `[ens] colibri-fallback reverse address=${normalizedAddress} error=${err.message}`
+      );
+    }
+  }
+
   const provider = await getWorkingProvider();
   const ur = new ethers.Contract(UNIVERSAL_RESOLVER_ADDRESS, UR_ABI, provider);
   const addrBytes = ethers.getBytes(normalizedAddress);
@@ -1717,6 +1782,7 @@ module.exports = {
   invalidateCachedProvider,
   invalidateEnsContent,
   universalResolverCall,
+  universalResolverReverse,
   isResolverNotFoundError,
   clearEnsCachesForTest,
   hostOf,

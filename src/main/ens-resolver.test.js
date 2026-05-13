@@ -48,8 +48,10 @@ jest.mock('./settings-store', () => ({
 // lazy-requires this; the lazy require sees the mocked module. Tests
 // flip behavior per case via mockResolveViaColibri.
 const mockResolveViaColibri = jest.fn();
+const mockResolveReverseViaColibri = jest.fn();
 jest.mock('./ens/colibri-resolver', () => ({
   resolveViaColibri: (...args) => mockResolveViaColibri(...args),
+  resolveReverseViaColibri: (...args) => mockResolveReverseViaColibri(...args),
   DEFAULT_PROVER_URL: 'https://test-prover.example',
 }));
 
@@ -1918,6 +1920,121 @@ describe('ens-resolver', () => {
 
       expect(mockResolveViaColibri).not.toHaveBeenCalled();
       expect(mockUrResolve).toHaveBeenCalled();
+    });
+  });
+
+  // Phase 2 A — same Colibri orchestrator branch, reverse direction.
+  // resolveEnsReverse goes through tryColibriReverse instead of consensusResolve.
+  describe('colibri orchestrator branch — reverse', () => {
+    const ADDR = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+
+    function withColibri(overrides = {}) {
+      mockLoadSettings.mockReturnValue({
+        ...mockLoadSettings(),
+        ensResolutionMethod: 'colibri',
+        ...overrides,
+      });
+    }
+
+    test('routes through Colibri and returns name + verified-via-colibri trust', async () => {
+      withColibri();
+      mockResolveReverseViaColibri.mockResolvedValue({ name: 'vitalik.eth' });
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(mockResolveReverseViaColibri).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        success: true,
+        address: ADDR,
+        name: 'vitalik.eth',
+        trust: { level: 'verified', method: 'colibri', prover: 'test-prover.example' },
+      });
+      expect(mockUrReverse).not.toHaveBeenCalled();
+    });
+
+    test('no primary set surfaces as NO_REVERSE with trust attached', async () => {
+      withColibri();
+      mockResolveReverseViaColibri.mockResolvedValue({ name: '' });
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('NO_REVERSE');
+      expect(result.trust.method).toBe('colibri');
+    });
+
+    test('ResolverNotFound surfaces as NO_REVERSE (no record at all)', async () => {
+      withColibri();
+      const err = Object.assign(new Error('ResolverNotFound(bytes)'), {
+        data: '0x77209fe8',
+      });
+      mockResolveReverseViaColibri.mockRejectedValue(err);
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('NO_REVERSE');
+      expect(result.trust.method).toBe('colibri');
+    });
+
+    test('ReverseAddressMismatch surfaces as UNVERIFIED (spoofed/stale record)', async () => {
+      withColibri();
+      const err = Object.assign(new Error('ReverseAddressMismatch'), {
+        data: '0xef9c03ce',
+      });
+      mockResolveReverseViaColibri.mockRejectedValue(err);
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('UNVERIFIED');
+      expect(result.trust.method).toBe('colibri');
+      // Critical: the trust object's level is still 'verified' — the proof
+      // was valid, the contract reverted. The 'reason' carries the spoofed-
+      // record signal, not the trust level.
+      expect(result.trust.level).toBe('verified');
+    });
+
+    test('non-revert error falls through to the legacy path by default', async () => {
+      withColibri();
+      mockResolveReverseViaColibri.mockRejectedValue(new Error('prover unreachable'));
+      mockUrReverse.mockResolvedValue(['legacy.eth']);
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(result.success).toBe(true);
+      expect(result.name).toBe('legacy.eth');
+      // No trust field on the legacy path — additive design.
+      expect(result.trust).toBeUndefined();
+      expect(mockUrReverse).toHaveBeenCalled();
+    });
+
+    test('non-revert error rethrows when ensFallbackToQuorum is disabled', async () => {
+      withColibri({ ensFallbackToQuorum: false });
+      mockResolveReverseViaColibri.mockRejectedValue(new Error('prover unreachable'));
+
+      await expect(resolveEnsReverse(ADDR)).rejects.toThrow('prover unreachable');
+      expect(mockUrReverse).not.toHaveBeenCalled();
+    });
+
+    test('default ensResolutionMethod=quorum leaves the legacy reverse path untouched', async () => {
+      // Don't call withColibri — defaults to 'quorum'.
+      mockUrReverse.mockResolvedValue(['legacy.eth']);
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(mockResolveReverseViaColibri).not.toHaveBeenCalled();
+      expect(mockUrReverse).toHaveBeenCalled();
+      expect(result.name).toBe('legacy.eth');
+    });
+
+    test('invalid address rejects before either path is hit', async () => {
+      withColibri();
+      const result = await resolveEnsReverse('0xnotanaddress');
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('INVALID_ADDRESS');
+      expect(mockResolveReverseViaColibri).not.toHaveBeenCalled();
+      expect(mockUrReverse).not.toHaveBeenCalled();
     });
   });
 });

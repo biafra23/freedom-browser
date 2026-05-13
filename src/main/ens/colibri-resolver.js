@@ -6,7 +6,7 @@ const Colibri = require('@corpus-core/colibri-stateless').default;
 const { Strategy } = require('@corpus-core/colibri-stateless');
 const log = require('../logger');
 const { loadSettings } = require('../settings-store');
-const { universalResolverCall, hostOf } = require('../ens-resolver');
+const { universalResolverCall, universalResolverReverse, hostOf } = require('../ens-resolver');
 
 // privacy_mode 'basic' is a strict improvement (call params never sent
 // to the prover); pinning rather than exposing as a toggle keeps the
@@ -90,6 +90,15 @@ async function resolveViaColibri(name, callData) {
   return universalResolverCall(cachedProvider, name, callData);
 }
 
+// Reverse counterpart: cryptographically-verified `ur.reverse` for an
+// address. Returns { name } on a successful (forward-verified) lookup.
+// Throws on revert (UR's ResolverNotFound / ReverseAddressMismatch) or
+// network/verification failure — the orchestrator classifies.
+async function resolveReverseViaColibri(addressBytes) {
+  await getClient();
+  return universalResolverReverse(cachedProvider, addressBytes);
+}
+
 function clearColibriClientForTest() {
   cachedClient = null;
   cachedClientKey = null;
@@ -99,6 +108,7 @@ function clearColibriClientForTest() {
 
 module.exports = {
   resolveViaColibri,
+  resolveReverseViaColibri,
   clearColibriClientForTest,
   DEFAULT_PROVER_URL,
 };

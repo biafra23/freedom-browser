@@ -44,12 +44,19 @@ jest.mock('../settings-store', () => ({
 // Surgical: only stub the two symbols this module imports. Re-exporting the
 // whole ens-resolver here would pull every ENS dependency into the test.
 const mockUniversalResolverCall = jest.fn();
+const mockUniversalResolverReverse = jest.fn();
 jest.mock('../ens-resolver', () => ({
   universalResolverCall: (...args) => mockUniversalResolverCall(...args),
+  universalResolverReverse: (...args) => mockUniversalResolverReverse(...args),
   hostOf: (url) => { try { return new URL(url).host; } catch { return url; } },
 }));
 
-const { resolveViaColibri, clearColibriClientForTest, DEFAULT_PROVER_URL } = require('./colibri-resolver');
+const {
+  resolveViaColibri,
+  resolveReverseViaColibri,
+  clearColibriClientForTest,
+  DEFAULT_PROVER_URL,
+} = require('./colibri-resolver');
 
 const DEFAULTS = {
   ensColibriProverUrl: '',
@@ -65,6 +72,7 @@ beforeEach(() => {
     resolvedData: '0xdeadbeef',
     resolverAddress: '0x000000000000000000000000000000000000ffff',
   });
+  mockUniversalResolverReverse.mockResolvedValue({ name: 'vitalik.eth' });
 });
 
 describe('resolveViaColibri', () => {
@@ -169,6 +177,33 @@ describe('resolveViaColibri', () => {
     const err = new Error('proof verification failed');
     mockUniversalResolverCall.mockRejectedValue(err);
     await expect(resolveViaColibri('a.eth', '0x')).rejects.toBe(err);
+  });
+});
+
+describe('resolveReverseViaColibri', () => {
+  const ADDR_BYTES = new Uint8Array(20).fill(0xab);
+
+  test('delegates to universalResolverReverse via the cached BrowserProvider', async () => {
+    const result = await resolveReverseViaColibri(ADDR_BYTES);
+    expect(mockBrowserProvider).toHaveBeenCalledTimes(1);
+    expect(mockUniversalResolverReverse).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'browser-provider' }),
+      ADDR_BYTES,
+    );
+    expect(result).toEqual({ name: 'vitalik.eth' });
+  });
+
+  test('reuses the singleton + cached provider across forward and reverse calls', async () => {
+    await resolveViaColibri('vitalik.eth', '0x');
+    await resolveReverseViaColibri(ADDR_BYTES);
+    expect(mockColibriCtor).toHaveBeenCalledTimes(1);
+    expect(mockBrowserProvider).toHaveBeenCalledTimes(1);
+  });
+
+  test('propagates errors verbatim (caller classifies)', async () => {
+    const err = Object.assign(new Error('ReverseAddressMismatch'), { data: '0xef9c03ce' });
+    mockUniversalResolverReverse.mockRejectedValue(err);
+    await expect(resolveReverseViaColibri(ADDR_BYTES)).rejects.toBe(err);
   });
 });
 

@@ -48,6 +48,7 @@ const TIMEOUT_MS = 60_000;
 const {
   resolveEnsContent,
   resolveEnsAddress,
+  resolveEnsReverse,
   clearEnsCachesForTest,
 } = require('../../ens-resolver');
 const { clearColibriClientForTest } = require('../../ens/colibri-resolver');
@@ -95,6 +96,20 @@ describeOrSkip('colibri e2e against mainnet1.colibri-proof.tech', () => {
     expect(result.address).toMatch(/^0x[a-fA-F0-9]{40}$/);
     expect(result.address.toLowerCase()).not.toBe('0x' + '0'.repeat(40));
     expect(result.trust.method).toBe('colibri');
+  }, TIMEOUT_MS);
+
+  test('reverse-resolves vitalik.eth\'s known address back to vitalik.eth', async () => {
+    // Vitalik's known main address. The reverse record is well-known and
+    // forward-verifies. Catches a regression where the reverse path falls
+    // off the Colibri orchestrator branch.
+    const result = await resolveEnsReverse('0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
+    expect(result.success).toBe(true);
+    expect(result.name).toBe('vitalik.eth');
+    expect(result.trust).toMatchObject({
+      level: 'verified',
+      method: 'colibri',
+      prover: 'mainnet1.colibri-proof.tech',
+    });
   }, TIMEOUT_MS);
 
   test('unregistered name surfaces as NO_RESOLVER (verified revert)', async () => {
