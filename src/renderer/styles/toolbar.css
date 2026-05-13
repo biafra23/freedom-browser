@@ -167,7 +167,7 @@
   color: var(--secure-fg);
 }
 .trust-shield[data-trust='unverified'] .icon-unverified {
-  color: #d29922;
+  color: var(--warning-fg);
 }
 .trust-shield[data-trust='conflict'] .icon-conflict {
   color: #cf222e;

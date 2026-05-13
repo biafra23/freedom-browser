@@ -587,6 +587,26 @@ function isReverseAddressMismatchError(err) {
   return urErrorSelector(err) === REVERSE_MISMATCH_SELECTOR;
 }
 
+// Decode the claimed primary name out of a ReverseAddressMismatch revert.
+// The UR's custom error is `ReverseAddressMismatch(string,bytes)`, so the
+// first ABI arg after the 4-byte selector is the claimed name string.
+// Returns null if the data is missing or malformed — the warning UI then
+// falls back to a name-less "unverified reverse" message.
+function decodeReverseMismatchClaimedName(err) {
+  const data = err?.data || err?.info?.error?.data || '';
+  if (typeof data !== 'string' || data.length < 10) return null;
+  if (data.slice(0, 10).toLowerCase() !== REVERSE_MISMATCH_SELECTOR) return null;
+  try {
+    const [name] = ethers.AbiCoder.defaultAbiCoder().decode(
+      ['string', 'bytes'],
+      '0x' + data.slice(10),
+    );
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
 // Call the Universal Resolver's resolve(name, data). `callData` is the raw
 // ABI-encoded call the resolver would have received directly (selector +
 // args). Returns the raw ABI-encoded response — the caller must decode
@@ -1569,6 +1589,7 @@ async function tryColibriReverse(normalizedAddress, settings) {
         success: false,
         address: normalizedAddress,
         reason: 'UNVERIFIED',
+        claimedName: decodeReverseMismatchClaimedName(err),
         error: `Reverse record for ${normalizedAddress} does not forward-verify`,
         trust,
       };
@@ -1615,6 +1636,7 @@ async function doResolveEnsReverse(normalizedAddress) {
         success: false,
         address: normalizedAddress,
         reason: 'UNVERIFIED',
+        claimedName: decodeReverseMismatchClaimedName(err),
         error: `Reverse record for ${normalizedAddress} does not forward-verify`,
       });
     }

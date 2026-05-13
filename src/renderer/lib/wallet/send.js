@@ -827,17 +827,23 @@ async function handleSendContinue() {
   }
 }
 
-// Ask main for the primary ENS name set for an address. Returns
-// { name, trust } when one is set and forward-verifies, or null
-// otherwise. Never throws — the review flow isn't blocked by a
-// reverse-lookup failure.
+// Ask main for the primary ENS name set for an address. Returns one of:
+//   { name, trust }                          forward-verified primary name
+//   { warning: 'unverified', claimedName }   primary claim doesn't forward-verify
+//   null                                     no reverse record / hard error
+// Never throws — the review flow isn't blocked by a reverse-lookup failure.
 async function lookupPrimaryNameForAddress(address) {
   const api = window.electronAPI;
   if (!api?.resolveEnsReverse) return null;
   try {
     const result = await api.resolveEnsReverse(address);
-    if (!result?.success || !result.name) return null;
-    return { name: result.name, trust: result.trust || null };
+    if (result?.success && result.name) {
+      return { name: result.name, trust: result.trust || null };
+    }
+    if (result?.reason === 'UNVERIFIED') {
+      return { warning: 'unverified', claimedName: result.claimedName || null };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -968,7 +974,13 @@ function populateSendReview() {
   }
 }
 
-function renderRecipientReview(container, address, { name, trust }) {
+function renderRecipientReview(container, address, resolution) {
+  if (resolution.warning === 'unverified') {
+    renderRecipientUnverified(container, address, resolution.claimedName);
+    return;
+  }
+
+  const { name, trust } = resolution;
   const nameSpan = document.createElement('span');
   nameSpan.className = 'send-review-name';
   nameSpan.textContent = name;
@@ -983,6 +995,28 @@ function renderRecipientReview(container, address, { name, trust }) {
   children.push(addressSpan);
 
   container.replaceChildren(...children);
+}
+
+// Render path for the rare case where the recipient address has a primary
+// ENS name set, but that name doesn't forward-resolve back to the address.
+// The claim is untrusted, so we don't display it as text — only as a
+// tooltip on the warning glyph, so a phisher can't slip a misleading
+// name onto the review screen.
+function renderRecipientUnverified(container, address, claimedName) {
+  const addressSpan = document.createElement('span');
+  addressSpan.className = 'send-review-recipient-address-bare';
+  addressSpan.textContent = address;
+
+  const warn = document.createElement('span');
+  warn.className = 'send-review-warning';
+  warn.textContent = '⚠';
+  const detail = claimedName
+    ? `This address claims to be "${claimedName}", but the name doesn't forward-resolve back to it. Treat the name as untrusted — could be a stale record or a spoofing attempt.`
+    : `This address has a primary ENS name set, but it doesn't forward-verify back. Treat the claim as untrusted.`;
+  warn.title = detail;
+  warn.setAttribute('aria-label', detail);
+
+  container.replaceChildren(addressSpan, warn);
 }
 
 // Verified checkmark for the recipient cell when trust is verifiable.

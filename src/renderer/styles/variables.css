@@ -13,6 +13,9 @@
      verified/user-configured states, autocomplete row verified badge,
      wallet review verified checkmark. One token, all surfaces. */
   --secure-fg: #6b9e7a;
+  /* "Be careful" amber — address-bar trust shield's unverified state,
+     wallet review warning glyph (e.g. spoofed/stale ENS reverse claim). */
+  --warning-fg: #d29922;
 }
 
 /* Light theme */

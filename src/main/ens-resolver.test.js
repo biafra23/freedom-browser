@@ -1989,6 +1989,37 @@ describe('ens-resolver', () => {
       expect(result.trust.level).toBe('verified');
     });
 
+    test('UNVERIFIED carries the decoded claimedName from revert data', async () => {
+      withColibri();
+      // ReverseAddressMismatch(string,bytes) — claimed name + address bytes.
+      // Building a real revert payload here so the decoder is exercised end-to-end.
+      const args = actualEthers.AbiCoder.defaultAbiCoder().encode(
+        ['string', 'bytes'],
+        ['spoofed.eth', '0xabcd'],
+      );
+      const err = Object.assign(new Error('ReverseAddressMismatch'), {
+        data: '0xef9c03ce' + args.slice(2),
+      });
+      mockResolveReverseViaColibri.mockRejectedValue(err);
+
+      const result = await resolveEnsReverse(ADDR);
+
+      expect(result.reason).toBe('UNVERIFIED');
+      expect(result.claimedName).toBe('spoofed.eth');
+    });
+
+    test('UNVERIFIED with no decodable revert data has claimedName=null', async () => {
+      withColibri();
+      const err = Object.assign(new Error('ReverseAddressMismatch'), {
+        data: '0xef9c03ce', // selector only, no args
+      });
+      mockResolveReverseViaColibri.mockRejectedValue(err);
+
+      const result = await resolveEnsReverse(ADDR);
+      expect(result.reason).toBe('UNVERIFIED');
+      expect(result.claimedName).toBeNull();
+    });
+
     test('non-revert error falls through to the legacy path by default', async () => {
       withColibri();
       mockResolveReverseViaColibri.mockRejectedValue(new Error('prover unreachable'));
