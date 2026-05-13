@@ -22,10 +22,12 @@ export const resolveTrustBadge = ({ value = '', ensTrustByName = new Map() } = {
 };
 
 // One-sentence status shown at the top of the trust popover, below the ENS
-// name. Keyed on trust level. Lookup misses (unknown level) yield `null`
-// from `buildTrustRows({...}).status` and the caller decides how to handle.
+// name. Keyed on trust level (and, for verified, on the resolution method).
+// Lookup misses (unknown level) yield `null` from `buildTrustRows({...}).status`
+// and the caller decides how to handle.
 const TRUST_STATUS_SENTENCE = {
   verified: 'ENS resolution verified',
+  'verified-colibri': 'Cryptographically verified via Colibri',
   'user-configured': 'Resolved with your configured RPC',
   unverified: 'ENS resolution not verified',
   conflict: 'Verification failed: RPCs disagree',
@@ -54,6 +56,37 @@ const TRUST_HASH_LABEL = {
 // already produces `'bzz'` directly.
 const protoToScheme = (proto) => (proto === 'swarm' ? 'bzz' : proto);
 
+// Network + hash content rows are the same across every resolution method —
+// they describe the resolved URI, not how we verified it. Extracted so the
+// Colibri branch (which skips the per-method trust rows above) and the
+// legacy branch share the rendering shape.
+const buildContentRows = ({ uri = '', proto = '' } = {}) => {
+  const uriMatch = uri.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
+  const scheme = uriMatch
+    ? uriMatch[1].toLowerCase()
+    : protoToScheme((proto || '').toLowerCase());
+  const body = uriMatch ? uriMatch[2] : '';
+
+  const networkName = scheme
+    ? TRUST_NETWORK_NAME[scheme] || scheme.toUpperCase()
+    : '';
+  const hashLabel = TRUST_HASH_LABEL[scheme] || 'Content Hash';
+
+  const contentRows = [];
+  if (networkName) {
+    contentRows.push({ label: 'Network', display: networkName, copy: '' });
+  }
+  if (body) {
+    contentRows.push({
+      label: hashLabel,
+      display: body,
+      copy: body,
+      autoFit: body,
+    });
+  }
+  return contentRows;
+};
+
 // Pure helper that turns a `(trust, level, uri, proto)` tuple into the
 // data the popover renders: a status sentence and two ordered arrays of
 // row descriptors for the trust and content sections. Each row is
@@ -67,7 +100,10 @@ export const buildTrustRows = ({
   uri = '',
   proto = '',
 } = {}) => {
-  const status = TRUST_STATUS_SENTENCE[level] || null;
+  const method = trust.method;
+  const isColibri = level === 'verified' && method === 'colibri';
+  const statusKey = isColibri ? 'verified-colibri' : level;
+  const status = TRUST_STATUS_SENTENCE[statusKey] || null;
 
   const agreed = Array.isArray(trust.agreed) ? trust.agreed : [];
   const queried = Array.isArray(trust.queried) ? trust.queried : [];
@@ -75,6 +111,22 @@ export const buildTrustRows = ({
   const blockNumber = trust.block?.number;
 
   const trustRows = [];
+
+  // Colibri results carry single-source agreed/queried (the prover host) by
+  // design — the cryptographic verification *replaces* the M-of-K heuristic,
+  // it doesn't run alongside it. Surface the prover + method instead of the
+  // degenerate quorum row.
+  if (isColibri) {
+    if (trust.prover) {
+      trustRows.push({
+        label: 'Verified by',
+        display: trust.prover,
+        copy: trust.prover,
+        autoFit: trust.prover,
+      });
+    }
+    return { status, trustRows, contentRows: buildContentRows({ uri, proto }) };
+  }
 
   // Quorum summary is meaningful only when more than one RPC was queried;
   // otherwise "1 of 1" is degenerate and just adds noise on the
@@ -133,34 +185,7 @@ export const buildTrustRows = ({
     trustRows.push({ label: 'Block', display: num, copy: num });
   }
 
-  // Parse the resolved URI to split scheme from body. The copy value
-  // for the hash row is the body alone (matching what's shown), not
-  // the full `scheme://body` URI.
-  const uriMatch = uri.match(/^([a-z][a-z0-9+.-]*):\/\/(.+)$/i);
-  const scheme = uriMatch
-    ? uriMatch[1].toLowerCase()
-    : protoToScheme((proto || '').toLowerCase());
-  const body = uriMatch ? uriMatch[2] : '';
-
-  const networkName = scheme
-    ? TRUST_NETWORK_NAME[scheme] || scheme.toUpperCase()
-    : '';
-  const hashLabel = TRUST_HASH_LABEL[scheme] || 'Content Hash';
-
-  const contentRows = [];
-  if (networkName) {
-    contentRows.push({ label: 'Network', display: networkName, copy: '' });
-  }
-  if (body) {
-    contentRows.push({
-      label: hashLabel,
-      display: body,
-      copy: body,
-      autoFit: body,
-    });
-  }
-
-  return { status, trustRows, contentRows };
+  return { status, trustRows, contentRows: buildContentRows({ uri, proto }) };
 };
 
 export const resolveProtocolIconType = ({

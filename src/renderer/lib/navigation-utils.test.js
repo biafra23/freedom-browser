@@ -384,6 +384,55 @@ describe('navigation-utils', () => {
       ]);
     });
 
+    test('colibri-verified: shows method-specific status and a single Verified-by row', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: {
+          method: 'colibri',
+          prover: 'mainnet1.colibri-proof.tech',
+          agreed: ['mainnet1.colibri-proof.tech'],
+          queried: ['mainnet1.colibri-proof.tech'],
+        },
+        uri: 'ipfs://QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+      });
+
+      expect(result.status).toBe('Cryptographically verified via Colibri');
+      // No RPC Quorum / per-RPC rows — the prover is not a quorum member.
+      expect(result.trustRows).toEqual([
+        {
+          label: 'Verified by',
+          display: 'mainnet1.colibri-proof.tech',
+          copy: 'mainnet1.colibri-proof.tech',
+          autoFit: 'mainnet1.colibri-proof.tech',
+        },
+      ]);
+      // Content rows are independent of the verification method.
+      expect(result.contentRows).toEqual([
+        { label: 'Network', display: 'IPFS', copy: '' },
+        {
+          label: 'CID',
+          display: 'QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+          copy: 'QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+          autoFit: 'QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
+        },
+      ]);
+    });
+
+    test('colibri-verified without prover field: still uses Colibri status, omits the row', async () => {
+      const { buildTrustRows } = await loadNavigationUtils();
+
+      const result = buildTrustRows({
+        level: 'verified',
+        trust: { method: 'colibri' },
+        uri: 'bzz://abc123',
+      });
+
+      expect(result.status).toBe('Cryptographically verified via Colibri');
+      expect(result.trustRows).toEqual([]);
+    });
+
     test('returns null status for an unknown trust level', async () => {
       const { buildTrustRows } = await loadNavigationUtils();
 

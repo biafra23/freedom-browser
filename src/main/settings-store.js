@@ -45,13 +45,14 @@ const DEFAULT_SETTINGS = {
   showBookmarkBar: false,
   enableEnsCustomRpc: false,
   ensRpcUrl: '',
-  // ENS resolution method selector. 'quorum' is the legacy public-RPC
-  // cross-checking path (see below); 'colibri' routes through the
-  // @corpus-core/colibri-stateless verifier for cryptographic proof
-  // rather than heuristic agreement; 'custom-rpc' uses ensRpcUrl as
-  // a single trusted source. Hidden until the settings UI lands —
-  // default keeps the pre-Colibri behaviour intact.
-  ensResolutionMethod: 'quorum',
+  // ENS resolution method selector. 'colibri' routes through the
+  // @corpus-core/colibri-stateless verifier for cryptographic proof;
+  // 'quorum' is the legacy public-RPC cross-checking path (see below);
+  // 'custom-rpc' uses ensRpcUrl as a single trusted source. Default is
+  // 'colibri' on fresh installs. Existing installs without this key are
+  // migrated in loadSettings (custom-RPC users preserved, everyone else
+  // upgraded to colibri).
+  ensResolutionMethod: 'colibri',
   // When 'colibri' is the primary and the prover errors / fails to
   // verify, fall through to the quorum path instead of surfacing the
   // failure. Loud-fallback is enforced via a structured log line.
@@ -101,7 +102,20 @@ function loadSettings() {
     const filePath = getSettingsPath();
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
-      cachedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
+      const parsed = JSON.parse(data);
+      // One-shot migration for installs that predate the ensResolutionMethod
+      // key. Custom-RPC users explicitly pointed at their own node, almost
+      // certainly to keep queries off public infrastructure — preserve that
+      // intent. Everyone else (the vast majority, who never picked quorum
+      // explicitly) auto-upgrades to the cryptographically-verified Colibri
+      // path. Idempotent: subsequent loads see the key on disk (after the
+      // next save) or recompute the same answer if the file is unchanged.
+      if (!Object.prototype.hasOwnProperty.call(parsed, 'ensResolutionMethod')) {
+        parsed.ensResolutionMethod = parsed.enableEnsCustomRpc === true
+          ? 'custom-rpc'
+          : 'colibri';
+      }
+      cachedSettings = { ...DEFAULT_SETTINGS, ...parsed };
     } else {
       cachedSettings = { ...DEFAULT_SETTINGS };
     }
