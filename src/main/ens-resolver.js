@@ -1634,4 +1634,5 @@ module.exports = {
   universalResolverCall,
   isResolverNotFoundError,
   clearEnsCachesForTest,
+  hostOf,
 };
