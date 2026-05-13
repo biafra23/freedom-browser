@@ -7,6 +7,7 @@
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
 import { refreshBalances, getTokensWithBalance, getChainsWithBalance, sortTokens } from './balance-display.js';
+import { TRUST_STATUS_SENTENCE } from '../navigation-utils.js';
 import { createTab } from '../tabs.js';
 
 // DOM references
@@ -18,7 +19,6 @@ let sendPendingView;
 let sendSuccessView;
 let sendErrorView;
 let sendRecipientInput;
-let sendResolvedAddress;
 let sendRecipientError;
 // Send chain selector
 let sendChainSelector;
@@ -64,12 +64,10 @@ let sendRetryBtn;
 let sendTxState = {
   selectedToken: null,
   recipient: '',
-  // Set only when `recipient` was resolved from ENS; review view shows both.
-  recipientName: null,
-  // Trust metadata for `recipientName`. Carries the same shape the ENS
-  // resolver returns: { level, method?, prover?, agreed?, queried?, ... }.
-  // Null when the name came from an unverifiable source (or no name resolved).
-  recipientTrust: null,
+  // { name, trust } when `recipient` was resolved from ENS (or a reverse
+  // lookup of a raw address succeeded), null otherwise. Bundled so that
+  // clearing one half can't leak a stale other half.
+  recipientResolution: null,
   amount: '',
   gasLimit: null,
   maxFeePerGas: null,
@@ -88,7 +86,6 @@ export function initSend() {
   sendSuccessView = document.getElementById('send-success-view');
   sendErrorView = document.getElementById('send-error-view');
   sendRecipientInput = document.getElementById('send-recipient');
-  sendResolvedAddress = document.getElementById('send-resolved-address');
   sendRecipientError = document.getElementById('send-recipient-error');
   sendChainSelector = document.getElementById('send-chain-selector');
   sendChainBtn = document.getElementById('send-chain-btn');
@@ -166,9 +163,7 @@ function setupSendScreen() {
     sendRecipientInput.addEventListener('input', () => {
       clearSendError('recipient');
       // Edits invalidate any previously-resolved ENS address.
-      hideResolvedAddress();
-      sendTxState.recipientName = null;
-      sendTxState.recipientTrust = null;
+      sendTxState.recipientResolution = null;
     });
   }
 
@@ -263,8 +258,7 @@ function resetSendState() {
   sendTxState = {
     selectedToken: null,
     recipient: '',
-    recipientName: null,
-    recipientTrust: null,
+    recipientResolution: null,
     amount: '',
     gasLimit: null,
     maxFeePerGas: null,
@@ -277,8 +271,6 @@ function resetSendState() {
   if (sendRecipientInput) sendRecipientInput.value = '';
   if (sendAmountInput) sendAmountInput.value = '';
   if (sendPasswordInput) sendPasswordInput.value = '';
-
-  if (sendResolvedAddress) sendResolvedAddress.textContent = '';
 
   closeSendChainDropdown();
   closeSendAssetDropdown();
@@ -293,8 +285,6 @@ function resetSendState() {
   clearSendError('general');
   clearSendError('review');
   clearSendError('unlock');
-
-  sendResolvedAddress?.classList.add('hidden');
 
   if (sendContinueBtn) {
     sendContinueBtn.disabled = false;
@@ -807,14 +797,9 @@ async function handleSendContinue() {
       const resolved = await resolveRecipientEns(recipientClass.value);
       if (!resolved) return; // error already surfaced on the recipient field
       sendTxState.recipient = resolved.address;
-      sendTxState.recipientName = resolved.name;
-      sendTxState.recipientTrust = resolved.trust;
-      // No `showResolvedAddress(...)` here — the address is about to be
-      // shown on the review screen, so painting it under the input field
-      // for a sub-second only flashes a transitional state at the user.
+      sendTxState.recipientResolution = { name: resolved.name, trust: resolved.trust };
     } else {
       sendTxState.recipient = recipientClass.value;
-      hideResolvedAddress();
       // Best-effort reverse lookup so the review screen can show the
       // recipient's primary ENS name alongside the address when one is
       // verifiably set. Fire in parallel with gas estimation so it
@@ -825,9 +810,8 @@ async function handleSendContinue() {
 
     if (sendContinueBtn) sendContinueBtn.textContent = 'Loading...';
     const [, reverseResult] = await Promise.all([estimateTransactionGas(), reverseLookup]);
-    if (reverseResult && !sendTxState.recipientName) {
-      sendTxState.recipientName = reverseResult.name;
-      sendTxState.recipientTrust = reverseResult.trust;
+    if (reverseResult && !sendTxState.recipientResolution) {
+      sendTxState.recipientResolution = reverseResult;
     }
     populateSendReview();
     await configureSendUnlockUI();
@@ -890,17 +874,6 @@ async function resolveRecipientEns(name) {
   };
 }
 
-function showResolvedAddress(address) {
-  if (!sendResolvedAddress) return;
-  sendResolvedAddress.textContent = address;
-  sendResolvedAddress.classList.remove('hidden');
-}
-
-function hideResolvedAddress() {
-  if (!sendResolvedAddress) return;
-  sendResolvedAddress.textContent = '';
-  sendResolvedAddress.classList.add('hidden');
-}
 
 async function estimateTransactionGas() {
   const token = sendTxState.selectedToken;
@@ -963,10 +936,10 @@ function populateSendReview() {
   const chain = walletState.registeredChains[sendTxState.chainId];
 
   if (sendReviewTo) {
-    if (sendTxState.recipientName) {
-      renderRecipientReview(sendReviewTo, sendTxState.recipientName, sendTxState.recipient, sendTxState.recipientTrust);
+    if (sendTxState.recipientResolution) {
+      renderRecipientReview(sendReviewTo, sendTxState.recipient, sendTxState.recipientResolution);
     } else {
-      sendReviewTo.replaceChildren(document.createTextNode(sendTxState.recipient));
+      sendReviewTo.textContent = sendTxState.recipient;
     }
   }
 
@@ -995,18 +968,14 @@ function populateSendReview() {
   }
 }
 
-// Build the recipient cell on the review screen. Renders the resolved
-// ENS name in normal type, a verification badge when the trust object
-// reports verified/user-configured, then the address in monospace
-// parentheses. Falls back to plain text on null trust — no badge.
-function renderRecipientReview(container, name, address, trust) {
+function renderRecipientReview(container, address, { name, trust }) {
   const nameSpan = document.createElement('span');
   nameSpan.className = 'send-review-name';
   nameSpan.textContent = name;
   const children = [nameSpan];
 
   const badge = buildRecipientVerifiedBadge(trust);
-  if (badge) children.push(document.createTextNode(' '), badge);
+  if (badge) children.push(badge);
 
   const addressSpan = document.createElement('span');
   addressSpan.className = 'send-review-recipient-address';
@@ -1016,26 +985,19 @@ function renderRecipientReview(container, name, address, trust) {
   container.replaceChildren(...children);
 }
 
-// Returns a styled checkmark span describing the trust outcome, or null
-// when there's nothing trustworthy to assert (conflict / unverified /
-// missing trust info). Tooltip + aria-label vocabulary matches the
-// address-bar trust shield popover so the surfaces feel consistent.
+// Verified checkmark for the recipient cell when trust is verifiable.
+// Tooltip copy is sourced from the address-bar popover's status table
+// (TRUST_STATUS_SENTENCE) so the two surfaces can't drift; for Colibri
+// the prover host is appended as the one inline detail this surface adds.
 function buildRecipientVerifiedBadge(trust) {
   if (!trust) return null;
   if (trust.level !== 'verified' && trust.level !== 'user-configured') return null;
 
-  let title;
-  if (trust.method === 'colibri') {
-    title = trust.prover
-      ? `Cryptographically verified via Colibri (${trust.prover})`
-      : 'Cryptographically verified via Colibri';
-  } else if (trust.level === 'user-configured') {
-    title = 'Resolved via your configured RPC';
-  } else if (Array.isArray(trust.agreed) && Array.isArray(trust.queried) && trust.queried.length > 1) {
-    title = `Cross-checked across ${trust.agreed.length} of ${trust.queried.length} public RPCs`;
-  } else {
-    title = 'Verified';
-  }
+  const isColibri = trust.level === 'verified' && trust.method === 'colibri';
+  const key = isColibri ? 'verified-colibri' : trust.level;
+  let title = TRUST_STATUS_SENTENCE[key];
+  if (!title) return null;
+  if (isColibri && trust.prover) title += ` (${trust.prover})`;
 
   const badge = document.createElement('span');
   badge.className = 'send-review-verified';

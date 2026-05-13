@@ -24,8 +24,9 @@ export const resolveTrustBadge = ({ value = '', ensTrustByName = new Map() } = {
 // One-sentence status shown at the top of the trust popover, below the ENS
 // name. Keyed on trust level (and, for verified, on the resolution method).
 // Lookup misses (unknown level) yield `null` from `buildTrustRows({...}).status`
-// and the caller decides how to handle.
-const TRUST_STATUS_SENTENCE = {
+// and the caller decides how to handle. Exported because the wallet review
+// surface reuses these as tooltip copy — keep the vocabulary in one place.
+export const TRUST_STATUS_SENTENCE = {
   verified: 'ENS resolution verified',
   'verified-colibri': 'Cryptographically verified via Colibri',
   'user-configured': 'Resolved with your configured RPC',
