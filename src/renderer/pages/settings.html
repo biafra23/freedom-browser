@@ -508,7 +508,7 @@
               <line x1="11" y1="7.5" x2="6" y2="16.5"></line>
               <line x1="13" y1="7.5" x2="18" y2="16.5"></line>
             </svg>
-            Networks
+            Chains
           </button>
           <button type="button" class="nav-item" data-target="ethereum">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -599,7 +599,7 @@
             How Freedom resolves <code>.eth</code> and <code>.box</code> names. ENS lives on
             Ethereum, so this is a focused view of the Ethereum network — its RPC endpoints,
             Colibri prover and quorum parameters are configured in
-            <a href="#networks">Networks settings</a>.
+            <a href="#networks">Chains settings</a>.
           </p>
           <div class="card">
             <div class="row">
@@ -1027,10 +1027,10 @@
               </button>`;
           }).join('');
           view.innerHTML = `
-            <h2 class="section-title">Networks</h2>
+            <h2 class="section-title">Chains</h2>
             <p class="row-help" style="margin-bottom: 16px">
               The chains Freedom resolves names and balances on. Select a
-              network to configure its verification strategy and endpoints.
+              chain to configure its verification strategy and endpoints.
             </p>
             <div class="card">${rows}</div>`;
         };
@@ -1149,7 +1149,7 @@
             : '';
 
           view.innerHTML = `
-            <button type="button" class="back-link" data-action="back">‹ Networks</button>
+            <button type="button" class="back-link" data-action="back">‹ Chains</button>
             <h2 class="section-title">${esc(chainName(cid))}</h2>
             <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}</p>
 
