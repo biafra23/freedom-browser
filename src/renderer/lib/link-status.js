@@ -48,7 +48,13 @@ export const setLinkStatusSide = (side) => {
   applySide(currentSide);
 };
 
-export const clearLinkStatus = () => {
+/**
+ * Clear the link hover preview.
+ * @param {{ immediate?: boolean }} [options] When `immediate` is true, the
+ *   bar is hidden synchronously with no fade-out — used by tab switches
+ *   so the previous tab's URL never visibly trails into the new tab.
+ */
+export const clearLinkStatus = (options = {}) => {
   if (!linkStatusEl || !linkStatusUrlEl) return;
 
   if (showTimer) {
@@ -65,6 +71,12 @@ export const clearLinkStatus = () => {
     linkStatusUrlEl.textContent = '';
     linkStatusEl.hidden = true;
   };
+
+  if (options.immediate) {
+    linkStatusEl.classList.remove('visible');
+    finishHide();
+    return;
+  }
 
   if (!linkStatusEl.classList.contains('visible')) {
     finishHide();
@@ -111,18 +123,27 @@ export const showLinkStatus = (url) => {
     return;
   }
 
+  // A pending hide means the bar was visible moments ago and is mid-fade.
+  // Treat that as still visible so re-hovers within the fade window swap
+  // text instantly instead of restarting the show delay.
+  const wasFadingOut = hideTimer !== null;
   if (hideTimer) {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
 
-  // Already visible: swap text in place, no fade.
-  if (linkStatusEl.classList.contains('visible')) {
+  // Already visible (or mid fade-out): swap text in place, no fade.
+  if (linkStatusEl.classList.contains('visible') || wasFadingOut) {
     if (showTimer) {
       clearTimeout(showTimer);
       showTimer = null;
     }
     linkStatusUrlEl.textContent = trimmed;
+    linkStatusEl.hidden = false;
+    applySide(currentSide);
+    if (!linkStatusEl.classList.contains('visible')) {
+      linkStatusEl.classList.add('visible');
+    }
     return;
   }
 

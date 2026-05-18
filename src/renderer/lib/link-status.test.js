@@ -133,4 +133,43 @@ describe('link-status', () => {
     jest.advanceTimersByTime(200);
     expect(linkStatus.classList.add).toHaveBeenCalledWith('link-status--right');
   });
+
+  test('clearLinkStatus({ immediate: true }) hides synchronously', async () => {
+    const { linkStatus, urlEl } = createElements();
+    const mod = await loadModule(linkStatus, urlEl);
+    mod.initLinkStatus();
+
+    mod.handleUpdateTargetUrl(1, 'https://example.com/', 1);
+    jest.advanceTimersByTime(200);
+    expect(linkStatus.hidden).toBe(false);
+    expect(urlEl.textContent).toBe('https://example.com/');
+
+    mod.clearLinkStatus({ immediate: true });
+    expect(urlEl.textContent).toBe('');
+    expect(linkStatus.hidden).toBe(true);
+    expect(linkStatus.classList.contains('visible')).toBe(false);
+  });
+
+  test('re-hovering during fade-out swaps text instantly', async () => {
+    const { linkStatus, urlEl } = createElements();
+    const mod = await loadModule(linkStatus, urlEl);
+    mod.initLinkStatus();
+
+    mod.handleUpdateTargetUrl(1, 'https://a.example/', 1);
+    jest.advanceTimersByTime(200);
+    expect(linkStatus.classList.contains('visible')).toBe(true);
+
+    // Empty url begins fade-out — visible class removed, text still mounted.
+    mod.handleUpdateTargetUrl(1, '', 1);
+    expect(linkStatus.classList.contains('visible')).toBe(false);
+    expect(linkStatus.hidden).toBe(false);
+
+    // New hover before HIDE_DELAY_MS elapses must swap immediately, not
+    // schedule another show delay and not flicker the bar empty.
+    linkStatus.classList.add.mockClear();
+    mod.handleUpdateTargetUrl(1, 'https://b.example/', 1);
+    expect(urlEl.textContent).toBe('https://b.example/');
+    expect(linkStatus.hidden).toBe(false);
+    expect(linkStatus.classList.add).toHaveBeenCalledWith('visible');
+  });
 });

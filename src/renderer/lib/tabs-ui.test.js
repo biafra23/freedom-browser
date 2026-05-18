@@ -137,6 +137,11 @@ const loadTabsModule = async (options = {}) => {
   const pageContextMenuMocks = {
     setupWebviewContextMenu: jest.fn(),
   };
+  const linkStatusMocks = {
+    clearLinkStatus: jest.fn(),
+    handleUpdateTargetUrl: jest.fn(),
+    setLinkStatusSide: jest.fn(),
+  };
 
   addressInput.focus = jest.fn();
   addressInput.select = jest.fn();
@@ -162,6 +167,7 @@ const loadTabsModule = async (options = {}) => {
   jest.doMock('./bookmarks-ui.js', () => bookmarksMocks);
   jest.doMock('./menu-backdrop.js', () => backdropMocks);
   jest.doMock('./page-context-menu.js', () => pageContextMenuMocks);
+  jest.doMock('./link-status.js', () => linkStatusMocks);
   jest.doMock('./page-urls.js', () => ({
     homeUrl: options.homeUrl || HOME_URL,
   }));
@@ -192,6 +198,7 @@ const loadTabsModule = async (options = {}) => {
     bookmarksMocks,
     backdropMocks,
     pageContextMenuMocks,
+    linkStatusMocks,
   };
 };
 
@@ -1012,5 +1019,79 @@ describe('tabs ui behavior', () => {
     expect(firstTab.webview.closeDevTools.mock.calls.length).toBe(devtoolsCloseBefore + 1);
     expect(debugMocks.pushDebug).toHaveBeenCalledWith('DevTools opened');
     expect(debugMocks.pushDebug).toHaveBeenCalledWith('DevTools closed');
+  });
+
+  test('forwards update-target-url and link-status:zone for the active tab only', async () => {
+    const { mod, linkStatusMocks } = await loadTabsModule();
+    await mod.initTabs();
+
+    const firstTab = mod.getActiveTab();
+    const secondTab = mod.createTab('https://second.example');
+    mod.switchTab(secondTab.id);
+
+    linkStatusMocks.handleUpdateTargetUrl.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    // Active tab forwards both events with the active tab id.
+    secondTab.webview.dispatch('update-target-url', { url: 'https://hovered.example/' });
+    expect(linkStatusMocks.handleUpdateTargetUrl).toHaveBeenCalledWith(
+      secondTab.id,
+      'https://hovered.example/',
+      secondTab.id
+    );
+
+    secondTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: true }],
+    });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('right');
+
+    secondTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: false }],
+    });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('left');
+
+    // Background tab still calls handleUpdateTargetUrl (it gates internally
+    // by comparing tabId to activeTabId), but the zone signal is dropped
+    // entirely so a hover in a background webview can never move the bar
+    // shown for the active tab.
+    linkStatusMocks.handleUpdateTargetUrl.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    firstTab.webview.dispatch('update-target-url', { url: 'https://background.example/' });
+    expect(linkStatusMocks.handleUpdateTargetUrl).toHaveBeenCalledWith(
+      firstTab.id,
+      'https://background.example/',
+      secondTab.id
+    );
+
+    firstTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: true }],
+    });
+    expect(linkStatusMocks.setLinkStatusSide).not.toHaveBeenCalled();
+  });
+
+  test('switchTab clears the link status immediately and resets side', async () => {
+    const { mod, linkStatusMocks } = await loadTabsModule();
+    await mod.initTabs();
+
+    const firstTab = mod.getActiveTab();
+    const secondTab = mod.createTab('https://second.example');
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    mod.switchTab(firstTab.id);
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenCalledWith('left');
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    mod.switchTab(secondTab.id);
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenCalledWith('left');
   });
 });

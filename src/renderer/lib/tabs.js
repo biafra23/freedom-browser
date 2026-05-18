@@ -1121,7 +1121,7 @@ export const switchTab = (tabId, options = {}) => {
   const tab = tabState.tabs.find((t) => t.id === tabId);
   if (!tab) return;
 
-  clearLinkStatus();
+  clearLinkStatus({ immediate: true });
   setLinkStatusSide('left');
   tabState.activeTabId = tabId;
 
