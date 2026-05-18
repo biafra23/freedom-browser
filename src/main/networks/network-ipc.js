@@ -10,6 +10,7 @@
 
 const { ipcMain } = require('electron');
 const registry = require('./network-registry');
+const chainCatalog = require('./chain-catalog');
 const rpcManager = require('../wallet/rpc-manager');
 
 // registry.invalidate() already ran inside the mutation; this also drops
@@ -70,6 +71,28 @@ function registerNetworkConfigIpc() {
 
   ipcMain.handle('networks:test-api-key', (_event, providerId, apiKey) => {
     return rpcManager.testApiKey(providerId, apiKey);
+  });
+
+  // The chainlist.org catalog backing the add-chain search. Both handlers
+  // can hit the network, so they report failure as { success: false }
+  // rather than rejecting.
+  ipcMain.handle('networks:search-chains', async (_event, query) => {
+    try {
+      return { success: true, chains: await chainCatalog.searchChains(query) };
+    } catch (err) {
+      return { success: false, error: err.message || 'Chain catalog unavailable' };
+    }
+  });
+
+  ipcMain.handle('networks:get-catalog-chain', async (_event, chainId) => {
+    try {
+      const chain = await chainCatalog.getCatalogChain(chainId);
+      return chain
+        ? { success: true, chain }
+        : { success: false, error: 'Chain not found in catalog' };
+    } catch (err) {
+      return { success: false, error: err.message || 'Chain catalog unavailable' };
+    }
   });
 
   console.log('[NetworkConfig] IPC handlers registered');
