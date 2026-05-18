@@ -2,6 +2,7 @@ const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const log = require('../logger');
+const { migrateLegacyConfig } = require('./migration');
 
 // The unified source of chain + endpoint configuration. Three layers:
 //   - builtin    — ships in src/shared/ (chains.json, endpoint-sources.json)
@@ -36,6 +37,56 @@ function readJson(filePath, fallback) {
 
 let cache = null;
 
+// The user-layer config. When network-config.json is absent but a legacy
+// settings.json exists, run the one-shot migration and persist the result.
+// Idempotent: once network-config.json is on disk, later loads just read it;
+// a crash before the write simply re-migrates next time.
+function resolveUserConfig(customChains, builtinSources) {
+  const configPath = userDataPath('network-config.json');
+
+  // Distinguish "absent" (a migration candidate) from "present but corrupt".
+  // A corrupt file must NOT trigger re-migration — re-deriving from the old
+  // legacy settings would clobber a post-migration user's new-model
+  // customizations. Corrupt → fall back to defaults, leave the file intact.
+  let rawConfig;
+  try {
+    rawConfig = fs.readFileSync(configPath, 'utf-8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      log.error(`[network-registry] cannot read network-config.json: ${err.message}`);
+      return {};
+    }
+    rawConfig = null; // absent
+  }
+  if (rawConfig !== null) {
+    try {
+      return JSON.parse(rawConfig);
+    } catch (err) {
+      log.error(
+        `[network-registry] network-config.json is corrupt, using defaults ` +
+        `(file left intact for recovery): ${err.message}`
+      );
+      return {};
+    }
+  }
+
+  const legacySettings = readJson(userDataPath('settings.json'), null);
+  if (!legacySettings) return {}; // fresh install — nothing to migrate
+
+  const migrated = migrateLegacyConfig({
+    settings: legacySettings,
+    customChains,
+    builtinSources,
+  });
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(migrated, null, 2), 'utf-8');
+    log.info('[network-registry] migrated legacy config -> network-config.json');
+  } catch (err) {
+    log.error(`[network-registry] failed to persist migration: ${err.message}`);
+  }
+  return migrated; // use it in-memory regardless of write success
+}
+
 // Merge the layers into the queryable registry. Cached until invalidate().
 function load() {
   if (cache) return cache;
@@ -43,7 +94,7 @@ function load() {
   const builtinNetworks = readJson(builtinPath('chains.json'), {});
   const builtinSources = readJson(builtinPath('endpoint-sources.json'), {});
   const customChains = readJson(userDataPath('custom-chains.json'), {});
-  const userConfig = readJson(userDataPath('network-config.json'), {});
+  const userConfig = resolveUserConfig(customChains, builtinSources);
   const apiKeys = readJson(userDataPath('rpc-api-keys.json'), {});
 
   // Networks: builtin chains, then custom chains, then per-network user

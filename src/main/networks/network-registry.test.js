@@ -6,6 +6,7 @@
 // userData directory value is irrelevant here.
 
 const mockFiles = {};
+const mockWriteFileSync = jest.fn();
 jest.mock('node:fs', () => ({
   readFileSync: (filePath) => {
     const name = require('node:path').basename(filePath);
@@ -14,6 +15,7 @@ jest.mock('node:fs', () => ({
     }
     return mockFiles[name];
   },
+  writeFileSync: (...args) => mockWriteFileSync(...args),
 }));
 
 const registry = require('./network-registry');
@@ -46,13 +48,15 @@ const SOURCES = {
   },
 };
 
-function setFiles({ chains = CHAINS, sources = SOURCES, custom, userConfig, apiKeys } = {}) {
+function setFiles({ chains = CHAINS, sources = SOURCES, custom, userConfig, apiKeys, settings } = {}) {
   for (const k of Object.keys(mockFiles)) delete mockFiles[k];
   mockFiles['chains.json'] = JSON.stringify(chains);
   mockFiles['endpoint-sources.json'] = JSON.stringify(sources);
   if (custom !== undefined) mockFiles['custom-chains.json'] = JSON.stringify(custom);
   if (userConfig !== undefined) mockFiles['network-config.json'] = JSON.stringify(userConfig);
   if (apiKeys !== undefined) mockFiles['rpc-api-keys.json'] = JSON.stringify(apiKeys);
+  if (settings !== undefined) mockFiles['settings.json'] = JSON.stringify(settings);
+  mockWriteFileSync.mockClear();
   registry.invalidate();
 }
 
@@ -169,5 +173,51 @@ describe('invalidate', () => {
     expect(registry.getNetwork(1).verification.primary).toBe('colibri');
     setFiles({ userConfig: { networks: { '1': { verification: { primary: 'direct' } } } } });
     expect(registry.getNetwork(1).verification.primary).toBe('direct');
+  });
+});
+
+describe('legacy-config migration on load', () => {
+  test('absent network-config.json + legacy settings.json → migrates and persists', () => {
+    // A quorum-era custom-RPC user: no network-config.json yet.
+    setFiles({ settings: { enableEnsCustomRpc: true, ensRpcUrl: 'http://localhost:8545' } });
+    expect(registry.getNetwork(1).verification.primary).toBe('direct');
+    expect(registry.getEndpoints(1, 'rpc')).toContain('http://localhost:8545');
+    // network-config.json was written out.
+    const written = mockWriteFileSync.mock.calls.find(([p]) => String(p).endsWith('network-config.json'));
+    expect(written).toBeDefined();
+  });
+
+  test('no settings.json (fresh install) → no migration, no write', () => {
+    setFiles();
+    registry.getNetwork(1);
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  test('network-config.json already present → migration is skipped', () => {
+    setFiles({
+      settings: { enableEnsCustomRpc: true, ensRpcUrl: 'http://localhost:8545' },
+      userConfig: { networks: { '1': { verification: { primary: 'quorum' } } } },
+    });
+    expect(registry.getNetwork(1).verification.primary).toBe('quorum');
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  test('corrupt network-config.json → defaults, no re-migration, file left intact', () => {
+    setFiles({ settings: { enableEnsCustomRpc: true, ensRpcUrl: 'http://localhost:8545' } });
+    mockFiles['network-config.json'] = '{ this is not valid json';
+    registry.invalidate();
+    // Builtin default — NOT the migrated 'direct', and the corrupt file is
+    // not overwritten by a re-migration.
+    expect(registry.getNetwork(1).verification.primary).toBe('colibri');
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  test('migration write failure → migrated config still used in-memory', () => {
+    setFiles({ settings: { enableEnsCustomRpc: true, ensRpcUrl: 'http://localhost:8545' } });
+    mockWriteFileSync.mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    expect(registry.getNetwork(1).verification.primary).toBe('direct');
+    expect(registry.getEndpoints(1, 'rpc')).toContain('http://localhost:8545');
   });
 });
