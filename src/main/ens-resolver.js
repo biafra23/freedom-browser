@@ -494,13 +494,16 @@ function dropCachedProvider() {
   }
 }
 
-// Full reset: drop the legacy cached provider AND wipe the quorum pool
-// (shuffled order, quarantine, pinned block). External callers use this
-// after a settings edit so a re-tested RPC gets a fresh chance; tests
-// call it between cases for a clean slate.
+// Full reset: drop the legacy cached provider, wipe the quorum pool
+// (shuffled order, quarantine, pinned block), AND flush the per-name
+// resolution caches. External callers use this after a settings edit:
+// the resolution caches store each name's trust level, which is derived
+// from the verification method — so a method change must drop them or
+// stale results keep their old trust until their TTL expires.
 function invalidateCachedProvider() {
   dropCachedProvider();
   invalidateProviderPool();
+  clearEnsResolutionCaches();
   registry.invalidate();
 }
 
@@ -1748,10 +1751,10 @@ function invalidateEnsContent(name) {
   return had;
 }
 
-// Test-only: drop all cached resolution results so tests can share ENS
-// names across cases without cross-pollution. Safe to call from production
-// (equivalent to waiting out the TTLs), but not exposed over IPC.
-function clearEnsCachesForTest() {
+// Drop all cached resolution results. Called from invalidateCachedProvider
+// after a settings edit (equivalent to waiting out the TTLs); tests also
+// call it directly to share ENS names across cases without cross-pollution.
+function clearEnsResolutionCaches() {
   ensResultCache.clear();
   ensAddressCache.clear();
   ensReverseCache.clear();
@@ -1768,6 +1771,6 @@ module.exports = {
   universalResolverCall,
   universalResolverReverse,
   isResolverNotFoundError,
-  clearEnsCachesForTest,
+  clearEnsResolutionCaches,
   hostOf,
 };

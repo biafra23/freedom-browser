@@ -210,7 +210,6 @@ const {
   invalidateCachedProvider,
   universalResolverCall,
   isResolverNotFoundError,
-  clearEnsCachesForTest,
 } = require('./ens-resolver');
 
 // Fake block anchor — stable hash so consensus legs querying the same
@@ -220,7 +219,6 @@ const FAKE_BLOCK = { number: 12345678, hash: '0xabcdef00000000000000000000000000
 beforeEach(() => {
   jest.clearAllMocks();
   invalidateCachedProvider();
-  clearEnsCachesForTest();
   lastProviderUrl = null;
   mockProviderRouteMap = null;
   mockProviderAnchorMap = null;

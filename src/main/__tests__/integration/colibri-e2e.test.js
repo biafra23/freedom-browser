@@ -45,12 +45,12 @@ const {
   resolveEnsContent,
   resolveEnsAddress,
   resolveEnsReverse,
-  clearEnsCachesForTest,
+  clearEnsResolutionCaches,
 } = require('../../ens-resolver');
 const { clearColibriClientForTest } = require('../../ens/colibri-resolver');
 
 beforeEach(() => {
-  clearEnsCachesForTest();
+  clearEnsResolutionCaches();
 });
 
 afterAll(() => {
