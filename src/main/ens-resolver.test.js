@@ -78,6 +78,27 @@ jest.mock('./networks/network-registry', () => {
       const custom = s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim();
       return custom ? [custom, ...pool] : [...pool];
     },
+    // The config view: a user-added rpc source when a custom RPC is set,
+    // plus the builtin pool. Drives the `direct` user-configured-vs-builtin
+    // trust decision in consensusResolve.
+    getEndpointSourceList: () => {
+      const s = mockLoadSettings() || {};
+      const list = [];
+      if (s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim()) {
+        list.push({
+          id: 'user-eth-custom', role: 'rpc', keyed: false,
+          builtin: false, removed: false, coverage: { '1': s.ensRpcUrl.trim() },
+        });
+      }
+      const pool = Array.isArray(s.ensPublicRpcProviders) && s.ensPublicRpcProviders.length > 0
+        ? s.ensPublicRpcProviders
+        : DEFAULT_RPC;
+      pool.forEach((url, i) => list.push({
+        id: 'eth-builtin-' + i, role: 'rpc', keyed: false,
+        builtin: true, removed: false, coverage: { '1': url },
+      }));
+      return list;
+    },
     invalidate: () => {},
   };
 });
@@ -1031,6 +1052,24 @@ describe('ens-resolver', () => {
       expect(result.trust.queried).toEqual(['my-node.local:8545']);
       // Only one leg fired against the custom RPC; public quorum untouched.
       expect(mockUrResolve).toHaveBeenCalledTimes(1);
+    });
+
+    test('direct method with no custom RPC resolves unverified, not user-configured', async () => {
+      // `direct` strategy but no user-added endpoint — it falls to a builtin
+      // public RPC, which is an unverified single source, not something the
+      // user configured.
+      mockLoadSettings.mockReturnValue({
+        ensResolutionMethod: 'custom-rpc',
+        enableEnsCustomRpc: false,
+        ensRpcUrl: '',
+        ensPublicRpcProviders: TEST_PROVIDERS,
+      });
+      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_HASH)));
+
+      const result = await resolveEnsContent('no-custom.eth');
+
+      expect(result.type).toBe('ok');
+      expect(result.trust.level).toBe('unverified');
     });
 
     test('custom RPC failure falls back to public quorum', async () => {

@@ -159,12 +159,15 @@
   display: block;
 }
 
-/* Verified / user-configured strokes match the HTTPS globe colour. */
+/* Verified — green, matches the HTTPS globe. */
 .trust-shield[data-trust='verified'] .icon-verified {
   color: var(--secure-fg);
 }
+/* User-configured — resolved via an endpoint you chose, but not
+   independently verified. A neutral indicator, deliberately not the
+   verified green. */
 .trust-shield[data-trust='user-configured'] .icon-user-configured {
-  color: var(--secure-fg);
+  color: var(--muted);
 }
 .trust-shield[data-trust='unverified'] .icon-unverified {
   color: var(--warning-fg);

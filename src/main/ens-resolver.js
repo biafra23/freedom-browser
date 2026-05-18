@@ -918,34 +918,36 @@ function buildColibriTrust(proverHost) {
   };
 }
 
-// Custom-RPC fast path: single leg against the user's own node, labelled
-// trust='user-configured'. On any failure, return null so the caller falls
-// back to the public quorum path (preserving existing graceful-degrade
-// behavior). Pinned block is fetched from the same custom RPC — we don't
-// want to send user-node requests to public RPCs behind their back.
-async function tryCustomRpcFastPath(customRpc, name, callData) {
+// Single-leg fast path for the `direct` strategy. `userConfigured` is the
+// honest trust basis: true when the endpoint is a user-added source
+// (trust='user-configured'), false when `direct` was chosen without a
+// custom endpoint so it's just an unverified builtin public RPC. On any
+// failure, return null so the caller falls back to the public quorum path.
+// Pinned block is fetched from the same RPC — we don't want to send
+// user-node requests to public RPCs behind their back.
+async function tryDirectResolve(rpcUrl, name, callData, userConfigured) {
   const { quorum } = registry.getNetwork(1);
   const anchor = quorum.anchor || 'latest';
   const timeoutMs = Number(quorum.timeoutMs) || 5000;
   let block;
   try {
-    block = await fetchSingleSourceAnchor(customRpc, anchor, timeoutMs);
+    block = await fetchSingleSourceAnchor(rpcUrl, anchor, timeoutMs);
   } catch (err) {
-    log.warn(`[ens] custom RPC anchor fetch failed (${hostOf(customRpc)}): ${err.message}`);
+    log.warn(`[ens] direct RPC anchor fetch failed (${hostOf(rpcUrl)}): ${err.message}`);
     return null;
   }
 
-  const leg = await runQuorumLeg(customRpc, name, callData, block.hash, timeoutMs);
+  const leg = await runQuorumLeg(rpcUrl, name, callData, block.hash, timeoutMs);
   if (leg.status === 'error') {
-    log.warn(`[ens] custom RPC leg failed (${hostOf(customRpc)}): ${leg.error?.message}`);
+    log.warn(`[ens] direct RPC leg failed (${hostOf(rpcUrl)}): ${leg.error?.message}`);
     return null;
   }
 
   const trust = buildTrust({
-    level: 'user-configured',
-    agreed: [hostOf(customRpc)],
+    level: userConfigured ? 'user-configured' : 'unverified',
+    agreed: [hostOf(rpcUrl)],
     dissented: [],
-    queried: [hostOf(customRpc)],
+    queried: [hostOf(rpcUrl)],
     k: 1,
     m: 1,
     block,
@@ -1026,11 +1028,19 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
 
   // Direct strategy: a single trusted endpoint (typically the user's own
   // node). Try it first, fall back to public quorum on any failure so a
-  // misbehaving own-node still resolves.
+  // misbehaving own-node still resolves. User-added sources sort ahead of
+  // builtins, so directUrl is the user's own endpoint when one exists —
+  // only then is the answer honestly 'user-configured'; with no custom
+  // endpoint added, `direct` is just an unverified builtin public RPC.
   if (strategy === 'direct') {
     const [directUrl] = registry.getEndpoints(1, 'rpc');
     if (directUrl) {
-      const directResult = await tryCustomRpcFastPath(directUrl, normalizedName, callData);
+      const userConfigured = registry.getEndpointSourceList().some(
+        (s) => s.role === 'rpc' && !s.builtin && !s.removed && s.coverage && s.coverage['1']
+      );
+      const directResult = await tryDirectResolve(
+        directUrl, normalizedName, callData, userConfigured
+      );
       if (directResult) return directResult;
     }
   }
