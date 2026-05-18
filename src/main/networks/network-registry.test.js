@@ -278,6 +278,101 @@ describe('mutation layer', () => {
   });
 });
 
+describe('builtin flag', () => {
+  test('builtin chains are tagged builtin: true', () => {
+    expect(registry.getNetwork(1).builtin).toBe(true);
+    expect(registry.getAllNetworks()['100'].builtin).toBe(true);
+  });
+
+  test('custom chains are tagged builtin: false', () => {
+    setFiles({ custom: { '8453': { chainId: 8453, name: 'Base' } } });
+    expect(registry.getNetwork(8453).builtin).toBe(false);
+    expect(registry.getNetwork(1).builtin).toBe(true);
+  });
+});
+
+describe('isChainAvailable / getAvailableChains', () => {
+  test('a chain with a keyless rpc source is available', () => {
+    expect(registry.isChainAvailable(1)).toBe(true);
+    expect(registry.isChainAvailable(100)).toBe(true);
+  });
+
+  test('a chain with no usable endpoint is unavailable', () => {
+    setFiles({ custom: { '777': { chainId: 777, name: 'CustomNet' } } });
+    expect(registry.isChainAvailable(777)).toBe(false);
+  });
+
+  test('getAvailableChains excludes chains with no endpoint', () => {
+    setFiles({ custom: { '777': { chainId: 777, name: 'CustomNet' } } });
+    expect(Object.keys(registry.getAvailableChains()).sort()).toEqual(['1', '100']);
+  });
+});
+
+describe('addCustomChain', () => {
+  test('persists a new chain and makes it queryable', () => {
+    expect(registry.addCustomChain({ chainId: 8453, name: 'Base', nativeSymbol: 'ETH' }))
+      .toEqual({ success: true, chainId: '8453' });
+    expect(registry.getNetwork(8453)).toMatchObject({ name: 'Base', builtin: false });
+    const written = mockWriteFileSync.mock.calls.find(([p]) => String(p).endsWith('custom-chains.json'));
+    expect(written).toBeDefined();
+  });
+
+  test('coerces a string chainId to a number in the stored definition', () => {
+    registry.addCustomChain({ chainId: '8453', name: 'Base' });
+    expect(registry.getNetwork(8453).chainId).toBe(8453);
+  });
+
+  test('rejects a missing or invalid chainId', () => {
+    expect(registry.addCustomChain({ name: 'NoId' }).success).toBe(false);
+    expect(registry.addCustomChain({ chainId: 0, name: 'Zero' }).success).toBe(false);
+    expect(registry.addCustomChain({ chainId: -1, name: 'Neg' }).success).toBe(false);
+  });
+
+  test('rejects a chainId that collides with a builtin chain', () => {
+    expect(registry.addCustomChain({ chainId: 1, name: 'FakeEth' }).success).toBe(false);
+    expect(registry.getNetwork(1).name).toBe('Ethereum');
+  });
+
+  test('re-adding an existing custom chain replaces its definition', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' });
+    expect(registry.addCustomChain({ chainId: 8453, name: 'Base Renamed' }).success).toBe(true);
+    expect(registry.getNetwork(8453).name).toBe('Base Renamed');
+  });
+});
+
+describe('removeCustomChain', () => {
+  test('removes a custom chain', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' });
+    expect(registry.removeCustomChain(8453)).toEqual({ success: true });
+    expect(registry.getNetwork(8453)).toBeNull();
+  });
+
+  test('rejects removing an unknown or builtin chain', () => {
+    expect(registry.removeCustomChain(999).success).toBe(false);
+    expect(registry.removeCustomChain(1).success).toBe(false);
+  });
+
+  test('drops the chain network override and its single-chain endpoint sources', () => {
+    setFiles({
+      custom: { '8453': { chainId: 8453, name: 'Base' } },
+      userConfig: {
+        networks: { '8453': { verification: { primary: 'quorum' } } },
+        endpointSources: {
+          'base-rpc': { role: 'rpc', keyed: false, coverage: { '8453': 'https://base.example' } },
+          'multi': {
+            role: 'rpc', keyed: false,
+            coverage: { '1': 'https://m1.example', '8453': 'https://m2.example' },
+          },
+        },
+      },
+    });
+    registry.removeCustomChain(8453);
+    const ids = registry.getEndpointSourceList().map((s) => s.id);
+    expect(ids).not.toContain('base-rpc');
+    expect(ids).toContain('multi');
+  });
+});
+
 describe('legacy-config migration on load', () => {
   test('absent network-config.json + legacy settings.json → migrates and persists', () => {
     // A quorum-era custom-RPC user: no network-config.json yet.

@@ -126,7 +126,12 @@ function load() {
     if (!removedSourceIds.has(id)) endpointSources[id] = src;
   }
 
-  cache = { networks, endpointSources, allSources, userSourceIds, removedSourceIds, apiKeys };
+  const customChainIds = new Set(Object.keys(customChains));
+
+  cache = {
+    networks, endpointSources, allSources,
+    userSourceIds, removedSourceIds, apiKeys, customChainIds,
+  };
   return cache;
 }
 
@@ -135,12 +140,42 @@ function invalidate() {
   cache = null;
 }
 
+// A chain is "custom" when it came from custom-chains.json; every other
+// chain is builtin. The flag lets the wallet and settings UI decide what
+// a user is allowed to remove.
+function withBuiltinFlag(cid, net, customChainIds) {
+  return { ...net, builtin: !customChainIds.has(String(cid)) };
+}
+
 function getNetwork(chainId) {
-  return load().networks[String(chainId)] || null;
+  const { networks, customChainIds } = load();
+  const net = networks[String(chainId)];
+  return net ? withBuiltinFlag(chainId, net, customChainIds) : null;
 }
 
 function getAllNetworks() {
-  return { ...load().networks };
+  const { networks, customChainIds } = load();
+  const out = {};
+  for (const [cid, net] of Object.entries(networks)) {
+    out[cid] = withBuiltinFlag(cid, net, customChainIds);
+  }
+  return out;
+}
+
+// Whether the registry can resolve at least one rpc endpoint for a chain
+// — a keyless builtin RPC, a user-added RPC, or a keyed provider with a
+// configured API key. A chain with no usable endpoint can't be used.
+function isChainAvailable(chainId) {
+  return getEndpoints(chainId, 'rpc').length > 0;
+}
+
+function getAvailableChains() {
+  const all = getAllNetworks();
+  const out = {};
+  for (const [cid, net] of Object.entries(all)) {
+    if (isChainAvailable(cid)) out[cid] = net;
+  }
+  return out;
 }
 
 // Endpoint source objects covering (chainId, role), raw — the {API_KEY}
@@ -236,6 +271,22 @@ function writeUserConfig(config) {
   invalidate();
 }
 
+// The custom-chains layer. Unlike network-config.json (per-chain policy
+// overrides), custom-chains.json holds full chain definitions for chains
+// the user added — load() merges it into the network set.
+function readCustomChains() {
+  return readJson(userDataPath('custom-chains.json'), {});
+}
+
+function writeCustomChains(customChains) {
+  fs.writeFileSync(
+    userDataPath('custom-chains.json'),
+    JSON.stringify(customChains, null, 2),
+    'utf-8'
+  );
+  invalidate();
+}
+
 // Merge a partial override into the user layer's networks[chainId].
 // verification/quorum merge one level deep against any existing override;
 // the rest of each block fills in from the builtin defaults at load time,
@@ -289,9 +340,63 @@ function restoreEndpointSource(id) {
   writeUserConfig({ ...config, removedSources });
 }
 
+// Register a user-defined chain. The definition is persisted verbatim
+// (chainId coerced to a number); verification defaults to `direct` at
+// load time. Re-adding an existing custom chain replaces its definition.
+// A chainId that collides with a builtin chain is rejected — builtin
+// chains are customized via updateNetwork, not replaced.
+function addCustomChain(def) {
+  const { networks, customChainIds } = load();
+  const chainId = Number(def?.chainId);
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    return { success: false, error: 'A valid chain ID is required' };
+  }
+  const cid = String(chainId);
+  if (networks[cid] && !customChainIds.has(cid)) {
+    return { success: false, error: 'That chain ID is built in already' };
+  }
+  const customChains = readCustomChains();
+  customChains[cid] = { ...def, chainId };
+  writeCustomChains(customChains);
+  return { success: true, chainId: cid };
+}
+
+// Remove a user-defined chain along with its user-layer leftovers: the
+// chain's network override and any user endpoint source that covered
+// only this chain (a multi-chain source is left intact). custom-chains
+// is written first so a failure mid-way can't strand a chain that has
+// already lost its endpoints.
+function removeCustomChain(chainId) {
+  const { networks, customChainIds } = load();
+  const cid = String(chainId);
+  if (networks[cid] && !customChainIds.has(cid)) {
+    return { success: false, error: 'Cannot remove a built-in chain' };
+  }
+  const customChains = readCustomChains();
+  if (!customChains[cid]) {
+    return { success: false, error: 'Custom chain not found' };
+  }
+  delete customChains[cid];
+  writeCustomChains(customChains);
+
+  const config = readUserConfig();
+  const networksOverride = { ...(config.networks || {}) };
+  delete networksOverride[cid];
+  const endpointSources = {};
+  for (const [id, src] of Object.entries(config.endpointSources || {})) {
+    const covers = Object.keys(src.coverage || {});
+    if (covers.length === 1 && covers[0] === cid) continue;
+    endpointSources[id] = src;
+  }
+  writeUserConfig({ ...config, networks: networksOverride, endpointSources });
+  return { success: true };
+}
+
 module.exports = {
   getNetwork,
   getAllNetworks,
+  isChainAvailable,
+  getAvailableChains,
   getEndpoints,
   getEndpointSources,
   getEndpointSourceList,
@@ -300,5 +405,7 @@ module.exports = {
   upsertEndpointSource,
   removeEndpointSource,
   restoreEndpointSource,
+  addCustomChain,
+  removeCustomChain,
   invalidate,
 };
