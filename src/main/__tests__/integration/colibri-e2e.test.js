@@ -35,16 +35,12 @@ jest.mock('electron', () => ({
   ipcMain: { handle: jest.fn() },
 }));
 
-const mockLoadSettings = jest.fn();
-jest.mock('../../settings-store', () => ({
-  loadSettings: (...args) => mockLoadSettings(...args),
-  DEFAULT_ENS_PUBLIC_RPC_PROVIDERS: [],
-}));
-
 const TIMEOUT_MS = 60_000;
 
-// Loaded after mocks so the SUT's `require('../../settings-store')` resolves
-// to the mock. The Colibri package is NOT mocked — real WASM, real prover.
+// Nothing is stubbed: the real network-registry reads the builtin
+// chains.json / endpoint-sources.json, and the fresh temp userData dir has
+// no user config — so mainnet resolves to its `colibri` default against the
+// default prover. The Colibri package is NOT mocked — real WASM, real prover.
 const {
   resolveEnsContent,
   resolveEnsAddress,
@@ -54,21 +50,6 @@ const {
 const { clearColibriClientForTest } = require('../../ens/colibri-resolver');
 
 beforeEach(() => {
-  mockLoadSettings.mockReturnValue({
-    enableEnsCustomRpc: false,
-    ensRpcUrl: '',
-    ensResolutionMethod: 'colibri',
-    ensFallbackToQuorum: false,           // surface Colibri errors loudly during e2e
-    ensColibriProverUrl: '',              // → DEFAULT_PROVER_URL (mainnet1.colibri-proof.tech)
-    ensColibriZkProof: true,
-    enableEnsQuorum: false,
-    ensQuorumK: 3,
-    ensQuorumM: 2,
-    ensQuorumTimeoutMs: 5000,
-    ensBlockAnchor: 'latest',
-    ensBlockAnchorTtlMs: 30000,
-    ensPublicRpcProviders: [],
-  });
   clearEnsCachesForTest();
 });
 

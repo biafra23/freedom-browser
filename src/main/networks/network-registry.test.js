@@ -166,6 +166,19 @@ describe('user config layer', () => {
     });
     expect(registry.getEndpoints(1, 'rpc')).toContain('http://localhost:8545');
   });
+
+  test('a user-added source sorts ahead of builtin sources', () => {
+    setFiles({
+      userConfig: {
+        endpointSources: {
+          'user-local': { role: 'rpc', keyed: false, coverage: { '1': 'http://localhost:8545' } },
+        },
+      },
+    });
+    // The `direct` strategy resolves to getEndpoints(...)[0] — the user's
+    // own endpoint must win over the shipped pool.
+    expect(registry.getEndpoints(1, 'rpc')[0]).toBe('http://localhost:8545');
+  });
 });
 
 describe('invalidate', () => {

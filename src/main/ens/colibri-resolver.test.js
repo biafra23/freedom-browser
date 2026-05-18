@@ -36,9 +36,16 @@ jest.mock('ethers', () => ({
   ethers: { BrowserProvider: mockBrowserProvider },
 }));
 
+// The registry is mocked; tests still pump a legacy-shaped object via
+// mockLoadSettings and the mock translates the two fields this module
+// reads (prover URL, zkProof) into the registry shape.
 const mockLoadSettings = jest.fn();
-jest.mock('../settings-store', () => ({
-  loadSettings: (...args) => mockLoadSettings(...args),
+jest.mock('../networks/network-registry', () => ({
+  getNetwork: () => ({ zkProof: (mockLoadSettings() || {}).ensColibriZkProof !== false }),
+  getEndpoints: (_chainId, role) =>
+    role === 'prover'
+      ? [((mockLoadSettings() || {}).ensColibriProverUrl || '').trim()].filter(Boolean)
+      : [],
 }));
 
 // Surgical: only stub the two symbols this module imports. Re-exporting the

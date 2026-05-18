@@ -4,7 +4,7 @@ const { ethers } = require('ethers');
 const { ens_normalize } = require('@adraffy/ens-normalize');
 const IPC = require('../shared/ipc-channels');
 const { success, failure } = require('./ipc-contract');
-const { loadSettings, DEFAULT_ENS_PUBLIC_RPC_PROVIDERS } = require('./settings-store');
+const registry = require('./networks/network-registry');
 const { prefetchGatewayUrl, NOOP_HANDLE: NOOP_PREFETCH } = require('./ens-prefetch');
 
 // Canonical ENS Universal Resolver — a DAO-owned proxy that delegates to
@@ -38,27 +38,6 @@ const IPFS_CONTENTHASH_RE =
   /^0x(?<codecPrefix>e3010170|e5010172)(?<multihash>(?<mhCode>[0-9a-f]{2})(?<mhLen>[0-9a-f]{2})(?<digest>[0-9a-f]*))$/;
 const SWARM_CONTENTHASH_RE = /^0xe40101fa011b20(?<swarmHash>[0-9a-f]{64})$/;
 
-// Read effective custom RPC URL from settings (empty string = disabled/unset)
-function getCustomRpcUrl() {
-  try {
-    const settings = loadSettings();
-    if (settings.enableEnsCustomRpc !== true) return '';
-    return (settings.ensRpcUrl || '').trim();
-  } catch {
-    return '';
-  }
-}
-
-// Build the effective provider list for the legacy single-source path
-// (reverse resolution). Sources from the same user-configured list the
-// quorum path uses, so a provider the user removed in settings is also
-// excluded here.
-function getRpcProviders() {
-  const custom = getCustomRpcUrl();
-  const publicList = getEffectivePublicProviders();
-  return custom ? [custom, ...publicList] : publicList;
-}
-
 // ---------------------------------------------------------------------------
 // Session-shuffled public-RPC pool with per-provider quarantine. Backs the
 // `consensusResolve` primitive defined later; the one remaining caller of
@@ -87,16 +66,12 @@ function shuffleInPlace(arr) {
   return arr;
 }
 
-// Effective public-RPC list from settings, with ETH_RPC env override
-// prepended for dev convenience. Falls back to defaults if the saved list
-// is empty/missing — the settings UI will enforce non-emptiness, but
-// defense-in-depth here keeps resolution working if the file is corrupted.
-function getEffectivePublicProviders() {
-  const settings = loadSettings();
-  const saved =
-    Array.isArray(settings.ensPublicRpcProviders) && settings.ensPublicRpcProviders.length > 0
-      ? settings.ensPublicRpcProviders
-      : DEFAULT_ENS_PUBLIC_RPC_PROVIDERS;
+// Effective mainnet `rpc`-role endpoint pool from the network registry,
+// with the ETH_RPC env override prepended for dev convenience. The registry
+// resolves coverage, key substitution and removals; a user-added endpoint
+// sorts ahead of the builtin pool.
+function getEffectiveRpcEndpoints() {
+  const saved = registry.getEndpoints(1, 'rpc');
 
   const envOverride = (process.env.ETH_RPC || '').trim();
   const list = envOverride ? [envOverride, ...saved] : [...saved];
@@ -116,7 +91,7 @@ function getEffectivePublicProviders() {
 
 // Shuffled provider order, recomputed only when the effective list changes.
 function getShuffledPublicProviders() {
-  const effective = getEffectivePublicProviders();
+  const effective = getEffectiveRpcEndpoints();
   const sourceKey = effective.join('|');
   if (shuffledProviderSourceKey !== sourceKey) {
     shuffledProviderOrder = shuffleInPlace([...effective]);
@@ -166,7 +141,7 @@ function invalidateProviderPool() {
 // ---------------------------------------------------------------------------
 // Block anchor: the shared (number, hash) all quorum legs query at, so
 // honest-but-unsynced providers don't produce false conflicts. Fetched from
-// one or two providers, cached for ensBlockAnchorTtlMs (default 30s).
+// one or two providers, cached for the network's quorum.anchorTtlMs (default 30s).
 // ---------------------------------------------------------------------------
 
 let pinnedBlockCache = null; // { anchor, number, hash, expiresAt }
@@ -261,14 +236,14 @@ function deriveCorroboratedHead(heads) {
 // hash-quorum step rejects solo forgeries. No M-agreement on the hash
 // → throw rather than silently promote uncorroborated state to verified.
 async function getPinnedBlock() {
-  const settings = loadSettings();
-  const anchor = settings.ensBlockAnchor || 'latest';
-  const ttl = typeof settings.ensBlockAnchorTtlMs === 'number'
-    ? settings.ensBlockAnchorTtlMs
+  const { quorum } = registry.getNetwork(1);
+  const anchor = quorum.anchor || 'latest';
+  const ttl = typeof quorum.anchorTtlMs === 'number'
+    ? quorum.anchorTtlMs
     : 30_000;
-  const timeoutMs = Number(settings.ensQuorumTimeoutMs) || 5000;
-  const desiredK = Math.max(2, Math.min(Number(settings.ensQuorumK) || 3, 9));
-  const desiredM = Math.max(2, Math.min(Number(settings.ensQuorumM) || 2, desiredK));
+  const timeoutMs = Number(quorum.timeoutMs) || 5000;
+  const desiredK = Math.max(2, Math.min(Number(quorum.k) || 3, 9));
+  const desiredM = Math.max(2, Math.min(Number(quorum.m) || 2, desiredK));
 
   if (pinnedBlockCache
       && pinnedBlockCache.anchor === anchor
@@ -457,7 +432,7 @@ const ensReverseCache = new Map();
 async function getWorkingProvider() {
   // If the cached provider's URL no longer matches the current settings, invalidate it
   if (cachedProvider && cachedProviderUrl) {
-    const providers = getRpcProviders();
+    const providers = getEffectiveRpcEndpoints();
     if (providers[0] !== cachedProviderUrl) {
       log.info(`[ens] Settings changed, invalidating cached provider: ${cachedProviderUrl}`);
       cachedProvider.destroy();
@@ -481,7 +456,7 @@ async function getWorkingProvider() {
   }
 
   // Try each provider in sequence
-  const providers = getRpcProviders();
+  const providers = getEffectiveRpcEndpoints();
   const total = providers.length;
   for (let i = 0; i < total; i++) {
     const rpcUrl = providers[i];
@@ -527,6 +502,7 @@ function dropCachedProvider() {
 function invalidateCachedProvider() {
   dropCachedProvider();
   invalidateProviderPool();
+  registry.invalidate();
 }
 
 // Check if an error is a provider/network error that warrants retry
@@ -879,13 +855,12 @@ function classifyNoAgreement({ results }) {
 // block N lives in block N+1).
 //
 // Throws on proof-verification failure / network error / prover outage so
-// the orchestrator can fall through to the legacy quorum path when
-// ensFallbackToQuorum is enabled.
-async function tryColibriPath(name, callData, settings) {
+// the orchestrator can fall through to the always-on quorum fallback.
+async function tryColibriPath(name, callData) {
   // Lazy require avoids a load-time cycle: colibri-resolver imports
   // universalResolverCall + hostOf from this module.
   const { resolveViaColibri } = require('./ens/colibri-resolver');
-  const proverHost = colibriProverHost(settings);
+  const proverHost = colibriProverHost();
 
   let result;
   try {
@@ -923,12 +898,13 @@ async function tryColibriPath(name, callData, settings) {
   };
 }
 
-// Read the effective prover URL from settings and return its host.
+// Read the effective prover URL from the registry and return its host.
 // Lazy-requires DEFAULT_PROVER_URL to dodge the load-time cycle between
 // this module and ./ens/colibri-resolver.
-function colibriProverHost(settings) {
+function colibriProverHost() {
   const { DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
-  return hostOf((settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim());
+  const [proverUrl] = registry.getEndpoints(1, 'prover');
+  return hostOf((proverUrl || DEFAULT_PROVER_URL).trim());
 }
 
 function buildColibriTrust(proverHost) {
@@ -949,9 +925,10 @@ function buildColibriTrust(proverHost) {
 // back to the public quorum path (preserving existing graceful-degrade
 // behavior). Pinned block is fetched from the same custom RPC — we don't
 // want to send user-node requests to public RPCs behind their back.
-async function tryCustomRpcFastPath(customRpc, name, callData, settings) {
-  const anchor = settings.ensBlockAnchor || 'latest';
-  const timeoutMs = Number(settings.ensQuorumTimeoutMs) || 5000;
+async function tryCustomRpcFastPath(customRpc, name, callData) {
+  const { quorum } = registry.getNetwork(1);
+  const anchor = quorum.anchor || 'latest';
+  const timeoutMs = Number(quorum.timeoutMs) || 5000;
   let block;
   try {
     block = await fetchSingleSourceAnchor(customRpc, anchor, timeoutMs);
@@ -1029,19 +1006,19 @@ async function resolveSingleSourceUnverified(url, name, callData, anchor, timeou
 //   { outcome: 'conflict',   groups,                         trust, block }
 // Throws when there are no providers or both waves all-errored.
 async function consensusResolve(normalizedName, callData, kind = 'content', options = {}) {
-  const settings = loadSettings();
+  const network = registry.getNetwork(1);
+  const strategy = network.verification.primary;
 
   // Colibri primary: cryptographic verification via the sync committee
   // (or zk sync proof). On verification failure or network/prover error
-  // we log loudly and fall through to the legacy quorum path below
-  // unless ensFallbackToQuorum is explicitly disabled. Loud-fallback is
-  // load-bearing: a silent fall-through would hide both prover health
-  // regressions and the (rare) "active attack" signal.
-  if (settings.ensResolutionMethod === 'colibri') {
+  // we log loudly and fall through to the quorum path below — fallback to
+  // quorum is structural and always-on. Loud-fallback is load-bearing: a
+  // silent fall-through would hide both prover health regressions and the
+  // (rare) "active attack" signal.
+  if (strategy === 'colibri') {
     try {
-      return await tryColibriPath(normalizedName, callData, settings);
+      return await tryColibriPath(normalizedName, callData);
     } catch (err) {
-      if (settings.ensFallbackToQuorum === false) throw err;
       log.warn(
         `[ens] colibri-fallback name=${normalizedName} kind=${kind} ` +
         `error=${err.message}`
@@ -1049,20 +1026,22 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
     }
   }
 
-  // Custom RPC: try first, fall back to public quorum on any failure so
-  // users with a misbehaving own-node still resolve.
-  const customRpc =
-    settings.enableEnsCustomRpc && (settings.ensRpcUrl || '').trim();
-  if (customRpc) {
-    const customResult = await tryCustomRpcFastPath(customRpc, normalizedName, callData, settings);
-    if (customResult) return customResult;
+  // Direct strategy: a single trusted endpoint (typically the user's own
+  // node). Try it first, fall back to public quorum on any failure so a
+  // misbehaving own-node still resolves.
+  if (strategy === 'direct') {
+    const [directUrl] = registry.getEndpoints(1, 'rpc');
+    if (directUrl) {
+      const directResult = await tryCustomRpcFastPath(directUrl, normalizedName, callData);
+      if (directResult) return directResult;
+    }
   }
 
-  const quorumDisabled = settings.enableEnsQuorum === false;
-  const desiredK = Math.max(1, Math.min(Number(settings.ensQuorumK) || 3, 9));
-  const desiredM = Math.max(1, Math.min(Number(settings.ensQuorumM) || 2, desiredK));
-  const timeoutMs = Number(settings.ensQuorumTimeoutMs) || 5000;
-  const anchor = settings.ensBlockAnchor || 'latest';
+  const { quorum } = network;
+  const desiredK = Math.max(1, Math.min(Number(quorum.k) || 3, 9));
+  const desiredM = Math.max(1, Math.min(Number(quorum.m) || 2, desiredK));
+  const timeoutMs = Number(quorum.timeoutMs) || 5000;
+  const anchor = quorum.anchor || 'latest';
 
   const available = getAvailableProviders();
   if (available.length === 0) {
@@ -1070,18 +1049,17 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   }
 
   // Degraded single-source path. Taken when:
-  //   - user disabled quorum explicitly, OR
   //   - fewer than 3 providers are non-quarantined (not enough to tolerate
   //     one outlier via median), OR
-  //   - user configured sub-minimum K/M (K<3 or M<2). In that case the
+  //   - the network's K/M is sub-minimum (K<3 or M<2). In that case the
   //     corroborated path can't honestly produce `verified` anyway, so we
-  //     respect the user's intent and downgrade rather than hard-failing.
+  //     respect the configuration and downgrade rather than hard-failing.
   // A single liar within the drift window can bias a K=2 anchor into the
   // past; we surface the outcome as `unverified` rather than minting a
   // "verified" badge we can't defend.
   const quorumUnderpowered =
     desiredK < MIN_QUORUM_PROVIDERS || desiredM < 2;
-  if (quorumDisabled || available.length < MIN_QUORUM_PROVIDERS || quorumUnderpowered) {
+  if (available.length < MIN_QUORUM_PROVIDERS || quorumUnderpowered) {
     return resolveSingleSourceUnverified(available[0], normalizedName, callData, anchor, timeoutMs);
   }
 
@@ -1586,9 +1564,9 @@ async function resolveEnsReverse(address) {
 // renderer can surface a "verified" indicator. ReverseAddressMismatch
 // surfaces as UNVERIFIED — the proof was valid but the contract reverted,
 // which is the spoofed-reverse-record signal.
-async function tryColibriReverse(normalizedAddress, settings) {
+async function tryColibriReverse(normalizedAddress) {
   const { resolveReverseViaColibri } = require('./ens/colibri-resolver');
-  const trust = buildColibriTrust(colibriProverHost(settings));
+  const trust = buildColibriTrust(colibriProverHost());
   const addrBytes = ethers.getBytes(normalizedAddress);
 
   let name;
@@ -1616,16 +1594,15 @@ async function tryColibriReverse(normalizedAddress, settings) {
 }
 
 async function doResolveEnsReverse(normalizedAddress) {
-  const settings = loadSettings();
+  const strategy = registry.getNetwork(1).verification.primary;
 
-  if (settings.ensResolutionMethod === 'colibri') {
+  if (strategy === 'colibri') {
     try {
       return cacheReverseResult(
         normalizedAddress,
-        await tryColibriReverse(normalizedAddress, settings)
+        await tryColibriReverse(normalizedAddress)
       );
     } catch (err) {
-      if (settings.ensFallbackToQuorum === false) throw err;
       log.warn(
         `[ens] colibri-fallback reverse address=${normalizedAddress} error=${err.message}`
       );

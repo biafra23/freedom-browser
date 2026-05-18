@@ -5,7 +5,7 @@ const { ethers } = require('ethers');
 const Colibri = require('@corpus-core/colibri-stateless').default;
 const { Strategy } = require('@corpus-core/colibri-stateless');
 const log = require('../logger');
-const { loadSettings } = require('../settings-store');
+const registry = require('../networks/network-registry');
 const { universalResolverCall, universalResolverReverse, hostOf } = require('../ens-resolver');
 
 // privacy_mode 'basic' is a strict improvement (call params never sent
@@ -48,9 +48,9 @@ function createDiskStorage() {
 // first-call lookups onto a single construction — without it, two cold
 // requests would both pass the cache check and double-init the WASM.
 async function getClient() {
-  const settings = loadSettings();
-  const proverUrl = (settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim();
-  const zkProof = settings.ensColibriZkProof !== false;
+  const [registryProver] = registry.getEndpoints(CHAIN_ID, 'prover');
+  const proverUrl = (registryProver || DEFAULT_PROVER_URL).trim();
+  const zkProof = registry.getNetwork(CHAIN_ID).zkProof !== false;
   const key = `${proverUrl}|${zkProof}`;
   if (cachedClient && cachedClientKey === key) return cachedClient;
   if (inFlightBuild && inFlightBuild.key === key) return inFlightBuild.promise;

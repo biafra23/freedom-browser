@@ -118,12 +118,13 @@ function load() {
   // builtin by id), minus any the user explicitly removed.
   const removed = new Set(userConfig.removedSources || []);
   const merged = { ...builtinSources, ...(userConfig.endpointSources || {}) };
+  const userSourceIds = new Set(Object.keys(userConfig.endpointSources || {}));
   const endpointSources = {};
   for (const [id, src] of Object.entries(merged)) {
     if (!removed.has(id)) endpointSources[id] = src;
   }
 
-  cache = { networks, endpointSources, apiKeys };
+  cache = { networks, endpointSources, userSourceIds, apiKeys };
   return cache;
 }
 
@@ -142,15 +143,19 @@ function getAllNetworks() {
 
 // Endpoint source objects covering (chainId, role), raw — the {API_KEY}
 // placeholder is left intact. For settings UIs that list sources.
+// User-added sources sort ahead of builtins: an endpoint the user
+// explicitly configured is preferred over the shipped pool (and is what
+// the `direct` strategy resolves to).
 function getEndpointSources(chainId, role) {
   const cid = String(chainId);
-  const { endpointSources } = load();
+  const { endpointSources, userSourceIds } = load();
   const out = [];
   for (const [id, src] of Object.entries(endpointSources)) {
     if (src.role === role && src.coverage && src.coverage[cid]) {
       out.push({ id, ...src });
     }
   }
+  out.sort((a, b) => Number(userSourceIds.has(b.id)) - Number(userSourceIds.has(a.id)));
   return out;
 }
 
