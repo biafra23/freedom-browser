@@ -13,7 +13,7 @@ import { truncateAddress, timeAgo } from './wallet/wallet-utils.js';
 // Submodule imports
 import { initBalanceDisplay, loadChainRegistry, refreshBalances, renderAssetList, loadCachedBalances, startBalanceRefresh } from './wallet/balance-display.js';
 import { initNodeStatus } from './wallet/node-status.js';
-import { initRpcSettings, closeRpcApiKeyScreen } from './wallet/rpc-settings.js';
+import { initRpcSettings } from './wallet/rpc-settings.js';
 import { initDappConnect, showDappConnect, updateConnectionBanner } from './wallet/dapp-connect.js';
 import { initDappTx, showDappTxApproval } from './wallet/dapp-tx.js';
 import { initDappSign, showDappSignApproval } from './wallet/dapp-sign.js';
@@ -358,7 +358,6 @@ function closeAllSubscreens() {
   closeStampManager();
   closeChequebookDeposit();
   closePublisherIdentities();
-  closeRpcApiKeyScreen();
 }
 
 /**

@@ -1012,10 +1012,10 @@
                   </button>
                 </div>
 
-                <!-- RPC Providers Section -->
+                <!-- Networks & RPC — deep-links to the Networks settings page -->
                 <div class="sidebar-section">
                   <div class="sidebar-section-header">
-                    <span class="sidebar-section-title">RPC Providers</span>
+                    <span class="sidebar-section-title">Networks</span>
                   </div>
                   <div id="rpc-providers-list" class="rpc-providers-list">
                     <!-- Populated dynamically -->
@@ -1089,49 +1089,6 @@
                   </svg>
                   <span>Copy to Clipboard</span>
                 </button>
-              </div>
-            </div>
-
-            <!-- RPC API Key sub-screen -->
-            <div id="sidebar-rpc-apikey" class="sidebar-subscreen hidden">
-              <div class="subscreen-header">
-                <button type="button" class="subscreen-back-btn" id="rpc-apikey-back">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="15 18 9 12 15 6"/>
-                  </svg>
-                  <span>Back</span>
-                </button>
-                <h3 class="subscreen-title" id="rpc-apikey-title">API Key</h3>
-              </div>
-
-              <div class="subscreen-content">
-                <p class="rpc-apikey-description">
-                  Enter your API key to enable blockchain access.
-                  <a href="#" id="rpc-apikey-website-link" class="rpc-apikey-link" target="_blank">Get an API key</a>
-                </p>
-
-                <div class="rpc-apikey-form">
-                  <label class="rpc-apikey-label" for="rpc-apikey-input">API Key</label>
-                  <div class="rpc-apikey-input-group">
-                    <input type="password" id="rpc-apikey-input" class="rpc-apikey-input" placeholder="Enter API key" autocomplete="off">
-                    <button type="button" class="rpc-apikey-toggle" id="rpc-apikey-toggle" title="Show/hide">
-                      <svg class="eye-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                        <circle cx="12" cy="12" r="3"/>
-                      </svg>
-                    </button>
-                  </div>
-
-                  <button type="button" class="rpc-apikey-test-btn" id="rpc-apikey-test">
-                    <span>Test Connection</span>
-                  </button>
-                  <div class="rpc-apikey-test-status hidden" id="rpc-apikey-test-status"></div>
-                </div>
-
-                <div class="rpc-apikey-actions">
-                  <button type="button" class="rpc-apikey-cancel-btn" id="rpc-apikey-cancel">Cancel</button>
-                  <button type="button" class="rpc-apikey-save-btn" id="rpc-apikey-save">Save</button>
-                </div>
               </div>
             </div>
 
