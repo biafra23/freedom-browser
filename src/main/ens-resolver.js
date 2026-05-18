@@ -3,7 +3,6 @@ const { ipcMain } = require('electron');
 const { ethers } = require('ethers');
 const { ens_normalize } = require('@adraffy/ens-normalize');
 const IPC = require('../shared/ipc-channels');
-const { success, failure } = require('./ipc-contract');
 const registry = require('./networks/network-registry');
 const { prefetchGatewayUrl, NOOP_HANDLE: NOOP_PREFETCH } = require('./ens-prefetch');
 
@@ -1664,44 +1663,6 @@ function cacheReverseResult(normalizedAddress, result) {
   return cacheAndLog(ensReverseCache, normalizedAddress, result, result.name);
 }
 
-// Test an RPC URL by connecting and fetching the block number.
-// Note: this intentionally accepts any reachable http(s) URL — testing a
-// local node (anvil/geth on 127.0.0.1, an internal RPC, etc.) is the
-// primary use case, so we do not block private-IP or loopback ranges.
-// Access is gated upstream by the freedomAPI guard (internal pages only).
-async function testRpcUrl(url) {
-  const trimmed = (url || '').trim();
-  if (!trimmed) {
-    return failure('INVALID_URL', 'RPC URL is empty');
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return failure('INVALID_URL', 'Invalid URL format');
-  }
-
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return failure('INVALID_URL', 'URL must use http:// or https://');
-  }
-
-  let provider;
-  try {
-    provider = new ethers.JsonRpcProvider(trimmed);
-    const blockNumber = await provider.getBlockNumber();
-    log.info(`[ens] RPC test succeeded for ${trimmed}: block ${blockNumber}`);
-    return success({ blockNumber });
-  } catch (err) {
-    log.warn(`[ens] RPC test failed for ${trimmed}: ${err.message}`);
-    return failure('CONNECTION_FAILED', err.message);
-  } finally {
-    if (provider) {
-      provider.destroy();
-    }
-  }
-}
-
 function registerEnsIpc() {
   ipcMain.handle(IPC.ENS_RESOLVE, async (_event, payload = {}) => {
     const { name } = payload;
@@ -1718,10 +1679,6 @@ function registerEnsIpc() {
         error: err.message,
       };
     }
-  });
-
-  ipcMain.handle(IPC.ENS_TEST_RPC, async (_event, payload = {}) => {
-    return testRpcUrl(payload.url);
   });
 
   ipcMain.handle(IPC.ENS_RESOLVE_ADDRESS, async (_event, payload = {}) => {
@@ -1797,7 +1754,6 @@ module.exports = {
   resolveEnsContent,
   resolveEnsAddress,
   resolveEnsReverse,
-  testRpcUrl,
   invalidateCachedProvider,
   invalidateEnsContent,
   universalResolverCall,

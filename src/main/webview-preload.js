@@ -171,9 +171,6 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   // Platform / environment info needed by settings page
   getPlatform: guardInternal('getPlatform', () => ipcRenderer.invoke('window:get-platform')),
 
-  // ENS RPC test (used by settings page)
-  testEnsRpc: guardInternal('testEnsRpc', (url) => ipcRenderer.invoke('ens:test-rpc', { url })),
-
   // Network configuration (the Networks settings page + the ENS lens).
   getNetworkConfig: guardInternal('getNetworkConfig', () =>
     ipcRenderer.invoke('networks:get-config')

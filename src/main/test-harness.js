@@ -184,10 +184,6 @@ function overrideEnsIpc() {
     return { success: false, address, reason: 'TEST_MODE_NOT_IMPLEMENTED' };
   });
 
-  replaceHandler(IPC.ENS_TEST_RPC, async () => {
-    return { success: true, blockNumber: 0, latencyMs: 0 };
-  });
-
   replaceHandler(IPC.ENS_INVALIDATE_CONTENT, async () => true);
 }
 

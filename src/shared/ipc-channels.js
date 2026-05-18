@@ -37,7 +37,6 @@ module.exports = {
   ENS_RESOLVE: 'ens:resolve',
   ENS_RESOLVE_ADDRESS: 'ens:resolve-address',
   ENS_RESOLVE_REVERSE: 'ens:resolve-reverse',
-  ENS_TEST_RPC: 'ens:test-rpc',
   ENS_INVALIDATE_CONTENT: 'ens:invalidate-content',
 
   // Settings

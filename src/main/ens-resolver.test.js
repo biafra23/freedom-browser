@@ -186,7 +186,6 @@ const {
   resolveEnsContent,
   resolveEnsAddress,
   resolveEnsReverse,
-  testRpcUrl,
   invalidateCachedProvider,
   universalResolverCall,
   isResolverNotFoundError,
@@ -755,52 +754,6 @@ describe('ens-resolver', () => {
 
       // Second call hits the cache keyed on lowercase form.
       expect(mockUrReverse).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('testRpcUrl', () => {
-    test('returns success for working RPC endpoint', async () => {
-      const result = await testRpcUrl('http://localhost:8545');
-      expect(result.success).toBe(true);
-      expect(result.blockNumber).toBe(12345678);
-    });
-
-    test('returns failure for empty URL', async () => {
-      const result = await testRpcUrl('');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('INVALID_URL');
-    });
-
-    test('returns failure for invalid URL format', async () => {
-      const result = await testRpcUrl('not-a-url');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('INVALID_URL');
-    });
-
-    test('returns failure for non-http URL', async () => {
-      const result = await testRpcUrl('ftp://localhost:8545');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('INVALID_URL');
-      expect(result.error.message).toContain('http');
-    });
-
-    test('returns failure when connection fails', async () => {
-      mockGetBlockNumber.mockRejectedValue(new Error('ECONNREFUSED'));
-
-      const result = await testRpcUrl('http://localhost:9999');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('CONNECTION_FAILED');
-    });
-
-    test('destroys provider after test', async () => {
-      await testRpcUrl('http://localhost:8545');
-      expect(mockDestroy).toHaveBeenCalled();
-    });
-
-    test('destroys provider even on failure', async () => {
-      mockGetBlockNumber.mockRejectedValue(new Error('fail'));
-      await testRpcUrl('http://localhost:8545');
-      expect(mockDestroy).toHaveBeenCalled();
     });
   });
 
