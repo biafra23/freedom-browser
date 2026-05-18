@@ -174,6 +174,32 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   // ENS RPC test (used by settings page)
   testEnsRpc: guardInternal('testEnsRpc', (url) => ipcRenderer.invoke('ens:test-rpc', { url })),
 
+  // Network configuration (the Networks settings page + the ENS lens).
+  getNetworkConfig: guardInternal('getNetworkConfig', () =>
+    ipcRenderer.invoke('networks:get-config')
+  ),
+  updateNetwork: guardInternal('updateNetwork', (chainId, patch) =>
+    ipcRenderer.invoke('networks:update-network', chainId, patch)
+  ),
+  upsertEndpointSource: guardInternal('upsertEndpointSource', (id, source) =>
+    ipcRenderer.invoke('networks:upsert-source', id, source)
+  ),
+  removeEndpointSource: guardInternal('removeEndpointSource', (id) =>
+    ipcRenderer.invoke('networks:remove-source', id)
+  ),
+  restoreEndpointSource: guardInternal('restoreEndpointSource', (id) =>
+    ipcRenderer.invoke('networks:restore-source', id)
+  ),
+  setNetworkApiKey: guardInternal('setNetworkApiKey', (providerId, apiKey) =>
+    ipcRenderer.invoke('networks:set-api-key', providerId, apiKey)
+  ),
+  removeNetworkApiKey: guardInternal('removeNetworkApiKey', (providerId) =>
+    ipcRenderer.invoke('networks:remove-api-key', providerId)
+  ),
+  testNetworkApiKey: guardInternal('testNetworkApiKey', (providerId, apiKey) =>
+    ipcRenderer.invoke('networks:test-api-key', providerId, apiKey)
+  ),
+
   // Service registry snapshot (read-only).
   getServiceRegistry: guardInternal('getServiceRegistry', () =>
     ipcRenderer.invoke('service-registry:get')

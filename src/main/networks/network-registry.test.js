@@ -157,6 +157,27 @@ describe('getKeyedSources', () => {
   });
 });
 
+describe('getEndpointSourceList', () => {
+  test('lists every source tagged with role/keyed/builtin', () => {
+    const byId = Object.fromEntries(registry.getEndpointSourceList().map((s) => [s.id, s]));
+    expect(byId['eth-public']).toMatchObject({ role: 'rpc', keyed: false, builtin: true, removed: false });
+    expect(byId['colibri-corpus']).toMatchObject({ role: 'prover', builtin: true });
+    expect(byId['alchemy']).toMatchObject({ keyed: true, builtin: true });
+  });
+
+  test('removed builtins and user-added sources are tagged', () => {
+    setFiles({
+      userConfig: {
+        removedSources: ['eth-public'],
+        endpointSources: { u1: { role: 'rpc', keyed: false, coverage: { '1': 'http://u1.example' } } },
+      },
+    });
+    const byId = Object.fromEntries(registry.getEndpointSourceList().map((s) => [s.id, s]));
+    expect(byId['eth-public'].removed).toBe(true);
+    expect(byId['u1']).toMatchObject({ builtin: false, removed: false });
+  });
+});
+
 describe('user config layer', () => {
   test('per-network verification override is applied', () => {
     setFiles({ userConfig: { networks: { '1': { verification: { primary: 'quorum' } } } } });

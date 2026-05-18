@@ -87,6 +87,7 @@ const { registerQuickUnlockIpc } = require('./quick-unlock');
 const { registerWalletIpc } = require('./wallet/wallet-ipc');
 const { registerChainRegistryIpc } = require('./chain-registry');
 const { registerRpcManagerIpc } = require('./wallet/rpc-manager');
+const { registerNetworkConfigIpc } = require('./networks/network-ipc');
 const { registerDappPermissionsIpc } = require('./wallet/dapp-permissions');
 const { registerSwarmIpc } = require('./swarm/stamp-service');
 const { registerPublishIpc } = require('./swarm/publish-service');
@@ -148,6 +149,7 @@ async function bootstrap() {
   registerWalletIpc();
   registerChainRegistryIpc();
   registerRpcManagerIpc();
+  registerNetworkConfigIpc();
   registerDappPermissionsIpc();
   registerSwarmIpc();
   registerPublishIpc();

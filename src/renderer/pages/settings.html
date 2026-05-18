@@ -436,6 +436,16 @@
             </svg>
             Startup
           </button>
+          <button type="button" class="nav-item" data-target="networks">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="5" r="3"></circle>
+              <circle cx="5" cy="19" r="3"></circle>
+              <circle cx="19" cy="19" r="3"></circle>
+              <line x1="11" y1="7.5" x2="6" y2="16.5"></line>
+              <line x1="13" y1="7.5" x2="18" y2="16.5"></line>
+            </svg>
+            Networks
+          </button>
           <button type="button" class="nav-item" data-target="ethereum">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="12 2 4 12 12 16 20 12 12 2"></polygon>
@@ -508,6 +518,31 @@
                   <span class="slider"></span>
                 </label>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Networks -->
+        <section class="section" id="networks">
+          <h2 class="section-title">Networks</h2>
+          <p class="row-help" style="margin-bottom: 16px">
+            The chains Freedom resolves names and balances on, and the RPC /
+            prover endpoints behind them. Each network picks a verification
+            strategy; endpoint sources supply the URLs it uses.
+          </p>
+          <div id="networks-list"></div>
+
+          <h2 class="section-title" style="margin-top: 32px">Endpoint sources</h2>
+          <p class="row-help" style="margin-bottom: 16px">
+            RPC and prover endpoints grouped by chain. Disable a built-in
+            source to stop using it, add your own node, or configure an API
+            key for a keyed provider.
+          </p>
+          <div id="endpoint-sources"></div>
+          <div class="card">
+            <div class="rpc-block" style="border-top: none">
+              <button type="button" id="endpoint-add" class="btn">+ Add endpoint</button>
+              <p id="networks-status" class="rpc-status"></p>
             </div>
           </div>
         </section>
@@ -1355,6 +1390,338 @@
         } catch {
           setEnsRpcStatus('Failed to load settings', 'error');
         }
+      })();
+
+      // ── Networks settings page ──────────────────────────────────────
+      // Self-contained controller for the #networks section. Talks to the
+      // network registry via freedomAPI's networks:* bridge; independent
+      // of the settings.json-backed form above. Every mutation re-fetches
+      // the config and re-renders, so the view always mirrors the registry.
+      (() => {
+        const section = $('networks');
+        const networksList = $('networks-list');
+        const sourcesList = $('endpoint-sources');
+        const addBtn = $('endpoint-add');
+        const statusEl = $('networks-status');
+        if (!section || !networksList || !sourcesList) return;
+
+        const STRATEGIES = [
+          ['colibri', 'Colibri (cryptographic verification)'],
+          ['quorum', 'Public-RPC quorum (cross-check)'],
+          ['direct', 'Direct (single trusted endpoint)'],
+        ];
+        const ANCHORS = ['latest', 'latest-32', 'finalized'];
+        const QUORUM_FIELDS = [
+          ['k', 'Providers per wave (K)', 1, 9],
+          ['m', 'Agreement threshold (M)', 1, 9],
+          ['timeoutMs', 'Per-call timeout (ms)', 500, 30000],
+          ['anchorTtlMs', 'Anchor cache TTL (ms)', 1000, 600000],
+        ];
+
+        const esc = (s) =>
+          String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+        let config = { networks: {}, sources: [] };
+        let endpointForm = null; // null | { mode, id, url, chainId, role }
+        let keyFor = null;       // null | providerId being edited
+
+        const setStatus = (msg, kind) => {
+          if (!statusEl) return;
+          statusEl.textContent = msg || '';
+          statusEl.className = 'rpc-status' + (kind ? ' ' + kind : '');
+        };
+
+        const chainIdsSorted = () =>
+          Object.keys(config.networks).sort((a, b) => Number(a) - Number(b));
+        const chainName = (cid) => config.networks[cid]?.name || ('chain ' + cid);
+
+        const renderNetworks = () => {
+          networksList.innerHTML = chainIdsSorted().map((cid) => {
+            const net = config.networks[cid] || {};
+            const primary = net.verification?.primary || 'direct';
+            const q = net.quorum || {};
+            const opts = STRATEGIES.map(([v, label]) =>
+              `<option value="${v}"${v === primary ? ' selected' : ''}>${esc(label)}</option>`
+            ).join('');
+
+            let extra = '';
+            if (primary === 'colibri') {
+              extra = `
+                <div class="row sub">
+                  <div class="row-body"><p class="row-label">ZK consensus proof</p></div>
+                  <div class="row-control">
+                    <label class="toggle">
+                      <input type="checkbox" data-net="${cid}" data-action="set-zkproof"${net.zkProof !== false ? ' checked' : ''} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>`;
+            } else if (primary === 'quorum') {
+              const numRows = QUORUM_FIELDS.map(([key, label, min, max]) => `
+                <div class="row sub">
+                  <div class="row-body"><p class="row-label">${esc(label)}</p></div>
+                  <div class="row-control">
+                    <input type="number" class="rpc-input" style="max-width: 110px"
+                           data-net="${cid}" data-action="set-quorum" data-key="${key}"
+                           min="${min}" max="${max}" value="${esc(q[key] ?? '')}" />
+                  </div>
+                </div>`).join('');
+              const anchorOpts = ANCHORS.map((a) =>
+                `<option value="${a}"${(q.anchor || 'latest') === a ? ' selected' : ''}>${a}</option>`
+              ).join('');
+              extra = numRows + `
+                <div class="row sub">
+                  <div class="row-body"><p class="row-label">Block anchor</p></div>
+                  <div class="row-control">
+                    <select class="rpc-input" style="max-width: 140px" data-net="${cid}" data-action="set-anchor">${anchorOpts}</select>
+                  </div>
+                </div>`;
+            }
+
+            return `
+              <div class="card" style="margin-bottom: 12px">
+                <div class="row">
+                  <div class="row-body">
+                    <p class="row-label">${esc(net.name || ('Chain ' + cid))}</p>
+                    <p class="row-help">chain ${esc(cid)}</p>
+                  </div>
+                  <div class="row-control">
+                    <select data-net="${cid}" data-action="set-verification">${opts}</select>
+                  </div>
+                </div>
+                ${extra}
+              </div>`;
+          }).join('');
+        };
+
+        const sourceRow = (src, cid) => {
+          const url = src.coverage
+            ? (cid ? src.coverage[cid] : Object.values(src.coverage)[0]) || ''
+            : '';
+          const meta = [src.role === 'prover' ? 'prover' : 'RPC', src.builtin ? 'built-in' : 'custom'];
+          if (src.keyed) meta.push(src.hasKey ? 'API key set' : 'no API key');
+          if (src.removed) meta.push('disabled');
+
+          let controls;
+          if (src.keyed && keyFor === src.id) {
+            return `
+              <div class="row">
+                <div class="row-body" style="flex: 1">
+                  <p class="row-label">${esc(src.name || src.id)}</p>
+                  <div class="rpc-row" style="margin-top: 8px">
+                    <input type="password" class="rpc-input" id="keyinput-${esc(src.id)}" placeholder="API key" spellcheck="false" />
+                    <button type="button" class="btn" data-action="test-key" data-id="${esc(src.id)}">Test</button>
+                    <button type="button" class="btn" data-action="save-key" data-id="${esc(src.id)}">Save</button>
+                    <button type="button" class="btn" data-action="cancel-key">Cancel</button>
+                  </div>
+                  <p class="rpc-status" id="keystatus-${esc(src.id)}"></p>
+                </div>
+              </div>`;
+          }
+          if (src.keyed) {
+            controls = src.hasKey
+              ? `<button type="button" class="btn" data-action="edit-key" data-id="${esc(src.id)}">Edit key</button>
+                 <button type="button" class="btn" data-action="remove-key" data-id="${esc(src.id)}">Remove</button>`
+              : `<button type="button" class="btn" data-action="edit-key" data-id="${esc(src.id)}">Add key</button>`;
+          } else if (src.builtin) {
+            controls = `<label class="toggle">
+                <input type="checkbox" data-action="toggle-source" data-id="${esc(src.id)}"${src.removed ? '' : ' checked'} />
+                <span class="slider"></span></label>`;
+          } else {
+            controls = `<button type="button" class="btn" data-action="edit-source" data-id="${esc(src.id)}">Edit</button>
+               <button type="button" class="btn" data-action="delete-source" data-id="${esc(src.id)}" title="Remove" aria-label="Remove">✕</button>`;
+          }
+
+          const labelStyle = src.keyed ? '' : ' style="font-family: ui-monospace, Menlo, monospace; font-size: 13px"';
+          return `
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label"${labelStyle}>${esc(src.keyed ? (src.name || src.id) : url)}</p>
+                <p class="row-help">${esc(meta.join(' · '))}</p>
+              </div>
+              <div class="row-control">${controls}</div>
+            </div>`;
+        };
+
+        const endpointFormHtml = () => {
+          const f = endpointForm;
+          const chainOpts = chainIdsSorted().map((cid) =>
+            `<option value="${cid}"${String(f.chainId) === cid ? ' selected' : ''}>${esc(chainName(cid))}</option>`
+          ).join('');
+          return `
+            <div class="card" style="margin-top: 16px">
+              <div class="rpc-block" style="border-top: none">
+                <p class="row-label" style="margin-bottom: 8px">${f.mode === 'edit' ? 'Edit endpoint' : 'Add endpoint'}</p>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <input type="text" class="rpc-input" id="ep-url" placeholder="https://..." spellcheck="false" value="${esc(f.url)}" />
+                </div>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <select class="rpc-input" id="ep-chain" style="max-width: 200px">${chainOpts}</select>
+                  <select class="rpc-input" id="ep-role" style="max-width: 140px">
+                    <option value="rpc"${f.role === 'rpc' ? ' selected' : ''}>RPC</option>
+                    <option value="prover"${f.role === 'prover' ? ' selected' : ''}>Prover</option>
+                  </select>
+                </div>
+                <button type="button" class="btn" data-action="save-endpoint">Save</button>
+                <button type="button" class="btn" data-action="cancel-endpoint" style="margin-left: 8px">Cancel</button>
+              </div>
+            </div>`;
+        };
+
+        const renderSources = () => {
+          const keyless = config.sources.filter((s) => !s.keyed);
+          const keyed = config.sources.filter((s) => s.keyed);
+          let html = '';
+          for (const cid of chainIdsSorted()) {
+            const rows = keyless.filter((s) => s.coverage && s.coverage[cid]);
+            if (rows.length === 0) continue;
+            html += `<h3 class="section-title" style="font-size: 14px; margin: 18px 0 8px">${esc(chainName(cid))}</h3>`;
+            html += `<div class="card">${rows.map((s) => sourceRow(s, cid)).join('')}</div>`;
+          }
+          if (keyed.length) {
+            html += `<h3 class="section-title" style="font-size: 14px; margin: 18px 0 8px">Keyed providers</h3>`;
+            html += `<div class="card">${keyed.map((s) => sourceRow(s, null)).join('')}</div>`;
+          }
+          if (endpointForm) html += endpointFormHtml();
+          sourcesList.innerHTML = html;
+        };
+
+        const render = () => {
+          renderNetworks();
+          renderSources();
+        };
+
+        const reload = async () => {
+          try {
+            const res = await freedomAPI.getNetworkConfig();
+            if (!res || !res.success) {
+              setStatus('Failed to load network configuration', 'error');
+              return;
+            }
+            config = { networks: res.networks || {}, sources: res.sources || [] };
+            render();
+          } catch {
+            setStatus('Failed to load network configuration', 'error');
+          }
+        };
+
+        // Run a mutation, then re-fetch + re-render so the view is authoritative.
+        const mutate = async (fn) => {
+          try {
+            const res = await fn();
+            if (res && res.success === false) {
+              setStatus(res.error || 'Change failed', 'error');
+              return;
+            }
+            setStatus('', '');
+          } catch (err) {
+            setStatus(err?.message || 'Change failed', 'error');
+          }
+          await reload();
+        };
+
+        addBtn?.addEventListener('click', () => {
+          endpointForm = { mode: 'add', id: null, url: '', chainId: chainIdsSorted()[0] || '1', role: 'rpc' };
+          render();
+          $('ep-url')?.focus();
+        });
+
+        section.addEventListener('change', (e) => {
+          const el = e.target.closest('[data-action]');
+          if (!el) return;
+          const cid = el.dataset.net;
+          if (el.dataset.action === 'set-verification') {
+            mutate(() => freedomAPI.updateNetwork(cid, { verification: { primary: el.value } }));
+          } else if (el.dataset.action === 'set-zkproof') {
+            mutate(() => freedomAPI.updateNetwork(cid, { zkProof: el.checked }));
+          } else if (el.dataset.action === 'set-anchor') {
+            mutate(() => freedomAPI.updateNetwork(cid, { quorum: { anchor: el.value } }));
+          } else if (el.dataset.action === 'set-quorum') {
+            const field = QUORUM_FIELDS.find(([k]) => k === el.dataset.key);
+            const n = Number(el.value);
+            if (field && el.value !== '' && Number.isFinite(n)) {
+              const clamped = Math.min(field[3], Math.max(field[2], n));
+              el.value = String(clamped);
+              mutate(() => freedomAPI.updateNetwork(cid, { quorum: { [el.dataset.key]: clamped } }));
+            }
+          } else if (el.dataset.action === 'toggle-source') {
+            const id = el.dataset.id;
+            mutate(() => el.checked
+              ? freedomAPI.restoreEndpointSource(id)
+              : freedomAPI.removeEndpointSource(id));
+          }
+        });
+
+        section.addEventListener('click', async (e) => {
+          const btn = e.target.closest('button[data-action]');
+          if (!btn) return;
+          const action = btn.dataset.action;
+          const id = btn.dataset.id;
+
+          if (action === 'delete-source') {
+            await mutate(() => freedomAPI.removeEndpointSource(id));
+          } else if (action === 'edit-source') {
+            const src = config.sources.find((s) => s.id === id);
+            if (src) {
+              const cid = Object.keys(src.coverage || {})[0] || chainIdsSorted()[0];
+              endpointForm = {
+                mode: 'edit', id, role: src.role || 'rpc', chainId: cid,
+                url: (src.coverage && src.coverage[cid]) || '',
+              };
+              render();
+            }
+          } else if (action === 'edit-key') {
+            keyFor = id;
+            render();
+            $('keyinput-' + id)?.focus();
+          } else if (action === 'cancel-key') {
+            keyFor = null;
+            render();
+          } else if (action === 'remove-key') {
+            await mutate(() => freedomAPI.removeNetworkApiKey(id));
+          } else if (action === 'test-key') {
+            const key = ($('keyinput-' + id)?.value || '').trim();
+            const statusLine = $('keystatus-' + id);
+            if (!key) { if (statusLine) { statusLine.textContent = 'Enter a key to test'; statusLine.className = 'rpc-status error'; } return; }
+            if (statusLine) { statusLine.textContent = 'testing…'; statusLine.className = 'rpc-status testing'; }
+            try {
+              const r = await freedomAPI.testNetworkApiKey(id, key);
+              if (statusLine) {
+                statusLine.textContent = r?.success ? 'Key works' : (r?.error || 'Key test failed');
+                statusLine.className = 'rpc-status ' + (r?.success ? 'success' : 'error');
+              }
+            } catch (err) {
+              if (statusLine) { statusLine.textContent = err?.message || 'Key test failed'; statusLine.className = 'rpc-status error'; }
+            }
+          } else if (action === 'save-key') {
+            const key = ($('keyinput-' + id)?.value || '').trim();
+            if (!key) {
+              const statusLine = $('keystatus-' + id);
+              if (statusLine) { statusLine.textContent = 'Enter a key'; statusLine.className = 'rpc-status error'; }
+              return;
+            }
+            keyFor = null;
+            await mutate(() => freedomAPI.setNetworkApiKey(id, key));
+          } else if (action === 'cancel-endpoint') {
+            endpointForm = null;
+            render();
+          } else if (action === 'save-endpoint') {
+            const url = ($('ep-url')?.value || '').trim();
+            const chainId = $('ep-chain')?.value;
+            const role = $('ep-role')?.value || 'rpc';
+            if (!url) { setStatus('Enter an endpoint URL', 'error'); return; }
+            const sourceId = endpointForm?.mode === 'edit' && endpointForm.id
+              ? endpointForm.id
+              : 'user-' + Date.now();
+            endpointForm = null;
+            await mutate(() => freedomAPI.upsertEndpointSource(sourceId, {
+              role, keyed: false, coverage: { [chainId]: url },
+            }));
+          }
+        });
+
+        reload();
       })();
     </script>
   </body>

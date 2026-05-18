@@ -115,16 +115,18 @@ function load() {
   }
 
   // Endpoint sources: builtin, then user-added (which may override a
-  // builtin by id), minus any the user explicitly removed.
-  const removed = new Set(userConfig.removedSources || []);
-  const merged = { ...builtinSources, ...(userConfig.endpointSources || {}) };
+  // builtin by id). allSources keeps removed entries — the config view
+  // lists them as disabled; endpointSources is the active set queries
+  // resolve against (removed entries filtered out).
+  const removedSourceIds = new Set(userConfig.removedSources || []);
   const userSourceIds = new Set(Object.keys(userConfig.endpointSources || {}));
+  const allSources = { ...builtinSources, ...(userConfig.endpointSources || {}) };
   const endpointSources = {};
-  for (const [id, src] of Object.entries(merged)) {
-    if (!removed.has(id)) endpointSources[id] = src;
+  for (const [id, src] of Object.entries(allSources)) {
+    if (!removedSourceIds.has(id)) endpointSources[id] = src;
   }
 
-  cache = { networks, endpointSources, userSourceIds, apiKeys };
+  cache = { networks, endpointSources, allSources, userSourceIds, removedSourceIds, apiKeys };
   return cache;
 }
 
@@ -178,6 +180,22 @@ function getEndpoints(chainId, role) {
     }
   }
   return out;
+}
+
+// Every endpoint source (builtin + user, including removed ones) flattened
+// for the settings UI. Each entry is tagged builtin/removed so the config
+// view can render disabled builtins and editable user sources.
+function getEndpointSourceList() {
+  const { allSources, userSourceIds, removedSourceIds } = load();
+  return Object.entries(allSources).map(([id, src]) => ({
+    id,
+    role: src.role,
+    keyed: !!src.keyed,
+    name: src.name || null,
+    coverage: src.coverage || {},
+    builtin: !userSourceIds.has(id),
+    removed: removedSourceIds.has(id),
+  }));
 }
 
 // Keyed endpoint sources of a role, as an { id: source } catalog — the
@@ -276,6 +294,7 @@ module.exports = {
   getAllNetworks,
   getEndpoints,
   getEndpointSources,
+  getEndpointSourceList,
   getKeyedSources,
   updateNetwork,
   upsertEndpointSource,
