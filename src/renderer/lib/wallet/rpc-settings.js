@@ -21,6 +21,6 @@ export function initRpcSettings() {
 
   const btn = document.getElementById('rpc-open-providers');
   if (btn) {
-    btn.addEventListener('click', () => createTab('freedom://settings/providers'));
+    btn.addEventListener('click', () => createTab('freedom://settings/rpc'));
   }
 }

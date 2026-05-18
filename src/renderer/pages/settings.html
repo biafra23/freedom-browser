@@ -500,7 +500,7 @@
             </svg>
             Startup
           </button>
-          <button type="button" class="nav-item" data-target="networks">
+          <button type="button" class="nav-item" data-target="chains">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="5" r="3"></circle>
               <circle cx="5" cy="19" r="3"></circle>
@@ -510,13 +510,13 @@
             </svg>
             Chains
           </button>
-          <button type="button" class="nav-item" data-target="providers">
+          <button type="button" class="nav-item" data-target="rpc">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
             </svg>
             RPC Providers
           </button>
-          <button type="button" class="nav-item" data-target="ethereum">
+          <button type="button" class="nav-item" data-target="ens">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="12 2 4 12 12 16 20 12 12 2"></polygon>
               <polygon points="4 14 12 22 20 14 12 18 4 14"></polygon>
@@ -592,25 +592,25 @@
           </div>
         </section>
 
-        <!-- Networks -->
-        <section class="section" id="networks">
-          <div id="networks-view"></div>
-          <p id="networks-status" class="rpc-status"></p>
+        <!-- Chains -->
+        <section class="section" id="chains">
+          <div id="chains-view"></div>
+          <p id="chains-status" class="rpc-status"></p>
         </section>
 
         <!-- RPC Providers -->
-        <section class="section" id="providers">
-          <div id="providers-view"></div>
-          <p id="providers-status" class="rpc-status"></p>
+        <section class="section" id="rpc">
+          <div id="rpc-view"></div>
+          <p id="rpc-status" class="rpc-status"></p>
         </section>
 
         <!-- ENS Resolution — a focused lens on the Ethereum network -->
-        <section class="section" id="ethereum">
+        <section class="section" id="ens">
           <h2 class="section-title">ENS Resolution</h2>
           <p class="row-help" style="margin-bottom: 16px">
             How Freedom resolves <code>.eth</code> and <code>.box</code> names. ENS lives on
             Ethereum — manage its RPC endpoints under
-            <a href="#networks">Chains settings</a>.
+            <a href="#chains">Chains settings</a>.
           </p>
           <div class="card">
             <div class="row">
@@ -755,7 +755,7 @@
       const DEFAULT_SECTION = SECTIONS[0] || 'appearance';
 
       // The section is the part before any `/` sub-route, so a deep link
-      // like #networks/1 (a chain detail) still resolves to `networks`.
+      // like #chains/1 (a chain detail) still resolves to `chains`.
       const resolveSection = (hash) => {
         const candidate = (hash || '').replace(/^#/, '').toLowerCase().split('/')[0];
         return SECTIONS.includes(candidate) ? candidate : DEFAULT_SECTION;
@@ -794,7 +794,7 @@
       // keeps this out of the back/forward stack.
       const initialSection = resolveSection(location.hash);
       const initialRawHash = location.hash.replace(/^#/, '').toLowerCase();
-      // A bare section or one of its sub-routes (e.g. networks/1) is canonical.
+      // A bare section or one of its sub-routes (e.g. chains/1) is canonical.
       const initialHashIsCanonical =
         initialRawHash === initialSection || initialRawHash.startsWith(initialSection + '/');
       if (!initialHashIsCanonical) {
@@ -983,17 +983,17 @@
         }
       })();
 
-      // ── Networks settings page ──────────────────────────────────────
-      // Master-detail controller for the #networks section: a list of
+      // ── Chains settings page ────────────────────────────────────────
+      // Master-detail controller for the #chains section: a list of
       // chains, each drilling into a per-chain detail view of that chain's
-      // endpoint sources. Hash-routed — #networks is the list,
-      // #networks/<chainId> a detail. Talks to the registry via
+      // endpoint sources. Hash-routed — #chains is the list,
+      // #chains/<chainId> a detail. Talks to the registry via
       // freedomAPI's networks:* bridge; every mutation re-fetches and
       // re-renders so the view mirrors the registry.
       (() => {
-        const section = $('networks');
-        const view = $('networks-view');
-        const statusEl = $('networks-status');
+        const section = $('chains');
+        const view = $('chains-view');
+        const statusEl = $('chains-status');
         if (!section || !view) return;
 
         const esc = (s) =>
@@ -1016,7 +1016,7 @@
         // The chain whose detail is open, parsed from the hash; null = list.
         const openChainId = () => {
           const parts = location.hash.replace(/^#/, '').toLowerCase().split('/');
-          return parts[0] === 'networks' && parts[1] ? parts[1] : null;
+          return parts[0] === 'chains' && parts[1] ? parts[1] : null;
         };
 
         // --- master: chain list --------------------------------------
@@ -1163,9 +1163,9 @@
           const id = btn.dataset.id;
 
           if (action === 'open-chain') {
-            location.hash = 'networks/' + btn.dataset.chain;
+            location.hash = 'chains/' + btn.dataset.chain;
           } else if (action === 'back') {
-            location.hash = 'networks';
+            location.hash = 'chains';
           } else if (action === 'add-endpoint') {
             endpointForm = { mode: 'add', id: null, url: '' };
             render();
@@ -1205,7 +1205,7 @@
         // (config may have changed elsewhere). The transient add/edit form
         // is cleared on any navigation.
         window.addEventListener('hashchange', () => {
-          if (resolveSection(location.hash) !== 'networks') return;
+          if (resolveSection(location.hash) !== 'chains') return;
           endpointForm = null;
           render();  // instant list<->detail swap from cached config
           reload();  // then re-sync in case it changed elsewhere
@@ -1215,7 +1215,7 @@
       })();
 
       // ── ENS Resolution lens ─────────────────────────────────────────
-      // A focused view of the Ethereum (chain 1) network for the #ethereum
+      // A focused view of the Ethereum (chain 1) network for the #ens
       // section: the verification strategy and, for Colibri, the prover.
       // RPC endpoints live under Chains settings.
       (() => {
@@ -1291,7 +1291,7 @@
         // Re-sync on navigation into this section — values may have been
         // changed from the Chains page in the same session.
         window.addEventListener('hashchange', () => {
-          if (location.hash.replace(/^#/, '').toLowerCase() === 'ethereum') refresh();
+          if (location.hash.replace(/^#/, '').toLowerCase() === 'ens') refresh();
         });
 
         refresh();
@@ -1299,13 +1299,13 @@
 
       // ── RPC Providers page ──────────────────────────────────────────
       // Commercial RPC providers (Alchemy / Infura / DRPC) and their API
-      // keys, for the #providers section. A keyed provider's API key is
+      // keys, for the #rpc section. A keyed provider's API key is
       // one credential across every chain that provider serves, so it
       // belongs here rather than per-chain.
       (() => {
-        const section = $('providers');
-        const view = $('providers-view');
-        const statusEl = $('providers-status');
+        const section = $('rpc');
+        const view = $('rpc-view');
+        const statusEl = $('rpc-status');
         if (!section || !view) return;
 
         const esc = (s) =>
@@ -1445,7 +1445,7 @@
 
         // Re-sync on navigation into this section.
         window.addEventListener('hashchange', () => {
-          if (resolveSection(location.hash) !== 'providers') return;
+          if (resolveSection(location.hash) !== 'rpc') return;
           keyFor = null;
           reload();
         });
