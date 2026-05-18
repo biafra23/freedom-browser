@@ -95,6 +95,36 @@ function registerNetworkConfigIpc() {
     }
   });
 
+  // The chain set — the wallet and dapp provider read chains from here.
+  ipcMain.handle('networks:get-chains', () => {
+    return { success: true, chains: registry.getAllNetworks() };
+  });
+
+  ipcMain.handle('networks:get-chain', (_event, chainId) => {
+    const chain = registry.getNetwork(chainId);
+    return chain ? { success: true, chain } : { success: false, error: 'Chain not found' };
+  });
+
+  ipcMain.handle('networks:get-available-chains', () => {
+    return { success: true, chains: registry.getAvailableChains() };
+  });
+
+  ipcMain.handle('networks:is-chain-available', (_event, chainId) => {
+    return { success: true, available: registry.isChainAvailable(chainId) };
+  });
+
+  ipcMain.handle('networks:add-chain', (_event, chain) => {
+    const result = registry.addCustomChain(chain);
+    if (result.success) refreshDownstream();
+    return result;
+  });
+
+  ipcMain.handle('networks:remove-chain', (_event, chainId) => {
+    const result = registry.removeCustomChain(chainId);
+    if (result.success) refreshDownstream();
+    return result;
+  });
+
   console.log('[NetworkConfig] IPC handlers registered');
 }
 

@@ -338,17 +338,20 @@ contextBridge.exposeInMainWorld('swarmNode', {
   getUploadStatus: (tagUid) => ipcRenderer.invoke('swarm:get-upload-status', tagUid),
 });
 
-contextBridge.exposeInMainWorld('chainRegistry', {
-  getChains: () => ipcRenderer.invoke('chain-registry:get-chains'),
-  getTokens: (chainId) => ipcRenderer.invoke('chain-registry:get-tokens', chainId),
-  getChain: (chainId) => ipcRenderer.invoke('chain-registry:get-chain', chainId),
-  getToken: (key) => ipcRenderer.invoke('chain-registry:get-token', key),
-  addChain: (chain) => ipcRenderer.invoke('chain-registry:add-chain', chain),
-  addToken: (token) => ipcRenderer.invoke('chain-registry:add-token', token),
-  removeChain: (chainId) => ipcRenderer.invoke('chain-registry:remove-chain', chainId),
-  removeToken: (key) => ipcRenderer.invoke('chain-registry:remove-token', key),
-  getAvailableChains: () => ipcRenderer.invoke('chain-registry:get-available-chains'),
-  isChainAvailable: (chainId) => ipcRenderer.invoke('chain-registry:is-chain-available', chainId),
+contextBridge.exposeInMainWorld('networks', {
+  getChains: () => ipcRenderer.invoke('networks:get-chains'),
+  getChain: (chainId) => ipcRenderer.invoke('networks:get-chain', chainId),
+  getAvailableChains: () => ipcRenderer.invoke('networks:get-available-chains'),
+  isChainAvailable: (chainId) => ipcRenderer.invoke('networks:is-chain-available', chainId),
+  addChain: (chain) => ipcRenderer.invoke('networks:add-chain', chain),
+  removeChain: (chainId) => ipcRenderer.invoke('networks:remove-chain', chainId),
+});
+
+contextBridge.exposeInMainWorld('tokens', {
+  getTokens: (chainId) => ipcRenderer.invoke('tokens:get-tokens', chainId),
+  getToken: (key) => ipcRenderer.invoke('tokens:get-token', key),
+  addToken: (token) => ipcRenderer.invoke('tokens:add-token', token),
+  removeToken: (key) => ipcRenderer.invoke('tokens:remove-token', key),
 });
 
 contextBridge.exposeInMainWorld('rpcManager', {

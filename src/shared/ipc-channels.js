@@ -132,15 +132,19 @@ module.exports = {
   IDENTITY_DELETE_VAULT: 'identity:delete-vault',
   IDENTITY_VALIDATE_MNEMONIC: 'identity:validate-mnemonic',
 
-  // Chain Registry
-  CHAIN_REGISTRY_GET_CHAINS: 'chain-registry:get-chains',
-  CHAIN_REGISTRY_GET_TOKENS: 'chain-registry:get-tokens',
-  CHAIN_REGISTRY_GET_CHAIN: 'chain-registry:get-chain',
-  CHAIN_REGISTRY_GET_TOKEN: 'chain-registry:get-token',
-  CHAIN_REGISTRY_ADD_CHAIN: 'chain-registry:add-chain',
-  CHAIN_REGISTRY_ADD_TOKEN: 'chain-registry:add-token',
-  CHAIN_REGISTRY_REMOVE_CHAIN: 'chain-registry:remove-chain',
-  CHAIN_REGISTRY_REMOVE_TOKEN: 'chain-registry:remove-token',
+  // Chains — served by the network registry
+  NETWORKS_GET_CHAINS: 'networks:get-chains',
+  NETWORKS_GET_CHAIN: 'networks:get-chain',
+  NETWORKS_GET_AVAILABLE_CHAINS: 'networks:get-available-chains',
+  NETWORKS_IS_CHAIN_AVAILABLE: 'networks:is-chain-available',
+  NETWORKS_ADD_CHAIN: 'networks:add-chain',
+  NETWORKS_REMOVE_CHAIN: 'networks:remove-chain',
+
+  // Tokens
+  TOKENS_GET_TOKENS: 'tokens:get-tokens',
+  TOKENS_GET_TOKEN: 'tokens:get-token',
+  TOKENS_ADD_TOKEN: 'tokens:add-token',
+  TOKENS_REMOVE_TOKEN: 'tokens:remove-token',
 
   // Wallet Transactions
   WALLET_ESTIMATE_GAS: 'wallet:estimate-gas',

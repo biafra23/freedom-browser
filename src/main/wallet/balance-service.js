@@ -8,7 +8,8 @@
 
 const { formatEther, formatUnits, Contract } = require('ethers');
 const { getProvider, withRetry } = require('./provider-manager');
-const { getTokens, isChainAvailable } = require('../chain-registry');
+const { getTokens } = require('../token-registry');
+const { isChainAvailable } = require('../networks/network-registry');
 const persistentCache = require('./balance-cache');
 
 // ERC-20 ABI (minimal for balance checking)

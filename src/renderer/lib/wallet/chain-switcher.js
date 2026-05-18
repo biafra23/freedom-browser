@@ -69,7 +69,7 @@ async function renderChainList() {
 
   chainSwitcherList.innerHTML = '';
 
-  const availableResult = await window.chainRegistry.getAvailableChains();
+  const availableResult = await window.networks.getAvailableChains();
   const availableChains = availableResult.success ? availableResult.chains : {};
   const availableChainIds = new Set(Object.keys(availableChains));
   const availableCount = availableChainIds.size;

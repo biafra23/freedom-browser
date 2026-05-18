@@ -70,8 +70,8 @@ export async function refreshBalances(forceRefresh = false) {
 export async function loadChainRegistry() {
   try {
     const [chainsResult, tokensResult] = await Promise.all([
-      window.chainRegistry.getChains(),
-      window.chainRegistry.getTokens(),
+      window.networks.getChains(),
+      window.tokens.getTokens(),
     ]);
 
     if (chainsResult.success) {

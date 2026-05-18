@@ -340,7 +340,7 @@ async function proxyRpcCall(method, params) {
 
   if (rpcUrls.length === 0) {
     // No RPC URLs available - give helpful error message
-    const chainsResult = await window.chainRegistry.getChains();
+    const chainsResult = await window.networks.getChains();
     const chains = chainsResult.success ? chainsResult.chains : {};
     const chain = chains[chainId];
     const chainName = chain?.name || `Chain ${chainId}`;
@@ -384,7 +384,7 @@ async function handleSwitchChain(params, permissionKey, webview) {
   }
 
   const requestedChainId = parseInt(params[0].chainId, 16);
-  const result = await window.chainRegistry.getChains();
+  const result = await window.networks.getChains();
   const chains = result.success ? result.chains : {};
 
   if (!chains[requestedChainId]) {
@@ -392,7 +392,7 @@ async function handleSwitchChain(params, permissionKey, webview) {
   }
 
   // Check if the chain is available (has RPC configured)
-  const availabilityResult = await window.chainRegistry.isChainAvailable(requestedChainId);
+  const availabilityResult = await window.networks.isChainAvailable(requestedChainId);
   if (!availabilityResult.available) {
     const chain = chains[requestedChainId];
     throw {
