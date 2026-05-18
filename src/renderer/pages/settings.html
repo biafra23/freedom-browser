@@ -960,19 +960,11 @@
               `<option value="${v}"${v === primary ? ' selected' : ''}>${esc(label)}</option>`
             ).join('');
 
+            // colibri needs no per-network params here — the prover is an
+            // endpoint source, and zkProof is a config-file-only field
+            // (network-config.json) rather than a user-facing toggle.
             let extra = '';
-            if (primary === 'colibri') {
-              extra = `
-                <div class="row sub">
-                  <div class="row-body"><p class="row-label">ZK consensus proof</p></div>
-                  <div class="row-control">
-                    <label class="toggle">
-                      <input type="checkbox" data-net="${cid}" data-action="set-zkproof"${net.zkProof !== false ? ' checked' : ''} />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>`;
-            } else if (primary === 'quorum') {
+            if (primary === 'quorum') {
               const numRows = QUORUM_FIELDS.map(([key, label, min, max]) => `
                 <div class="row sub">
                   <div class="row-body"><p class="row-label">${esc(label)}</p></div>
@@ -1148,8 +1140,6 @@
           const cid = el.dataset.net;
           if (el.dataset.action === 'set-verification') {
             mutate(() => freedomAPI.updateNetwork(cid, { verification: { primary: el.value } }));
-          } else if (el.dataset.action === 'set-zkproof') {
-            mutate(() => freedomAPI.updateNetwork(cid, { zkProof: el.checked }));
           } else if (el.dataset.action === 'set-anchor') {
             mutate(() => freedomAPI.updateNetwork(cid, { quorum: { anchor: el.value } }));
           } else if (el.dataset.action === 'set-quorum') {
