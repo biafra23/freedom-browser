@@ -1226,6 +1226,12 @@
           }
         });
 
+        // Re-sync on navigation into this section — the config may have
+        // been changed from the ENS lens in the same session.
+        window.addEventListener('hashchange', () => {
+          if (location.hash.replace(/^#/, '').toLowerCase() === 'networks') reload();
+        });
+
         reload();
       })();
 
