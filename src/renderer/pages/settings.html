@@ -1002,6 +1002,7 @@
 
         let config = { networks: {}, sources: [] };
         let endpointForm = null; // null | { mode, id, url } — chain is the open detail; role is always rpc
+        let addState = null;     // null | { mode: 'search'|'manual', results, picked } — the add-chain flow
 
         const setStatus = (msg, kind) => {
           if (!statusEl) return;
@@ -1019,23 +1020,133 @@
           return parts[0] === 'chains' && parts[1] ? parts[1] : null;
         };
 
+        // A master-list button row: name + sub-line, trailing chevron.
+        // `name`/`sub` must already be escaped; `attr` is a data-attribute
+        // string the click handler reads.
+        const navRow = ({ name, sub, action, attr, disabled }) => `
+          <button type="button" class="net-row" data-action="${action}" ${attr}${disabled ? ' disabled' : ''}>
+            <span class="net-row-text">
+              <span class="net-row-name">${name}</span>
+              <span class="net-row-sub">${sub}</span>
+            </span>
+            <span class="net-chevron">›</span>
+          </button>`;
+
+        // A standalone action button in its own card (12px top margin).
+        const cardButton = (label, action) => `
+          <div class="card" style="margin-top: 12px">
+            <div class="rpc-block" style="border-top: none">
+              <button type="button" class="btn" data-action="${action}">${label}</button>
+            </div>
+          </div>`;
+
         // --- master: chain list --------------------------------------
         const renderList = () => {
-          const rows = chainIdsSorted().map((cid) => `
-            <button type="button" class="net-row" data-action="open-chain" data-chain="${esc(cid)}">
-              <span class="net-row-text">
-                <span class="net-row-name">${esc(chainName(cid))}</span>
-                <span class="net-row-sub">chain ${esc(cid)}</span>
-              </span>
-              <span class="net-chevron">›</span>
-            </button>`).join('');
+          const rows = chainIdsSorted().map((cid) => navRow({
+            name: esc(chainName(cid)),
+            sub: 'chain ' + esc(cid),
+            action: 'open-chain',
+            attr: `data-chain="${esc(cid)}"`,
+          })).join('');
           view.innerHTML = `
             <h2 class="section-title">Chains</h2>
             <p class="row-help" style="margin-bottom: 16px">
               The chains Freedom resolves names and balances on. Select a
               chain to manage its RPC and prover endpoints.
             </p>
-            <div class="card">${rows}</div>`;
+            <div class="card">${rows}</div>
+            ${cardButton('+ Add a chain', 'add-chain')}`;
+        };
+
+        // --- add-chain flow ------------------------------------------
+        // In-controller state (like endpointForm): mode 'search' queries
+        // the public chain catalogue, 'manual' takes a hand-entered chain;
+        // `picked` holds a catalogue chain awaiting confirmation.
+        const searchResultsHtml = () => {
+          if (addState.results === null) {
+            return '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">Loading…</p></div>';
+          }
+          if (!addState.results.length) {
+            return '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No chains found.</p></div>';
+          }
+          return addState.results.map((c) => {
+            const exists = !!config.networks[String(c.chainId)];
+            const bits = ['chain ' + c.chainId, c.rpcCount + ' RPC' + (c.rpcCount === 1 ? '' : 's')];
+            if (c.isTestnet) bits.push('testnet');
+            return navRow({
+              name: esc(c.name) + (exists ? ' — added' : ''),
+              sub: esc(bits.join(' · ')),
+              action: 'pick-chain',
+              attr: `data-chain-id="${esc(c.chainId)}"`,
+              disabled: exists,
+            });
+          }).join('');
+        };
+
+        const searchHtml = () => `
+          <div class="card">
+            <div class="rpc-block" style="border-top: none">
+              <input type="text" class="rpc-input" id="chain-search-input"
+                placeholder="Search chains by name or ID…" spellcheck="false" />
+            </div>
+          </div>
+          <div class="card" id="chain-search-results" style="margin-top: 12px">${searchResultsHtml()}</div>
+          ${cardButton('Enter a chain manually', 'add-manual')}`;
+
+        const manualHtml = () => `
+          <div class="card">
+            <div class="rpc-block" style="border-top: none">
+              <p class="row-help" style="margin: 0 0 8px">
+                For a chain not in the catalogue — your own devnet or a private network.
+              </p>
+              <div class="rpc-row" style="margin-bottom: 8px">
+                <input type="text" class="rpc-input" id="man-chainid" placeholder="Chain ID (e.g. 8453)" spellcheck="false" />
+              </div>
+              <div class="rpc-row" style="margin-bottom: 8px">
+                <input type="text" class="rpc-input" id="man-name" placeholder="Chain name" spellcheck="false" />
+              </div>
+              <div class="rpc-row" style="margin-bottom: 8px">
+                <input type="text" class="rpc-input" id="man-symbol" placeholder="Currency symbol (e.g. ETH)" spellcheck="false" />
+              </div>
+              <div class="rpc-row" style="margin-bottom: 8px">
+                <input type="text" class="rpc-input" id="man-rpc" placeholder="RPC URL (https://…)" spellcheck="false" />
+              </div>
+              <button type="button" class="btn" data-action="submit-manual">Add chain</button>
+              <button type="button" class="btn" data-action="add-search" style="margin-left: 8px">Back to search</button>
+            </div>
+          </div>`;
+
+        const renderAddConfirm = () => {
+          const c = addState.picked;
+          const rows = [
+            ['Chain ID', String(c.chainId)],
+            ['Currency', (c.nativeCurrency && c.nativeCurrency.symbol) || '—'],
+            ['RPC endpoints', c.rpcUrls.length + ' will be imported'],
+          ];
+          if (c.explorerUrl) rows.push(['Explorer', c.explorerUrl]);
+          const rowsHtml = rows.map(([k, v]) => `
+            <div class="row">
+              <div class="row-body"><p class="row-label">${esc(k)}</p></div>
+              <div class="row-control"><p class="row-help">${esc(v)}</p></div>
+            </div>`).join('');
+          view.innerHTML = `
+            <button type="button" class="back-link" data-action="add-back">‹ Search</button>
+            <h2 class="section-title">${esc(c.name)}</h2>
+            <p class="row-help" style="margin-bottom: 16px">Review and confirm.</p>
+            <div class="card">${rowsHtml}</div>
+            ${cardButton('Add chain', 'confirm-add')}`;
+        };
+
+        const renderAdd = () => {
+          if (addState.picked) { renderAddConfirm(); return; }
+          view.innerHTML = `
+            <button type="button" class="back-link" data-action="cancel-add">‹ Chains</button>
+            <h2 class="section-title">Add a chain</h2>
+            <p class="row-help" style="margin-bottom: 16px">
+              Search the public chain catalogue, or enter a chain manually.
+            </p>
+            ${addState.mode === 'manual' ? manualHtml() : searchHtml()}`;
+          $(addState.mode === 'manual' ? 'man-chainid' : 'chain-search-input')?.focus();
         };
 
         // --- a keyless RPC endpoint row (detail view) ----------------
@@ -1104,15 +1215,12 @@
               API keys are on the RPC Providers page.
             </p>
             <div class="card">${keylessHtml}</div>
-            <div class="card" style="margin-top: 12px">
-              <div class="rpc-block" style="border-top: none">
-                <button type="button" class="btn" data-action="add-endpoint">+ Add a custom RPC</button>
-              </div>
-            </div>
+            ${cardButton('+ Add a custom RPC', 'add-endpoint')}
             ${endpointForm ? endpointFormHtml() : ''}`;
         };
 
         const render = () => {
+          if (addState) { renderAdd(); return; }
           const cid = openChainId();
           if (cid && config.networks[cid]) renderDetail(cid);
           else renderList();
@@ -1146,6 +1254,49 @@
           }
           await reload();
         };
+
+        // Query the chain catalogue and refresh only the results list, so
+        // the search input keeps focus while the user types.
+        let searchTimer = null;
+        let searchSeq = 0;
+        const runChainSearch = async (query) => {
+          const seq = ++searchSeq;
+          try {
+            const res = await freedomAPI.searchChains(query);
+            if (seq !== searchSeq) return;  // a newer search has superseded this one
+            if (!addState || addState.mode !== 'search' || addState.picked) return;
+            addState.results = res && res.success ? res.chains : [];
+          } catch {
+            if (seq !== searchSeq || !addState) return;
+            addState.results = [];
+          }
+          const el = $('chain-search-results');
+          if (el) el.innerHTML = searchResultsHtml();
+        };
+
+        // Persist a new chain (+ its RPC endpoints), then open its detail.
+        const submitAddChain = async (def, rpcUrls) => {
+          try {
+            const res = await freedomAPI.addChain(def, rpcUrls);
+            if (res && res.success === false) {
+              setStatus(res.error || 'Could not add chain', 'error');
+              return;
+            }
+            setStatus('', '');
+            addState = null;
+            await reload();
+            location.hash = 'chains/' + def.chainId;
+          } catch (err) {
+            setStatus(err?.message || 'Could not add chain', 'error');
+          }
+        };
+
+        section.addEventListener('input', (e) => {
+          if (e.target.id !== 'chain-search-input') return;
+          const q = e.target.value;
+          clearTimeout(searchTimer);
+          searchTimer = setTimeout(() => runChainSearch(q), 250);
+        });
 
         section.addEventListener('change', (e) => {
           const el = e.target.closest('[data-action]');
@@ -1198,6 +1349,65 @@
             }));
           } else if (action === 'delete-source') {
             await mutate(() => freedomAPI.removeEndpointSource(id));
+          } else if (action === 'add-chain') {
+            addState = { mode: 'search', results: null, picked: null };
+            render();
+            runChainSearch('');
+          } else if (action === 'add-manual') {
+            if (addState) { addState.mode = 'manual'; render(); }
+          } else if (action === 'add-search') {
+            if (addState) {
+              addState.mode = 'search';
+              addState.results = null;
+              render();
+              runChainSearch('');
+            }
+          } else if (action === 'cancel-add') {
+            clearTimeout(searchTimer);
+            addState = null;
+            render();
+          } else if (action === 'add-back') {
+            if (addState) {
+              addState.picked = null;
+              render();
+              runChainSearch($('chain-search-input')?.value || '');
+            }
+          } else if (action === 'pick-chain') {
+            setStatus('Loading chain…', 'testing');
+            try {
+              const res = await freedomAPI.getCatalogChain(btn.dataset.chainId);
+              if (!res || !res.success) {
+                setStatus(res?.error || 'Could not load chain', 'error');
+                return;
+              }
+              setStatus('', '');
+              if (addState) { addState.picked = res.chain; render(); }
+            } catch (err) {
+              setStatus(err?.message || 'Could not load chain', 'error');
+            }
+          } else if (action === 'confirm-add') {
+            const c = addState?.picked;
+            if (!c) return;
+            await submitAddChain(
+              {
+                chainId: c.chainId,
+                name: c.name,
+                nativeSymbol: (c.nativeCurrency && c.nativeCurrency.symbol) || '',
+                blockExplorer: c.explorerUrl || '',
+              },
+              c.rpcUrls || []);
+          } else if (action === 'submit-manual') {
+            const chainId = ($('man-chainid')?.value || '').trim();
+            const name = ($('man-name')?.value || '').trim();
+            const symbol = ($('man-symbol')?.value || '').trim();
+            const rpc = ($('man-rpc')?.value || '').trim();
+            if (!chainId || !name || !rpc) {
+              setStatus('Chain ID, name and RPC URL are required', 'error');
+              return;
+            }
+            await submitAddChain(
+              { chainId: Number(chainId), name, nativeSymbol: symbol, blockExplorer: '' },
+              [rpc]);
           }
         });
 
@@ -1206,7 +1416,9 @@
         // is cleared on any navigation.
         window.addEventListener('hashchange', () => {
           if (resolveSection(location.hash) !== 'chains') return;
+          clearTimeout(searchTimer);
           endpointForm = null;
+          addState = null;
           render();  // instant list<->detail swap from cached config
           reload();  // then re-sync in case it changed elsewhere
         });

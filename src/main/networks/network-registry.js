@@ -340,12 +340,13 @@ function restoreEndpointSource(id) {
   writeUserConfig({ ...config, removedSources });
 }
 
-// Register a user-defined chain. The definition is persisted verbatim
-// (chainId coerced to a number); verification defaults to `direct` at
-// load time. Re-adding an existing custom chain replaces its definition.
-// A chainId that collides with a builtin chain is rejected — builtin
-// chains are customized via updateNetwork, not replaced.
-function addCustomChain(def) {
+// Register a user-defined chain, optionally importing rpcUrls as keyless
+// endpoint sources for it. The definition is persisted verbatim (chainId
+// coerced to a number); verification defaults to `direct` at load time.
+// Re-adding an existing custom chain replaces its definition and its
+// imported endpoints. A chainId that collides with a builtin chain is
+// rejected — builtin chains are customized via updateNetwork.
+function addCustomChain(def, rpcUrls = []) {
   const { networks, customChainIds } = load();
   const chainId = Number(def?.chainId);
   if (!Number.isInteger(chainId) || chainId <= 0) {
@@ -358,6 +359,26 @@ function addCustomChain(def) {
   const customChains = readCustomChains();
   customChains[cid] = { ...def, chainId };
   writeCustomChains(customChains);
+
+  // `custom-<cid>-` ids mark this chain's auto-imported endpoints. A
+  // re-add drops the prior set and writes the new one; RPCs the user
+  // added by hand (`user-` ids) are left untouched. Skipped entirely
+  // when there is nothing to import and nothing prior to clear.
+  const config = readUserConfig();
+  const prefix = `custom-${cid}-`;
+  const hadImported = Object.keys(config.endpointSources || {}).some((id) => id.startsWith(prefix));
+  if (rpcUrls.length || hadImported) {
+    const endpointSources = {};
+    for (const [id, src] of Object.entries(config.endpointSources || {})) {
+      if (!id.startsWith(prefix)) endpointSources[id] = src;
+    }
+    rpcUrls.forEach((url, i) => {
+      endpointSources[`${prefix}${i + 1}`] = {
+        role: 'rpc', keyed: false, coverage: { [cid]: url },
+      };
+    });
+    writeUserConfig({ ...config, endpointSources });
+  }
   return { success: true, chainId: cid };
 }
 

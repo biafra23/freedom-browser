@@ -338,6 +338,23 @@ describe('addCustomChain', () => {
     expect(registry.addCustomChain({ chainId: 8453, name: 'Base Renamed' }).success).toBe(true);
     expect(registry.getNetwork(8453).name).toBe('Base Renamed');
   });
+
+  test('imports rpcUrls as keyless endpoint sources for the chain', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example', 'https://b.example']);
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://a.example', 'https://b.example']);
+  });
+
+  test('re-adding replaces the chain previously imported rpc sources', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example']);
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://c.example']);
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://c.example']);
+  });
+
+  test('re-adding with no rpcUrls clears previously imported rpc sources', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example']);
+    registry.addCustomChain({ chainId: 8453, name: 'Base' });
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual([]);
+  });
 });
 
 describe('removeCustomChain', () => {

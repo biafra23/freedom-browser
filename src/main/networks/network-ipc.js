@@ -113,8 +113,8 @@ function registerNetworkConfigIpc() {
     return { success: true, available: registry.isChainAvailable(chainId) };
   });
 
-  ipcMain.handle('networks:add-chain', (_event, chain) => {
-    const result = registry.addCustomChain(chain);
+  ipcMain.handle('networks:add-chain', (_event, chain, rpcUrls) => {
+    const result = registry.addCustomChain(chain, rpcUrls || []);
     if (result.success) refreshDownstream();
     return result;
   });
