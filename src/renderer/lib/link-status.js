@@ -4,10 +4,19 @@ let linkStatusEl = null;
 let linkStatusUrlEl = null;
 let hideTimer = null;
 let showTimer = null;
+let revealFrame = null;
 let currentSide = 'left';
 
 const SHOW_DELAY_MS = 150;
 const HIDE_DELAY_MS = 250;
+
+// Cap before assigning to textContent — `update-target-url` will happily
+// forward megabyte-scale `data:` / `javascript:` URLs from a hostile (or
+// merely sloppy) embedded iframe, which a single ellipsis-styled element
+// shouldn't have to chew on every hover. Chrome / Firefox truncate around
+// the same range; users can still see the full target via right-click +
+// "Copy link address" on the page itself.
+const MAX_URL_LENGTH = 2048;
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
@@ -15,10 +24,18 @@ const prefersReducedMotion = () =>
 
 const scheduleFrame = (callback) => {
   if (typeof globalThis.requestAnimationFrame === 'function') {
-    globalThis.requestAnimationFrame(callback);
-  } else {
-    callback();
+    return globalThis.requestAnimationFrame(callback);
   }
+  callback();
+  return null;
+};
+
+const cancelScheduledFrame = () => {
+  if (revealFrame == null) return;
+  if (typeof globalThis.cancelAnimationFrame === 'function') {
+    globalThis.cancelAnimationFrame(revealFrame);
+  }
+  revealFrame = null;
 };
 
 export const initLinkStatus = () => {
@@ -65,6 +82,10 @@ export const clearLinkStatus = (options = {}) => {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
+  // A queued reveal frame would otherwise re-add `visible` after we hide,
+  // leaving the element with `hidden=true` + `.visible` and skipping the
+  // next show delay. Cancel it before touching the class.
+  cancelScheduledFrame();
 
   const finishHide = () => {
     if (!linkStatusEl || !linkStatusUrlEl) return;
@@ -109,19 +130,25 @@ const revealLinkStatus = (url) => {
   }
 
   linkStatusEl.classList.remove('visible');
-  scheduleFrame(() => {
+  cancelScheduledFrame();
+  revealFrame = scheduleFrame(() => {
+    revealFrame = null;
     linkStatusEl?.classList.add('visible');
   });
 };
 
+const truncateUrl = (url) =>
+  url.length > MAX_URL_LENGTH ? url.slice(0, MAX_URL_LENGTH) : url;
+
 export const showLinkStatus = (url) => {
   if (!linkStatusEl || !linkStatusUrlEl) return;
 
-  const trimmed = typeof url === 'string' ? url.trim() : '';
-  if (!trimmed) {
+  const raw = typeof url === 'string' ? url.trim() : '';
+  if (!raw) {
     clearLinkStatus();
     return;
   }
+  const trimmed = truncateUrl(raw);
 
   // A pending hide means the bar was visible moments ago and is mid-fade.
   // Treat that as still visible so re-hovers within the fade window swap
@@ -138,6 +165,7 @@ export const showLinkStatus = (url) => {
       clearTimeout(showTimer);
       showTimer = null;
     }
+    cancelScheduledFrame();
     linkStatusUrlEl.textContent = trimmed;
     linkStatusEl.hidden = false;
     applySide(currentSide);
@@ -155,21 +183,4 @@ export const showLinkStatus = (url) => {
     showTimer = null;
     revealLinkStatus(trimmed);
   }, SHOW_DELAY_MS);
-};
-
-/**
- * Handle webview `update-target-url` for the active tab.
- * @param {number} tabId
- * @param {string} url
- * @param {number|null} activeTabId
- */
-export const handleUpdateTargetUrl = (tabId, url, activeTabId) => {
-  if (tabId !== activeTabId) return;
-
-  const trimmed = typeof url === 'string' ? url.trim() : '';
-  if (!trimmed) {
-    clearLinkStatus();
-    return;
-  }
-  showLinkStatus(trimmed);
 };

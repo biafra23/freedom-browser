@@ -159,8 +159,16 @@ document.addEventListener('auxclick', handleDwebLinkActivation, true);
 // opposite corner (matches Chrome's status-bubble behaviour). Only emits
 // on zone transitions to keep IPC traffic minimal — for typical browsing
 // the channel is silent.
-const LINK_STATUS_ZONE_BAND_PX = 28;   // bottom band height (~bar height)
-const LINK_STATUS_ZONE_WIDTH_PX = 280; // left band width
+//
+// Width must track the actual bar's `max-width: min(70vw, 640px)` from
+// link-status.css. A fixed width was too narrow on wide viewports, so a
+// link hovered between the band's right edge and the bar's right edge
+// would sit under the bar without triggering the flip.
+const LINK_STATUS_ZONE_BAND_PX = 28; // bottom band height (~bar height)
+const LINK_STATUS_ZONE_MAX_WIDTH_PX = 640;
+const LINK_STATUS_ZONE_VW_FRACTION = 0.7;
+const linkStatusZoneWidth = () =>
+  Math.min(LINK_STATUS_ZONE_MAX_WIDTH_PX, window.innerWidth * LINK_STATUS_ZONE_VW_FRACTION);
 let linkStatusInZone = false;
 const sendLinkStatusZone = (inZone) => {
   if (linkStatusInZone === inZone) return;
@@ -172,7 +180,7 @@ document.addEventListener(
   (event) => {
     const inZone =
       event.clientY > window.innerHeight - LINK_STATUS_ZONE_BAND_PX &&
-      event.clientX < LINK_STATUS_ZONE_WIDTH_PX;
+      event.clientX < linkStatusZoneWidth();
     sendLinkStatusZone(inZone);
   },
   { passive: true, capture: true }

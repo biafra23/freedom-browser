@@ -9,7 +9,7 @@ import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
 import {
   clearLinkStatus,
-  handleUpdateTargetUrl,
+  showLinkStatus,
   setLinkStatusSide,
 } from './link-status.js';
 
@@ -506,7 +506,16 @@ const createWebview = (tabId, initialUrl) => {
       }
     },
     'update-target-url': (event) => {
-      handleUpdateTargetUrl(tabId, event.url, tabState.activeTabId);
+      // Gate at the tab edge (same shape as `link-status:zone`) so the
+      // link-status module never sees background-tab hover events. Empty
+      // url → fade out; non-empty → start the show pipeline.
+      if (tabId !== tabState.activeTabId) return;
+      const url = typeof event.url === 'string' ? event.url : '';
+      if (url) {
+        showLinkStatus(url);
+      } else {
+        clearLinkStatus();
+      }
     },
   };
 
@@ -1121,6 +1130,11 @@ export const switchTab = (tabId, options = {}) => {
   const tab = tabState.tabs.find((t) => t.id === tabId);
   if (!tab) return;
 
+  // Reset the link-hover preview before swapping active tabs:
+  // - immediate clear so the previous tab's URL never trails into the new tab
+  // - reset side because `currentSide` is module-level state shared across
+  //   tabs; the new tab's preload will re-arm the zone tracker on first
+  //   mousemove and update side accordingly.
   clearLinkStatus({ immediate: true });
   setLinkStatusSide('left');
   tabState.activeTabId = tabId;

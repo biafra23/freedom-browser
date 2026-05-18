@@ -139,7 +139,7 @@ const loadTabsModule = async (options = {}) => {
   };
   const linkStatusMocks = {
     clearLinkStatus: jest.fn(),
-    handleUpdateTargetUrl: jest.fn(),
+    showLinkStatus: jest.fn(),
     setLinkStatusSide: jest.fn(),
   };
 
@@ -1029,16 +1029,17 @@ describe('tabs ui behavior', () => {
     const secondTab = mod.createTab('https://second.example');
     mod.switchTab(secondTab.id);
 
-    linkStatusMocks.handleUpdateTargetUrl.mockClear();
+    linkStatusMocks.showLinkStatus.mockClear();
+    linkStatusMocks.clearLinkStatus.mockClear();
     linkStatusMocks.setLinkStatusSide.mockClear();
 
-    // Active tab forwards both events with the active tab id.
+    // Active tab: non-empty url goes to showLinkStatus, empty triggers a
+    // (faded) clearLinkStatus.
     secondTab.webview.dispatch('update-target-url', { url: 'https://hovered.example/' });
-    expect(linkStatusMocks.handleUpdateTargetUrl).toHaveBeenCalledWith(
-      secondTab.id,
-      'https://hovered.example/',
-      secondTab.id
-    );
+    expect(linkStatusMocks.showLinkStatus).toHaveBeenCalledWith('https://hovered.example/');
+
+    secondTab.webview.dispatch('update-target-url', { url: '' });
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenLastCalledWith();
 
     secondTab.webview.dispatch('ipc-message', {
       channel: 'link-status:zone',
@@ -1052,19 +1053,15 @@ describe('tabs ui behavior', () => {
     });
     expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('left');
 
-    // Background tab still calls handleUpdateTargetUrl (it gates internally
-    // by comparing tabId to activeTabId), but the zone signal is dropped
-    // entirely so a hover in a background webview can never move the bar
-    // shown for the active tab.
-    linkStatusMocks.handleUpdateTargetUrl.mockClear();
+    // Background-tab events for both channels are dropped entirely so
+    // hovering links in a hidden tab can never move the active tab's bar.
+    linkStatusMocks.showLinkStatus.mockClear();
+    linkStatusMocks.clearLinkStatus.mockClear();
     linkStatusMocks.setLinkStatusSide.mockClear();
 
     firstTab.webview.dispatch('update-target-url', { url: 'https://background.example/' });
-    expect(linkStatusMocks.handleUpdateTargetUrl).toHaveBeenCalledWith(
-      firstTab.id,
-      'https://background.example/',
-      secondTab.id
-    );
+    expect(linkStatusMocks.showLinkStatus).not.toHaveBeenCalled();
+    expect(linkStatusMocks.clearLinkStatus).not.toHaveBeenCalled();
 
     firstTab.webview.dispatch('ipc-message', {
       channel: 'link-status:zone',
