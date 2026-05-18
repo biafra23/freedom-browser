@@ -1,0 +1,69 @@
+/* Link hover URL preview (Chrome / Firefox style) */
+
+.content-page {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.content-page .webview-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.link-status {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 2;
+  max-width: min(70vw, 640px);
+  padding: 3px 8px 3px 12px;
+  border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-top-right-radius: 6px;
+  background: var(--bg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.link-status:not(.visible) {
+  transition-duration: 200ms;
+  transition-timing-function: ease-in;
+}
+
+[data-theme='light'] .link-status {
+  background: var(--toolbar);
+}
+
+.link-status.visible {
+  opacity: 1;
+}
+
+.link-status[hidden] {
+  display: none !important;
+}
+
+.link-status-url {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: ltr;
+}
+
+[data-theme='light'] .link-status-url {
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link-status {
+    transition: none;
+  }
+}

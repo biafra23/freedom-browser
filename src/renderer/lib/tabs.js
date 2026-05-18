@@ -7,6 +7,7 @@ import { setupWebviewContextMenu } from './page-context-menu.js';
 import { homeUrl } from './page-urls.js';
 import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
+import { clearLinkStatus, handleUpdateTargetUrl } from './link-status.js';
 
 const electronAPI = window.electronAPI;
 
@@ -488,6 +489,9 @@ const createWebview = (tabId, initialUrl) => {
       if (tabId === tabState.activeTabId && onWebviewEvent) {
         onWebviewEvent('ipc-message', { tabId, channel: event.channel, args: event.args });
       }
+    },
+    'update-target-url': (event) => {
+      handleUpdateTargetUrl(tabId, event.url, tabState.activeTabId);
     },
   };
 
@@ -1102,6 +1106,7 @@ export const switchTab = (tabId, options = {}) => {
   const tab = tabState.tabs.find((t) => t.id === tabId);
   if (!tab) return;
 
+  clearLinkStatus();
   tabState.activeTabId = tabId;
 
   // Hide all webviews, show active one
