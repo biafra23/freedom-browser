@@ -1149,24 +1149,37 @@
           $(addState.mode === 'manual' ? 'man-chainid' : 'chain-search-input')?.focus();
         };
 
-        // --- a keyless RPC endpoint row (detail view) ----------------
-        // Keyed providers are managed on the RPC Providers page, not here.
-        const sourceRow = (src, cid) => {
+        // --- an RPC endpoint row (detail view) -----------------------
+        // Covers all three kinds a chain can be reached by: a user-added
+        // custom RPC, a builtin public RPC, and a commercial keyed
+        // provider. Keyed providers are managed on the RPC Providers
+        // page — here they only show their key status and a link there.
+        const endpointRow = (src, cid, primary) => {
           const url = (src.coverage && src.coverage[cid]) || '';
-          const meta = [src.builtin ? 'built-in' : 'custom'];
-          if (src.removed) meta.push('disabled');
+          const kind = !src.builtin ? 'custom' : (src.keyed ? 'commercial' : 'public');
+          const meta = [kind];
+          if (primary) meta.push('primary');
+          if (src.keyed && !src.hasKey) meta.push('no API key');
+          else if (src.removed) meta.push('disabled');
 
-          const controls = src.builtin
-            ? `<label class="toggle">
+          let controls = '';
+          if (src.keyed) {
+            if (!src.hasKey) {
+              controls = '<button type="button" class="btn" data-action="open-rpc-page">Manage keys</button>';
+            }
+          } else if (src.builtin) {
+            controls = `<label class="toggle">
                 <input type="checkbox" data-action="toggle-source" data-id="${esc(src.id)}"${src.removed ? '' : ' checked'} />
-                <span class="slider"></span></label>`
-            : `<button type="button" class="btn" data-action="edit-source" data-id="${esc(src.id)}">Edit</button>
+                <span class="slider"></span></label>`;
+          } else {
+            controls = `<button type="button" class="btn" data-action="edit-source" data-id="${esc(src.id)}">Edit</button>
                <button type="button" class="btn" data-action="delete-source" data-id="${esc(src.id)}" title="Remove" aria-label="Remove">✕</button>`;
+          }
 
           return `
             <div class="row">
               <div class="row-body">
-                <p class="row-label" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px">${esc(url)}</p>
+                <p class="row-label" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px">${src.keyed ? esc(src.name || src.id) : esc(url)}</p>
                 <p class="row-help">${esc(meta.join(' · '))}</p>
               </div>
               <div class="row-control">${controls}</div>
@@ -1190,33 +1203,39 @@
             </div>`;
         };
 
-        // --- detail: one chain's endpoint sources --------------------
+        // --- detail: one chain's RPC endpoints -----------------------
         // Verification strategy is deliberately not shown here — today
         // only ENS (mainnet) consumes it, and that lives in the ENS lens.
-        // When the wallet honours per-chain verification it returns here.
         const renderDetail = (cid) => {
-          // Keyless RPC-role sources only. The Colibri prover lives in the
-          // ENS lens; keyed providers (Alchemy etc.) on the RPC Providers
-          // page — neither is mixed into a chain's RPC endpoint list.
-          const keyless = config.sources.filter((s) => s.role === 'rpc' && !s.keyed && s.coverage && s.coverage[cid]);
-          const keylessHtml = keyless.length
-            ? keyless.map((s) => sourceRow(s, cid)).join('')
+          const isCustom = config.networks[cid]?.builtin === false;
+          // Every rpc-role source covering this chain — user-added before
+          // builtin, the order getEndpoints resolves them in. The Colibri
+          // prover (prover role) lives in the ENS lens, not here.
+          const rpcs = config.sources
+            .filter((s) => s.role === 'rpc' && s.coverage && s.coverage[cid])
+            .sort((a, b) => (a.builtin ? 1 : 0) - (b.builtin ? 1 : 0));
+          const usable = (s) => !s.removed && (s.keyed ? !!s.hasKey : true);
+          const primary = rpcs.find(usable);
+          const rowsHtml = rpcs.length
+            ? rpcs.map((s) => endpointRow(s, cid, s === primary)).join('')
             : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No RPC endpoints for this chain.</p></div>';
 
           view.innerHTML = `
             <button type="button" class="back-link" data-action="back">‹ Chains</button>
             <h2 class="section-title">${esc(chainName(cid))}</h2>
-            <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}</p>
+            <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}${isCustom ? ' · custom chain' : ''}</p>
 
             <h2 class="section-title">RPC endpoints</h2>
             <p class="row-help" style="margin-bottom: 16px">
-              The RPC endpoints this chain uses. Disable a built-in source
-              to stop using it, or add your own. Commercial providers with
-              API keys are on the RPC Providers page.
+              Every endpoint that can serve this chain — your own, public,
+              and commercial. They are tried in order; the first usable one
+              is primary. Commercial providers need an API key, managed on
+              the RPC Providers page.
             </p>
-            <div class="card">${keylessHtml}</div>
+            <div class="card">${rowsHtml}</div>
             ${cardButton('+ Add a custom RPC', 'add-endpoint')}
-            ${endpointForm ? endpointFormHtml() : ''}`;
+            ${endpointForm ? endpointFormHtml() : ''}
+            ${isCustom ? cardButton('Remove this chain', 'remove-chain') : ''}`;
         };
 
         const render = () => {
@@ -1349,6 +1368,23 @@
             }));
           } else if (action === 'delete-source') {
             await mutate(() => freedomAPI.removeEndpointSource(id));
+          } else if (action === 'open-rpc-page') {
+            location.hash = 'rpc';
+          } else if (action === 'remove-chain') {
+            const cid = openChainId();
+            if (!cid) return;
+            if (!window.confirm('Remove ' + chainName(cid) + '? Its custom RPC endpoints are removed too.')) return;
+            try {
+              const res = await freedomAPI.removeChain(cid);
+              if (res && res.success === false) {
+                setStatus(res.error || 'Could not remove chain', 'error');
+                return;
+              }
+              setStatus('', '');
+              location.hash = 'chains';
+            } catch (err) {
+              setStatus(err?.message || 'Could not remove chain', 'error');
+            }
           } else if (action === 'add-chain') {
             addState = { mode: 'search', results: null, picked: null };
             render();
