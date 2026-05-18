@@ -7,7 +7,7 @@ const http = require('http');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { loadSettings } = require('./settings-store');
-const { getChain } = require('./wallet/chains');
+const registry = require('./networks/network-registry');
 const {
   MODE,
   DEFAULTS,
@@ -111,8 +111,7 @@ function getConfiguredBeeNodeMode() {
 }
 
 function getPrimaryGnosisRpcUrl() {
-  const chain = getChain(GNOSIS_CHAIN_ID);
-  const primaryUrl = chain?.rpcUrls?.[0];
+  const [primaryUrl] = registry.getEndpoints(GNOSIS_CHAIN_ID, 'rpc');
   return typeof primaryUrl === 'string' && primaryUrl.trim() ? primaryUrl.trim() : null;
 }
 

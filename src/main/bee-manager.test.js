@@ -223,9 +223,9 @@ function loadBeeManagerModule(options = {}) {
   const loadSettings = options.loadSettings || jest.fn(() => ({
     beeNodeMode: options.beeNodeMode || 'ultraLight',
   }));
-  const getChain = options.getChain || jest.fn(() => ({
-    rpcUrls: options.rpcUrls || ['https://rpc.gnosischain.com'],
-  }));
+  const registry = options.registry || {
+    getEndpoints: jest.fn(() => options.rpcUrls || ['https://rpc.gnosischain.com']),
+  };
 
   const platformMap = {
     darwin: 'mac',
@@ -284,9 +284,7 @@ function loadBeeManagerModule(options = {}) {
       [require.resolve('./settings-store')]: () => ({
         loadSettings,
       }),
-      [require.resolve('./wallet/chains')]: () => ({
-        getChain,
-      }),
+      [require.resolve('./networks/network-registry')]: () => registry,
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
@@ -318,7 +316,7 @@ function loadBeeManagerModule(options = {}) {
     dataDir,
     execSync,
     fsMock,
-    getChain,
+    registry,
     httpGet,
     ipcMain,
     keysPath,
@@ -516,7 +514,7 @@ describe('bee-manager', () => {
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
 
-    expect(ctx.getChain).toHaveBeenCalledWith(100);
+    expect(ctx.registry.getEndpoints).toHaveBeenCalledWith(100, 'rpc');
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('swap-enable: true');
@@ -566,7 +564,7 @@ describe('bee-manager', () => {
   test('fails startup when Bee light mode has no configured primary Gnosis RPC', async () => {
     const ctx = loadBeeManagerModule({
       beeNodeMode: 'light',
-      getChain: jest.fn(() => ({ rpcUrls: [] })),
+      rpcUrls: [],
       portSequence: [false],
       httpResponse: () => ({
         statusCode: 500,

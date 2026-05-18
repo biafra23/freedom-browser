@@ -315,27 +315,17 @@ function removeCustomToken(key) {
 }
 
 /**
- * Check if a chain is available for use
- * A chain is available if:
- * - It has public RPCs (hasPublicRpc: true), OR
- * - User has configured an RPC provider that supports this chain
+ * Check if a chain is available for use — i.e. the registry resolves at
+ * least one rpc endpoint for it (a keyless builtin RPC, or a keyed
+ * provider with a configured API key).
  * @param {number|string} chainId - Chain ID
  * @returns {boolean}
  */
 function isChainAvailable(chainId) {
   initRegistry();
-  const chain = chains[chainId];
-  if (!chain) return false;
+  if (!chains[chainId]) return false;
 
-  // Chain has public RPCs - always available
-  if (chain.hasPublicRpc) {
-    return true;
-  }
-
-  // Check if any configured provider supports this chain
-  const rpc = getRpcManager();
-  const providerUrls = rpc.getEffectiveRpcUrls(chainId);
-  return providerUrls.length > 0;
+  return getRpcManager().getEffectiveRpcUrls(chainId).length > 0;
 }
 
 /**

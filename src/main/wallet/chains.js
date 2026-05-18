@@ -57,8 +57,6 @@ function getChain(chainId) {
     ...registryChain,
     ...metadata,
     nativeCurrency,
-    // Ensure rpcUrls is present (registry uses rpcUrls)
-    rpcUrls: registryChain.rpcUrls || [],
   };
 }
 
