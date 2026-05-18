@@ -586,8 +586,7 @@
           </div>
         </section>
 
-        <!-- Networks — master-detail: a chain list, drilling into a
-             per-chain detail view. Rendered by the controller below. -->
+        <!-- Networks -->
         <section class="section" id="networks">
           <div id="networks-view"></div>
           <p id="networks-status" class="rpc-status"></p>
@@ -1006,7 +1005,7 @@
 
         const chainIdsSorted = () =>
           Object.keys(config.networks).sort((a, b) => Number(a) - Number(b));
-        const chainName = (cid) => config.networks[cid]?.name || ('chain ' + cid);
+        const chainName = (cid) => config.networks[cid]?.name || ('Chain ' + cid);
 
         // The chain whose detail is open, parsed from the hash; null = list.
         const openChainId = () => {
@@ -1151,7 +1150,7 @@
 
           view.innerHTML = `
             <button type="button" class="back-link" data-action="back">‹ Networks</button>
-            <h2 class="section-title">${esc(net.name || ('Chain ' + cid))}</h2>
+            <h2 class="section-title">${esc(chainName(cid))}</h2>
             <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}</p>
 
             <div class="card">
