@@ -597,8 +597,7 @@
           <h2 class="section-title">ENS Resolution</h2>
           <p class="row-help" style="margin-bottom: 16px">
             How Freedom resolves <code>.eth</code> and <code>.box</code> names. ENS lives on
-            Ethereum, so this is a focused view of the Ethereum network — its RPC endpoints,
-            Colibri prover and quorum parameters are configured in
+            Ethereum — manage its RPC endpoints under
             <a href="#networks">Chains settings</a>.
           </p>
           <div class="card">
@@ -613,6 +612,18 @@
                   <option value="quorum">Public-RPC quorum</option>
                   <option value="direct">Direct (single trusted endpoint)</option>
                 </select>
+              </div>
+            </div>
+            <div class="row" id="ens-prover-row">
+              <div class="row-body">
+                <p class="row-label">Colibri prover</p>
+                <p class="row-help">
+                  Endpoint that produces the verification proofs. Leave empty
+                  for the corpus.core default.
+                </p>
+              </div>
+              <div class="row-control" style="flex: 1; max-width: 300px">
+                <input type="text" id="ens-prover-url" class="rpc-input" placeholder="https://mainnet1.colibri-proof.tech" spellcheck="false" />
               </div>
             </div>
             <div class="row">
@@ -978,7 +989,7 @@
             ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
         let config = { networks: {}, sources: [] };
-        let endpointForm = null; // null | { mode, id, url, role } — chain is the open detail
+        let endpointForm = null; // null | { mode, id, url } — chain is the open detail; role is always rpc
         let keyFor = null;       // null | providerId being edited
 
         const setStatus = (msg, kind) => {
@@ -1065,8 +1076,8 @@
             </div>`;
         };
 
-        // The add/edit-endpoint form. The chain is fixed (the open detail),
-        // so the form only asks for URL + role.
+        // The add/edit form for an RPC endpoint. The chain is fixed (the
+        // open detail) and the role is always rpc, so it only asks for a URL.
         const endpointFormHtml = () => {
           const f = endpointForm;
           return `
@@ -1075,10 +1086,6 @@
                 <p class="row-label" style="margin-bottom: 8px">${f.mode === 'edit' ? 'Edit endpoint' : 'Add endpoint'}</p>
                 <div class="rpc-row" style="margin-bottom: 8px">
                   <input type="text" class="rpc-input" id="ep-url" placeholder="https://..." spellcheck="false" value="${esc(f.url)}" />
-                  <select class="rpc-input" id="ep-role" style="max-width: 130px">
-                    <option value="rpc"${f.role === 'rpc' ? ' selected' : ''}>RPC</option>
-                    <option value="prover"${f.role === 'prover' ? ' selected' : ''}>Prover</option>
-                  </select>
                 </div>
                 <button type="button" class="btn" data-action="save-endpoint">Save</button>
                 <button type="button" class="btn" data-action="cancel-endpoint" style="margin-left: 8px">Cancel</button>
@@ -1091,11 +1098,13 @@
         // only ENS (mainnet) consumes it, and that lives in the ENS lens.
         // When the wallet honours per-chain verification it returns here.
         const renderDetail = (cid) => {
-          const keyless = config.sources.filter((s) => !s.keyed && s.coverage && s.coverage[cid]);
+          // RPC-role sources only — the Colibri prover is configured in the
+          // ENS lens, not mixed into a chain's RPC endpoint list.
+          const keyless = config.sources.filter((s) => s.role === 'rpc' && !s.keyed && s.coverage && s.coverage[cid]);
           const keyed = config.sources.filter((s) => s.keyed && s.coverage && s.coverage[cid]);
           const keylessHtml = keyless.length
             ? keyless.map((s) => sourceRow(s, cid)).join('')
-            : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No endpoint sources for this chain.</p></div>';
+            : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No RPC endpoints for this chain.</p></div>';
           const keyedSection = keyed.length
             ? `<h3 class="section-title" style="font-size: 14px; margin: 18px 0 8px">Keyed providers</h3>
                <div class="card">${keyed.map((s) => sourceRow(s, cid)).join('')}</div>`
@@ -1106,10 +1115,10 @@
             <h2 class="section-title">${esc(chainName(cid))}</h2>
             <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}</p>
 
-            <h2 class="section-title">Endpoint sources</h2>
+            <h2 class="section-title">RPC endpoints</h2>
             <p class="row-help" style="margin-bottom: 16px">
-              RPC and prover endpoints for this chain. Disable a built-in
-              source to stop using it, or add your own.
+              The RPC endpoints this chain uses. Disable a built-in source
+              to stop using it, or add your own.
             </p>
             <div class="card">${keylessHtml}</div>
             ${keyedSection}
@@ -1176,7 +1185,7 @@
           } else if (action === 'back') {
             location.hash = 'networks';
           } else if (action === 'add-endpoint') {
-            endpointForm = { mode: 'add', id: null, url: '', role: 'rpc' };
+            endpointForm = { mode: 'add', id: null, url: '' };
             render();
             $('ep-url')?.focus();
           } else if (action === 'edit-source') {
@@ -1184,7 +1193,7 @@
             const cid = openChainId();
             if (src) {
               endpointForm = {
-                mode: 'edit', id, role: src.role || 'rpc',
+                mode: 'edit', id,
                 url: (src.coverage && cid && src.coverage[cid]) || '',
               };
               render();
@@ -1195,7 +1204,6 @@
             render();
           } else if (action === 'save-endpoint') {
             const url = ($('ep-url')?.value || '').trim();
-            const role = $('ep-role')?.value || 'rpc';
             const cid = openChainId();
             if (!url) { setStatus('Enter an endpoint URL', 'error'); return; }
             if (!cid) { endpointForm = null; render(); return; }
@@ -1204,7 +1212,7 @@
               : 'user-' + Date.now();
             endpointForm = null;
             await mutate(() => freedomAPI.upsertEndpointSource(sourceId, {
-              role, keyed: false, coverage: { [cid]: url },
+              role: 'rpc', keyed: false, coverage: { [cid]: url },
             }));
           } else if (action === 'delete-source') {
             await mutate(() => freedomAPI.removeEndpointSource(id));
@@ -1259,17 +1267,26 @@
 
       // ── ENS Resolution lens ─────────────────────────────────────────
       // A focused view of the Ethereum (chain 1) network for the #ethereum
-      // section: surfaces the verification strategy and links to the
-      // Chains page for endpoint configuration.
+      // section: the verification strategy and, for Colibri, the prover.
+      // RPC endpoints live under Chains settings.
       (() => {
         const methodSelect = $('ens-lens-method');
         const helpEl = $('ens-lens-help');
+        const proverRow = $('ens-prover-row');
+        const proverInput = $('ens-prover-url');
         if (!methodSelect || !helpEl) return;
 
         const HELP = {
           colibri: 'Each answer is cryptographically verified against the Ethereum sync committee via the Colibri prover.',
           quorum: 'Several public RPCs are queried in parallel; only answers they agree on are trusted.',
           direct: 'Resolved via a single trusted endpoint — no cross-checking or proof.',
+        };
+
+        let proverId = 'colibri-corpus';  // prover endpoint-source id for chain 1
+        let currentProverUrl = '';        // '' means the builtin default is in use
+
+        const showProverRow = (method) => {
+          if (proverRow) proverRow.style.display = method === 'colibri' ? '' : 'none';
         };
 
         const refresh = async () => {
@@ -1279,6 +1296,16 @@
             const primary = res.networks?.['1']?.verification?.primary || 'colibri';
             methodSelect.value = primary;
             helpEl.textContent = HELP[primary] || '';
+            showProverRow(primary);
+
+            const prover = (res.sources || []).find(
+              (s) => s.role === 'prover' && s.coverage && s.coverage['1']
+            );
+            proverId = prover?.id || 'colibri-corpus';
+            // A user override has builtin:false; the pristine builtin is
+            // left as an empty field (the placeholder shows the default).
+            currentProverUrl = prover && prover.builtin === false ? prover.coverage['1'] : '';
+            if (proverInput) proverInput.value = currentProverUrl;
           } catch {
             helpEl.textContent = 'Could not load ENS network configuration.';
           }
@@ -1287,6 +1314,7 @@
         methodSelect.addEventListener('change', async () => {
           const primary = methodSelect.value;
           helpEl.textContent = HELP[primary] || '';
+          showProverRow(primary);
           try {
             await freedomAPI.updateNetwork('1', { verification: { primary } });
           } catch {
@@ -1294,8 +1322,25 @@
           }
         });
 
-        // Re-sync on navigation into this section — the value may have been
-        // changed from the Networks page in the same session.
+        // Blur, not input — avoid persisting a half-typed URL. A non-empty
+        // value overrides the prover; clearing it reverts to the builtin.
+        proverInput?.addEventListener('blur', async () => {
+          const url = proverInput.value.trim();
+          if (url === currentProverUrl) return;
+          try {
+            if (url) {
+              await freedomAPI.upsertEndpointSource(proverId, {
+                role: 'prover', keyed: false, coverage: { '1': url },
+              });
+            } else {
+              await freedomAPI.removeEndpointSource(proverId);
+            }
+          } catch { /* surfaced on the refresh below */ }
+          refresh();
+        });
+
+        // Re-sync on navigation into this section — values may have been
+        // changed from the Chains page in the same session.
         window.addEventListener('hashchange', () => {
           if (location.hash.replace(/^#/, '').toLowerCase() === 'ethereum') refresh();
         });
