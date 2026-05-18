@@ -191,11 +191,95 @@ function getKeyedSources(role) {
   return out;
 }
 
+// --- mutation layer ---------------------------------------------------
+// Writes go to the user-config layer (network-config.json). Each mutation
+// runs load() first so any pending legacy migration has already produced
+// network-config.json, then reads that persisted file, edits it, and
+// writes it back — invalidating the cache so the next query reflects it.
+
+// The raw user layer. Absent or corrupt → the empty shape, and the
+// mutation that follows writes a fresh file. Unlike the load path (which
+// preserves a corrupt file for recovery), a deliberate write may replace
+// it — a corrupt config was already not in effect.
+function readUserConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(userDataPath('network-config.json'), 'utf-8'));
+  } catch {
+    return { networks: {}, endpointSources: {}, removedSources: [] };
+  }
+}
+
+function writeUserConfig(config) {
+  fs.writeFileSync(
+    userDataPath('network-config.json'),
+    JSON.stringify(config, null, 2),
+    'utf-8'
+  );
+  invalidate();
+}
+
+// Merge a partial override into the user layer's networks[chainId].
+// verification/quorum merge one level deep against any existing override;
+// the rest of each block fills in from the builtin defaults at load time,
+// so the persisted override stays minimal (just the user's deviations).
+function updateNetwork(chainId, patch) {
+  load();
+  const config = readUserConfig();
+  const networks = { ...(config.networks || {}) };
+  const cid = String(chainId);
+  const current = networks[cid] || {};
+  networks[cid] = { ...current, ...patch };
+  if (patch.verification) {
+    networks[cid].verification = { ...current.verification, ...patch.verification };
+  }
+  if (patch.quorum) {
+    networks[cid].quorum = { ...current.quorum, ...patch.quorum };
+  }
+  writeUserConfig({ ...config, networks });
+}
+
+// Add or replace a user endpoint source. An explicit re-add also un-hides
+// a builtin of the same id (the prior removal no longer applies).
+function upsertEndpointSource(id, source) {
+  load();
+  const config = readUserConfig();
+  const endpointSources = { ...(config.endpointSources || {}), [id]: source };
+  const removedSources = (config.removedSources || []).filter((x) => x !== id);
+  writeUserConfig({ ...config, endpointSources, removedSources });
+}
+
+// Remove a source: a user-added one is deleted outright; a builtin is
+// added to removedSources (it can't be deleted from endpoint-sources.json).
+function removeEndpointSource(id) {
+  load();
+  const config = readUserConfig();
+  const endpointSources = { ...(config.endpointSources || {}) };
+  let removedSources = config.removedSources || [];
+  if (endpointSources[id]) {
+    delete endpointSources[id];
+  } else if (!removedSources.includes(id)) {
+    removedSources = [...removedSources, id];
+  }
+  writeUserConfig({ ...config, endpointSources, removedSources });
+}
+
+// Un-hide a builtin source that was previously removed.
+function restoreEndpointSource(id) {
+  load();
+  const config = readUserConfig();
+  const removedSources = (config.removedSources || []).filter((x) => x !== id);
+  writeUserConfig({ ...config, removedSources });
+}
+
 module.exports = {
   getNetwork,
   getAllNetworks,
   getEndpoints,
   getEndpointSources,
   getKeyedSources,
+  updateNetwork,
+  upsertEndpointSource,
+  removeEndpointSource,
+  restoreEndpointSource,
   invalidate,
 };

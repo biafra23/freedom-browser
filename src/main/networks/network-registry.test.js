@@ -15,7 +15,10 @@ jest.mock('node:fs', () => ({
     }
     return mockFiles[name];
   },
-  writeFileSync: (...args) => mockWriteFileSync(...args),
+  writeFileSync: (...args) => {
+    mockWriteFileSync(...args);
+    mockFiles[require('node:path').basename(args[0])] = args[1];
+  },
 }));
 
 const registry = require('./network-registry');
@@ -200,6 +203,57 @@ describe('invalidate', () => {
     expect(registry.getNetwork(1).verification.primary).toBe('colibri');
     setFiles({ userConfig: { networks: { '1': { verification: { primary: 'direct' } } } } });
     expect(registry.getNetwork(1).verification.primary).toBe('direct');
+  });
+});
+
+describe('mutation layer', () => {
+  test('updateNetwork persists a verification override', () => {
+    registry.updateNetwork(1, { verification: { primary: 'quorum' } });
+    expect(registry.getNetwork(1).verification.primary).toBe('quorum');
+    const written = mockWriteFileSync.mock.calls.find(([p]) => String(p).endsWith('network-config.json'));
+    expect(written).toBeDefined();
+  });
+
+  test('updateNetwork merges a partial quorum patch, keeping the rest', () => {
+    registry.updateNetwork(1, { quorum: { k: 7 } });
+    expect(registry.getNetwork(1).quorum).toMatchObject({ k: 7, m: 2, timeoutMs: 5000 });
+  });
+
+  test('upsertEndpointSource adds a user source visible to getEndpoints', () => {
+    registry.upsertEndpointSource('my-rpc', {
+      role: 'rpc', keyed: false, coverage: { '1': 'http://my-rpc.example' },
+    });
+    expect(registry.getEndpoints(1, 'rpc')).toContain('http://my-rpc.example');
+  });
+
+  test('upsertEndpointSource un-hides a previously removed builtin', () => {
+    setFiles({ userConfig: { removedSources: ['eth-public'] } });
+    registry.upsertEndpointSource('eth-public', {
+      role: 'rpc', keyed: false, coverage: { '1': 'http://override.example' },
+    });
+    expect(registry.getEndpoints(1, 'rpc')).toContain('http://override.example');
+  });
+
+  test('removeEndpointSource hides a builtin source', () => {
+    registry.removeEndpointSource('eth-public');
+    expect(registry.getEndpoints(1, 'rpc')).not.toContain('https://eth.public.example');
+  });
+
+  test('removeEndpointSource deletes a user-added source outright', () => {
+    setFiles({
+      userConfig: {
+        endpointSources: { u1: { role: 'rpc', keyed: false, coverage: { '1': 'http://u1.example' } } },
+      },
+    });
+    registry.removeEndpointSource('u1');
+    expect(registry.getEndpoints(1, 'rpc')).not.toContain('http://u1.example');
+  });
+
+  test('restoreEndpointSource un-hides a removed builtin', () => {
+    registry.removeEndpointSource('eth-public');
+    expect(registry.getEndpoints(1, 'rpc')).not.toContain('https://eth.public.example');
+    registry.restoreEndpointSource('eth-public');
+    expect(registry.getEndpoints(1, 'rpc')).toContain('https://eth.public.example');
   });
 });
 
