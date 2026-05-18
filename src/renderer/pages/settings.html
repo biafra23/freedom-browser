@@ -510,6 +510,12 @@
             </svg>
             Chains
           </button>
+          <button type="button" class="nav-item" data-target="providers">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+            </svg>
+            RPC Providers
+          </button>
           <button type="button" class="nav-item" data-target="ethereum">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="12 2 4 12 12 16 20 12 12 2"></polygon>
@@ -590,6 +596,12 @@
         <section class="section" id="networks">
           <div id="networks-view"></div>
           <p id="networks-status" class="rpc-status"></p>
+        </section>
+
+        <!-- RPC Providers -->
+        <section class="section" id="providers">
+          <div id="providers-view"></div>
+          <p id="providers-status" class="rpc-status"></p>
         </section>
 
         <!-- ENS Resolution — a focused lens on the Ethereum network -->
@@ -990,7 +1002,6 @@
 
         let config = { networks: {}, sources: [] };
         let endpointForm = null; // null | { mode, id, url } — chain is the open detail; role is always rpc
-        let keyFor = null;       // null | providerId being edited
 
         const setStatus = (msg, kind) => {
           if (!statusEl) return;
@@ -1027,49 +1038,24 @@
             <div class="card">${rows}</div>`;
         };
 
-        // --- an endpoint-source row (detail view) --------------------
+        // --- a keyless RPC endpoint row (detail view) ----------------
+        // Keyed providers are managed on the RPC Providers page, not here.
         const sourceRow = (src, cid) => {
           const url = (src.coverage && src.coverage[cid]) || '';
-          const meta = [src.role === 'prover' ? 'prover' : 'RPC', src.builtin ? 'built-in' : 'custom'];
-          if (src.keyed) meta.push(src.hasKey ? 'API key set' : 'no API key');
+          const meta = [src.builtin ? 'built-in' : 'custom'];
           if (src.removed) meta.push('disabled');
 
-          if (src.keyed && keyFor === src.id) {
-            return `
-              <div class="row">
-                <div class="row-body" style="flex: 1">
-                  <p class="row-label">${esc(src.name || src.id)}</p>
-                  <div class="rpc-row" style="margin-top: 8px">
-                    <input type="password" class="rpc-input" id="keyinput-${esc(src.id)}" placeholder="API key" spellcheck="false" />
-                    <button type="button" class="btn" data-action="test-key" data-id="${esc(src.id)}">Test</button>
-                    <button type="button" class="btn" data-action="save-key" data-id="${esc(src.id)}">Save</button>
-                    <button type="button" class="btn" data-action="cancel-key">Cancel</button>
-                  </div>
-                  <p class="rpc-status" id="keystatus-${esc(src.id)}"></p>
-                </div>
-              </div>`;
-          }
-
-          let controls;
-          if (src.keyed) {
-            controls = src.hasKey
-              ? `<button type="button" class="btn" data-action="edit-key" data-id="${esc(src.id)}">Edit key</button>
-                 <button type="button" class="btn" data-action="remove-key" data-id="${esc(src.id)}">Remove</button>`
-              : `<button type="button" class="btn" data-action="edit-key" data-id="${esc(src.id)}">Add key</button>`;
-          } else if (src.builtin) {
-            controls = `<label class="toggle">
+          const controls = src.builtin
+            ? `<label class="toggle">
                 <input type="checkbox" data-action="toggle-source" data-id="${esc(src.id)}"${src.removed ? '' : ' checked'} />
-                <span class="slider"></span></label>`;
-          } else {
-            controls = `<button type="button" class="btn" data-action="edit-source" data-id="${esc(src.id)}">Edit</button>
+                <span class="slider"></span></label>`
+            : `<button type="button" class="btn" data-action="edit-source" data-id="${esc(src.id)}">Edit</button>
                <button type="button" class="btn" data-action="delete-source" data-id="${esc(src.id)}" title="Remove" aria-label="Remove">✕</button>`;
-          }
 
-          const labelStyle = src.keyed ? '' : ' style="font-family: ui-monospace, Menlo, monospace; font-size: 13px"';
           return `
             <div class="row">
               <div class="row-body">
-                <p class="row-label"${labelStyle}>${esc(src.keyed ? (src.name || src.id) : url)}</p>
+                <p class="row-label" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px">${esc(url)}</p>
                 <p class="row-help">${esc(meta.join(' · '))}</p>
               </div>
               <div class="row-control">${controls}</div>
@@ -1098,17 +1084,13 @@
         // only ENS (mainnet) consumes it, and that lives in the ENS lens.
         // When the wallet honours per-chain verification it returns here.
         const renderDetail = (cid) => {
-          // RPC-role sources only — the Colibri prover is configured in the
-          // ENS lens, not mixed into a chain's RPC endpoint list.
+          // Keyless RPC-role sources only. The Colibri prover lives in the
+          // ENS lens; keyed providers (Alchemy etc.) on the RPC Providers
+          // page — neither is mixed into a chain's RPC endpoint list.
           const keyless = config.sources.filter((s) => s.role === 'rpc' && !s.keyed && s.coverage && s.coverage[cid]);
-          const keyed = config.sources.filter((s) => s.keyed && s.coverage && s.coverage[cid]);
           const keylessHtml = keyless.length
             ? keyless.map((s) => sourceRow(s, cid)).join('')
             : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No RPC endpoints for this chain.</p></div>';
-          const keyedSection = keyed.length
-            ? `<h3 class="section-title" style="font-size: 14px; margin: 18px 0 8px">Keyed providers</h3>
-               <div class="card">${keyed.map((s) => sourceRow(s, cid)).join('')}</div>`
-            : '';
 
           view.innerHTML = `
             <button type="button" class="back-link" data-action="back">‹ Chains</button>
@@ -1118,13 +1100,13 @@
             <h2 class="section-title">RPC endpoints</h2>
             <p class="row-help" style="margin-bottom: 16px">
               The RPC endpoints this chain uses. Disable a built-in source
-              to stop using it, or add your own.
+              to stop using it, or add your own. Commercial providers with
+              API keys are on the RPC Providers page.
             </p>
             <div class="card">${keylessHtml}</div>
-            ${keyedSection}
             <div class="card" style="margin-top: 12px">
               <div class="rpc-block" style="border-top: none">
-                <button type="button" class="btn" data-action="add-endpoint">+ Add endpoint</button>
+                <button type="button" class="btn" data-action="add-endpoint">+ Add a custom RPC</button>
               </div>
             </div>
             ${endpointForm ? endpointFormHtml() : ''}`;
@@ -1216,48 +1198,15 @@
             }));
           } else if (action === 'delete-source') {
             await mutate(() => freedomAPI.removeEndpointSource(id));
-          } else if (action === 'edit-key') {
-            keyFor = id;
-            render();
-            $('keyinput-' + id)?.focus();
-          } else if (action === 'cancel-key') {
-            keyFor = null;
-            render();
-          } else if (action === 'remove-key') {
-            await mutate(() => freedomAPI.removeNetworkApiKey(id));
-          } else if (action === 'test-key') {
-            const key = ($('keyinput-' + id)?.value || '').trim();
-            const statusLine = $('keystatus-' + id);
-            if (!key) { if (statusLine) { statusLine.textContent = 'Enter a key to test'; statusLine.className = 'rpc-status error'; } return; }
-            if (statusLine) { statusLine.textContent = 'testing…'; statusLine.className = 'rpc-status testing'; }
-            try {
-              const r = await freedomAPI.testNetworkApiKey(id, key);
-              if (statusLine) {
-                statusLine.textContent = r?.success ? 'Key works' : (r?.error || 'Key test failed');
-                statusLine.className = 'rpc-status ' + (r?.success ? 'success' : 'error');
-              }
-            } catch (err) {
-              if (statusLine) { statusLine.textContent = err?.message || 'Key test failed'; statusLine.className = 'rpc-status error'; }
-            }
-          } else if (action === 'save-key') {
-            const key = ($('keyinput-' + id)?.value || '').trim();
-            if (!key) {
-              const statusLine = $('keystatus-' + id);
-              if (statusLine) { statusLine.textContent = 'Enter a key'; statusLine.className = 'rpc-status error'; }
-              return;
-            }
-            keyFor = null;
-            await mutate(() => freedomAPI.setNetworkApiKey(id, key));
           }
         });
 
         // The hash drives list↔detail; entering the section also re-syncs
-        // (config may have changed from the ENS lens). Transient form/key
-        // editor state is cleared on any navigation.
+        // (config may have changed elsewhere). The transient add/edit form
+        // is cleared on any navigation.
         window.addEventListener('hashchange', () => {
           if (resolveSection(location.hash) !== 'networks') return;
           endpointForm = null;
-          keyFor = null;
           render();  // instant list<->detail swap from cached config
           reload();  // then re-sync in case it changed elsewhere
         });
@@ -1346,6 +1295,162 @@
         });
 
         refresh();
+      })();
+
+      // ── RPC Providers page ──────────────────────────────────────────
+      // Commercial RPC providers (Alchemy / Infura / DRPC) and their API
+      // keys, for the #providers section. A keyed provider's API key is
+      // one credential across every chain that provider serves, so it
+      // belongs here rather than per-chain.
+      (() => {
+        const section = $('providers');
+        const view = $('providers-view');
+        const statusEl = $('providers-status');
+        if (!section || !view) return;
+
+        const esc = (s) =>
+          String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+        let config = { networks: {}, sources: [] };
+        let keyFor = null;  // null | provider id whose key is being edited
+
+        const setStatus = (msg, kind) => {
+          if (!statusEl) return;
+          statusEl.textContent = msg || '';
+          statusEl.className = 'rpc-status' + (kind ? ' ' + kind : '');
+        };
+
+        // Of the user's configured chains, the ones this provider serves.
+        const supportedChains = (provider) => {
+          const names = Object.keys(provider.coverage || {})
+            .filter((cid) => config.networks[cid])
+            .map((cid) => config.networks[cid].name || ('Chain ' + cid));
+          return names.length ? names.join(', ') : 'none of your chains';
+        };
+
+        const providerRow = (p) => {
+          if (keyFor === p.id) {
+            return `
+              <div class="row">
+                <div class="row-body" style="flex: 1">
+                  <p class="row-label">${esc(p.name || p.id)}</p>
+                  <div class="rpc-row" style="margin-top: 8px">
+                    <input type="password" class="rpc-input" id="pkey-${esc(p.id)}" placeholder="API key" spellcheck="false" />
+                    <button type="button" class="btn" data-action="test-key" data-id="${esc(p.id)}">Test</button>
+                    <button type="button" class="btn" data-action="save-key" data-id="${esc(p.id)}">Save</button>
+                    <button type="button" class="btn" data-action="cancel-key">Cancel</button>
+                  </div>
+                  <p class="rpc-status" id="pstatus-${esc(p.id)}"></p>
+                </div>
+              </div>`;
+          }
+          const controls = p.hasKey
+            ? `<button type="button" class="btn" data-action="edit-key" data-id="${esc(p.id)}">Edit key</button>
+               <button type="button" class="btn" data-action="remove-key" data-id="${esc(p.id)}">Remove</button>`
+            : `<button type="button" class="btn" data-action="edit-key" data-id="${esc(p.id)}">Add key</button>`;
+          return `
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label">${esc(p.name || p.id)}</p>
+                <p class="row-help">${p.hasKey ? 'API key set' : 'No API key'} · supports ${esc(supportedChains(p))}</p>
+              </div>
+              <div class="row-control">${controls}</div>
+            </div>`;
+        };
+
+        const render = () => {
+          const providers = config.sources.filter((s) => s.keyed);
+          const body = providers.length
+            ? `<div class="card">${providers.map(providerRow).join('')}</div>`
+            : '<div class="card"><div class="rpc-block" style="border-top: none"><p class="rpc-hint">No keyed providers available.</p></div></div>';
+          view.innerHTML = `
+            <h2 class="section-title">RPC Providers</h2>
+            <p class="row-help" style="margin-bottom: 16px">
+              Commercial RPC providers. Add an API key to use one — a single
+              key covers every chain that provider serves. Keyless public
+              RPCs are managed per chain under Chains settings.
+            </p>
+            ${body}`;
+        };
+
+        const reload = async () => {
+          try {
+            const res = await freedomAPI.getNetworkConfig();
+            if (!res || !res.success) {
+              setStatus('Failed to load provider configuration', 'error');
+              return;
+            }
+            config = { networks: res.networks || {}, sources: res.sources || [] };
+            render();
+          } catch {
+            setStatus('Failed to load provider configuration', 'error');
+          }
+        };
+
+        const mutate = async (fn) => {
+          try {
+            const res = await fn();
+            if (res && res.success === false) {
+              setStatus(res.error || 'Change failed', 'error');
+              return;
+            }
+            setStatus('', '');
+          } catch (err) {
+            setStatus(err?.message || 'Change failed', 'error');
+          }
+          await reload();
+        };
+
+        section.addEventListener('click', async (e) => {
+          const btn = e.target.closest('button[data-action]');
+          if (!btn) return;
+          const action = btn.dataset.action;
+          const id = btn.dataset.id;
+
+          if (action === 'edit-key') {
+            keyFor = id;
+            render();
+            $('pkey-' + id)?.focus();
+          } else if (action === 'cancel-key') {
+            keyFor = null;
+            render();
+          } else if (action === 'remove-key') {
+            await mutate(() => freedomAPI.removeNetworkApiKey(id));
+          } else if (action === 'test-key') {
+            const key = ($('pkey-' + id)?.value || '').trim();
+            const line = $('pstatus-' + id);
+            if (!key) { if (line) { line.textContent = 'Enter a key to test'; line.className = 'rpc-status error'; } return; }
+            if (line) { line.textContent = 'testing…'; line.className = 'rpc-status testing'; }
+            try {
+              const r = await freedomAPI.testNetworkApiKey(id, key);
+              if (line) {
+                line.textContent = r?.success ? 'Key works' : (r?.error || 'Key test failed');
+                line.className = 'rpc-status ' + (r?.success ? 'success' : 'error');
+              }
+            } catch (err) {
+              if (line) { line.textContent = err?.message || 'Key test failed'; line.className = 'rpc-status error'; }
+            }
+          } else if (action === 'save-key') {
+            const key = ($('pkey-' + id)?.value || '').trim();
+            if (!key) {
+              const line = $('pstatus-' + id);
+              if (line) { line.textContent = 'Enter a key'; line.className = 'rpc-status error'; }
+              return;
+            }
+            keyFor = null;
+            await mutate(() => freedomAPI.setNetworkApiKey(id, key));
+          }
+        });
+
+        // Re-sync on navigation into this section.
+        window.addEventListener('hashchange', () => {
+          if (resolveSection(location.hash) !== 'providers') return;
+          keyFor = null;
+          reload();
+        });
+
+        reload();
       })();
     </script>
   </body>

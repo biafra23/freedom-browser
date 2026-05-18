@@ -1,8 +1,7 @@
 /**
- * RPC settings — relocated to the Chains settings page.
+ * RPC settings — relocated to the RPC Providers settings page.
  *
- * Network and RPC-provider configuration (verification strategy, RPC
- * endpoints, provider API keys) now lives in the unified Chains settings
+ * RPC provider API keys are managed on the unified RPC Providers settings
  * page. The wallet sidebar keeps a single deep-link there.
  */
 
@@ -14,14 +13,14 @@ export function initRpcSettings() {
 
   container.innerHTML = `
     <p style="font-size: 12px; color: var(--text-secondary, #888); margin: 0 0 8px">
-      Network verification and RPC provider keys are managed in Chains settings.
+      RPC provider API keys are managed on the RPC Providers settings page.
     </p>
-    <button type="button" id="rpc-open-networks" class="rpc-provider-btn" style="width: 100%">
-      Open Chains settings
+    <button type="button" id="rpc-open-providers" class="rpc-provider-btn" style="width: 100%">
+      Open RPC Providers settings
     </button>`;
 
-  const btn = document.getElementById('rpc-open-networks');
+  const btn = document.getElementById('rpc-open-providers');
   if (btn) {
-    btn.addEventListener('click', () => createTab('freedom://settings/networks'));
+    btn.addEventListener('click', () => createTab('freedom://settings/providers'));
   }
 }
