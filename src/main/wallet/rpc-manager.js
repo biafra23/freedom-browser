@@ -1,14 +1,15 @@
 /**
  * RPC Manager
  *
- * Manages user-configured RPC provider API keys and builds RPC URLs.
- * Providers are defined in src/shared/rpc-providers.json.
- * User API keys are stored in ~/.freedom-browser/rpc-api-keys.json.
+ * Manages user-configured RPC provider API keys. The provider catalog and
+ * resolved RPC URLs come from the network registry; user API keys are
+ * stored in <userData>/rpc-api-keys.json.
  */
 
 const { app, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const registry = require('../networks/network-registry');
 
 // Lazy-loaded to avoid circular dependencies
 let providerManager = null;
@@ -24,7 +25,6 @@ const API_KEYS_FILE = 'rpc-api-keys.json';
 
 // Cache
 let apiKeysCache = null;
-let providersCache = null;
 
 /**
  * Get path to user's API keys file
@@ -34,38 +34,12 @@ function getApiKeysPath() {
 }
 
 /**
- * Get path to builtin providers file
- */
-function getProvidersPath() {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'app.asar', 'src', 'shared', 'rpc-providers.json');
-  }
-  return path.join(__dirname, '..', '..', 'shared', 'rpc-providers.json');
-}
-
-/**
- * Load builtin RPC providers
+ * The keyed-provider catalog (Alchemy/Infura/DRPC) from the network
+ * registry, keyed by id. Each entry: { id, role, keyed, name, website,
+ * docsUrl, coverage } where coverage maps chainId -> URL template.
  */
 function loadProviders() {
-  if (providersCache) {
-    return providersCache;
-  }
-
-  try {
-    const filePath = getProvidersPath();
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, 'utf-8');
-      providersCache = JSON.parse(data);
-    } else {
-      console.error('[RpcManager] Providers file not found:', filePath);
-      providersCache = {};
-    }
-  } catch (err) {
-    console.error('[RpcManager] Failed to load providers:', err);
-    providersCache = {};
-  }
-
-  return providersCache;
+  return registry.getKeyedSources('rpc');
 }
 
 /**
@@ -198,49 +172,13 @@ function hasApiKey(providerId) {
 }
 
 /**
- * Build RPC URL for a provider and chain
- * @param {string} providerId - Provider ID (e.g., 'alchemy')
- * @param {number|string} chainId - Chain ID
- * @returns {string|null} - Full RPC URL with API key substituted, or null if not available
- */
-function getRpcUrl(providerId, chainId) {
-  const provider = getProvider(providerId);
-  if (!provider) return null;
-
-  const template = provider.chains[String(chainId)];
-  if (!template) return null;
-
-  const apiKey = getApiKey(providerId);
-  if (!apiKey) return null;
-
-  return template.replace('{API_KEY}', apiKey);
-}
-
-/**
- * Get all effective RPC URLs for a chain
- * Priority: configured providers (in order of configuration)
+ * All resolved RPC URLs for a chain — the registry's rpc-role endpoint
+ * pool: keyless builtin RPCs plus keyed providers with a configured key.
  * @param {number|string} chainId - Chain ID
  * @returns {string[]} - Array of RPC URLs
  */
 function getEffectiveRpcUrls(chainId) {
-  const chainIdStr = String(chainId);
-  const urls = [];
-
-  // Get URLs from all configured providers that support this chain
-  const configuredProviders = getConfiguredProviders();
-  const providers = loadProviders();
-
-  for (const providerId of configuredProviders) {
-    const provider = providers[providerId];
-    if (provider?.chains[chainIdStr]) {
-      const url = getRpcUrl(providerId, chainId);
-      if (url) {
-        urls.push(url);
-      }
-    }
-  }
-
-  return urls;
+  return registry.getEndpoints(chainId, 'rpc');
 }
 
 /**
@@ -254,8 +192,8 @@ function getProviderSupportedChains() {
 
   for (const providerId of configuredProviders) {
     const provider = providers[providerId];
-    if (provider?.chains) {
-      Object.keys(provider.chains).forEach((chainId) => chainIds.add(chainId));
+    if (provider?.coverage) {
+      Object.keys(provider.coverage).forEach((chainId) => chainIds.add(chainId));
     }
   }
 
@@ -275,14 +213,14 @@ async function testApiKey(providerId, apiKey) {
   }
 
   // Find a chain to test with (prefer Ethereum mainnet, fall back to first available)
-  const chainIds = Object.keys(provider.chains);
+  const chainIds = Object.keys(provider.coverage);
   const testChainId = chainIds.includes('1') ? '1' : chainIds[0];
 
   if (!testChainId) {
     return { success: false, error: 'Provider has no chains configured' };
   }
 
-  const template = provider.chains[testChainId];
+  const template = provider.coverage[testChainId];
   const url = template.replace('{API_KEY}', apiKey);
 
   try {
@@ -318,11 +256,11 @@ async function testApiKey(providerId, apiKey) {
 }
 
 /**
- * Clear caches (useful when providers file changes)
+ * Clear caches (useful when RPC config changes)
  */
 function clearCaches() {
   apiKeysCache = null;
-  providersCache = null;
+  registry.invalidate();
 }
 
 /**
@@ -340,7 +278,7 @@ function registerRpcManagerIpc() {
         name: provider.name,
         website: provider.website,
         docsUrl: provider.docsUrl,
-        supportedChains: Object.keys(provider.chains),
+        supportedChains: Object.keys(provider.coverage),
       };
     }
     return { success: true, providers: result };
@@ -376,22 +314,9 @@ function registerRpcManagerIpc() {
     return { success: true, chains: getProviderSupportedChains() };
   });
 
-  // Get effective RPC URLs for a chain (built-in public RPCs first, then provider URLs)
+  // Get effective RPC URLs for a chain (the registry's resolved rpc pool)
   ipcMain.handle('rpc:get-effective-urls', (_event, chainId) => {
-    const { getChain } = require('./chains');
-    const chain = getChain(chainId);
-    const builtinUrls = chain?.rpcUrls || [];
-    const providerUrls = getEffectiveRpcUrls(chainId);
-    // Deduplicate: built-in public RPCs first, then provider URLs
-    const seen = new Set(builtinUrls);
-    const urls = [...builtinUrls];
-    for (const url of providerUrls) {
-      if (!seen.has(url)) {
-        urls.push(url);
-        seen.add(url);
-      }
-    }
-    return { success: true, urls };
+    return { success: true, urls: getEffectiveRpcUrls(chainId) };
   });
 
   console.log('[RpcManager] IPC handlers registered');
@@ -407,7 +332,6 @@ module.exports = {
   removeApiKey,
   getConfiguredProviders,
   hasApiKey,
-  getRpcUrl,
   getEffectiveRpcUrls,
   getProviderSupportedChains,
   testApiKey,

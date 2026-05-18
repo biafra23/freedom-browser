@@ -140,6 +140,20 @@ describe('getEndpointSources', () => {
   });
 });
 
+describe('getKeyedSources', () => {
+  test('returns only keyed sources of the role, each carrying its id', () => {
+    const keyed = registry.getKeyedSources('rpc');
+    expect(Object.keys(keyed)).toEqual(['alchemy']);
+    expect(keyed.alchemy).toMatchObject({ id: 'alchemy', role: 'rpc', keyed: true });
+  });
+
+  test('keyless sources and other roles are excluded', () => {
+    const keyed = registry.getKeyedSources('rpc');
+    expect(keyed['eth-public']).toBeUndefined();
+    expect(keyed['colibri-corpus']).toBeUndefined();
+  });
+});
+
 describe('user config layer', () => {
   test('per-network verification override is applied', () => {
     setFiles({ userConfig: { networks: { '1': { verification: { primary: 'quorum' } } } } });

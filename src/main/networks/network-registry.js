@@ -180,10 +180,22 @@ function getEndpoints(chainId, role) {
   return out;
 }
 
+// Keyed endpoint sources of a role, as an { id: source } catalog — the
+// provider list (Alchemy/Infura/DRPC) the wallet's RPC settings present.
+function getKeyedSources(role) {
+  const { endpointSources } = load();
+  const out = {};
+  for (const [id, src] of Object.entries(endpointSources)) {
+    if (src.role === role && src.keyed) out[id] = { id, ...src };
+  }
+  return out;
+}
+
 module.exports = {
   getNetwork,
   getAllNetworks,
   getEndpoints,
   getEndpointSources,
+  getKeyedSources,
   invalidate,
 };
