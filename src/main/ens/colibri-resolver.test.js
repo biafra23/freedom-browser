@@ -44,7 +44,8 @@ jest.mock('../networks/network-registry', () => ({
   getNetwork: () => ({ zkProof: (mockLoadSettings() || {}).ensColibriZkProof !== false }),
   getEndpoints: (_chainId, role) =>
     role === 'prover'
-      ? [((mockLoadSettings() || {}).ensColibriProverUrl || '').trim()].filter(Boolean)
+      // Empty setting → the builtin prover (stand-in for colibri-corpus).
+      ? [((mockLoadSettings() || {}).ensColibriProverUrl || 'https://test-prover.example').trim()]
       : [],
 }));
 
@@ -62,7 +63,6 @@ const {
   resolveViaColibri,
   resolveReverseViaColibri,
   clearColibriClientForTest,
-  DEFAULT_PROVER_URL,
 } = require('./colibri-resolver');
 
 const DEFAULTS = {
@@ -89,7 +89,7 @@ describe('resolveViaColibri', () => {
     expect(mockColibriCtor).toHaveBeenCalledTimes(1);
     expect(mockColibriCtor).toHaveBeenCalledWith({
       chainId: 1,
-      prover: [DEFAULT_PROVER_URL],
+      prover: ['https://test-prover.example'],
       zk_proof: true,
       privacy_mode: 'basic',
       proofStrategy: Strategy.VerifiedOnly,

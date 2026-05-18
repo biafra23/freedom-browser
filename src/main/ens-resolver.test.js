@@ -69,7 +69,8 @@ jest.mock('./networks/network-registry', () => {
     getEndpoints: (_chainId, role) => {
       const s = mockLoadSettings() || {};
       if (role === 'prover') {
-        return [(s.ensColibriProverUrl || '').trim()].filter(Boolean);
+        // Empty setting → the builtin prover (stand-in for colibri-corpus).
+        return [(s.ensColibriProverUrl || 'https://test-prover.example').trim()];
       }
       const pool = Array.isArray(s.ensPublicRpcProviders) && s.ensPublicRpcProviders.length > 0
         ? s.ensPublicRpcProviders
@@ -89,7 +90,6 @@ const mockResolveReverseViaColibri = jest.fn();
 jest.mock('./ens/colibri-resolver', () => ({
   resolveViaColibri: (...args) => mockResolveViaColibri(...args),
   resolveReverseViaColibri: (...args) => mockResolveReverseViaColibri(...args),
-  DEFAULT_PROVER_URL: 'https://test-prover.example',
 }));
 
 // Mock ethers with controllable provider and resolver behavior.

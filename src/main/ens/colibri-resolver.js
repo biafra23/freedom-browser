@@ -13,7 +13,6 @@ const { universalResolverCall, universalResolverReverse, hostOf } = require('../
 // threat model legible.
 const PRIVACY_MODE = 'basic';
 const CHAIN_ID = 1;
-const DEFAULT_PROVER_URL = 'https://mainnet1.colibri-proof.tech';
 
 let cachedClient = null;
 let cachedClientKey = null;
@@ -48,8 +47,10 @@ function createDiskStorage() {
 // first-call lookups onto a single construction — without it, two cold
 // requests would both pass the cache check and double-init the WASM.
 async function getClient() {
-  const [registryProver] = registry.getEndpoints(CHAIN_ID, 'prover');
-  const proverUrl = (registryProver || DEFAULT_PROVER_URL).trim();
+  const [proverUrl] = registry.getEndpoints(CHAIN_ID, 'prover');
+  if (!proverUrl) {
+    throw new Error(`No Colibri prover configured for chain ${CHAIN_ID}`);
+  }
   const zkProof = registry.getNetwork(CHAIN_ID).zkProof !== false;
   const key = `${proverUrl}|${zkProof}`;
   if (cachedClient && cachedClientKey === key) return cachedClient;
@@ -110,5 +111,4 @@ module.exports = {
   resolveViaColibri,
   resolveReverseViaColibri,
   clearColibriClientForTest,
-  DEFAULT_PROVER_URL,
 };

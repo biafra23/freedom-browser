@@ -897,13 +897,12 @@ async function tryColibriPath(name, callData) {
   };
 }
 
-// Read the effective prover URL from the registry and return its host.
-// Lazy-requires DEFAULT_PROVER_URL to dodge the load-time cycle between
-// this module and ./ens/colibri-resolver.
+// Host of the configured mainnet Colibri prover, for trust labelling.
+// Empty when none is configured — the colibri path then errors and the
+// orchestrator falls through to the quorum fallback.
 function colibriProverHost() {
-  const { DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
   const [proverUrl] = registry.getEndpoints(1, 'prover');
-  return hostOf((proverUrl || DEFAULT_PROVER_URL).trim());
+  return proverUrl ? hostOf(proverUrl) : '';
 }
 
 function buildColibriTrust(proverHost) {
