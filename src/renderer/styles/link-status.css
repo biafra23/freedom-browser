@@ -17,17 +17,31 @@
 .link-status {
   position: absolute;
   left: 0;
+  right: auto;
   bottom: 0;
   z-index: 2;
   max-width: min(70vw, 640px);
   padding: 3px 8px 3px 12px;
   border-top: 1px solid var(--border);
   border-right: 1px solid var(--border);
+  border-left: none;
   border-top-right-radius: 6px;
+  border-top-left-radius: 0;
   background: var(--bg);
   pointer-events: none;
   opacity: 0;
   transition: opacity 150ms ease-out;
+}
+
+.link-status.link-status--right {
+  left: auto;
+  right: 0;
+  padding-left: 8px;
+  padding-right: 12px;
+  border-right: none;
+  border-left: 1px solid var(--border);
+  border-top-right-radius: 0;
+  border-top-left-radius: 6px;
 }
 
 .link-status:not(.visible) {

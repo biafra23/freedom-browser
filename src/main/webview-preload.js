@@ -154,6 +154,32 @@ const handleDwebLinkActivation = (event) => {
 document.addEventListener('click', handleDwebLinkActivation, true);
 document.addEventListener('auxclick', handleDwebLinkActivation, true);
 
+// Notify the host renderer when the cursor enters/leaves the bottom-left
+// region of the viewport so the link-hover URL preview can flip to the
+// opposite corner (matches Chrome's status-bubble behaviour). Only emits
+// on zone transitions to keep IPC traffic minimal — for typical browsing
+// the channel is silent.
+const LINK_STATUS_ZONE_BAND_PX = 28;   // bottom band height (~bar height)
+const LINK_STATUS_ZONE_WIDTH_PX = 280; // left band width
+let linkStatusInZone = false;
+const sendLinkStatusZone = (inZone) => {
+  if (linkStatusInZone === inZone) return;
+  linkStatusInZone = inZone;
+  ipcRenderer.sendToHost('link-status:zone', { inLeftZone: inZone });
+};
+document.addEventListener(
+  'mousemove',
+  (event) => {
+    const inZone =
+      event.clientY > window.innerHeight - LINK_STATUS_ZONE_BAND_PX &&
+      event.clientX < LINK_STATUS_ZONE_WIDTH_PX;
+    sendLinkStatusZone(inZone);
+  },
+  { passive: true, capture: true }
+);
+document.addEventListener('mouseleave', () => sendLinkStatusZone(false));
+window.addEventListener('blur', () => sendLinkStatusZone(false));
+
 // Expose APIs to internal pages (guarded for safety)
 contextBridge.exposeInMainWorld('freedomAPI', {
   // History

@@ -4,6 +4,7 @@ let linkStatusEl = null;
 let linkStatusUrlEl = null;
 let hideTimer = null;
 let showTimer = null;
+let currentSide = 'left';
 
 const SHOW_DELAY_MS = 150;
 const HIDE_DELAY_MS = 250;
@@ -23,6 +24,28 @@ const scheduleFrame = (callback) => {
 export const initLinkStatus = () => {
   linkStatusEl = document.getElementById('link-status');
   linkStatusUrlEl = document.getElementById('link-status-url');
+};
+
+const applySide = (side) => {
+  if (!linkStatusEl) return;
+  if (side === 'right') {
+    linkStatusEl.classList.add('link-status--right');
+  } else {
+    linkStatusEl.classList.remove('link-status--right');
+  }
+};
+
+/**
+ * Set which corner the preview anchors to. Called when the cursor enters
+ * or leaves the default bottom-left position so the bar gets out of the
+ * way of the link the user is hovering.
+ * @param {'left' | 'right'} side
+ */
+export const setLinkStatusSide = (side) => {
+  const next = side === 'right' ? 'right' : 'left';
+  if (next === currentSide) return;
+  currentSide = next;
+  applySide(currentSide);
 };
 
 export const clearLinkStatus = () => {
@@ -66,6 +89,7 @@ const revealLinkStatus = (url) => {
 
   linkStatusUrlEl.textContent = url;
   linkStatusEl.hidden = false;
+  applySide(currentSide);
 
   if (prefersReducedMotion()) {
     linkStatusEl.classList.add('visible');

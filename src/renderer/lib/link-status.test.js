@@ -105,6 +105,32 @@ describe('link-status', () => {
       mod.showLinkStatus('https://example.com/');
       mod.clearLinkStatus();
       mod.handleUpdateTargetUrl(1, 'https://example.com/', 1);
+      mod.setLinkStatusSide('right');
     }).not.toThrow();
+  });
+
+  test('setLinkStatusSide toggles the right-anchor class', async () => {
+    const { linkStatus, urlEl } = createElements();
+    const mod = await loadModule(linkStatus, urlEl);
+    mod.initLinkStatus();
+
+    mod.setLinkStatusSide('right');
+    expect(linkStatus.classList.add).toHaveBeenCalledWith('link-status--right');
+
+    linkStatus.classList.remove.mockClear();
+    mod.setLinkStatusSide('left');
+    expect(linkStatus.classList.remove).toHaveBeenCalledWith('link-status--right');
+  });
+
+  test('reveal applies current side', async () => {
+    const { linkStatus, urlEl } = createElements();
+    const mod = await loadModule(linkStatus, urlEl);
+    mod.initLinkStatus();
+
+    mod.setLinkStatusSide('right');
+    linkStatus.classList.add.mockClear();
+    mod.handleUpdateTargetUrl(1, 'https://example.com/', 1);
+    jest.advanceTimersByTime(200);
+    expect(linkStatus.classList.add).toHaveBeenCalledWith('link-status--right');
   });
 });

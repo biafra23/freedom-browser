@@ -7,7 +7,11 @@ import { setupWebviewContextMenu } from './page-context-menu.js';
 import { homeUrl } from './page-urls.js';
 import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
-import { clearLinkStatus, handleUpdateTargetUrl } from './link-status.js';
+import {
+  clearLinkStatus,
+  handleUpdateTargetUrl,
+  setLinkStatusSide,
+} from './link-status.js';
 
 const electronAPI = window.electronAPI;
 
@@ -482,6 +486,17 @@ const createWebview = (tabId, initialUrl) => {
       }
     },
     'ipc-message': (event) => {
+      // Link-hover preview cursor-zone updates from webview-preload — flip
+      // the bar to the opposite corner so it never covers the hovered link.
+      // Handled directly here (not via navigation.js) because it doesn't
+      // touch tab/navigation state.
+      if (event.channel === 'link-status:zone') {
+        if (tabId === tabState.activeTabId) {
+          const inLeftZone = event.args?.[0]?.inLeftZone === true;
+          setLinkStatusSide(inLeftZone ? 'right' : 'left');
+        }
+        return;
+      }
       // Messages from internal pages (e.g. ens-unverified interstitial
       // bubbling a "Continue once" signal). Route through the registered
       // onWebviewEvent handler so navigation.js can stay the sole owner
@@ -1107,6 +1122,7 @@ export const switchTab = (tabId, options = {}) => {
   if (!tab) return;
 
   clearLinkStatus();
+  setLinkStatusSide('left');
   tabState.activeTabId = tabId;
 
   // Hide all webviews, show active one
