@@ -962,32 +962,16 @@
 
       // ── Networks settings page ──────────────────────────────────────
       // Master-detail controller for the #networks section: a list of
-      // chains, each drilling into a per-chain detail view (verification
-      // strategy + that chain's endpoint sources). Hash-routed — #networks
-      // is the list, #networks/<chainId> a detail. Talks to the registry
-      // via freedomAPI's networks:* bridge; every mutation re-fetches and
+      // chains, each drilling into a per-chain detail view of that chain's
+      // endpoint sources. Hash-routed — #networks is the list,
+      // #networks/<chainId> a detail. Talks to the registry via
+      // freedomAPI's networks:* bridge; every mutation re-fetches and
       // re-renders so the view mirrors the registry.
       (() => {
         const section = $('networks');
         const view = $('networks-view');
         const statusEl = $('networks-status');
         if (!section || !view) return;
-
-        const STRATEGIES = [
-          ['colibri', 'Colibri (cryptographic verification)'],
-          ['quorum', 'Public-RPC quorum (cross-check)'],
-          ['direct', 'Direct (single trusted endpoint)'],
-        ];
-        const STRATEGY_LABEL = {
-          colibri: 'Colibri', quorum: 'Public-RPC quorum', direct: 'Direct',
-        };
-        const ANCHORS = ['latest', 'latest-32', 'finalized'];
-        const QUORUM_FIELDS = [
-          ['k', 'Providers per wave (K)', 1, 9],
-          ['m', 'Agreement threshold (M)', 1, 9],
-          ['timeoutMs', 'Per-call timeout (ms)', 500, 30000],
-          ['anchorTtlMs', 'Anchor cache TTL (ms)', 1000, 600000],
-        ];
 
         const esc = (s) =>
           String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
@@ -1015,22 +999,19 @@
 
         // --- master: chain list --------------------------------------
         const renderList = () => {
-          const rows = chainIdsSorted().map((cid) => {
-            const primary = config.networks[cid]?.verification?.primary || 'direct';
-            return `
-              <button type="button" class="net-row" data-action="open-chain" data-chain="${esc(cid)}">
-                <span class="net-row-text">
-                  <span class="net-row-name">${esc(chainName(cid))}</span>
-                  <span class="net-row-sub">chain ${esc(cid)} · ${esc(STRATEGY_LABEL[primary] || primary)}</span>
-                </span>
-                <span class="net-chevron">›</span>
-              </button>`;
-          }).join('');
+          const rows = chainIdsSorted().map((cid) => `
+            <button type="button" class="net-row" data-action="open-chain" data-chain="${esc(cid)}">
+              <span class="net-row-text">
+                <span class="net-row-name">${esc(chainName(cid))}</span>
+                <span class="net-row-sub">chain ${esc(cid)}</span>
+              </span>
+              <span class="net-chevron">›</span>
+            </button>`).join('');
           view.innerHTML = `
             <h2 class="section-title">Chains</h2>
             <p class="row-help" style="margin-bottom: 16px">
               The chains Freedom resolves names and balances on. Select a
-              chain to configure its verification strategy and endpoints.
+              chain to manage its RPC and prover endpoints.
             </p>
             <div class="card">${rows}</div>`;
         };
@@ -1105,44 +1086,16 @@
             </div>`;
         };
 
-        // --- detail: one chain ---------------------------------------
+        // --- detail: one chain's endpoint sources --------------------
+        // Verification strategy is deliberately not shown here — today
+        // only ENS (mainnet) consumes it, and that lives in the ENS lens.
+        // When the wallet honours per-chain verification it returns here.
         const renderDetail = (cid) => {
-          const net = config.networks[cid] || {};
-          const primary = net.verification?.primary || 'direct';
-          const q = net.quorum || {};
-
-          const stratOpts = STRATEGIES.map(([v, label]) =>
-            `<option value="${v}"${v === primary ? ' selected' : ''}>${esc(label)}</option>`
-          ).join('');
-
-          let quorumRows = '';
-          if (primary === 'quorum') {
-            const numRows = QUORUM_FIELDS.map(([key, label, min, max]) => `
-              <div class="row sub">
-                <div class="row-body"><p class="row-label">${esc(label)}</p></div>
-                <div class="row-control">
-                  <input type="number" class="rpc-input" style="max-width: 110px"
-                         data-net="${esc(cid)}" data-action="set-quorum" data-key="${key}"
-                         min="${min}" max="${max}" value="${esc(q[key] ?? '')}" />
-                </div>
-              </div>`).join('');
-            const anchorOpts = ANCHORS.map((a) =>
-              `<option value="${a}"${(q.anchor || 'latest') === a ? ' selected' : ''}>${a}</option>`
-            ).join('');
-            quorumRows = numRows + `
-              <div class="row sub">
-                <div class="row-body"><p class="row-label">Block anchor</p></div>
-                <div class="row-control">
-                  <select class="rpc-input" style="max-width: 140px" data-net="${esc(cid)}" data-action="set-anchor">${anchorOpts}</select>
-                </div>
-              </div>`;
-          }
-
           const keyless = config.sources.filter((s) => !s.keyed && s.coverage && s.coverage[cid]);
           const keyed = config.sources.filter((s) => s.keyed && s.coverage && s.coverage[cid]);
           const keylessHtml = keyless.length
             ? keyless.map((s) => sourceRow(s, cid)).join('')
-            : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No endpoint sources for this network.</p></div>';
+            : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No endpoint sources for this chain.</p></div>';
           const keyedSection = keyed.length
             ? `<h3 class="section-title" style="font-size: 14px; margin: 18px 0 8px">Keyed providers</h3>
                <div class="card">${keyed.map((s) => sourceRow(s, cid)).join('')}</div>`
@@ -1153,22 +1106,9 @@
             <h2 class="section-title">${esc(chainName(cid))}</h2>
             <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}</p>
 
-            <div class="card">
-              <div class="row">
-                <div class="row-body">
-                  <p class="row-label">Verification method</p>
-                  <p class="row-help">How resolved data for this network is trusted.</p>
-                </div>
-                <div class="row-control">
-                  <select data-net="${esc(cid)}" data-action="set-verification">${stratOpts}</select>
-                </div>
-              </div>
-              ${quorumRows}
-            </div>
-
-            <h2 class="section-title" style="margin-top: 24px">Endpoint sources</h2>
+            <h2 class="section-title">Endpoint sources</h2>
             <p class="row-help" style="margin-bottom: 16px">
-              RPC and prover endpoints for this network. Disable a built-in
+              RPC and prover endpoints for this chain. Disable a built-in
               source to stop using it, or add your own.
             </p>
             <div class="card">${keylessHtml}</div>
@@ -1218,26 +1158,11 @@
 
         section.addEventListener('change', (e) => {
           const el = e.target.closest('[data-action]');
-          if (!el) return;
-          const cid = el.dataset.net;
-          if (el.dataset.action === 'set-verification') {
-            mutate(() => freedomAPI.updateNetwork(cid, { verification: { primary: el.value } }));
-          } else if (el.dataset.action === 'set-anchor') {
-            mutate(() => freedomAPI.updateNetwork(cid, { quorum: { anchor: el.value } }));
-          } else if (el.dataset.action === 'set-quorum') {
-            const field = QUORUM_FIELDS.find(([k]) => k === el.dataset.key);
-            const n = Number(el.value);
-            if (field && el.value !== '' && Number.isFinite(n)) {
-              const clamped = Math.min(field[3], Math.max(field[2], n));
-              el.value = String(clamped);
-              mutate(() => freedomAPI.updateNetwork(cid, { quorum: { [el.dataset.key]: clamped } }));
-            }
-          } else if (el.dataset.action === 'toggle-source') {
-            const id = el.dataset.id;
-            mutate(() => el.checked
-              ? freedomAPI.restoreEndpointSource(id)
-              : freedomAPI.removeEndpointSource(id));
-          }
+          if (!el || el.dataset.action !== 'toggle-source') return;
+          const id = el.dataset.id;
+          mutate(() => el.checked
+            ? freedomAPI.restoreEndpointSource(id)
+            : freedomAPI.removeEndpointSource(id));
         });
 
         section.addEventListener('click', async (e) => {
@@ -1334,8 +1259,8 @@
 
       // ── ENS Resolution lens ─────────────────────────────────────────
       // A focused view of the Ethereum (chain 1) network for the #ethereum
-      // section: surfaces the verification strategy and links to the full
-      // Networks page for endpoint / prover / quorum configuration.
+      // section: surfaces the verification strategy and links to the
+      // Chains page for endpoint configuration.
       (() => {
         const methodSelect = $('ens-lens-method');
         const helpEl = $('ens-lens-help');
