@@ -10,8 +10,16 @@
     "logo": "ethereum.png",
     "builtin": true,
     "hasPublicRpc": false,
-    "verification": { "primary": "colibri" },
-    "quorum": { "k": 3, "m": 2, "timeoutMs": 5000, "anchor": "latest", "anchorTtlMs": 30000 },
+    "verification": {
+      "primary": "colibri"
+    },
+    "quorum": {
+      "k": 3,
+      "m": 2,
+      "timeoutMs": 5000,
+      "anchor": "latest",
+      "anchorTtlMs": 30000
+    },
     "zkProof": true
   },
   "100": {
@@ -30,7 +38,15 @@
     "logo": "gnosis.png",
     "builtin": true,
     "hasPublicRpc": true,
-    "verification": { "primary": "quorum" },
-    "quorum": { "k": 3, "m": 2, "timeoutMs": 5000, "anchor": "latest", "anchorTtlMs": 30000 }
+    "verification": {
+      "primary": "quorum"
+    },
+    "quorum": {
+      "k": 3,
+      "m": 2,
+      "timeoutMs": 5000,
+      "anchor": "latest",
+      "anchorTtlMs": 30000
+    }
   }
 }
