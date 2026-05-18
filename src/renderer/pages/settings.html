@@ -547,149 +547,36 @@
           </div>
         </section>
 
-        <!-- ENS Resolution -->
+        <!-- ENS Resolution — a focused lens on the Ethereum network -->
         <section class="section" id="ethereum">
-          <h2 class="section-title">Resolution method</h2>
+          <h2 class="section-title">ENS Resolution</h2>
           <p class="row-help" style="margin-bottom: 16px">
-            How Freedom resolves <code>.eth</code> and <code>.box</code> names to the content they
-            point at. Colibri verifies each answer cryptographically against the Ethereum sync
-            committee; the public-RPC quorum cross-checks several RPC providers; custom RPC
-            trusts a node you run yourself.
+            How Freedom resolves <code>.eth</code> and <code>.box</code> names. ENS lives on
+            Ethereum, so this is a focused view of the Ethereum network — its RPC endpoints,
+            Colibri prover and quorum parameters are configured in
+            <a href="#networks">Networks settings</a>.
           </p>
           <div class="card">
             <div class="row">
               <div class="row-body">
-                <p class="row-label">
-                  <label style="cursor: pointer; font-weight: normal">
-                    <input type="radio" name="ens-resolution-method" value="colibri" id="ens-method-colibri" />
-                    Colibri (cryptographic verification)
-                    <span style="color: var(--text-muted); font-size: 12px; margin-left: 6px">Recommended</span>
-                  </label>
-                </p>
-                <p class="row-help" style="padding-left: 22px">
-                  Each answer is verified against the Ethereum sync committee via a partner-hosted
-                  prover. Stronger than RPC cross-checking. Adds a single trust dependency on the
-                  prover; fall back to the public-RPC quorum if it fails.
-                </p>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">
-                  <label style="cursor: pointer; font-weight: normal">
-                    <input type="radio" name="ens-resolution-method" value="quorum" id="ens-method-quorum" />
-                    Public-RPC quorum
-                  </label>
-                </p>
-                <p class="row-help" style="padding-left: 22px">
-                  Ask several public Ethereum RPCs in parallel and only trust answers where they
-                  agree. The previous Freedom default.
-                </p>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">
-                  <label style="cursor: pointer; font-weight: normal">
-                    <input type="radio" name="ens-resolution-method" value="custom-rpc" id="ens-method-custom-rpc" />
-                    Custom Ethereum RPC
-                  </label>
-                </p>
-                <p class="row-help" style="padding-left: 22px">
-                  Resolve via a single Ethereum node you run yourself. No cross-checking, no
-                  prover dependency — you trust your own node.
-                </p>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">Fall back to public-RPC quorum if primary fails</p>
-                <p class="row-help">
-                  When the primary method errors or can't verify, retry via the public-RPC quorum
-                  rather than surfacing the failure. The fallback is announced in DevTools so
-                  primary-method health regressions stay visible.
-                </p>
+                <p class="row-label">Verification method</p>
+                <p class="row-help" id="ens-lens-help">Loading…</p>
               </div>
               <div class="row-control">
-                <label class="toggle">
-                  <input type="checkbox" id="ens-fallback-to-quorum" />
-                  <span class="slider"></span>
-                </label>
+                <select id="ens-lens-method">
+                  <option value="colibri">Colibri (cryptographic verification)</option>
+                  <option value="quorum">Public-RPC quorum</option>
+                  <option value="direct">Direct (single trusted endpoint)</option>
+                </select>
               </div>
             </div>
-          </div>
-
-          <!-- Colibri configuration — visible when method=colibri -->
-          <h2 class="section-title" style="margin-top: 32px" id="ens-colibri-header">Colibri</h2>
-          <div class="card" id="ens-colibri-card">
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">Prover URL</p>
-                <p class="row-help">
-                  Partner-hosted Colibri prover. The default is operated by corpus.core; you can
-                  point at any compatible prover endpoint.
-                </p>
-              </div>
-              <div class="row-control" style="flex: 1; max-width: 320px">
-                <input
-                  type="text"
-                  id="ens-colibri-prover-url"
-                  class="rpc-input"
-                  placeholder="https://mainnet1.colibri-proof.tech"
-                  spellcheck="false"
-                />
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">Use ZK consensus proof</p>
-                <p class="row-help">
-                  Bootstraps the sync committee via a recursive zero-knowledge proof instead of
-                  classical light-client updates. Smaller bootstrap, partner-recommended on.
-                </p>
-              </div>
-              <div class="row-control">
-                <label class="toggle">
-                  <input type="checkbox" id="ens-colibri-zk-proof" />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <!-- Custom Ethereum RPC — visible when method=custom-rpc -->
-          <h2 class="section-title" style="margin-top: 32px" id="ens-custom-rpc-header">Custom Ethereum RPC</h2>
-          <div class="card" id="ens-custom-rpc-card">
-            <div class="rpc-block" id="ens-rpc-field" style="border-top: none">
-              <div class="rpc-row">
-                <input
-                  type="text"
-                  id="ens-rpc-url"
-                  class="rpc-input"
-                  placeholder="http://localhost:8545"
-                  spellcheck="false"
-                />
-                <button type="button" id="ens-rpc-test" class="btn">Test</button>
-              </div>
-              <p class="rpc-hint">JSON-RPC endpoint reachable from this machine.</p>
-              <p id="ens-rpc-status" class="rpc-status"></p>
-            </div>
-          </div>
-
-          <!-- Public-RPC quorum — primary or fallback depending on method choice above -->
-          <h2 class="section-title" style="margin-top: 32px">Public-RPC quorum</h2>
-          <p class="row-help" style="margin-bottom: 16px">
-            Used as the primary path when "Public-RPC quorum" is selected above, and as the
-            fallback for the other methods. Freedom asks multiple servers and only trusts answers
-            where several agree.
-          </p>
-          <div class="card">
             <div class="row">
               <div class="row-body">
                 <p class="row-label">Block unverified ENS navigation</p>
                 <p class="row-help">
-                  Show a warning page when only one RPC answers (no cross-check possible). Turn
-                  off to navigate directly with only the amber shield indicator.
+                  Show a warning page before navigating to an ENS name that resolved without
+                  verification (for example, when only one RPC answered). Turn off to navigate
+                  straight through with only the amber shield indicator.
                 </p>
               </div>
               <div class="row-control">
@@ -698,95 +585,6 @@
                   <span class="slider"></span>
                 </label>
               </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">Cross-check across multiple public RPCs</p>
-                <p class="row-help">
-                  Disable only if you want single-source behavior without setting a custom RPC.
-                </p>
-              </div>
-              <div class="row-control">
-                <label class="toggle">
-                  <input type="checkbox" id="enable-ens-quorum" />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-
-            <details class="rpc-block" id="ens-quorum-advanced" style="border-top: 1px solid var(--border)">
-              <summary style="cursor: pointer; color: var(--text-muted); font-size: 13px">
-                Advanced quorum parameters
-              </summary>
-              <div class="row sub">
-                <div class="row-body">
-                  <p class="row-label">Providers per wave (K)</p>
-                  <p class="row-help">Number of RPCs queried in parallel per lookup. Minimum 3 for verified outcomes.</p>
-                </div>
-                <div class="row-control">
-                  <input type="number" id="ens-quorum-k" class="rpc-input" style="max-width: 80px" min="1" max="9" />
-                </div>
-              </div>
-              <div class="row sub">
-                <div class="row-body">
-                  <p class="row-label">Agreement threshold (M)</p>
-                  <p class="row-help">How many providers must return byte-identical answers. Must be ≤ K.</p>
-                </div>
-                <div class="row-control">
-                  <input type="number" id="ens-quorum-m" class="rpc-input" style="max-width: 80px" min="1" max="9" />
-                </div>
-              </div>
-              <div class="row sub">
-                <div class="row-body">
-                  <p class="row-label">Per-call timeout (ms)</p>
-                  <p class="row-help">Slow providers are skipped after this time.</p>
-                </div>
-                <div class="row-control">
-                  <input type="number" id="ens-quorum-timeout" class="rpc-input" style="max-width: 100px" min="500" max="30000" step="500" />
-                </div>
-              </div>
-              <div class="row sub">
-                <div class="row-body">
-                  <p class="row-label">Block anchor</p>
-                  <p class="row-help">
-                    All providers query at this block. <code>latest</code> is ~1.5 min behind head;
-                    <code>finalized</code> is ~12 min behind but strongest.
-                  </p>
-                </div>
-                <div class="row-control">
-                  <select id="ens-block-anchor" class="rpc-input" style="max-width: 140px">
-                    <option value="latest">latest</option>
-                    <option value="latest-32">latest-32</option>
-                    <option value="finalized">finalized</option>
-                  </select>
-                </div>
-              </div>
-              <div class="row sub">
-                <div class="row-body">
-                  <p class="row-label">Anchor cache TTL (ms)</p>
-                  <p class="row-help">How long one pinned block is reused across resolutions.</p>
-                </div>
-                <div class="row-control">
-                  <input type="number" id="ens-anchor-ttl" class="rpc-input" style="max-width: 100px" min="1000" max="600000" step="1000" />
-                </div>
-              </div>
-            </details>
-          </div>
-
-          <!-- Public RPC providers list editor -->
-          <h2 class="section-title" style="margin-top: 32px">Public RPC providers</h2>
-          <p class="row-help" style="margin-bottom: 16px">
-            Edit the list of Ethereum RPCs Freedom uses for cross-checking. Fewer than 3 entries
-            means every resolution will be marked unverified.
-          </p>
-          <div class="card">
-            <div id="ens-provider-list" class="rpc-block" style="border-top: none"></div>
-            <div class="rpc-block" style="border-top: 1px solid var(--border)">
-              <button type="button" id="ens-provider-add" class="btn">+ Add provider</button>
-              <button type="button" id="ens-provider-reset" class="btn" style="margin-left: 8px">
-                Reset to defaults
-              </button>
-              <p id="ens-provider-status" class="rpc-status"></p>
             </div>
           </div>
         </section>
@@ -868,54 +666,13 @@
         themeMode: $('theme-mode'),
         startBee: $('start-bee-at-launch'),
         startIpfs: $('start-ipfs-at-launch'),
-        ensMethodRadios: [
-          $('ens-method-colibri'),
-          $('ens-method-quorum'),
-          $('ens-method-custom-rpc'),
-        ],
-        ensFallbackToQuorum: $('ens-fallback-to-quorum'),
-        ensColibriHeader: $('ens-colibri-header'),
-        ensColibriCard: $('ens-colibri-card'),
-        ensColibriProverUrl: $('ens-colibri-prover-url'),
-        ensColibriZkProof: $('ens-colibri-zk-proof'),
-        ensCustomRpcHeader: $('ens-custom-rpc-header'),
-        ensCustomRpcCard: $('ens-custom-rpc-card'),
-        ensRpcField: $('ens-rpc-field'),
-        ensRpcUrl: $('ens-rpc-url'),
-        ensRpcTest: $('ens-rpc-test'),
-        ensRpcStatus: $('ens-rpc-status'),
         blockUnverifiedEns: $('block-unverified-ens'),
-        enableEnsQuorum: $('enable-ens-quorum'),
-        ensQuorumK: $('ens-quorum-k'),
-        ensQuorumM: $('ens-quorum-m'),
-        ensQuorumTimeout: $('ens-quorum-timeout'),
-        ensBlockAnchor: $('ens-block-anchor'),
-        ensAnchorTtl: $('ens-anchor-ttl'),
-        ensProviderList: $('ens-provider-list'),
-        ensProviderAdd: $('ens-provider-add'),
-        ensProviderReset: $('ens-provider-reset'),
-        ensProviderStatus: $('ens-provider-status'),
         enableRadicle: $('enable-radicle-integration'),
         startRadicleRow: $('start-radicle-row'),
         startRadicle: $('start-radicle-at-launch'),
         enableIdentity: $('enable-identity-wallet'),
         autoUpdate: $('auto-update'),
       };
-
-      // Mirrors DEFAULT_ENS_PUBLIC_RPC_PROVIDERS in settings-store.js — kept
-      // in the page so "Reset to defaults" doesn't need a backend round-trip.
-      // Update both places when adding/removing a default RPC.
-      const ENS_DEFAULT_PROVIDERS = [
-        'https://ethereum.publicnode.com',
-        'https://1rpc.io/eth',
-        'https://eth.drpc.org',
-        'https://eth-mainnet.public.blastapi.io',
-        'https://eth.merkle.io',
-        'https://cloudflare-eth.com',
-        'https://rpc.ankr.com/eth',
-        'https://rpc.flashbots.net',
-        'https://eth.llamarpc.com',
-      ];
 
       const swarmModeHelp = $('swarm-mode-help');
       const swarmModeBtn = $('swarm-mode-action-btn');
@@ -977,99 +734,16 @@
         }
       };
 
-      const getSelectedEnsMethod = () => {
-        const checked = fields.ensMethodRadios.find((r) => r?.checked);
-        return checked?.value || 'colibri';
-      };
-
-      // Drive per-method visibility of the Colibri / Custom-RPC subsections.
-      // The public-RPC quorum block is always visible since it's either the
-      // primary path or the fallback for the other methods.
-      const applyEnsMethodVisibility = () => {
-        const method = getSelectedEnsMethod();
-        const showColibri = method === 'colibri';
-        const showCustomRpc = method === 'custom-rpc';
-        fields.ensColibriHeader.classList.toggle('hidden', !showColibri);
-        fields.ensColibriCard.classList.toggle('hidden', !showColibri);
-        fields.ensCustomRpcHeader.classList.toggle('hidden', !showCustomRpc);
-        fields.ensCustomRpcCard.classList.toggle('hidden', !showCustomRpc);
-      };
-
-      const setEnsRpcStatus = (text, type) => {
-        fields.ensRpcStatus.textContent = text;
-        fields.ensRpcStatus.className = 'rpc-status' + (type ? ' ' + type : '');
-      };
-
-      const setProviderStatus = (text, type) => {
-        fields.ensProviderStatus.textContent = text;
-        fields.ensProviderStatus.className = 'rpc-status' + (type ? ' ' + type : '');
-      };
-
-      // Shared Test-button runner for the custom-RPC field and per-provider
-      // rows. Returns immediately if `url` is blank.
-      const runRpcTest = async (url, btn, setStatus, prefix = '') => {
-        const u = (url || '').trim();
-        if (!u) {
-          setStatus('Enter a URL to test', 'error');
-          return;
-        }
-        setStatus((prefix ? prefix + ' — ' : '') + 'testing…', 'testing');
-        btn.disabled = true;
-        try {
-          const r = await freedomAPI.testEnsRpc(u);
-          if (r?.success) {
-            setStatus((prefix ? prefix + ' — ' : '') + 'connected (block #' + r.blockNumber + ')', 'success');
-          } else {
-            setStatus((prefix ? prefix + ' — ' : '') + (r?.error?.message || 'connection failed'), 'error');
-          }
-        } catch (err) {
-          setStatus((prefix ? prefix + ' — ' : '') + (err?.message || 'test failed'), 'error');
-        } finally {
-          btn.disabled = false;
-        }
-      };
-
-      const clampNumberInput = (input, min, max) => {
-        const n = Number(input.value);
-        if (!Number.isFinite(n)) return;
-        if (n < min) input.value = String(min);
-        else if (n > max) input.value = String(max);
-      };
-
-      const collectProviderUrls = () =>
-        [...fields.ensProviderList.querySelectorAll('.provider-input')]
-          .map((input) => (input.value || '').trim())
-          .filter((url) => url.length > 0);
-
-      const currentFormState = () => {
-        const method = getSelectedEnsMethod();
-        return {
-          theme: fields.themeMode.value || 'system',
-          startBeeAtLaunch: fields.startBee.checked,
-          startIpfsAtLaunch: fields.startIpfs.checked,
-          enableRadicleIntegration: isWindows ? false : fields.enableRadicle.checked,
-          startRadicleAtLaunch: isWindows ? false : fields.startRadicle.checked,
-          enableIdentityWallet: fields.enableIdentity.checked,
-          autoUpdate: fields.autoUpdate.checked,
-          ensResolutionMethod: method,
-          ensFallbackToQuorum: fields.ensFallbackToQuorum.checked,
-          ensColibriProverUrl: (fields.ensColibriProverUrl.value || '').trim(),
-          ensColibriZkProof: fields.ensColibriZkProof.checked,
-          // Keep enableEnsCustomRpc in sync with the radio so any legacy
-          // consumer reading the old flag (and the persisted JSON shape)
-          // stays correct without a separate migration pass.
-          enableEnsCustomRpc: method === 'custom-rpc',
-          ensRpcUrl: (fields.ensRpcUrl.value || '').trim(),
-          blockUnverifiedEns: fields.blockUnverifiedEns.checked,
-          enableEnsQuorum: fields.enableEnsQuorum.checked,
-          ensQuorumK: Number(fields.ensQuorumK.value) || 3,
-          ensQuorumM: Number(fields.ensQuorumM.value) || 2,
-          ensQuorumTimeoutMs: Number(fields.ensQuorumTimeout.value) || 5000,
-          ensBlockAnchor: fields.ensBlockAnchor.value || 'latest',
-          ensBlockAnchorTtlMs: Number(fields.ensAnchorTtl.value) || 30000,
-          ensPublicRpcProviders: collectProviderUrls(),
-        };
-      };
+      const currentFormState = () => ({
+        theme: fields.themeMode.value || 'system',
+        startBeeAtLaunch: fields.startBee.checked,
+        startIpfsAtLaunch: fields.startIpfs.checked,
+        enableRadicleIntegration: isWindows ? false : fields.enableRadicle.checked,
+        startRadicleAtLaunch: isWindows ? false : fields.startRadicle.checked,
+        enableIdentityWallet: fields.enableIdentity.checked,
+        autoUpdate: fields.autoUpdate.checked,
+        blockUnverifiedEns: fields.blockUnverifiedEns.checked,
+      });
 
       const applyFormState = (settings) => {
         if (!settings) return;
@@ -1080,100 +754,8 @@
         fields.startRadicle.checked = settings.startRadicleAtLaunch === true;
         fields.enableIdentity.checked = settings.enableIdentityWallet === true;
         fields.autoUpdate.checked = settings.autoUpdate !== false;
-        // Read the new method key; legacy installs that haven't been migrated
-        // yet are mapped here as a safety net (loadSettings on the main side
-        // should have already done this — duplicate logic is cheap and keeps
-        // the form correct even if the value-resolution order changes).
-        const method =
-          settings.ensResolutionMethod ||
-          (settings.enableEnsCustomRpc === true ? 'custom-rpc' : 'colibri');
-        for (const radio of fields.ensMethodRadios) {
-          radio.checked = radio.value === method;
-        }
-        fields.ensFallbackToQuorum.checked = settings.ensFallbackToQuorum !== false;
-        fields.ensColibriProverUrl.value = settings.ensColibriProverUrl || '';
-        fields.ensColibriZkProof.checked = settings.ensColibriZkProof !== false;
-        fields.ensRpcUrl.value = settings.ensRpcUrl || '';
         fields.blockUnverifiedEns.checked = settings.blockUnverifiedEns !== false;
-        fields.enableEnsQuorum.checked = settings.enableEnsQuorum !== false;
-        fields.ensQuorumK.value = settings.ensQuorumK ?? 3;
-        fields.ensQuorumM.value = settings.ensQuorumM ?? 2;
-        fields.ensQuorumTimeout.value = settings.ensQuorumTimeoutMs ?? 5000;
-        fields.ensBlockAnchor.value = settings.ensBlockAnchor || 'latest';
-        fields.ensAnchorTtl.value = settings.ensBlockAnchorTtlMs ?? 30000;
-        renderProviderList(
-          Array.isArray(settings.ensPublicRpcProviders) && settings.ensPublicRpcProviders.length > 0
-            ? settings.ensPublicRpcProviders
-            : ENS_DEFAULT_PROVIDERS
-        );
-        applyEnsMethodVisibility();
         setFieldEnabled(fields.enableRadicle, fields.startRadicleRow, fields.startRadicle);
-        setEnsRpcStatus('', '');
-        setProviderStatus('', '');
-      };
-
-      // Render the provider list. Each row owns its own Test + Remove handlers
-      // via a closure over its row element; no delegated event wiring.
-      const renderProviderList = (urls) => {
-        fields.ensProviderList.textContent = '';
-        for (const url of urls) appendProviderRow(url);
-        updateProviderListEmptyHint();
-      };
-
-      const updateProviderListEmptyHint = () => {
-        const count = fields.ensProviderList.querySelectorAll('.provider-input').length;
-        if (count === 0) {
-          fields.ensProviderList.innerHTML =
-            '<p class="rpc-hint" style="margin: 8px 0">' +
-            'No providers configured — falling back to the built-in default list. ' +
-            'Click <strong>Reset to defaults</strong> to restore the list.' +
-            '</p>';
-        }
-      };
-
-      const appendProviderRow = (url = '') => {
-        // First append wipes the empty-state hint that `renderProviderList`
-        // may have left behind, so we don't end up with hint + rows.
-        if (fields.ensProviderList.querySelector('.rpc-hint') &&
-            !fields.ensProviderList.querySelector('.provider-input')) {
-          fields.ensProviderList.textContent = '';
-        }
-
-        const row = document.createElement('div');
-        row.className = 'rpc-row';
-        row.style.marginBottom = '8px';
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'rpc-input provider-input';
-        input.placeholder = 'https://...';
-        input.spellcheck = false;
-        input.value = url;
-        input.setAttribute('aria-label', 'Public RPC provider URL');
-        input.addEventListener('blur', save);
-
-        const testBtn = document.createElement('button');
-        testBtn.type = 'button';
-        testBtn.className = 'btn';
-        testBtn.textContent = 'Test';
-        testBtn.addEventListener('click', () => {
-          runRpcTest(input.value, testBtn, setProviderStatus, input.value.trim());
-        });
-
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'btn';
-        removeBtn.textContent = '✕';
-        removeBtn.title = 'Remove provider';
-        removeBtn.setAttribute('aria-label', 'Remove provider');
-        removeBtn.addEventListener('click', () => {
-          row.remove();
-          updateProviderListEmptyHint();
-          save();
-        });
-
-        row.append(input, testBtn, removeBtn);
-        fields.ensProviderList.appendChild(row);
       };
 
       let cachedSettings = null;
@@ -1263,9 +845,7 @@
 
       const save = async () => {
         const ok = await freedomAPI.saveSettings(currentFormState());
-        if (!ok) {
-          setEnsRpcStatus('Failed to save settings', 'error');
-        }
+        if (!ok) console.error('[settings] failed to save settings');
       };
 
       fields.themeMode.addEventListener('change', save);
@@ -1278,76 +858,11 @@
       fields.startRadicle.addEventListener('change', save);
       fields.enableIdentity.addEventListener('change', save);
       fields.autoUpdate.addEventListener('change', save);
-
-      for (const radio of fields.ensMethodRadios) {
-        radio.addEventListener('change', () => {
-          applyEnsMethodVisibility();
-          save();
-        });
-      }
-      fields.ensFallbackToQuorum.addEventListener('change', save);
-      fields.ensColibriZkProof.addEventListener('change', save);
-
-      // Persist text fields on blur only — autosaving mid-typing would
-      // briefly persist partial URLs (e.g. http://localh) that the ENS
-      // resolver picks up on the next lookup.
-      fields.ensColibriProverUrl.addEventListener('blur', save);
-      fields.ensRpcUrl.addEventListener('input', () => setEnsRpcStatus('', ''));
-      fields.ensRpcUrl.addEventListener('blur', save);
-
       fields.blockUnverifiedEns.addEventListener('change', save);
-      fields.enableEnsQuorum.addEventListener('change', save);
-
-      // Clamp number inputs to their declared min/max before saving so the
-      // UI reflects the same value the backend will store (backend also
-      // clamps, so the UI would otherwise drift until the next settings:
-      // updated broadcast).
-      fields.ensQuorumK.addEventListener('change', () => {
-        clampNumberInput(fields.ensQuorumK, 1, 9);
-        save();
-      });
-      fields.ensQuorumM.addEventListener('change', () => {
-        clampNumberInput(fields.ensQuorumM, 1, 9);
-        save();
-      });
-      fields.ensQuorumTimeout.addEventListener('change', () => {
-        clampNumberInput(fields.ensQuorumTimeout, 500, 30000);
-        save();
-      });
-      fields.ensBlockAnchor.addEventListener('change', save);
-      fields.ensAnchorTtl.addEventListener('change', () => {
-        clampNumberInput(fields.ensAnchorTtl, 1000, 600000);
-        save();
-      });
-
-      fields.ensProviderAdd.addEventListener('click', () => {
-        appendProviderRow();
-        setProviderStatus('', '');
-        // Focus the new input so the user can type immediately.
-        const rows = fields.ensProviderList.querySelectorAll('.provider-input');
-        rows[rows.length - 1]?.focus();
-      });
-
-      fields.ensProviderReset.addEventListener('click', () => {
-        renderProviderList(ENS_DEFAULT_PROVIDERS);
-        save();
-        setProviderStatus('Reset to default provider list', 'success');
-      });
-
-      fields.ensRpcTest.addEventListener('click', () => {
-        runRpcTest(fields.ensRpcUrl.value, fields.ensRpcTest, setEnsRpcStatus);
-      });
 
       const formStateMatches = (settings) => {
         const form = currentFormState();
-        for (const key of Object.keys(form)) {
-          if (Array.isArray(form[key])) {
-            if (JSON.stringify(form[key]) !== JSON.stringify(settings[key])) return false;
-          } else if (form[key] !== settings[key]) {
-            return false;
-          }
-        }
-        return true;
+        return Object.keys(form).every((key) => form[key] === settings[key]);
       };
 
       // Broadcasts from main keep a second open settings tab in sync; skip the
@@ -1388,7 +903,7 @@
           applyFormState(settings);
           renderSwarmModeRow(settings, registry);
         } catch {
-          setEnsRpcStatus('Failed to load settings', 'error');
+          console.error('[settings] failed to load settings');
         }
       })();
 
@@ -1722,6 +1237,52 @@
         });
 
         reload();
+      })();
+
+      // ── ENS Resolution lens ─────────────────────────────────────────
+      // A focused view of the Ethereum (chain 1) network for the #ethereum
+      // section: surfaces the verification strategy and links to the full
+      // Networks page for endpoint / prover / quorum configuration.
+      (() => {
+        const methodSelect = $('ens-lens-method');
+        const helpEl = $('ens-lens-help');
+        if (!methodSelect || !helpEl) return;
+
+        const HELP = {
+          colibri: 'Each answer is cryptographically verified against the Ethereum sync committee via the Colibri prover.',
+          quorum: 'Several public RPCs are queried in parallel; only answers they agree on are trusted.',
+          direct: 'Resolved via a single trusted endpoint — no cross-checking or proof.',
+        };
+
+        const refresh = async () => {
+          try {
+            const res = await freedomAPI.getNetworkConfig();
+            if (!res || !res.success) return;
+            const primary = res.networks?.['1']?.verification?.primary || 'colibri';
+            methodSelect.value = primary;
+            helpEl.textContent = HELP[primary] || '';
+          } catch {
+            helpEl.textContent = 'Could not load ENS network configuration.';
+          }
+        };
+
+        methodSelect.addEventListener('change', async () => {
+          const primary = methodSelect.value;
+          helpEl.textContent = HELP[primary] || '';
+          try {
+            await freedomAPI.updateNetwork('1', { verification: { primary } });
+          } catch {
+            helpEl.textContent = 'Failed to update the ENS verification method.';
+          }
+        });
+
+        // Re-sync on navigation into this section — the value may have been
+        // changed from the Networks page in the same session.
+        window.addEventListener('hashchange', () => {
+          if (location.hash.replace(/^#/, '').toLowerCase() === 'ethereum') refresh();
+        });
+
+        refresh();
       })();
     </script>
   </body>
