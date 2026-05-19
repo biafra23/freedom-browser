@@ -3377,9 +3377,13 @@
 }
 
 /* Placeholder for chains with no logo asset (user-added custom chains):
-   an initial-letter circle. Mirrors the token .asset-logo-placeholder
-   treatment at the smaller chain-icon size. */
-.chain-switcher-item-logo-fallback {
+   an initial-letter circle, mirroring the token .asset-logo-placeholder
+   treatment at the chain-icon size. Used by the switcher button and the
+   dropdown rows. */
+.chain-switcher-logo-fallback {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3391,7 +3395,7 @@
   text-transform: uppercase;
 }
 
-[data-theme="light"] .chain-switcher-item-logo-fallback {
+[data-theme="light"] .chain-switcher-logo-fallback {
   color: var(--text-inverse);
 }
 
