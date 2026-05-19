@@ -6,7 +6,7 @@
 
 import { walletState } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
-import { renderAssetList } from './balance-display.js';
+import { renderAssetList, loadChainRegistry } from './balance-display.js';
 import { getActiveWebview, emitChainChanged } from '../dapp-provider.js';
 
 // DOM references
@@ -69,7 +69,22 @@ async function renderChainList() {
 
   chainSwitcherList.innerHTML = '';
 
-  const availableResult = await window.networks.getAvailableChains();
+  // Refresh the chain set first — a chain may have been added or removed
+  // on the settings page since the wallet loaded.
+  const [, availableResult] = await Promise.all([
+    loadChainRegistry(),
+    window.networks.getAvailableChains(),
+  ]);
+
+  // If the selected chain was removed, fall back to "All Chains" so the
+  // header and asset list don't keep filtering on a chain that's gone.
+  const selected = walletState.selectedChainId;
+  if (selected !== null && !walletState.registeredChains[selected]) {
+    walletState.selectedChainId = null;
+    updateChainSwitcherDisplay();
+    renderAssetList();
+  }
+
   const availableChains = availableResult.success ? availableResult.chains : {};
   const availableChainIds = new Set(Object.keys(availableChains));
   const availableCount = availableChainIds.size;
