@@ -3376,6 +3376,25 @@
   object-fit: contain;
 }
 
+/* Placeholder for chains with no logo asset (user-added custom chains):
+   an initial-letter circle. Mirrors the token .asset-logo-placeholder
+   treatment at the smaller chain-icon size. */
+.chain-switcher-item-logo-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--muted);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+[data-theme="light"] .chain-switcher-item-logo-fallback {
+  color: var(--text-inverse);
+}
+
 .chain-switcher-item-name {
   font-size: 13px;
   font-weight: 500;

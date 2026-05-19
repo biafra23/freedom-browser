@@ -129,9 +129,12 @@ async function renderChainList() {
       item.classList.add('disabled');
     }
 
+    // Custom chains have no logo asset — show an initial-letter circle so
+    // the row stays aligned with chains that do have an icon.
+    const initial = (chain.name || '').trim().charAt(0) || '?';
     const logoHtml = chain.logo
       ? `<img class="chain-switcher-item-logo" src="assets/chains/${chain.logo}" alt="${chain.name}">`
-      : '';
+      : `<span class="chain-switcher-item-logo chain-switcher-item-logo-fallback">${escapeHtml(initial)}</span>`;
 
     const unavailableHtml = !isAvailable
       ? '<span class="chain-switcher-item-unavailable">No RPC</span>'
