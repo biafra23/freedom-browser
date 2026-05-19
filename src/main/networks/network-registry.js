@@ -41,7 +41,7 @@ let cache = null;
 // settings.json exists, run the one-shot migration and persist the result.
 // Idempotent: once network-config.json is on disk, later loads just read it;
 // a crash before the write simply re-migrates next time.
-function resolveUserConfig(customChains, builtinSources) {
+function resolveUserConfig(builtinSources) {
   const configPath = userDataPath('network-config.json');
 
   // Distinguish "absent" (a migration candidate) from "present but corrupt".
@@ -73,11 +73,7 @@ function resolveUserConfig(customChains, builtinSources) {
   const legacySettings = readJson(userDataPath('settings.json'), null);
   if (!legacySettings) return {}; // fresh install — nothing to migrate
 
-  const migrated = migrateLegacyConfig({
-    settings: legacySettings,
-    customChains,
-    builtinSources,
-  });
+  const migrated = migrateLegacyConfig({ settings: legacySettings, builtinSources });
   try {
     fs.writeFileSync(configPath, JSON.stringify(migrated, null, 2), 'utf-8');
     log.info('[network-registry] migrated legacy config -> network-config.json');
@@ -94,7 +90,7 @@ function load() {
   const builtinNetworks = readJson(builtinPath('chains.json'), {});
   const builtinSources = readJson(builtinPath('endpoint-sources.json'), {});
   const customChains = readJson(userDataPath('custom-chains.json'), {});
-  const userConfig = resolveUserConfig(customChains, builtinSources);
+  const userConfig = resolveUserConfig(builtinSources);
   const apiKeys = readJson(userDataPath('rpc-api-keys.json'), {});
 
   // Networks: builtin chains, then custom chains, then per-network user

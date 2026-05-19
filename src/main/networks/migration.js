@@ -96,9 +96,8 @@ function diffPublicRpcList(userList, builtinSources) {
 }
 
 // settings    — raw legacy settings.json
-// customChains — raw custom-chains.json (chainId -> chain, chains carry rpcUrls)
 // builtinSources — endpoint-sources.json (to diff the edited RPC list against)
-function migrateLegacyConfig({ settings = {}, customChains = {}, builtinSources = {} } = {}) {
+function migrateLegacyConfig({ settings = {}, builtinSources = {} } = {}) {
   const networks = {};
   const endpointSources = {};
   const removedSources = [];
@@ -144,22 +143,10 @@ function migrateLegacyConfig({ settings = {}, customChains = {}, builtinSources 
     Object.assign(endpointSources, listDiff.added);
   }
 
-  // ── Custom chains — their legacy rpcUrls become endpoint sources, or
-  // the wallet loses reach to that chain once it reads the registry. ──
-  for (const [cid, chain] of Object.entries(customChains)) {
-    const urls = Array.isArray(chain?.rpcUrls) ? chain.rpcUrls : [];
-    urls.forEach((url, i) => {
-      const trimmed = (url || '').trim();
-      if (trimmed) {
-        endpointSources[`migrated-chain-${cid}-${i}`] = {
-          role: 'rpc',
-          keyed: false,
-          coverage: { [cid]: trimmed },
-        };
-      }
-    });
-  }
-
+  // Custom chains are not migrated: their rpcUrls live on the chain
+  // definition in custom-chains.json, which network-registry's load()
+  // already surfaces as endpoint sources — copying them here would
+  // double every custom-chain RPC.
   return { networks, endpointSources, removedSources };
 }
 

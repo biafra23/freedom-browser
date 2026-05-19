@@ -85,18 +85,13 @@ describe('migrateLegacyConfig — the 11-case matrix', () => {
     expect(Object.values(result.endpointSources).every((s) => s.keyed === false)).toBe(true);
   });
 
-  test('8. custom chains → their legacy rpcUrls become endpoint sources', () => {
+  test('8. custom-chain rpcUrls are not migrated (load() surfaces them as catalog sources)', () => {
     const result = run({}, {
       '8453': { chainId: 8453, name: 'Base', rpcUrls: ['https://base.example', 'https://base2.example'] },
     });
-    expect(result.endpointSources['migrated-chain-8453-0']).toEqual({
-      role: 'rpc',
-      keyed: false,
-      coverage: { '8453': 'https://base.example' },
-    });
-    expect(result.endpointSources['migrated-chain-8453-1'].coverage).toEqual({
-      '8453': 'https://base2.example',
-    });
+    // The chain's rpcUrls stay on its custom-chains.json definition;
+    // copying them here would double them against load()'s catalog: sources.
+    expect(result.endpointSources).toEqual({});
   });
 
   test('9. kolibri-era dev settings are tolerated and mapped', () => {
