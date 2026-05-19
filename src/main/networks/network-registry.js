@@ -180,9 +180,11 @@ function getAvailableChains() {
 
 // Endpoint source objects covering (chainId, role), raw — the {API_KEY}
 // placeholder is left intact. For settings UIs that list sources.
-// User-added sources sort ahead of builtins: an endpoint the user
-// explicitly configured is preferred over the shipped pool (and is what
-// the `direct` strategy resolves to).
+// Sorted by resolution priority in three tiers: a user-added endpoint
+// first (you chose it), then a keyed commercial provider (an opt-in,
+// higher-reliability endpoint), then a builtin public RPC (the always-on
+// fallback). `direct` resolves to the first; quorum / wallet failover
+// walk the order.
 function getEndpointSources(chainId, role) {
   const cid = String(chainId);
   const { endpointSources, userSourceIds } = load();
@@ -192,7 +194,12 @@ function getEndpointSources(chainId, role) {
       out.push({ id, ...src });
     }
   }
-  out.sort((a, b) => Number(userSourceIds.has(b.id)) - Number(userSourceIds.has(a.id)));
+  const tierOf = (entry) => {
+    if (userSourceIds.has(entry.id)) return 0;
+    if (entry.keyed) return 1;
+    return 2;
+  };
+  out.sort((a, b) => tierOf(a) - tierOf(b));
   return out;
 }
 

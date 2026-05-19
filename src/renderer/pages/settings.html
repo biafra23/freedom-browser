@@ -1150,14 +1150,14 @@
         };
 
         // --- an RPC endpoint row (detail view) -----------------------
-        // Covers all three kinds a chain can be reached by: a user-added
-        // custom RPC, a builtin public RPC, and a commercial keyed
-        // provider. Keyed providers are managed on the RPC Providers
-        // page — here they only show their key status and a link there.
+        // The kind (your RPC / commercial / public) is conveyed by the
+        // section the row sits in; the row itself only flags noteworthy
+        // state — primary, a missing API key, a disabled builtin. Keyed
+        // providers are managed on the RPC Providers page; here they
+        // only show key status and a link there.
         const endpointRow = (src, cid, primary) => {
           const url = (src.coverage && src.coverage[cid]) || '';
-          const kind = !src.builtin ? 'custom' : (src.keyed ? 'commercial' : 'public');
-          const meta = [kind];
+          const meta = [];
           if (primary) meta.push('primary');
           if (src.keyed && !src.hasKey) meta.push('no API key');
           else if (src.removed) meta.push('disabled');
@@ -1180,7 +1180,7 @@
             <div class="row">
               <div class="row-body">
                 <p class="row-label" style="font-family: ui-monospace, Menlo, monospace; font-size: 13px">${src.keyed ? esc(src.name || src.id) : esc(url)}</p>
-                <p class="row-help">${esc(meta.join(' · '))}</p>
+                ${meta.length ? `<p class="row-help">${esc(meta.join(' · '))}</p>` : ''}
               </div>
               <div class="row-control">${controls}</div>
             </div>`;
@@ -1204,37 +1204,52 @@
         };
 
         // --- detail: one chain's RPC endpoints -----------------------
-        // Verification strategy is deliberately not shown here — today
-        // only ENS (mainnet) consumes it, and that lives in the ENS lens.
+        // Three priority tiers, each its own section: your own RPCs, then
+        // keyed commercial providers, then builtin public RPCs — the
+        // order getEndpoints resolves them in. Verification strategy is
+        // not shown — only ENS (mainnet) consumes it, via the ENS lens.
         const renderDetail = (cid) => {
           const isCustom = config.networks[cid]?.builtin === false;
-          // Every rpc-role source covering this chain — user-added before
-          // builtin, the order getEndpoints resolves them in. The Colibri
-          // prover (prover role) lives in the ENS lens, not here.
-          const rpcs = config.sources
-            .filter((s) => s.role === 'rpc' && s.coverage && s.coverage[cid])
-            .sort((a, b) => (a.builtin ? 1 : 0) - (b.builtin ? 1 : 0));
+          const rpcs = config.sources.filter(
+            (s) => s.role === 'rpc' && s.coverage && s.coverage[cid]);
+          const mine = rpcs.filter((s) => !s.builtin);
+          const commercial = rpcs.filter((s) => s.builtin && s.keyed);
+          const publicRpcs = rpcs.filter((s) => s.builtin && !s.keyed);
+
+          // primary = the first usable endpoint walking the tier order.
           const usable = (s) => !s.removed && (s.keyed ? !!s.hasKey : true);
-          const primary = rpcs.find(usable);
-          const rowsHtml = rpcs.length
-            ? rpcs.map((s) => endpointRow(s, cid, s === primary)).join('')
-            : '<div class="rpc-block" style="border-top: none"><p class="rpc-hint">No RPC endpoints for this chain.</p></div>';
+          const primary = [...mine, ...commercial, ...publicRpcs].find(usable);
+
+          const section = (title, help, list, emptyHint) => `
+            <h2 class="section-title" style="margin-top: 20px">${title}</h2>
+            <p class="row-help" style="margin-bottom: 12px">${help}</p>
+            <div class="card">${list.length
+              ? list.map((s) => endpointRow(s, cid, s === primary)).join('')
+              : `<div class="rpc-block" style="border-top: none"><p class="rpc-hint">${emptyHint}</p></div>`}</div>`;
 
           view.innerHTML = `
             <button type="button" class="back-link" data-action="back">‹ Chains</button>
             <h2 class="section-title">${esc(chainName(cid))}</h2>
             <p class="row-help" style="margin-bottom: 16px">chain ${esc(cid)}${isCustom ? ' · custom chain' : ''}</p>
 
-            <h2 class="section-title">RPC endpoints</h2>
-            <p class="row-help" style="margin-bottom: 16px">
-              Every endpoint that can serve this chain — your own, public,
-              and commercial. They are tried in order; the first usable one
-              is primary. Commercial providers need an API key, managed on
-              the RPC Providers page.
+            <p class="row-help" style="margin-bottom: 4px">
+              Freedom reaches this chain through these endpoints — for
+              wallet balances, transactions, and dapp requests. They are
+              tried in priority order; the first working one is primary.
             </p>
-            <div class="card">${rowsHtml}</div>
+
+            ${section('Your RPCs', 'Endpoints you added — tried first.', mine, 'No custom RPCs yet.')}
             ${cardButton('+ Add a custom RPC', 'add-endpoint')}
             ${endpointForm ? endpointFormHtml() : ''}
+
+            ${commercial.length ? section('Commercial providers',
+              'Keyed providers — used before public RPCs once you add an API key on the RPC Providers page.',
+              commercial, '') : ''}
+
+            ${publicRpcs.length ? section('Public RPCs',
+              'Free builtin endpoints — the always-on fallback.',
+              publicRpcs, '') : ''}
+
             ${isCustom ? cardButton('Remove this chain', 'remove-chain') : ''}`;
         };
 

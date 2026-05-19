@@ -217,6 +217,25 @@ describe('user config layer', () => {
     // own endpoint must win over the shipped pool.
     expect(registry.getEndpoints(1, 'rpc')[0]).toBe('http://localhost:8545');
   });
+
+  test('a keyed provider resolves ahead of a public RPC', () => {
+    setFiles({ apiKeys: { alchemy: { apiKey: 'K', enabled: true } } });
+    const urls = registry.getEndpoints(1, 'rpc');
+    expect(urls.indexOf('https://eth.alchemy.example/v2/K'))
+      .toBeLessThan(urls.indexOf('https://eth.public.example'));
+  });
+
+  test('a user-added endpoint still resolves ahead of a keyed provider', () => {
+    setFiles({
+      apiKeys: { alchemy: { apiKey: 'K', enabled: true } },
+      userConfig: {
+        endpointSources: {
+          'user-local': { role: 'rpc', keyed: false, coverage: { '1': 'http://localhost:8545' } },
+        },
+      },
+    });
+    expect(registry.getEndpoints(1, 'rpc')[0]).toBe('http://localhost:8545');
+  });
 });
 
 describe('invalidate', () => {
