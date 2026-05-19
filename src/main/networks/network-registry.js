@@ -409,7 +409,13 @@ function removeCustomChain(chainId) {
     if (covers.length === 1 && covers[0] === cid) continue;
     endpointSources[id] = src;
   }
-  writeUserConfig({ ...config, networks: networksOverride, endpointSources });
+  // Drop any disabled-state for this chain's catalogue RPCs — a stale
+  // `catalog:<cid>:*` entry would otherwise suppress an endpoint if the
+  // chain is re-added later.
+  const removedSources = (config.removedSources || []).filter(
+    (id) => !id.startsWith(`catalog:${cid}:`)
+  );
+  writeUserConfig({ ...config, networks: networksOverride, endpointSources, removedSources });
   return { success: true };
 }
 

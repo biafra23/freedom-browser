@@ -401,6 +401,15 @@ describe('removeCustomChain', () => {
     expect(registry.getEndpoints(8453, 'rpc')).toEqual([]);
   });
 
+  test('removing a chain clears the disabled-state of its catalogue RPCs', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example', 'https://b.example']);
+    registry.removeEndpointSource('catalog:8453:1'); // user disables the first catalogue RPC
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://b.example']);
+    registry.removeCustomChain(8453);
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example', 'https://b.example']);
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://a.example', 'https://b.example']);
+  });
+
   test('drops the chain network override and its single-chain endpoint sources', () => {
     setFiles({
       custom: { '8453': { chainId: 8453, name: 'Base' } },
