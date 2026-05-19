@@ -112,6 +112,9 @@ function load() {
       verification: { primary: 'direct', ...net.verification, ...override.verification },
       quorum: { ...net.quorum, ...override.quorum },
     };
+    // rpcUrls (custom chains only) is capability data — it is surfaced as
+    // endpoint sources below; the network object itself stays policy-only.
+    delete networks[cid].rpcUrls;
   }
 
   // Endpoint sources: builtin, then user-added (which may override a
@@ -121,6 +124,17 @@ function load() {
   const removedSourceIds = new Set(userConfig.removedSources || []);
   const userSourceIds = new Set(Object.keys(userConfig.endpointSources || {}));
   const allSources = { ...builtinSources, ...(userConfig.endpointSources || {}) };
+  // A custom chain's catalogue RPCs are stored on its definition. Surface
+  // each as a keyless rpc source under a reserved `catalog:` id — not a
+  // user-layer id, so it counts as one of the chain's public endpoints
+  // rather than a hand-added one.
+  for (const [cid, chain] of Object.entries(customChains)) {
+    (chain.rpcUrls || []).forEach((url, i) => {
+      allSources[`catalog:${cid}:${i + 1}`] = {
+        role: 'rpc', keyed: false, coverage: { [cid]: url },
+      };
+    });
+  }
   const endpointSources = {};
   for (const [id, src] of Object.entries(allSources)) {
     if (!removedSourceIds.has(id)) endpointSources[id] = src;
@@ -347,11 +361,11 @@ function restoreEndpointSource(id) {
   writeUserConfig({ ...config, removedSources });
 }
 
-// Register a user-defined chain, optionally importing rpcUrls as keyless
-// endpoint sources for it. The definition is persisted verbatim (chainId
-// coerced to a number); verification defaults to `direct` at load time.
-// Re-adding an existing custom chain replaces its definition and its
-// imported endpoints. A chainId that collides with a builtin chain is
+// Register a user-defined chain. rpcUrls are stored on the definition
+// (load() surfaces them as the chain's public endpoints); the rest is
+// persisted verbatim, chainId coerced to a number. verification defaults
+// to `direct` at load time. Re-adding an existing custom chain replaces
+// its definition. A chainId that collides with a builtin chain is
 // rejected — builtin chains are customized via updateNetwork.
 function addCustomChain(def, rpcUrls = []) {
   const { networks, customChainIds } = load();
@@ -364,36 +378,15 @@ function addCustomChain(def, rpcUrls = []) {
     return { success: false, error: 'That chain ID is built in already' };
   }
   const customChains = readCustomChains();
-  customChains[cid] = { ...def, chainId };
+  customChains[cid] = { ...def, chainId, rpcUrls: [...rpcUrls] };
   writeCustomChains(customChains);
-
-  // `custom-<cid>-` ids mark this chain's auto-imported endpoints. A
-  // re-add drops the prior set and writes the new one; RPCs the user
-  // added by hand (`user-` ids) are left untouched. Skipped entirely
-  // when there is nothing to import and nothing prior to clear.
-  const config = readUserConfig();
-  const prefix = `custom-${cid}-`;
-  const hadImported = Object.keys(config.endpointSources || {}).some((id) => id.startsWith(prefix));
-  if (rpcUrls.length || hadImported) {
-    const endpointSources = {};
-    for (const [id, src] of Object.entries(config.endpointSources || {})) {
-      if (!id.startsWith(prefix)) endpointSources[id] = src;
-    }
-    rpcUrls.forEach((url, i) => {
-      endpointSources[`${prefix}${i + 1}`] = {
-        role: 'rpc', keyed: false, coverage: { [cid]: url },
-      };
-    });
-    writeUserConfig({ ...config, endpointSources });
-  }
   return { success: true, chainId: cid };
 }
 
-// Remove a user-defined chain along with its user-layer leftovers: the
-// chain's network override and any user endpoint source that covered
-// only this chain (a multi-chain source is left intact). custom-chains
-// is written first so a failure mid-way can't strand a chain that has
-// already lost its endpoints.
+// Remove a user-defined chain. Its catalogue RPCs are part of the
+// definition and go with it; this also drops the chain's network
+// override and any hand-added endpoint source that covered only this
+// chain (a multi-chain source is left intact).
 function removeCustomChain(chainId) {
   const { networks, customChainIds } = load();
   const cid = String(chainId);

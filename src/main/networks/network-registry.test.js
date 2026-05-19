@@ -363,6 +363,12 @@ describe('addCustomChain', () => {
     expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://a.example', 'https://b.example']);
   });
 
+  test('imported rpcUrls are public (builtin) endpoints, not hand-added', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example']);
+    const src = registry.getEndpointSourceList().find((s) => s.coverage['8453'] === 'https://a.example');
+    expect(src).toMatchObject({ role: 'rpc', keyed: false, builtin: true });
+  });
+
   test('re-adding replaces the chain previously imported rpc sources', () => {
     registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example']);
     registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://c.example']);
@@ -386,6 +392,13 @@ describe('removeCustomChain', () => {
   test('rejects removing an unknown or builtin chain', () => {
     expect(registry.removeCustomChain(999).success).toBe(false);
     expect(registry.removeCustomChain(1).success).toBe(false);
+  });
+
+  test('the chain catalogue RPCs disappear when the chain is removed', () => {
+    registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example']);
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://a.example']);
+    registry.removeCustomChain(8453);
+    expect(registry.getEndpoints(8453, 'rpc')).toEqual([]);
   });
 
   test('drops the chain network override and its single-chain endpoint sources', () => {
