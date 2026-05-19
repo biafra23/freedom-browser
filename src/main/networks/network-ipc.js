@@ -11,6 +11,7 @@
 const { ipcMain } = require('electron');
 const registry = require('./network-registry');
 const chainCatalog = require('./chain-catalog');
+const tokenRegistry = require('../token-registry');
 const rpcManager = require('../wallet/rpc-manager');
 
 // registry.invalidate() already ran inside the mutation; this also drops
@@ -115,13 +116,29 @@ function registerNetworkConfigIpc() {
 
   ipcMain.handle('networks:add-chain', (_event, chain, rpcUrls) => {
     const result = registry.addCustomChain(chain, rpcUrls || []);
-    if (result.success) refreshDownstream();
+    if (result.success) {
+      // Register the chain's native asset so the wallet fetches its
+      // balance — balances iterate token entries, and a custom chain
+      // has none otherwise. Best-effort: a chain with no currency
+      // symbol simply gets no native token.
+      tokenRegistry.addCustomToken({
+        chainId: Number(result.chainId),
+        address: null,
+        symbol: chain.nativeSymbol || '',
+        name: chain.nativeSymbol || '',
+        decimals: 18,
+      });
+      refreshDownstream();
+    }
     return result;
   });
 
   ipcMain.handle('networks:remove-chain', (_event, chainId) => {
     const result = registry.removeCustomChain(chainId);
-    if (result.success) refreshDownstream();
+    if (result.success) {
+      tokenRegistry.removeCustomToken(tokenRegistry.getTokenKey(Number(chainId), null));
+      refreshDownstream();
+    }
     return result;
   });
 
