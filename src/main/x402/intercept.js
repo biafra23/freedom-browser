@@ -31,7 +31,8 @@ const { webContents } = require('electron');
 const log = require('../logger');
 const { parsePaymentRequired } = require('@x402/core/schemas');
 const { registerWebRequestHandler } = require('../webrequest-dispatcher');
-const { append: appendReceipt } = require('./receipts');
+const paymentHistory = require('../payment-history');
+const { KINDS: PAYMENT_KINDS, STATUSES: PAYMENT_STATUSES } = paymentHistory;
 const { getPermissionCoverage } = require('./payment-utils');
 
 // Header names used on the wire. V2 uses the un-prefixed names; V1 (Coinbase
@@ -338,16 +339,23 @@ function paymentResponseLoggingHandler(details) {
     }
   }
 
+  let status;
+  if (!success) status = PAYMENT_STATUSES.FAILED;
+  else if (txHash) status = PAYMENT_STATUSES.SETTLED;
+  else status = PAYMENT_STATUSES.NO_RECEIPT;
+
   try {
-    appendReceipt({
+    paymentHistory.append({
+      kind: PAYMENT_KINDS.X402,
       url: expected.url,
       origin: expected.origin,
       chainId: expected.chainId,
       asset: expected.asset,
       amount: expected.amount,
+      fromAddress: expected.fromAddress,
+      toAddress: expected.payTo,
       txHash,
-      status: !success ? 'failed' : txHash ? 'settled' : 'no-receipt',
-      settledAt: Math.floor(Date.now() / 1000),
+      status,
     });
   } catch (err) {
     log.error(`[x402:settled] receipt append failed: ${err.message}`);
@@ -376,6 +384,8 @@ function injectPaymentSignatureHandler(details) {
     chainId: signed.chainId,
     asset: signed.asset,
     amount: signed.amount,
+    payTo: signed.payTo ?? null,
+    fromAddress: signed.fromAddress ?? null,
   });
 
   log.info(

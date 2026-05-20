@@ -14,12 +14,12 @@ const {
   getGasPrices,
   buildErc20TransferData,
   parseAmount,
-  signAndSendTransaction,
   getTransactionStatus,
   waitForTransaction,
   signPersonalMessage,
   signTypedData,
 } = require('./transaction-service');
+const { signAndRecord, KINDS: PAYMENT_KINDS } = require('./tx-recorder');
 const { getActiveWalletIndex } = require('../identity-manager');
 const { getEffectiveRpcUrls } = require('./rpc-manager');
 const { withVaultPrivateKey } = require('./vault-access');
@@ -48,6 +48,29 @@ function isAllowedRpcUrl(rpcUrl) {
   }
 
   return false;
+}
+
+// Shared body of the two send-transaction IPC handlers. They differ only
+// in which wallet index signs and which payment-history kind tags the
+// resulting row.
+async function handleSendTransaction(walletIndex, params, kind, context = {}) {
+  try {
+    const { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId } = params;
+    if (!to || chainId === undefined || !gasLimit) {
+      return { success: false, error: 'Missing required parameters: to, chainId, gasLimit' };
+    }
+    const result = await withVaultPrivateKey(walletIndex, (privateKey) =>
+      signAndRecord(
+        { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
+        privateKey,
+        { kind, ...context },
+      )
+    );
+    return { success: true, ...result };
+  } catch (err) {
+    console.error(`[WalletIPC] ${kind} transaction failed:`, err);
+    return { success: false, error: err.message };
+  }
 }
 
 /**
@@ -208,28 +231,8 @@ function registerWalletIpc() {
     }
   });
 
-  // Sign and send a transaction
-  ipcMain.handle('wallet:send-transaction', async (_event, params) => {
-    try {
-      const { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId } = params;
-
-      if (!to || chainId === undefined || !gasLimit) {
-        return { success: false, error: 'Missing required parameters: to, chainId, gasLimit' };
-      }
-
-      const result = await withVaultPrivateKey(getActiveWalletIndex(), (privateKey) =>
-        signAndSendTransaction(
-          { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
-          privateKey
-        )
-      );
-
-      return { success: true, ...result };
-    } catch (err) {
-      console.error('[WalletIPC] Transaction failed:', err);
-      return { success: false, error: err.message };
-    }
-  });
+  ipcMain.handle('wallet:send-transaction', (_event, params, context) =>
+    handleSendTransaction(getActiveWalletIndex(), params, PAYMENT_KINDS.WALLET_SEND, context));
 
   // Get transaction status
   ipcMain.handle('wallet:get-transaction-status', async (_event, txHash, chainId) => {
@@ -263,28 +266,10 @@ function registerWalletIpc() {
   // dApp-specific handlers (use specific wallet index)
   // ============================================
 
-  // Sign and send transaction for a dApp (uses specified wallet index)
-  ipcMain.handle('wallet:dapp-send-transaction', async (_event, params, walletIndex) => {
-    try {
-      const { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId } = params;
-
-      if (!to || chainId === undefined || !gasLimit) {
-        return { success: false, error: 'Missing required parameters: to, chainId, gasLimit' };
-      }
-
-      const result = await withVaultPrivateKey(walletIndex, (privateKey) =>
-        signAndSendTransaction(
-          { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
-          privateKey
-        )
-      );
-
-      return { success: true, ...result };
-    } catch (err) {
-      console.error('[WalletIPC] dApp transaction failed:', err);
-      return { success: false, error: err.message };
-    }
-  });
+  // Renderer threads the dapp's permissionKey through as context.origin
+  // so payment-history rows match the x402 permission store's keying.
+  ipcMain.handle('wallet:dapp-send-transaction', (_event, params, walletIndex, context) =>
+    handleSendTransaction(walletIndex, params, PAYMENT_KINDS.DAPP_SEND, context));
 
   // Sign a personal message (EIP-191) for a dApp
   ipcMain.handle('wallet:sign-message', async (_event, message, walletIndex) => {

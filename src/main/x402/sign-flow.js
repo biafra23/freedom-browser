@@ -55,6 +55,7 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   const headerValue = Buffer.from(JSON.stringify(payload)).toString('base64');
   const headerName = outgoingHeaderForVersion(detected.requirements.x402Version);
   const tuple = paymentTuple(detected.requirements);
+  const payTo = detected.requirements?.accepts?.[0]?.payTo ?? null;
 
   setPendingPayment(webContentsId, detected.url, {
     header: headerName,
@@ -63,6 +64,8 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
     chainId: tuple?.chainId,
     asset: tuple?.asset,
     amount: tuple?.amount,
+    payTo,
+    fromAddress: client.address,
   });
   clearDetectedPayment(webContentsId);
 

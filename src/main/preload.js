@@ -326,12 +326,12 @@ contextBridge.exposeInMainWorld('wallet', {
   getGasPrice: (chainId) => ipcRenderer.invoke('wallet:get-gas-price', chainId),
   buildErc20Data: (to, amount) => ipcRenderer.invoke('wallet:build-erc20-data', to, amount),
   parseAmount: (amount, decimals) => ipcRenderer.invoke('wallet:parse-amount', amount, decimals),
-  sendTransaction: (params) => ipcRenderer.invoke('wallet:send-transaction', params),
+  sendTransaction: (params, context) => ipcRenderer.invoke('wallet:send-transaction', params, context),
   getTransactionStatus: (txHash, chainId) => ipcRenderer.invoke('wallet:get-transaction-status', txHash, chainId),
   waitForTransaction: (txHash, chainId, confirmations) => ipcRenderer.invoke('wallet:wait-for-transaction', txHash, chainId, confirmations),
 
   // dApp-specific operations (use specific wallet index)
-  dappSendTransaction: (params, walletIndex) => ipcRenderer.invoke('wallet:dapp-send-transaction', params, walletIndex),
+  dappSendTransaction: (params, walletIndex, context) => ipcRenderer.invoke('wallet:dapp-send-transaction', params, walletIndex, context),
   signMessage: (message, walletIndex) => ipcRenderer.invoke('wallet:sign-message', message, walletIndex),
   signTypedData: (typedData, walletIndex) => ipcRenderer.invoke('wallet:sign-typed-data', typedData, walletIndex),
 

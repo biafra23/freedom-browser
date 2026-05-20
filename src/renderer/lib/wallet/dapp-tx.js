@@ -334,7 +334,7 @@ async function approveDappTx() {
       }
     }
 
-    const result = await window.wallet.dappSendTransaction(tx, walletIndex);
+    const result = await window.wallet.dappSendTransaction(tx, walletIndex, { origin: permissionKey });
 
     if (!result.success) {
       throw new Error(result.error || 'Transaction failed');

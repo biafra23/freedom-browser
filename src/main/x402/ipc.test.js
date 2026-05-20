@@ -45,9 +45,11 @@ jest.mock('../token-registry', () => ({
 }));
 
 const mockGetRecentReceipts = jest.fn();
-jest.mock('./receipts', () => ({
-  getRecent: (limit) => mockGetRecentReceipts(limit),
+jest.mock('../payment-history', () => ({
+  getRecent: (...args) => mockGetRecentReceipts(...args),
   append: jest.fn(),
+  KINDS: { X402: 'x402', WALLET_SEND: 'wallet-send', DAPP_SEND: 'dapp-send' },
+  STATUSES: { SETTLED: 'settled', NO_RECEIPT: 'no-receipt', FAILED: 'failed' },
 }));
 
 const mockGrant = jest.fn();
@@ -389,22 +391,22 @@ describe('x402:approve permission interactions', () => {
 });
 
 describe('x402:get-receipts', () => {
-  test('forwards limit to the store and returns the array', async () => {
+  test('delegates to payment-history filtered to kind=x402', async () => {
     mockGetRecentReceipts.mockReturnValueOnce([
-      { id: 'r-1', url: 'https://api.example/x', status: 'settled' },
+      { id: 1, url: 'https://api.example/x', status: 'settled', kind: 'x402' },
     ]);
     const result = await ipcHandlers['x402:get-receipts'](senderEvent(42), { limit: 50 });
     expect(result).toEqual({ success: true, receipts: [
-      { id: 'r-1', url: 'https://api.example/x', status: 'settled' },
+      { id: 1, url: 'https://api.example/x', status: 'settled', kind: 'x402' },
     ] });
-    expect(mockGetRecentReceipts).toHaveBeenCalledWith(50);
+    expect(mockGetRecentReceipts).toHaveBeenCalledWith({ kind: 'x402', limit: 50 });
   });
 
-  test('omits the limit gracefully when none is provided', async () => {
+  test('passes through undefined limit when none provided', async () => {
     mockGetRecentReceipts.mockReturnValueOnce([]);
     const result = await ipcHandlers['x402:get-receipts'](senderEvent(42));
     expect(result.success).toBe(true);
-    expect(mockGetRecentReceipts).toHaveBeenCalledWith(undefined);
+    expect(mockGetRecentReceipts).toHaveBeenCalledWith({ kind: 'x402', limit: undefined });
   });
 });
 

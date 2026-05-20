@@ -95,6 +95,8 @@ const { registerDappPermissionsIpc } = require('./wallet/dapp-permissions');
 const { registerSwarmIpc } = require('./swarm/stamp-service');
 const { registerPublishIpc } = require('./swarm/publish-service');
 const { registerPublishHistoryIpc, closeDb: closePublishHistoryDb } = require('./swarm/publish-history');
+const paymentHistory = require('./payment-history');
+const { getTransactionStatus: getTxStatus } = require('./wallet/transaction-service');
 const { registerSwarmPermissionsIpc } = require('./swarm/swarm-permissions');
 const { registerSwarmProviderIpc } = require('./swarm/swarm-provider-ipc');
 const { registerFeedStoreIpc } = require('./swarm/feed-store');
@@ -161,6 +163,15 @@ async function bootstrap() {
   registerSwarmPermissionsIpc();
   registerSwarmProviderIpc();
   registerFeedStoreIpc();
+
+  // Resolve any pending broadcast txs that didn't get a final receipt
+  // before the previous run exited. Fire-and-forget — the wallet stack
+  // is up by now (registerWalletIpc above wires the provider pool) and
+  // the sweep updates rows in place.
+  paymentHistory.repollPending(getTxStatus).catch((err) => {
+    log.warn(`[App] payment-history repoll failed: ${err.message}`);
+  });
+
   if (!TEST_MODE) {
     // Skip registering the real bzz/ipfs/ipns handlers in test mode —
     // installTestHarness() registers fixture-driven stubs on the same
@@ -290,6 +301,7 @@ app.on('before-quit', async (event) => {
   log.info('[App] Closing history databases...');
   closeHistoryDb();
   closePublishHistoryDb();
+  paymentHistory.closeDb();
 
   // Clean up any GitHub bridge temp directories
   cleanupTempDirs();

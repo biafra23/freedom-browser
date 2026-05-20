@@ -291,7 +291,7 @@ async function autoApproveTx(permission, txParams, chainId, permissionKey) {
     tx.gasPrice = gasPrices.gasPrice;
   }
 
-  const result = await window.wallet.dappSendTransaction(tx, walletIndex);
+  const result = await window.wallet.dappSendTransaction(tx, walletIndex, { origin: permissionKey });
   if (!result.success) throw new Error(result.error || 'Transaction failed');
 
   window.dappPermissions.updateLastUsed(permissionKey);

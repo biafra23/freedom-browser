@@ -17,8 +17,13 @@ jest.mock('../webrequest-dispatcher', () => ({
 }));
 
 const mockAppendReceipt = jest.fn();
-jest.mock('./receipts', () => ({
+jest.mock('../payment-history', () => ({
   append: (...args) => mockAppendReceipt(...args),
+  KINDS: { X402: 'x402', WALLET_SEND: 'wallet-send', DAPP_SEND: 'dapp-send' },
+  STATUSES: {
+    PENDING: 'pending', CONFIRMED: 'confirmed', FAILED: 'failed',
+    SETTLED: 'settled', NO_RECEIPT: 'no-receipt',
+  },
 }));
 
 // Auto-pay branch dispatches signAndQueueRetry via a lazy require —
@@ -474,6 +479,7 @@ describe('paymentResponseLoggingHandler', () => {
     });
     expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
     expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'x402',
       url: 'https://api.example/article',
       origin: 'https://api.example',
       chainId: 8453,

@@ -41,7 +41,7 @@ const {
   updatePermission,
   getAllPermissions,
 } = require('./permissions');
-const { getRecent: getRecentReceipts } = require('./receipts');
+const paymentHistory = require('../payment-history');
 const { signAndQueueRetry } = require('./sign-flow');
 const { paymentTuple, getPermissionCoverage } = require('./payment-utils');
 
@@ -125,8 +125,13 @@ function registerX402Ipc() {
     return { success: true, permissions: getAllPermissions() };
   });
 
+  // Legacy x402-only receipts channel. Now a thin alias over the unified
+  // payment-history store; new callers should use the `payments:*` IPC.
   ipcMain.handle(IPC.X402_GET_RECEIPTS, async (_event, { limit } = {}) => {
-    return { success: true, receipts: getRecentReceipts(limit) };
+    return {
+      success: true,
+      receipts: paymentHistory.getRecent({ kind: paymentHistory.KINDS.X402, limit }),
+    };
   });
 
   ipcMain.handle(IPC.X402_REVOKE_PERMISSION, async (_event, { origin, chainId, asset }) => {
