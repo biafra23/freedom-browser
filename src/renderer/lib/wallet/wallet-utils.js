@@ -73,6 +73,13 @@ export function formatRawTokenBalance(rawValue, decimals = 18) {
   }
 }
 
+// Inverse of formatRawTokenBalance for *whole-unit* inputs: "10" + 6 → "10000000".
+// Pass a digit string (or a number coercible to BigInt) — fractional amounts
+// would need a different parser and aren't accepted here.
+export function toAtomicUnits(humanAmount, decimals) {
+  return (BigInt(humanAmount) * 10n ** BigInt(decimals)).toString();
+}
+
 export function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const k = 1024;

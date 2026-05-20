@@ -26,14 +26,13 @@
  * Both stores expose `clear*` helpers so tests can isolate state.
  */
 
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-const { app } = require('electron');
+const { webContents } = require('electron');
 
 const log = require('../logger');
 const { parsePaymentRequired } = require('@x402/core/schemas');
 const { registerWebRequestHandler } = require('../webrequest-dispatcher');
 const { append: appendReceipt } = require('./receipts');
+const { getPermissionCoverage } = require('./payment-utils');
 
 // Header names used on the wire. V2 uses the un-prefixed names; V1 (Coinbase
 // original) ships with the `X-` prefix. Centralised so WP4 callers reference
@@ -235,18 +234,18 @@ function isStatus2xx(statusLine) {
   return / 2\d\d(?: |$)/.test(statusLine);
 }
 
-// `file://…/pages/x402.html` — same renderer-pages directory the rest of
-// the app loads its internal pages from. Memoised because Electron's
-// `app` isn't ready at module-load time; the first detection call
-// resolves it.
-let cachedInterstitialUrl = null;
-function getInterstitialFileUrl() {
-  if (cachedInterstitialUrl) return cachedInterstitialUrl;
-  const filePath = app.isPackaged
-    ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'pages', 'x402.html')
-    : path.join(__dirname, '..', '..', 'renderer', 'pages', 'x402.html');
-  cachedInterstitialUrl = pathToFileURL(filePath).toString();
-  return cachedInterstitialUrl;
+// Fire the approval-needed event at the HOST window's renderer (the
+// browser shell that owns the sidebar). The webview that hit the 402
+// is a child of the host webContents; sending to host puts the event
+// in front of the wallet sidebar UI.
+function notifyHostOfApprovalNeeded(webviewWebContentsId, payload) {
+  const wc = webContents.fromId(webviewWebContentsId);
+  const host = wc?.hostWebContents;
+  if (!host) {
+    log.warn(`[x402:detect] no host webContents for ${webviewWebContentsId}; approval event dropped`);
+    return;
+  }
+  host.send('x402:approval-needed', payload);
 }
 
 // === Dispatcher handlers =================================================
@@ -284,10 +283,31 @@ function detectPaymentRequiredHandler(details) {
     `[x402:detect] v${requirements.x402Version} payment required for ${sanitizeUrlForLog(details.url)}`
   );
 
-  // Redirect the navigation to the interstitial. The page lives in the
-  // same webview, so its IPC `event.sender.id` matches the webContentsId
-  // we just keyed the state under — no query-string handoff needed.
-  return { redirectURL: getInterstitialFileUrl() };
+  // Auto-pay branch — if an active cap covers this charge, sign and
+  // re-navigate silently. Deferred via setImmediate so we don't block
+  // Chromium on the vault round-trip; the original 402 response will
+  // render briefly while the retry kicks off.
+  if (getPermissionCoverage(details.url, requirements)?.covers) {
+    log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
+    const id = details.webContentsId;
+    setImmediate(() => {
+      // Lazy require to dodge the intercept ↔ sign-flow circular dep.
+      const { signAndQueueRetry } = require('./sign-flow');
+      signAndQueueRetry(id).catch((err) => {
+        log.error(`[x402:auto-pay] failed: ${err.message}`);
+      });
+    });
+    return null;
+  }
+
+  // Otherwise fire the approval event at the host renderer; the
+  // sidebar will pop up an approval card.
+  notifyHostOfApprovalNeeded(details.webContentsId, {
+    webContentsId: details.webContentsId,
+    url: details.url,
+    requirements,
+  });
+  return null;
 }
 
 // onHeadersReceived (chained after detect). On a successful retry the
@@ -385,7 +405,6 @@ module.exports = {
   injectPaymentSignatureHandler,
   paymentResponseLoggingHandler,
   parsePaymentRequiredHeader,
-  getInterstitialFileUrl,
   setPendingPayment,
   getDetectedPayment,
   clearDetectedPayment,

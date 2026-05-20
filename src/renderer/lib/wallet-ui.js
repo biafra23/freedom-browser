@@ -17,6 +17,7 @@ import { initRpcSettings } from './wallet/rpc-settings.js';
 import { initDappConnect, showDappConnect, updateConnectionBanner } from './wallet/dapp-connect.js';
 import { initDappTx, showDappTxApproval } from './wallet/dapp-tx.js';
 import { initDappSign, showDappSignApproval } from './wallet/dapp-sign.js';
+import { initDappX402 } from './wallet/dapp-x402.js';
 import { initPayments, refreshPayments } from './wallet/payments.js';
 import { initSend, openSend, closeSend } from './wallet/send.js';
 import { initExportMnemonic, closeExportMnemonic } from './wallet/export-mnemonic.js';
@@ -72,6 +73,7 @@ export function initWalletUi() {
   initPermissionManage();
   initPayments();
   initDappTx();
+  initDappX402();
   initDappSign();
   initSend();
   initExportMnemonic(switchTab);

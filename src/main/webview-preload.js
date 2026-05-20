@@ -243,24 +243,6 @@ contextBridge.exposeInMainWorld('freedomAPI', {
     ipcRenderer.sendToHost('ens:open-settings');
   }),
 
-  // x402 — payment interstitial. The interstitial runs in the same
-  // webview that hit the 402, so its `event.sender.id` matches the
-  // webContentsId the detector stashed against — no tab IDs flow
-  // through these calls.
-  x402GetDetails: guardInternal('x402GetDetails', () =>
-    ipcRenderer.invoke('x402:get-details')
-  ),
-  x402Approve: guardInternal('x402Approve', (opts) =>
-    ipcRenderer.invoke('x402:approve', opts)
-  ),
-  x402Cancel: guardInternal('x402Cancel', () => ipcRenderer.invoke('x402:cancel')),
-  x402GetAllPermissions: guardInternal('x402GetAllPermissions', () =>
-    ipcRenderer.invoke('x402:get-all-permissions')
-  ),
-  x402RevokePermission: guardInternal('x402RevokePermission', (args) =>
-    ipcRenderer.invoke('x402:revoke-permission', args)
-  ),
-
   // Favicons
   getCachedFavicon: guardInternal('getCachedFavicon', (url) =>
     ipcRenderer.invoke('favicon:get-cached', url)

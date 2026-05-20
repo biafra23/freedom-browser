@@ -8,7 +8,6 @@ jest.mock('../logger', () => ({
 // without going through Electron's IPC layer.
 const ipcHandlers = {};
 jest.mock('electron', () => ({
-  app: { isPackaged: false },
   ipcMain: {
     handle: (channel, handler) => {
       ipcHandlers[channel] = handler;

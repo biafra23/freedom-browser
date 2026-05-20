@@ -56,10 +56,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addHistory: (entry) => ipcRenderer.invoke('history:add', entry),
   removeHistory: (id) => ipcRenderer.invoke('history:remove', id),
   clearHistory: () => ipcRenderer.invoke('history:clear'),
-  // x402 payments (consumed by the Payments sidebar tab)
+  // x402 payments (consumed by the Payments sidebar tab + the
+  // payment-approval sidebar sub-screen). All tab-scoped calls take
+  // webContentsId explicitly — the sidebar is the host webContents,
+  // not the paying webview.
+  x402GetDetails: (args) => ipcRenderer.invoke('x402:get-details', args),
+  x402Approve: (args) => ipcRenderer.invoke('x402:approve', args),
+  x402Cancel: (args) => ipcRenderer.invoke('x402:cancel', args),
   x402GetReceipts: (options) => ipcRenderer.invoke('x402:get-receipts', options),
   x402GetAllPermissions: () => ipcRenderer.invoke('x402:get-all-permissions'),
   x402RevokePermission: (args) => ipcRenderer.invoke('x402:revoke-permission', args),
+  // Main fires this when an unsupervised 402 needs approval (no active
+  // cap covers the charge). Returns a disposer.
+  onX402ApprovalNeeded: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:approval-needed', handler);
+    return () => ipcRenderer.removeListener('x402:approval-needed', handler);
+  },
   // Internal
   getWebviewPreloadPath: () => ipcRenderer.invoke('internal:get-webview-preload-path'),
   // Context menu

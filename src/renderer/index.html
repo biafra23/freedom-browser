@@ -1766,6 +1766,92 @@
               </div>
             </div>
 
+            <!-- x402 Payment Approval sub-screen -->
+            <div id="sidebar-x402-approval" class="sidebar-subscreen sidebar-modal hidden">
+              <div class="subscreen-header">
+                <button type="button" class="subscreen-back-btn" id="x402-approval-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                  </svg>
+                </button>
+                <h3 class="subscreen-title">Payment Required</h3>
+              </div>
+
+              <div class="subscreen-content">
+                <div class="dapp-tx-origin">
+                  <div class="dapp-tx-site" id="x402-approval-site">example.com</div>
+                  <div class="dapp-tx-action">requests an on-chain payment</div>
+                </div>
+
+                <div class="dapp-tx-details">
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">Amount</span>
+                    <span class="dapp-tx-value" id="x402-approval-amount">—</span>
+                  </div>
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">To</span>
+                    <code class="dapp-tx-value dapp-tx-address" id="x402-approval-to">—</code>
+                  </div>
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">Network</span>
+                    <span class="dapp-tx-value" id="x402-approval-network">—</span>
+                  </div>
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">Page</span>
+                    <span class="dapp-tx-value" id="x402-approval-url">—</span>
+                  </div>
+                </div>
+
+                <div class="dapp-tx-warning hidden" id="x402-approval-warning">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  <span id="x402-approval-warning-text"></span>
+                </div>
+
+                <div class="dapp-tx-unlock hidden" id="x402-approval-unlock">
+                  <p class="dapp-tx-unlock-text">Unlock your vault to authorise this payment.</p>
+                  <button type="button" class="dapp-tx-touchid-btn hidden" id="x402-approval-touchid-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 11c0-1.1.9-2 2-2s2 .9 2 2-2 4-2 4"/>
+                      <path d="M8 15c0-2.2 1.8-4 4-4"/>
+                      <path d="M12 4a8 8 0 0 0-8 8c0 1.5.3 2.9.9 4.2"/>
+                      <path d="M12 4a8 8 0 0 1 8 8c0 1.5-.3 2.9-.9 4.2"/>
+                      <path d="M2 12c-.1 1.1-.1 3 .2 4.5"/>
+                      <path d="M22 12c.1 1.1.1 3-.2 4.5"/>
+                    </svg>
+                    <span>Unlock with Touch ID</span>
+                  </button>
+                  <button type="button" class="dapp-unlock-password-link hidden" id="x402-approval-password-link">or enter your password</button>
+                  <div class="dapp-tx-password-section hidden" id="x402-approval-password-section">
+                    <div class="dapp-tx-password-row">
+                      <input type="password" class="password-input" id="x402-approval-password-input" placeholder="Enter password" autocomplete="off">
+                      <button type="button" class="dapp-tx-password-submit" id="x402-approval-password-submit">Unlock</button>
+                    </div>
+                  </div>
+                  <div class="dapp-tx-error hidden" id="x402-approval-unlock-error"></div>
+                </div>
+
+                <div class="dapp-tx-error hidden" id="x402-approval-error"></div>
+
+                <label class="auto-approve-checkbox" id="x402-approval-grant-row">
+                  <input type="checkbox" id="x402-approval-grant-toggle" checked />
+                  <span>
+                    Allow up to <strong id="x402-approval-grant-cap">10 USDC</strong> of
+                    payments to this site over the next <strong>30 days</strong>, without
+                    asking again.
+                  </span>
+                </label>
+
+                <div class="dapp-tx-actions">
+                  <button type="button" class="dapp-tx-reject-btn" id="x402-approval-reject">Reject</button>
+                  <button type="button" class="dapp-tx-approve-btn" id="x402-approval-approve" disabled>Pay</button>
+                </div>
+              </div>
+            </div>
+
             <!-- Publish Setup sub-screen -->
             <div id="sidebar-publish-setup" class="sidebar-subscreen hidden">
               <div class="subscreen-header">

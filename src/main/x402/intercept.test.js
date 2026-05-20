@@ -4,8 +4,11 @@ jest.mock('../logger', () => ({
   error: jest.fn(),
 }));
 
+const mockHostSend = jest.fn();
 jest.mock('electron', () => ({
-  app: { isPackaged: false },
+  webContents: {
+    fromId: jest.fn(() => ({ hostWebContents: { send: mockHostSend } })),
+  },
 }));
 
 const mockRegister = jest.fn();
@@ -16,6 +19,18 @@ jest.mock('../webrequest-dispatcher', () => ({
 const mockAppendReceipt = jest.fn();
 jest.mock('./receipts', () => ({
   append: (...args) => mockAppendReceipt(...args),
+}));
+
+// Auto-pay branch dispatches signAndQueueRetry via a lazy require —
+// mock it so detector tests don't drag the whole sign flow in.
+const mockSignAndQueueRetry = jest.fn();
+jest.mock('./sign-flow', () => ({
+  signAndQueueRetry: (...args) => mockSignAndQueueRetry(...args),
+}));
+
+const mockGetPermission = jest.fn(() => null);
+jest.mock('./permissions', () => ({
+  getPermission: (...args) => mockGetPermission(...args),
 }));
 
 const {
@@ -31,7 +46,6 @@ const {
   clearAllPendingPayments,
   clearAllDetectedPayments,
   cleanupWebContents,
-  getInterstitialFileUrl,
 } = require('./intercept');
 
 beforeEach(() => {
@@ -39,6 +53,9 @@ beforeEach(() => {
   clearAllDetectedPayments();
   mockRegister.mockClear();
   mockAppendReceipt.mockReset();
+  mockHostSend.mockClear();
+  mockSignAndQueueRetry.mockReset().mockResolvedValue(undefined);
+  mockGetPermission.mockReset().mockReturnValue(null);
 });
 
 // Canonical Base USDC PaymentRequired (V2). `resource` is an object per
@@ -119,15 +136,35 @@ describe('detectPaymentRequiredHandler', () => {
     ...overrides,
   });
 
-  test('redirects to the interstitial and stashes the payment on 402 with V2 header', () => {
+  test('on 402 with V2 header: stashes the payment and fires the approval event at the host', () => {
     const result = detectPaymentRequiredHandler(detail());
 
-    expect(result).toEqual({ redirectURL: getInterstitialFileUrl() });
-    expect(getInterstitialFileUrl()).toMatch(/file:\/\/.*\/pages\/x402\.html$/);
+    // Pass-through — the host renderer's sidebar handles the approval
+    // UI; the webview's response renders whatever the server sent.
+    expect(result).toBeNull();
     expect(getDetectedPayment(7)).toMatchObject({
       url: 'https://api.example/article',
       requirements: sampleRequirements,
     });
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-needed', expect.objectContaining({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+    }));
+  });
+
+  test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry and skips the host event', () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    // Use real timers so the setImmediate inside the auto-pay branch
+    // actually fires.
+    detectPaymentRequiredHandler(detail());
+    return new Promise((resolve) => setImmediate(() => {
+      expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7);
+      expect(mockHostSend).not.toHaveBeenCalled();
+      resolve();
+    }));
   });
 
   test('accepts a V1 PaymentRequired payload from X-PAYMENT-REQUIRED', () => {
