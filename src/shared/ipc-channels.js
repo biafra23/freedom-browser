@@ -161,6 +161,8 @@ module.exports = {
   X402_CANCEL: 'x402:cancel',
   X402_GET_ALL_PERMISSIONS: 'x402:get-all-permissions',
   X402_REVOKE_PERMISSION: 'x402:revoke-permission',
+  X402_REVOKE_ALL_FOR_ORIGIN: 'x402:revoke-all-for-origin',
+  X402_UPDATE_PERMISSION: 'x402:update-permission',
   X402_GET_RECEIPTS: 'x402:get-receipts',
 
   // dApp Permissions

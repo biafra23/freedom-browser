@@ -10,7 +10,7 @@
  * webview (window.ethereum) → renderer (this) → main (RPC/signing)
  */
 
-import { showDappConnect, getSelectedChainId, setSelectedChainId, updateConnectionBanner, showDappTxApproval, showDappSignApproval, showVaultUnlock, updateSwarmConnectionBanner } from './wallet-ui.js';
+import { showDappConnect, getSelectedChainId, setSelectedChainId, updateConnectionBanner, showDappTxApproval, showDappSignApproval, showVaultUnlock, updateSwarmConnectionBanner, updateX402ConnectionBanner } from './wallet-ui.js';
 import { extractSelector } from './wallet/dapp-tx.js';
 import { getPermissionKey } from './origin-utils.js';
 
@@ -468,6 +468,7 @@ export function setActiveWebview(webview) {
   setTimeout(() => {
     updateConnectionBanner();
     updateSwarmConnectionBanner();
+    updateX402ConnectionBanner();
   }, 50);
 }
 

@@ -693,7 +693,6 @@
           <div class="sidebar-header">
             <div class="sidebar-tabs">
               <button type="button" class="sidebar-tab active" data-tab="wallet">Wallet</button>
-              <button type="button" class="sidebar-tab" data-tab="payments">Payments</button>
               <button type="button" class="sidebar-tab" data-tab="nodes">Nodes</button>
               <button type="button" class="sidebar-tab" data-tab="settings">Settings</button>
             </div>
@@ -765,6 +764,23 @@
                       <span class="auto-approve-badge hidden" id="swarm-auto-approve-badge">auto</span>
                     </div>
                     <button type="button" class="swarm-connection-disconnect" id="swarm-connection-disconnect" title="Revoke access">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                      </svg>
+                    </button>
+                  </div>
+
+                  <!-- x402 Auto-Pay Banner (shown when current tab has an active payment allowance) -->
+                  <div class="x402-connection-banner hidden" id="x402-connection-banner">
+                    <div class="x402-connection-info" id="x402-connection-manage" title="Manage auto-pay">
+                      <span class="x402-connection-indicator"></span>
+                      <span class="x402-connection-text">
+                        <span class="x402-connection-label">Auto-pay</span>
+                        <span class="x402-connection-site" id="x402-connection-site">site.eth</span>
+                        <span class="x402-connection-remaining" id="x402-connection-remaining"></span>
+                      </span>
+                    </div>
+                    <button type="button" class="x402-connection-disconnect" id="x402-connection-disconnect" title="Revoke auto-pay">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 6L6 18M6 6l12 12"/>
                       </svg>
@@ -984,26 +1000,6 @@
                   </div>
                 </div>
               </div><!-- /tab-nodes -->
-
-              <!-- Payments Tab Panel -->
-              <div id="tab-payments" class="tab-panel hidden">
-                <div class="sidebar-section">
-                  <div class="sidebar-section-header">
-                    <h3>Active allowances</h3>
-                  </div>
-                  <div id="x402-allowances-list" class="x402-list">
-                    <div class="x402-empty">No active allowances.</div>
-                  </div>
-                </div>
-                <div class="sidebar-section">
-                  <div class="sidebar-section-header">
-                    <h3>Recent payments</h3>
-                  </div>
-                  <div id="x402-receipts-list" class="x402-list">
-                    <div class="x402-empty">No payments yet.</div>
-                  </div>
-                </div>
-              </div><!-- /tab-payments -->
 
               <!-- Settings Tab Panel -->
               <div id="tab-settings" class="tab-panel hidden">
@@ -1837,7 +1833,7 @@
                 <div class="dapp-tx-error hidden" id="x402-approval-error"></div>
 
                 <label class="auto-approve-checkbox" id="x402-approval-grant-row">
-                  <input type="checkbox" id="x402-approval-grant-toggle" checked />
+                  <input type="checkbox" id="x402-approval-grant-toggle" />
                   <span>
                     Allow up to <strong id="x402-approval-grant-cap">10 USDC</strong> of
                     payments to this site over the next <strong>30 days</strong>, without
@@ -2305,6 +2301,28 @@
                 </div>
                 <div class="perms-actions">
                   <button type="button" class="perms-disconnect-btn" id="dapp-perms-disconnect">Disconnect</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- x402 Auto-Pay Management sub-screen -->
+            <div id="sidebar-x402-permissions" class="sidebar-subscreen hidden">
+              <div class="subscreen-header">
+                <button type="button" class="subscreen-back-btn" id="x402-perms-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                  </svg>
+                  <span>Back</span>
+                </button>
+                <h3 class="subscreen-title">Auto-pay</h3>
+              </div>
+              <div class="subscreen-content">
+                <div class="perms-site" id="x402-perms-site">site.eth</div>
+                <div id="x402-perms-list" class="perms-section">
+                  <!-- One block per (chainId, asset) allowance, rendered dynamically -->
+                </div>
+                <div class="perms-actions">
+                  <button type="button" class="perms-disconnect-btn" id="x402-perms-revoke-all">Revoke auto-pay</button>
                 </div>
               </div>
             </div>

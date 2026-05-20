@@ -1,19 +1,29 @@
 /**
  * x402 Payment Approval Module
  *
- * Sidebar sub-screen for "this page wants $X to load." Triggered by the
- * `x402:approval-needed` event from main when the webRequest detector
- * sees a 402 the user hasn't pre-authorised. Same shape as dapp-tx.js /
- * dapp-sign.js: hide all sub-screens, render the card, await Approve or
- * Reject, IPC back to main.
+ * Two responsibilities, mirroring dapp-connect.js's split:
+ *
+ *   1. The "this page wants $X to load" sidebar sub-screen, triggered by
+ *      the `x402:approval-needed` event from main when the webRequest
+ *      detector sees a 402 the user hasn't pre-authorised. Same shape as
+ *      dapp-tx.js / dapp-sign.js: hide all sub-screens, render the card,
+ *      await Approve or Reject, IPC back to main.
+ *
+ *   2. The auto-pay connection banner at the top of the Wallet tab. When
+ *      the current site has an active x402 cap, the banner shows it (with
+ *      remaining headroom) and offers a × button to revoke everything for
+ *      the origin, or a click to open the detail subscreen for fine
+ *      adjustment. Mirrors dapp-connection-banner / swarm-connection-banner.
  *
  * Auto-pay (an active per-origin cap covers the charge) is handled
- * entirely in main — this module never fires for that case.
+ * entirely in main — the approval card never fires for that case.
  */
 
 import { walletState, registerScreenHider, hideAllSubscreens } from './wallet-state.js';
-import { open as openSidebarPanel } from '../sidebar.js';
+import { open as openSidebarPanel, isVisible as isSidebarVisible } from '../sidebar.js';
 import { formatRawTokenBalance, truncateAddress, toAtomicUnits } from './wallet-utils.js';
+import { getPermissionKey } from '../origin-utils.js';
+import { showX402Permissions } from './permission-manage.js';
 
 // Defaults from the WP0 consent decision. The interstitial offers
 // these via the grant toggle; main signs+stores the cap if the toggle
@@ -48,6 +58,15 @@ let approveBtn;
 // Approval state for the currently-displayed card. `null` when idle.
 let pending = null;
 
+let bannerEl;
+let bannerInfoEl;
+let bannerSiteEl;
+let bannerRemainingEl;
+let bannerDisconnectBtn;
+
+// Origin key currently displayed in the banner; cleared when hidden.
+let currentBannerKey = null;
+
 export function initDappX402() {
   screen = document.getElementById('sidebar-x402-approval');
   backBtn = document.getElementById('x402-approval-back');
@@ -72,8 +91,15 @@ export function initDappX402() {
   rejectBtn = document.getElementById('x402-approval-reject');
   approveBtn = document.getElementById('x402-approval-approve');
 
+  bannerEl = document.getElementById('x402-connection-banner');
+  bannerInfoEl = document.getElementById('x402-connection-manage');
+  bannerSiteEl = document.getElementById('x402-connection-site');
+  bannerRemainingEl = document.getElementById('x402-connection-remaining');
+  bannerDisconnectBtn = document.getElementById('x402-connection-disconnect');
+
   registerScreenHider(() => screen?.classList.add('hidden'));
   wireButtons();
+  wireBanner();
 
   // Subscribe to main's "approval needed" events. Returned disposer is
   // discarded — the renderer lives for the window's lifetime.
@@ -81,6 +107,32 @@ export function initDappX402() {
     showApproval(payload).catch((err) => {
       console.error('[x402] failed to show approval:', err);
     });
+  });
+}
+
+function wireBanner() {
+  bannerInfoEl?.addEventListener('click', () => {
+    if (currentBannerKey) {
+      showX402Permissions(currentBannerKey);
+    }
+  });
+  bannerDisconnectBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (currentBannerKey) {
+      disconnectX402(currentBannerKey);
+    }
+  });
+
+  // Refresh on sidebar open + after navigations finish, same as the
+  // dapp/swarm banners — otherwise the banner only updates on explicit
+  // tab switches and misses initial-load and in-tab navigation cases.
+  document.addEventListener('sidebar-opened', () => {
+    updateX402ConnectionBanner();
+  });
+  document.addEventListener('navigation-completed', () => {
+    if (isSidebarVisible()) {
+      updateX402ConnectionBanner();
+    }
   });
 }
 
@@ -174,20 +226,50 @@ function renderCard() {
 
 async function checkUnlockState() {
   try {
-    const status = await window.identity?.getStatus?.();
-    const unlocked = status?.isUnlocked;
-    unlockBlock?.classList.toggle('hidden', !!unlocked);
-    if (approveBtn) approveBtn.disabled = !unlocked || !pending?.grantPayload;
-  } catch {
+    const status = await window.identity.getStatus();
+
+    if (status.isUnlocked) {
+      unlockBlock?.classList.add('hidden');
+      if (approveBtn) approveBtn.disabled = !pending?.grantPayload;
+      return;
+    }
+
     unlockBlock?.classList.remove('hidden');
     if (approveBtn) approveBtn.disabled = true;
+
+    // Show Touch ID when available + enrolled, fall back to the password
+    // link, and the section directly if the user doesn't yet have a
+    // memorised password.
+    const canUseTouchId = await window.quickUnlock.canUseTouchId();
+    const touchIdEnabled = await window.quickUnlock.isEnabled();
+    const hasTouchId = canUseTouchId && touchIdEnabled;
+
+    const vaultMeta = await window.identity.getVaultMeta();
+    const userKnowsPassword = vaultMeta?.userKnowsPassword ?? true;
+
+    touchIdBtn?.classList.toggle('hidden', !hasTouchId);
+
+    if (hasTouchId && userKnowsPassword) {
+      passwordLink?.classList.remove('hidden');
+      passwordSection?.classList.add('hidden');
+    } else if (userKnowsPassword) {
+      passwordLink?.classList.add('hidden');
+      passwordSection?.classList.remove('hidden');
+    } else {
+      passwordLink?.classList.add('hidden');
+      passwordSection?.classList.add('hidden');
+    }
+  } catch (err) {
+    console.error('[x402] failed to check vault status:', err);
+    unlockBlock?.classList.remove('hidden');
+    touchIdBtn?.classList.add('hidden');
+    passwordLink?.classList.add('hidden');
+    passwordSection?.classList.remove('hidden');
   }
 }
 
 async function handleTouchIdUnlock() {
   try {
-    // Same incantation dapp-tx.js uses: quickUnlock returns the cached
-    // password from the keychain, then identity.unlock applies it.
     const result = await window.quickUnlock.unlock();
     if (!result?.success) throw new Error(result?.error || 'Touch ID failed');
     const unlockResult = await window.identity.unlock(result.password);
@@ -230,6 +312,7 @@ async function approve() {
 
   if (result?.success) {
     closeAndReset();
+    updateX402ConnectionBanner().catch(() => {});
     return;
   }
 
@@ -289,4 +372,85 @@ function showUnlockError(message) {
 function hideUnlockError() {
   unlockError?.classList.add('hidden');
   if (unlockError) unlockError.textContent = '';
+}
+
+/**
+ * Refresh the auto-pay banner for the current address bar URL (or the
+ * supplied origin key). Shows the banner iff there's at least one
+ * active cap for that origin.
+ */
+export async function updateX402ConnectionBanner(originKey = null) {
+  if (!bannerEl) return;
+
+  let key = originKey;
+  if (!key) {
+    const displayUrl = document.getElementById('address-input')?.value || '';
+    key = getPermissionKey(displayUrl);
+  }
+
+  if (!key) {
+    bannerEl.classList.add('hidden');
+    currentBannerKey = null;
+    return;
+  }
+
+  try {
+    const result = await window.electronAPI.x402GetAllPermissions();
+    const forOrigin = (result?.permissions || []).filter((p) => p.origin === key);
+
+    if (forOrigin.length === 0) {
+      bannerEl.classList.add('hidden');
+      currentBannerKey = null;
+      return;
+    }
+
+    if (bannerSiteEl) bannerSiteEl.textContent = key;
+    if (bannerRemainingEl) {
+      bannerRemainingEl.textContent = await formatRemainingSummary(forOrigin);
+    }
+    currentBannerKey = key;
+    bannerEl.classList.remove('hidden');
+  } catch (err) {
+    console.error('[x402] failed to refresh banner:', err);
+    bannerEl.classList.add('hidden');
+    currentBannerKey = null;
+  }
+}
+
+// Render the per-origin remaining-cap summary. When every active cap is
+// the same asset we can sum them and show "X SYMBOL left"; mixed assets
+// or missing token-registry metadata fall back to a generic count (the
+// detail subscreen breaks down per cap anyway).
+async function formatRemainingSummary(perms) {
+  // tokens:get-token returns an `{success, token}` envelope — unwrap it.
+  const enriched = await Promise.all(
+    perms.map(async (p) => {
+      const r = await window.tokens.getToken(`${p.chainId}:${p.asset}`);
+      return { perm: p, asset: r?.token ?? null };
+    })
+  );
+
+  const symbols = new Set(enriched.map((e) => e.asset?.symbol).filter(Boolean));
+  if (symbols.size === 1 && enriched[0].asset) {
+    const { asset } = enriched[0];
+    let remaining = 0n;
+    for (const { perm } of enriched) {
+      remaining += BigInt(perm.capAmount) - BigInt(perm.spentAmount);
+    }
+    if (remaining < 0n) remaining = 0n;
+    return `${formatRawTokenBalance(remaining.toString(), asset.decimals)} ${asset.symbol} left`;
+  }
+  return `${perms.length} cap${perms.length > 1 ? 's' : ''} active`;
+}
+
+export async function disconnectX402(originKey) {
+  const key = originKey || currentBannerKey;
+  if (!key) return;
+  try {
+    await window.electronAPI.x402RevokeAllForOrigin({ origin: key });
+    bannerEl?.classList.add('hidden');
+    currentBannerKey = null;
+  } catch (err) {
+    console.error('[x402] revoke-all failed:', err);
+  }
 }

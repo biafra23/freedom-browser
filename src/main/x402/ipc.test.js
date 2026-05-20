@@ -54,12 +54,16 @@ const mockGrant = jest.fn();
 const mockGetPermission = jest.fn();
 const mockTryConsume = jest.fn();
 const mockRevoke = jest.fn();
+const mockRevokeAllForOrigin = jest.fn();
+const mockUpdatePermission = jest.fn();
 const mockGetAllPermissions = jest.fn();
 jest.mock('./permissions', () => ({
   grant: (...a) => mockGrant(...a),
   getPermission: (...a) => mockGetPermission(...a),
   tryConsume: (...a) => mockTryConsume(...a),
   revoke: (...a) => mockRevoke(...a),
+  revokeAllForOrigin: (...a) => mockRevokeAllForOrigin(...a),
+  updatePermission: (...a) => mockUpdatePermission(...a),
   getAllPermissions: (...a) => mockGetAllPermissions(...a),
 }));
 
@@ -84,6 +88,8 @@ beforeEach(() => {
   mockGetPermission.mockReset().mockReturnValue(null);
   mockTryConsume.mockReset().mockReturnValue(false);
   mockRevoke.mockReset();
+  mockRevokeAllForOrigin.mockReset();
+  mockUpdatePermission.mockReset();
   mockGetAllPermissions.mockReset().mockReturnValue([]);
   mockGetRecentReceipts.mockReset().mockReturnValue([]);
 });
@@ -420,6 +426,50 @@ describe('x402:get-all-permissions + x402:revoke-permission', () => {
     });
     expect(result.success).toBe(true);
     expect(mockRevoke).toHaveBeenCalledWith('https://a.example', 8453, '0xabc');
+  });
+
+  test('revoke-all-for-origin forwards the origin to the store', async () => {
+    const result = await ipcHandlers['x402:revoke-all-for-origin'](senderEvent(42), {
+      origin: 'https://a.example',
+    });
+    expect(result.success).toBe(true);
+    expect(mockRevokeAllForOrigin).toHaveBeenCalledWith('https://a.example');
+  });
+
+  test('update-permission forwards the patch to the store and returns the record', async () => {
+    mockUpdatePermission.mockReturnValueOnce({
+      origin: 'https://a.example',
+      chainId: 8453,
+      asset: '0xabc',
+      capAmount: '20000000',
+      spentAmount: '500000',
+    });
+    const result = await ipcHandlers['x402:update-permission'](senderEvent(42), {
+      origin: 'https://a.example',
+      chainId: 8453,
+      asset: '0xabc',
+      capAmount: '20000000',
+    });
+    expect(result.success).toBe(true);
+    expect(result.permission).toMatchObject({ capAmount: '20000000', spentAmount: '500000' });
+    expect(mockUpdatePermission).toHaveBeenCalledWith('https://a.example', 8453, '0xabc', {
+      capAmount: '20000000',
+      windowSeconds: undefined,
+    });
+  });
+
+  test('update-permission surfaces validation errors', async () => {
+    mockUpdatePermission.mockImplementationOnce(() => {
+      throw new Error('x402-permissions: no permission to update');
+    });
+    const result = await ipcHandlers['x402:update-permission'](senderEvent(42), {
+      origin: 'https://a.example',
+      chainId: 8453,
+      asset: '0xabc',
+      capAmount: '20000000',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no permission/);
   });
 });
 

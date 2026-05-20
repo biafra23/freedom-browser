@@ -12,6 +12,8 @@ const {
   getPermission,
   tryConsume,
   revoke,
+  revokeAllForOrigin,
+  updatePermission,
   getAllPermissions,
   _resetCache,
 } = require('./permissions');
@@ -162,6 +164,57 @@ describe('revoke', () => {
 
   test('idempotent — revoking an absent cap is a no-op', () => {
     expect(() => revoke(ORIGIN, BASE, USDC)).not.toThrow();
+  });
+});
+
+describe('revokeAllForOrigin', () => {
+  test('drops every cap for one origin and leaves other origins alone', () => {
+    const OTHER_TOKEN = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+    grant(ORIGIN, BASE, USDC, TEN_USDC, WINDOW_30_DAYS);
+    grant(ORIGIN, BASE, OTHER_TOKEN, ONE_USDC, WINDOW_30_DAYS);
+    grant('https://other.example/', BASE, USDC, ONE_USDC, WINDOW_30_DAYS);
+
+    revokeAllForOrigin(ORIGIN);
+
+    expect(getPermission(ORIGIN, BASE, USDC)).toBeNull();
+    expect(getPermission(ORIGIN, BASE, OTHER_TOKEN)).toBeNull();
+    expect(getPermission('https://other.example', BASE, USDC)).not.toBeNull();
+  });
+
+  test('idempotent', () => {
+    expect(() => revokeAllForOrigin(ORIGIN)).not.toThrow();
+  });
+});
+
+describe('updatePermission', () => {
+  test('patches the cap amount without resetting spent', () => {
+    grant(ORIGIN, BASE, USDC, ONE_USDC, WINDOW_30_DAYS);
+    tryConsume(ORIGIN, BASE, USDC, '500000');
+
+    const updated = updatePermission(ORIGIN, BASE, USDC, { capAmount: TEN_USDC });
+    expect(updated.capAmount).toBe(TEN_USDC);
+    expect(updated.spentAmount).toBe('500000');
+    expect(getPermission(ORIGIN, BASE, USDC).spentAmount).toBe('500000');
+  });
+
+  test('patches the window — expiresAt is recomputed from createdAt', () => {
+    const granted = grant(ORIGIN, BASE, USDC, TEN_USDC, WINDOW_30_DAYS);
+
+    const updated = updatePermission(ORIGIN, BASE, USDC, { windowSeconds: 7 * 24 * 60 * 60 });
+    expect(updated.expiresAt).toBe(granted.createdAt + 7 * 24 * 60 * 60);
+  });
+
+  test('throws when patching a non-existent record', () => {
+    expect(() => updatePermission(ORIGIN, BASE, USDC, { capAmount: TEN_USDC }))
+      .toThrow(/no permission/);
+  });
+
+  test('validates the patch payload', () => {
+    grant(ORIGIN, BASE, USDC, TEN_USDC, WINDOW_30_DAYS);
+    expect(() => updatePermission(ORIGIN, BASE, USDC, { capAmount: 'bad' }))
+      .toThrow(/digit string/);
+    expect(() => updatePermission(ORIGIN, BASE, USDC, { windowSeconds: 0 }))
+      .toThrow(/positive/);
   });
 });
 

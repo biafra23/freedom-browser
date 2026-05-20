@@ -17,8 +17,7 @@ import { initRpcSettings } from './wallet/rpc-settings.js';
 import { initDappConnect, showDappConnect, updateConnectionBanner } from './wallet/dapp-connect.js';
 import { initDappTx, showDappTxApproval } from './wallet/dapp-tx.js';
 import { initDappSign, showDappSignApproval } from './wallet/dapp-sign.js';
-import { initDappX402 } from './wallet/dapp-x402.js';
-import { initPayments, refreshPayments } from './wallet/payments.js';
+import { initDappX402, updateX402ConnectionBanner } from './wallet/dapp-x402.js';
 import { initSend, openSend, closeSend } from './wallet/send.js';
 import { initExportMnemonic, closeExportMnemonic } from './wallet/export-mnemonic.js';
 import { initWalletSelector, loadDerivedWallets } from './wallet/wallet-selector.js';
@@ -31,13 +30,14 @@ import { initStampManager, closeStampManager } from './wallet/stamp-manager.js';
 import { initChequebookDeposit, closeChequebookDeposit } from './wallet/chequebook-deposit.js';
 import { initSwarmConnect, showSwarmConnect, updateSwarmConnectionBanner, showSwarmPublishApproval, showSwarmFeedApproval } from './wallet/swarm-connect.js';
 import { initVaultUnlock, showVaultUnlock } from './wallet/vault-unlock.js';
-import { initPermissionManage, showDappPermissions, showSwarmPermissions } from './wallet/permission-manage.js';
+import { initPermissionManage, showDappPermissions, showSwarmPermissions, showX402Permissions } from './wallet/permission-manage.js';
 import { initPublisherIdentities, closePublisherIdentities } from './wallet/publisher-identities.js';
 
 // Re-export public API consumed by dapp-provider.js, swarm-provider.js, and index.js
 export { showDappConnect, updateConnectionBanner, showDappTxApproval, showDappSignApproval };
 export { showSwarmConnect, updateSwarmConnectionBanner, showSwarmPublishApproval, showSwarmFeedApproval, showVaultUnlock };
-export { showDappPermissions, showSwarmPermissions };
+export { updateX402ConnectionBanner };
+export { showDappPermissions, showSwarmPermissions, showX402Permissions };
 export { getSelectedChainId, setSelectedChainId };
 
 // DOM references owned by the coordinator
@@ -71,7 +71,6 @@ export function initWalletUi() {
   initSwarmConnect();
   initVaultUnlock();
   initPermissionManage();
-  initPayments();
   initDappTx();
   initDappX402();
   initDappSign();
@@ -142,8 +141,6 @@ function setupCoordinatorListeners() {
       switchTab(tabName);
       if ((tabName === 'wallet' || tabName === 'nodes') && (walletState.fullAddresses.wallet || walletState.fullAddresses.swarm)) {
         refreshBalances();
-      } else if (tabName === 'payments') {
-        refreshPayments();
       }
     });
   });

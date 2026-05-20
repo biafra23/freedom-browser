@@ -37,6 +37,8 @@ const {
 } = require('./intercept');
 const {
   revoke: revokePermission,
+  revokeAllForOrigin,
+  updatePermission,
   getAllPermissions,
 } = require('./permissions');
 const { getRecent: getRecentReceipts } = require('./receipts');
@@ -130,6 +132,20 @@ function registerX402Ipc() {
   ipcMain.handle(IPC.X402_REVOKE_PERMISSION, async (_event, { origin, chainId, asset }) => {
     revokePermission(origin, chainId, asset);
     return { success: true };
+  });
+
+  ipcMain.handle(IPC.X402_REVOKE_ALL_FOR_ORIGIN, async (_event, { origin } = {}) => {
+    revokeAllForOrigin(origin);
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC.X402_UPDATE_PERMISSION, async (_event, { origin, chainId, asset, capAmount, windowSeconds } = {}) => {
+    try {
+      const updated = updatePermission(origin, chainId, asset, { capAmount, windowSeconds });
+      return { success: true, permission: updated };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 }
 

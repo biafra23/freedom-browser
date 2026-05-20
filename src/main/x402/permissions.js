@@ -188,6 +188,61 @@ function revoke(origin, chainId, asset) {
 }
 
 /**
+ * Drop every cap for an origin (all chain/asset combos). Idempotent.
+ */
+function revokeAllForOrigin(origin) {
+  const all = load();
+  const normalized = normalizeOrigin(origin);
+  if (!all[normalized]) return;
+  delete all[normalized];
+  cache = all;
+  save();
+}
+
+/**
+ * Patch an existing cap's amount and/or window. Preserves `spentAmount`
+ * (a user bumping their cap shouldn't reset what they've already spent)
+ * and recomputes `expiresAt` from `createdAt + windowSeconds` when the
+ * window changes. Throws if the record doesn't exist — call grant first
+ * for new entries.
+ *
+ * @param {string} origin
+ * @param {number} chainId
+ * @param {string} asset
+ * @param {{ capAmount?: string, windowSeconds?: number }} patch
+ * @returns {object} The updated record.
+ */
+function updatePermission(origin, chainId, asset, patch = {}) {
+  const all = load();
+  const normalized = normalizeOrigin(origin);
+  const byAsset = all[normalized];
+  const key = assetKey(chainId, asset);
+  const record = byAsset?.[key];
+  if (!record) {
+    throw new Error('x402-permissions: no permission to update');
+  }
+
+  const next = { ...record };
+  if (patch.capAmount !== undefined) {
+    if (typeof patch.capAmount !== 'string' || !/^\d+$/.test(patch.capAmount)) {
+      throw new Error('x402-permissions: capAmount must be a digit string');
+    }
+    next.capAmount = patch.capAmount;
+  }
+  if (patch.windowSeconds !== undefined) {
+    if (!Number.isFinite(patch.windowSeconds) || patch.windowSeconds <= 0) {
+      throw new Error('x402-permissions: windowSeconds must be a positive number');
+    }
+    next.expiresAt = record.createdAt + patch.windowSeconds;
+  }
+
+  byAsset[key] = next;
+  cache = all;
+  save();
+  return { origin: normalized, chainId, asset, ...next };
+}
+
+/**
  * Flat list of every active (non-expired) cap. Used by the activity
  * pane in WP6 to render the revoke UI.
  */
@@ -214,6 +269,8 @@ module.exports = {
   getPermission,
   tryConsume,
   revoke,
+  revokeAllForOrigin,
+  updatePermission,
   getAllPermissions,
   _resetCache,
 };
