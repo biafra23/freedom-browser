@@ -1321,6 +1321,132 @@
   color: var(--text-inverse);
 }
 
+/* Recent payments mini-section (5 rows; "View all" opens freedom://payments) */
+.recent-payments {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.recent-payments-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.recent-payments-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.recent-payments-link {
+  font-size: 12px;
+  color: #2775ca;
+  text-decoration: none;
+}
+
+.recent-payments-link:hover {
+  text-decoration: underline;
+}
+
+.recent-payments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-payment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.recent-payment-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.recent-payment-amount {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-payment-counterparty {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-payment-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.recent-payment-when {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.recent-payment-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.recent-payment-status::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.recent-payment-status.settled,
+.recent-payment-status.confirmed { color: #56d364; }
+.recent-payment-status.pending   { color: #d29922; }
+.recent-payment-status.failed    { color: #f85149; }
+.recent-payment-status.no-receipt { color: #8b949e; }
+
+.recent-payments-empty {
+  padding: 16px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+[data-theme="light"] .recent-payment-row {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .recent-payment-status.settled,
+[data-theme="light"] .recent-payment-status.confirmed { color: #1f7a34; }
+[data-theme="light"] .recent-payment-status.pending   { color: #8a5a07; }
+[data-theme="light"] .recent-payment-status.failed    { color: #b3261e; }
+
 /* ============================================
    Node Cards (Collapsible)
    ============================================ */

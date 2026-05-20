@@ -18,6 +18,7 @@ import { initDappConnect, showDappConnect, updateConnectionBanner } from './wall
 import { initDappTx, showDappTxApproval } from './wallet/dapp-tx.js';
 import { initDappSign, showDappSignApproval } from './wallet/dapp-sign.js';
 import { initDappX402, updateX402ConnectionBanner } from './wallet/dapp-x402.js';
+import { initRecentPayments, refreshRecentPayments } from './wallet/recent-payments.js';
 import { initSend, openSend, closeSend } from './wallet/send.js';
 import { initExportMnemonic, closeExportMnemonic } from './wallet/export-mnemonic.js';
 import { initWalletSelector, loadDerivedWallets } from './wallet/wallet-selector.js';
@@ -73,6 +74,7 @@ export function initWalletUi() {
   initPermissionManage();
   initDappTx();
   initDappX402();
+  initRecentPayments();
   initDappSign();
   initSend();
   initExportMnemonic(switchTab);
@@ -141,6 +143,9 @@ function setupCoordinatorListeners() {
       switchTab(tabName);
       if ((tabName === 'wallet' || tabName === 'nodes') && (walletState.fullAddresses.wallet || walletState.fullAddresses.swarm)) {
         refreshBalances();
+      }
+      if (tabName === 'wallet') {
+        refreshRecentPayments().catch((err) => console.error('[wallet-ui] recent payments refresh failed:', err));
       }
     });
   });
