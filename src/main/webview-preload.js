@@ -250,8 +250,16 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   x402GetDetails: guardInternal('x402GetDetails', () =>
     ipcRenderer.invoke('x402:get-details')
   ),
-  x402Approve: guardInternal('x402Approve', () => ipcRenderer.invoke('x402:approve')),
+  x402Approve: guardInternal('x402Approve', (opts) =>
+    ipcRenderer.invoke('x402:approve', opts)
+  ),
   x402Cancel: guardInternal('x402Cancel', () => ipcRenderer.invoke('x402:cancel')),
+  x402GetAllPermissions: guardInternal('x402GetAllPermissions', () =>
+    ipcRenderer.invoke('x402:get-all-permissions')
+  ),
+  x402RevokePermission: guardInternal('x402RevokePermission', (args) =>
+    ipcRenderer.invoke('x402:revoke-permission', args)
+  ),
 
   // Favicons
   getCachedFavicon: guardInternal('getCachedFavicon', (url) =>

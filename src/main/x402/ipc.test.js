@@ -45,6 +45,19 @@ jest.mock('../token-registry', () => ({
   getTokenKey: (chainId, addr) => `${chainId}:${addr}`,
 }));
 
+const mockGrant = jest.fn();
+const mockGetPermission = jest.fn();
+const mockTryConsume = jest.fn();
+const mockRevoke = jest.fn();
+const mockGetAllPermissions = jest.fn();
+jest.mock('./permissions', () => ({
+  grant: (...a) => mockGrant(...a),
+  getPermission: (...a) => mockGetPermission(...a),
+  tryConsume: (...a) => mockTryConsume(...a),
+  revoke: (...a) => mockRevoke(...a),
+  getAllPermissions: (...a) => mockGetAllPermissions(...a),
+}));
+
 const { webContents } = require('electron');
 const intercept = require('./intercept');
 const { outgoingHeaderForVersion } = require('./intercept');
@@ -62,6 +75,11 @@ beforeEach(() => {
   mockGetActiveWalletIndex.mockReturnValue(0);
   webContents.fromId.mockReset();
   mockGetToken.mockReset();
+  mockGrant.mockReset();
+  mockGetPermission.mockReset().mockReturnValue(null);
+  mockTryConsume.mockReset().mockReturnValue(false);
+  mockRevoke.mockReset();
+  mockGetAllPermissions.mockReset().mockReturnValue([]);
 });
 
 const v2Detected = (overrides = {}) => ({
@@ -224,6 +242,158 @@ describe('x402:approve', () => {
     const result = await ipcHandlers['x402:approve'](senderEvent(42));
     expect(result.success).toBe(false);
     expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+});
+
+// === auto-pay state + grant + consume ====================================
+
+describe('x402:get-details autoPay', () => {
+  const seedDetection = () =>
+    require('./intercept').detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+
+  test('returns kind=cover when an active cap fits the charge', async () => {
+    seedDetection();
+    mockGetPermission.mockReturnValueOnce({
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      capAmount: '10000000',
+      spentAmount: '0',
+      createdAt: 1,
+      expiresAt: 9999999999,
+    });
+
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    expect(result.autoPay).toMatchObject({ kind: 'cover', capAmount: '10000000' });
+    expect(mockGetPermission).toHaveBeenCalledWith(
+      'https://api.example',
+      8453,
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+    );
+  });
+
+  test('returns kind=over-cap when the cap exists but is already spent', async () => {
+    seedDetection();
+    mockGetPermission.mockReturnValueOnce({
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      capAmount: '10000000',
+      spentAmount: '9999999', // only 1 atomic unit left; charge is 10000
+      createdAt: 1,
+      expiresAt: 9999999999,
+    });
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    expect(result.autoPay.kind).toBe('over-cap');
+    expect(result.autoPay.remaining).toBe('1');
+  });
+
+  test('returns kind=none when no permission exists', async () => {
+    seedDetection();
+    mockGetPermission.mockReturnValueOnce(null);
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    expect(result.autoPay).toEqual({ kind: 'none' });
+  });
+});
+
+describe('x402:approve permission interactions', () => {
+  const seedDetection = () =>
+    require('./intercept').detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+
+  beforeEach(() => {
+    seedDetection();
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+  });
+
+  test('with a grant arg: persists the cap before consuming this charge', async () => {
+    const callOrder = [];
+    mockGrant.mockImplementation(() => callOrder.push('grant'));
+    mockTryConsume.mockImplementation(() => {
+      callOrder.push('consume');
+      return true;
+    });
+
+    const result = await ipcHandlers['x402:approve'](senderEvent(42), {
+      grant: { capAmount: '10000000', windowSeconds: 30 * 24 * 60 * 60 },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockGrant).toHaveBeenCalledWith(
+      'https://api.example',
+      8453,
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '10000000',
+      30 * 24 * 60 * 60
+    );
+    // grant must precede consume so the consume bumps the new cap, not
+    // the previous half-spent one (the order the comment in ipc.js promises).
+    expect(callOrder).toEqual(['grant', 'consume']);
+  });
+
+  test('without a grant arg: only consumes against any existing cap', async () => {
+    await ipcHandlers['x402:approve'](senderEvent(42), {});
+    expect(mockGrant).not.toHaveBeenCalled();
+    expect(mockTryConsume).toHaveBeenCalledWith(
+      'https://api.example',
+      8453,
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '10000'
+    );
+  });
+
+  test('a failed grant does not block the sign / pay flow', async () => {
+    mockGrant.mockImplementation(() => {
+      throw new Error('windowSeconds must be positive');
+    });
+    const result = await ipcHandlers['x402:approve'](senderEvent(42), {
+      grant: { capAmount: '10000000', windowSeconds: -1 },
+    });
+    expect(result.success).toBe(true);
+    // The consume still runs — the user explicitly approved.
+    expect(mockTryConsume).toHaveBeenCalled();
+  });
+});
+
+describe('x402:get-all-permissions + x402:revoke-permission', () => {
+  test('get-all-permissions forwards from the store', async () => {
+    mockGetAllPermissions.mockReturnValueOnce([
+      { origin: 'https://a.example', chainId: 8453, asset: '0xabc', capAmount: '1', spentAmount: '0' },
+    ]);
+    const result = await ipcHandlers['x402:get-all-permissions'](senderEvent(42));
+    expect(result.permissions).toHaveLength(1);
+    expect(result.permissions[0]).toMatchObject({ origin: 'https://a.example' });
+  });
+
+  test('revoke-permission forwards origin/chainId/asset to the store', async () => {
+    const result = await ipcHandlers['x402:revoke-permission'](senderEvent(42), {
+      origin: 'https://a.example',
+      chainId: 8453,
+      asset: '0xabc',
+    });
+    expect(result.success).toBe(true);
+    expect(mockRevoke).toHaveBeenCalledWith('https://a.example', 8453, '0xabc');
   });
 });
 

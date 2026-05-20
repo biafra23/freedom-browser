@@ -159,6 +159,8 @@ module.exports = {
   X402_GET_DETAILS: 'x402:get-details',
   X402_APPROVE: 'x402:approve',
   X402_CANCEL: 'x402:cancel',
+  X402_GET_ALL_PERMISSIONS: 'x402:get-all-permissions',
+  X402_REVOKE_PERMISSION: 'x402:revoke-permission',
 
   // dApp Permissions
   DAPP_GET_PERMISSION: 'dapp:get-permission',

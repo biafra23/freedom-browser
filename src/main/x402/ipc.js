@@ -34,6 +34,13 @@ const {
   clearDetectedPayment,
   setPendingPayment,
 } = require('./intercept');
+const {
+  grant: grantPermission,
+  getPermission,
+  tryConsume,
+  revoke: revokePermission,
+  getAllPermissions,
+} = require('./permissions');
 const { getActiveWalletIndex } = require('../identity-manager');
 
 // Cancel fallback when the webview has no back history. `about:blank` is
@@ -43,19 +50,57 @@ const { getActiveWalletIndex } = require('../identity-manager');
 // for a corner case.
 const CANCEL_FALLBACK_URL = 'about:blank';
 
+// Pull `(chainId, asset, amount)` out of a PaymentRequired without
+// assuming V1 vs V2 field names. V1 uses `maxAmountRequired`, V2 uses
+// `amount`. Returns null if the network isn't CAIP-2 — the permission
+// store doesn't key non-EIP-155 caps and we don't auto-pay them.
+function paymentTuple(requirements) {
+  const accept = requirements?.accepts?.[0];
+  if (!accept) return null;
+  if (typeof accept.network !== 'string' || !accept.network.startsWith('eip155:')) return null;
+  const chainId = Number(accept.network.slice('eip155:'.length));
+  if (!Number.isFinite(chainId)) return null;
+  const amount = accept.amount ?? accept.maxAmountRequired;
+  if (typeof amount !== 'string') return null;
+  return { chainId, asset: accept.asset, amount };
+}
+
 // Resolve the asset entry the interstitial UI can use to format the amount
 // as e.g. "$0.01 USDC" instead of "10000 of 0x8335…". V2 uses CAIP-2
 // network strings (`eip155:8453`); V1 uses bare names (`base`). We only
 // look up V2 here — V1 callers fall back to raw display. Returns null if
 // the asset isn't in the (strict) allowlist we ship in tokens.json.
 function lookupAsset(requirements) {
-  const firstAccept = requirements?.accepts?.[0];
-  if (!firstAccept) return null;
-  const { network, asset } = firstAccept;
-  if (typeof network !== 'string' || !network.startsWith('eip155:')) return null;
-  const chainId = Number(network.slice('eip155:'.length));
-  if (!Number.isFinite(chainId)) return null;
-  return getToken(getTokenKey(chainId, asset)) ?? null;
+  const tuple = paymentTuple(requirements);
+  if (!tuple) return null;
+  return getToken(getTokenKey(tuple.chainId, tuple.asset)) ?? null;
+}
+
+// Render the auto-pay state for the interstitial: does an active cap
+// for this origin/asset already cover this charge, or will the user
+// have to approve?
+function autoPayStateFor(url, requirements) {
+  const tuple = paymentTuple(requirements);
+  if (!tuple) return { kind: 'none' };
+  let origin;
+  try { origin = new URL(url).origin; } catch { return { kind: 'none' }; }
+  const perm = getPermission(origin, tuple.chainId, tuple.asset);
+  if (!perm) return { kind: 'none' };
+  const remaining = BigInt(perm.capAmount) - BigInt(perm.spentAmount);
+  if (BigInt(tuple.amount) <= remaining) {
+    return {
+      kind: 'cover',
+      remaining: remaining.toString(),
+      capAmount: perm.capAmount,
+      expiresAt: perm.expiresAt,
+    };
+  }
+  return {
+    kind: 'over-cap',
+    remaining: remaining.toString(),
+    capAmount: perm.capAmount,
+    expiresAt: perm.expiresAt,
+  };
 }
 
 function registerX402Ipc() {
@@ -69,14 +114,29 @@ function registerX402Ipc() {
       url: detected.url,
       requirements: detected.requirements,
       asset: lookupAsset(detected.requirements),
+      autoPay: autoPayStateFor(detected.url, detected.requirements),
     };
   });
 
-  ipcMain.handle(IPC.X402_APPROVE, async (event) => {
+  // Approve a payment. The optional `grant` arg is sent by the
+  // interstitial when its "Allow up to $X for Y days" toggle is on —
+  // we sign this payment AND persist the cap so subsequent matching
+  // 402s skip the interstitial.
+  ipcMain.handle(IPC.X402_APPROVE, async (event, { grant } = {}) => {
     const tabId = event.sender.id;
     const detected = getDetectedPayment(tabId);
     if (!detected) {
       return { success: false, error: 'No pending x402 payment for this tab' };
+    }
+
+    // Identify the paying origin BEFORE we sign — if the URL doesn't
+    // parse, the cap policy can't apply, and silently paying anyway
+    // would let a malformed-URL site bypass the user's allowance.
+    let origin;
+    try {
+      origin = new URL(detected.url).origin;
+    } catch {
+      return { success: false, error: 'Refusing to pay: unparseable URL' };
     }
 
     let client;
@@ -102,6 +162,26 @@ function registerX402Ipc() {
     setPendingPayment(tabId, detected.url, { header: headerName, value: headerValue });
     clearDetectedPayment(tabId);
 
+    // Permission bookkeeping. Order matters: if the renderer passed a
+    // fresh `grant` block, replace any existing cap (zeroes spent +
+    // starts a new window) BEFORE consuming, so this payment counts
+    // against the new cap rather than burning a stale half-spent one.
+    const tuple = paymentTuple(detected.requirements);
+    if (tuple) {
+      if (grant) {
+        try {
+          grantPermission(origin, tuple.chainId, tuple.asset, grant.capAmount, grant.windowSeconds);
+        } catch (err) {
+          log.warn(`[x402:approve] grant rejected: ${err.message}`);
+        }
+      }
+      // Bump spent against whichever cap is now active (newly granted
+      // or pre-existing). `tryConsume` returns false silently if no
+      // cap exists or this charge doesn't fit — both fine; the user
+      // explicitly approved this single payment regardless.
+      tryConsume(origin, tuple.chainId, tuple.asset, tuple.amount);
+    }
+
     // Re-issue the original navigation. The dispatcher's inject handler
     // consumes the pending entry on the matching outbound request and the
     // server returns the paid resource. We deliberately don't await
@@ -117,6 +197,15 @@ function registerX402Ipc() {
       log.warn(`[x402:approve] webContents ${tabId} vanished before re-navigation`);
     }
 
+    return { success: true };
+  });
+
+  ipcMain.handle(IPC.X402_GET_ALL_PERMISSIONS, async () => {
+    return { success: true, permissions: getAllPermissions() };
+  });
+
+  ipcMain.handle(IPC.X402_REVOKE_PERMISSION, async (_event, { origin, chainId, asset }) => {
+    revokePermission(origin, chainId, asset);
     return { success: true };
   });
 

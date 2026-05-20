@@ -8,6 +8,15 @@ const networkEl = document.getElementById('network');
 const errorEl = document.getElementById('error');
 const approveBtn = document.getElementById('approve-btn');
 const cancelBtn = document.getElementById('cancel-btn');
+const grantToggleLabel = document.getElementById('grant-toggle-label');
+const grantToggle = document.getElementById('grant-toggle');
+const grantCapEl = document.getElementById('grant-cap');
+
+// User-locked defaults from the WP0 consent decision: $10 cap over 30
+// days when the toggle is on. WP6 will let the user customise; for now
+// these are the offered values when no permission exists yet.
+const DEFAULT_GRANT_CAP_USDC = 10;
+const DEFAULT_GRANT_WINDOW_SECONDS = 30 * 24 * 60 * 60;
 
 function setError(message) {
   errorEl.textContent = message;
@@ -27,6 +36,17 @@ function formatAmount(rawAmount, decimals) {
   return fraction ? `${whole}.${fraction}` : whole;
 }
 
+// "10" USDC + decimals=6 -> "10000000" atomic units (digit string). The
+// grant store rejects non-digit caps, so we keep this exact.
+function toAtomicUnits(humanAmount, decimals) {
+  return (BigInt(humanAmount) * 10n ** BigInt(decimals)).toString();
+}
+
+// Module-level so the approve handler can read the renderer-decided
+// grant payload without re-deriving it. `null` means "no grant offered"
+// (e.g. unknown asset — we can't compute atomic units of $10 of it).
+let pendingGrant = null;
+
 function renderDetails({ url, requirements, asset }) {
   const accept = requirements?.accepts?.[0];
   if (!accept) {
@@ -44,6 +64,16 @@ function renderDetails({ url, requirements, asset }) {
   if (asset && typeof asset.decimals === 'number') {
     const pretty = formatAmount(rawAmount, asset.decimals);
     amountEl.textContent = pretty ? `${pretty} ${asset.symbol}` : `${rawAmount} ${asset.symbol}`;
+
+    // Asset is in our allowlist — offer the grant toggle so the user
+    // can authorise future automatic payments. The cap stays in the
+    // asset's natural unit so "$10 USDC" maps cleanly.
+    grantCapEl.textContent = `${DEFAULT_GRANT_CAP_USDC} ${asset.symbol}`;
+    grantToggleLabel.hidden = false;
+    pendingGrant = {
+      capAmount: toAtomicUnits(DEFAULT_GRANT_CAP_USDC, asset.decimals),
+      windowSeconds: DEFAULT_GRANT_WINDOW_SECONDS,
+    };
   } else {
     // Asset not in our allowlist — show raw + the contract address so the
     // user at least sees what they'd be authorising. The approve button
@@ -55,6 +85,25 @@ function renderDetails({ url, requirements, asset }) {
         'Cancel and report the site, or open Settings to add the asset to your allowlist.'
     );
   }
+}
+
+function startApprove(opts) {
+  approveBtn.disabled = true;
+  cancelBtn.disabled = true;
+  setError('');
+  approveBtn.textContent = 'Signing…';
+
+  return window.freedomAPI.x402Approve(opts).then((result) => {
+    if (result?.success) {
+      // Main has already kicked off the re-navigation; this page will be
+      // replaced as soon as the paid resource arrives. Nothing more to do.
+      return;
+    }
+    approveBtn.textContent = 'Pay and continue';
+    approveBtn.disabled = false;
+    cancelBtn.disabled = false;
+    setError(result?.error || 'Payment failed.');
+  });
 }
 
 async function init() {
@@ -71,26 +120,21 @@ async function init() {
     return;
   }
   renderDetails(details);
+
+  // Auto-pay: an active cap already covers this charge. Skip the
+  // interactive UI and proceed silently; the user sees a brief
+  // "Signing…" status before the paid content lands. (No new grant —
+  // the existing cap covers this; main consumes against it.)
+  if (details.autoPay?.kind === 'cover') {
+    startApprove({});
+  }
 }
 
-approveBtn.onclick = async () => {
-  // Guard against double-approve while the vault round-trip is in flight.
-  approveBtn.disabled = true;
-  cancelBtn.disabled = true;
-  setError('');
-  approveBtn.textContent = 'Signing…';
-
-  const result = await window.freedomAPI?.x402Approve?.();
-  if (result?.success) {
-    // Main has already kicked off the re-navigation; this page will be
-    // replaced as soon as the paid resource arrives. Nothing more to do.
-    return;
-  }
-
-  approveBtn.textContent = 'Pay and continue';
-  approveBtn.disabled = false;
-  cancelBtn.disabled = false;
-  setError(result?.error || 'Payment failed.');
+approveBtn.onclick = () => {
+  // Send the grant payload only if the toggle is checked AND we offered
+  // it (the toggle stays hidden for unknown assets, but defence-in-depth).
+  const grant = grantToggle?.checked && pendingGrant ? pendingGrant : undefined;
+  startApprove({ grant });
 };
 
 cancelBtn.onclick = async () => {
