@@ -20,9 +20,9 @@ const {
   signPersonalMessage,
   signTypedData,
 } = require('./transaction-service');
-const { loadIdentityModule, getActiveWalletIndex } = require('../identity-manager');
+const { getActiveWalletIndex } = require('../identity-manager');
 const { getEffectiveRpcUrls } = require('./rpc-manager');
-const { resetVaultAutoLockTimer } = require('../vault-timer');
+const { withVaultPrivateKey } = require('./vault-access');
 
 /**
  * Validate that an RPC URL is a known, trusted endpoint.
@@ -48,14 +48,6 @@ function isAllowedRpcUrl(rpcUrl) {
   }
 
   return false;
-}
-
-/**
- * Validate walletIndex parameter from renderer.
- * Must be a non-negative integer.
- */
-function isValidWalletIndex(walletIndex) {
-  return typeof walletIndex === 'number' && Number.isInteger(walletIndex) && walletIndex >= 0;
 }
 
 /**
@@ -225,19 +217,11 @@ function registerWalletIpc() {
         return { success: false, error: 'Missing required parameters: to, chainId, gasLimit' };
       }
 
-      // Get the private key from the vault for the active wallet
-      const identity = await loadIdentityModule();
-      if (!identity.isUnlocked()) {
-        return { success: false, error: 'Vault is locked. Please unlock first.' };
-      }
-
-      const activeIndex = getActiveWalletIndex();
-      const privateKey = identity.exportPrivateKey(activeIndex);
-
-      // Sign and send
-      const result = await signAndSendTransaction(
-        { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
-        privateKey
+      const result = await withVaultPrivateKey(getActiveWalletIndex(), (privateKey) =>
+        signAndSendTransaction(
+          { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
+          privateKey
+        )
       );
 
       return { success: true, ...result };
@@ -282,31 +266,19 @@ function registerWalletIpc() {
   // Sign and send transaction for a dApp (uses specified wallet index)
   ipcMain.handle('wallet:dapp-send-transaction', async (_event, params, walletIndex) => {
     try {
-      if (!isValidWalletIndex(walletIndex)) {
-        return { success: false, error: 'Invalid wallet index' };
-      }
-
       const { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId } = params;
 
       if (!to || chainId === undefined || !gasLimit) {
         return { success: false, error: 'Missing required parameters: to, chainId, gasLimit' };
       }
 
-      // Get the private key from the vault for the specified wallet
-      const identity = await loadIdentityModule();
-      if (!identity.isUnlocked()) {
-        return { success: false, error: 'Vault is locked. Please unlock first.' };
-      }
-
-      const privateKey = identity.exportPrivateKey(walletIndex);
-
-      // Sign and send
-      const result = await signAndSendTransaction(
-        { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
-        privateKey
+      const result = await withVaultPrivateKey(walletIndex, (privateKey) =>
+        signAndSendTransaction(
+          { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
+          privateKey
+        )
       );
 
-      resetVaultAutoLockTimer();
       return { success: true, ...result };
     } catch (err) {
       console.error('[WalletIPC] dApp transaction failed:', err);
@@ -317,24 +289,14 @@ function registerWalletIpc() {
   // Sign a personal message (EIP-191) for a dApp
   ipcMain.handle('wallet:sign-message', async (_event, message, walletIndex) => {
     try {
-      if (!isValidWalletIndex(walletIndex)) {
-        return { success: false, error: 'Invalid wallet index' };
-      }
-
       if (!message) {
         return { success: false, error: 'Message is required' };
       }
 
-      // Get the private key from the vault
-      const identity = await loadIdentityModule();
-      if (!identity.isUnlocked()) {
-        return { success: false, error: 'Vault is locked. Please unlock first.' };
-      }
+      const signature = await withVaultPrivateKey(walletIndex, (privateKey) =>
+        signPersonalMessage(message, privateKey)
+      );
 
-      const privateKey = identity.exportPrivateKey(walletIndex);
-      const signature = await signPersonalMessage(message, privateKey);
-
-      resetVaultAutoLockTimer();
       return { success: true, signature };
     } catch (err) {
       console.error('[WalletIPC] Message signing failed:', err);
@@ -345,24 +307,14 @@ function registerWalletIpc() {
   // Sign typed data (EIP-712) for a dApp
   ipcMain.handle('wallet:sign-typed-data', async (_event, typedData, walletIndex) => {
     try {
-      if (!isValidWalletIndex(walletIndex)) {
-        return { success: false, error: 'Invalid wallet index' };
-      }
-
       if (!typedData) {
         return { success: false, error: 'Typed data is required' };
       }
 
-      // Get the private key from the vault
-      const identity = await loadIdentityModule();
-      if (!identity.isUnlocked()) {
-        return { success: false, error: 'Vault is locked. Please unlock first.' };
-      }
+      const signature = await withVaultPrivateKey(walletIndex, (privateKey) =>
+        signTypedData(typedData, privateKey)
+      );
 
-      const privateKey = identity.exportPrivateKey(walletIndex);
-      const signature = await signTypedData(typedData, privateKey);
-
-      resetVaultAutoLockTimer();
       return { success: true, signature };
     } catch (err) {
       console.error('[WalletIPC] Typed data signing failed:', err);

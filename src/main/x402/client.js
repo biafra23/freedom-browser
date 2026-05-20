@@ -17,8 +17,7 @@ const { ExactEvmScheme } = require('@x402/evm/exact/client');
 const { ExactEvmSchemeV1 } = require('@x402/evm/exact/v1/client');
 const { Wallet } = require('ethers');
 
-const { loadIdentityModule } = require('../identity-manager');
-const { resetVaultAutoLockTimer } = require('../vault-timer');
+const { withVaultPrivateKey } = require('../wallet/vault-access');
 const { signTypedData: signTypedDataWithKey } = require('../wallet/transaction-service');
 
 // V1 servers use string network names (not CAIP-2); unknown ones fall
@@ -37,33 +36,20 @@ const V1_NETWORKS = ['base', 'base-sepolia', 'ethereum'];
  * @returns {Promise<{ address: string, signTypedData: (msg: object) => Promise<string> }>}
  */
 async function buildVaultSigner(walletIndex) {
-  const identity = await loadIdentityModule();
-  if (!identity.isUnlocked()) {
-    throw new Error('Vault is locked');
-  }
-
-  // Derive the address once. identity-manager only caches addresses for
-  // the standard slots (userWallet, beeWallet) — for arbitrary indices we
-  // resolve via the private key and discard it before returning.
-  const probeKey = identity.exportPrivateKey(walletIndex);
-  const address = new Wallet(probeKey).address;
+  // Resolve the address once at construction. withVaultPrivateKey also
+  // resets the auto-lock timer, so the typical "build then immediately
+  // sign" flow doesn't race the timeout. Each subsequent signTypedData
+  // call re-runs the same unlock check in case the vault re-locked.
+  const address = await withVaultPrivateKey(walletIndex, (privateKey) =>
+    new Wallet(privateKey).address
+  );
 
   return {
     address,
-    async signTypedData(msg) {
-      // Re-check unlock per sign so a vault that locked between adapter
-      // construction and signing surfaces an error instead of an opaque
-      // exportPrivateKey throw. Auto-lock reset keeps multi-step x402
-      // flows (server settlement + retry) from locking mid-handshake.
-      const mod = await loadIdentityModule();
-      if (!mod.isUnlocked()) {
-        throw new Error('Vault is locked');
-      }
-      const privateKey = mod.exportPrivateKey(walletIndex);
-      const signature = await signTypedDataWithKey(msg, privateKey);
-      resetVaultAutoLockTimer();
-      return signature;
-    },
+    signTypedData: (msg) =>
+      withVaultPrivateKey(walletIndex, (privateKey) =>
+        signTypedDataWithKey(msg, privateKey)
+      ),
   };
 }
 

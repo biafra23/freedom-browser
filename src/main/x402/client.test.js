@@ -76,11 +76,13 @@ describe('buildVaultSigner', () => {
     const sig = await signer.signTypedData({ domain, types, primaryType: 'TransferWithAuthorization', message });
     expect(sig).toMatch(/^0x[0-9a-f]{130}$/);
     expect(verifyTypedData(domain, types, message, sig)).toBe(TEST_ADDRESS);
-    expect(mockResetVaultAutoLockTimer).toHaveBeenCalledTimes(1);
+    // Twice: once at signer construction (address derivation), once on sign.
+    expect(mockResetVaultAutoLockTimer).toHaveBeenCalledTimes(2);
   });
 
   test('signTypedData throws if the vault re-locks between construction and signing', async () => {
     const signer = await buildVaultSigner(0);
+    mockResetVaultAutoLockTimer.mockClear(); // ignore the construction reset
     mockIdentity.isUnlocked.mockReturnValue(false);
     await expect(signer.signTypedData({ domain: {}, types: {}, primaryType: 'X', message: {} }))
       .rejects.toThrow(/locked/i);

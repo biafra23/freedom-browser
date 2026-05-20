@@ -1,0 +1,65 @@
+/**
+ * Vault private-key access helper.
+ *
+ * Every caller that needs to sign with a vault key — wallet IPC handlers,
+ * the x402 client, future signers — performs the same sequence:
+ *
+ *   1. `loadIdentityModule()` — lazy-load the identity module.
+ *   2. `isUnlocked()` — refuse if the vault is locked.
+ *   3. `exportPrivateKey(walletIndex)` — derive the key.
+ *   4. (do the work)
+ *   5. `resetVaultAutoLockTimer()` — keep the vault alive through multi-
+ *       step flows (server settlement, follow-up retries, etc.).
+ *
+ * Open-coded across six places before this helper existed; one of those
+ * places (`wallet:send-transaction`) was missing step 5 and is fixed
+ * incidentally by the consolidation.
+ */
+
+const { loadIdentityModule } = require('../identity-manager');
+const { resetVaultAutoLockTimer } = require('../vault-timer');
+
+/**
+ * Check that a wallet index is a non-negative integer. dApp IPC handlers
+ * accept walletIndex from untrusted renderer code, so guard before
+ * passing it to vault derivation.
+ *
+ * @param {unknown} walletIndex
+ * @returns {boolean}
+ */
+function isValidWalletIndex(walletIndex) {
+  return typeof walletIndex === 'number' && Number.isInteger(walletIndex) && walletIndex >= 0;
+}
+
+/**
+ * Borrow a private key from the vault for a single operation.
+ *
+ * Throws `Error('Vault is locked')` if the vault is locked at call time
+ * (matches the codebase convention for thrown-vault-locked errors).
+ * Throws `Error('Invalid wallet index')` if the index would not
+ * round-trip through vault derivation.
+ *
+ * Resets the auto-lock timer after the callback resolves; if the
+ * callback throws, the timer is *not* reset (preserves the existing
+ * per-handler behaviour — only successful operations extend the lease).
+ *
+ * @template T
+ * @param {number} walletIndex
+ * @param {(privateKey: string) => T | Promise<T>} callback
+ * @returns {Promise<T>}
+ */
+async function withVaultPrivateKey(walletIndex, callback) {
+  if (!isValidWalletIndex(walletIndex)) {
+    throw new Error('Invalid wallet index');
+  }
+  const identity = await loadIdentityModule();
+  if (!identity.isUnlocked()) {
+    throw new Error('Vault is locked');
+  }
+  const privateKey = identity.exportPrivateKey(walletIndex);
+  const result = await callback(privateKey);
+  resetVaultAutoLockTimer();
+  return result;
+}
+
+module.exports = { withVaultPrivateKey, isValidWalletIndex };
