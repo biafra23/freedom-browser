@@ -73,6 +73,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('x402:approval-needed', handler);
     return () => ipcRenderer.removeListener('x402:approval-needed', handler);
   },
+  // Main fires this when auto-pay would have fired but the vault is
+  // locked. The cap is already authorised; we just need the user to
+  // unlock so sign-flow can resume.
+  onX402UnlockNeeded: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:unlock-needed', handler);
+    return () => ipcRenderer.removeListener('x402:unlock-needed', handler);
+  },
   // Internal
   getWebviewPreloadPath: () => ipcRenderer.invoke('internal:get-webview-preload-path'),
   // Context menu

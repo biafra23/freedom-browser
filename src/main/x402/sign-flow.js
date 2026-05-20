@@ -42,6 +42,11 @@ const { paymentTuple } = require('./payment-utils');
  * @param {{ grant?: { capAmount: string, windowSeconds: number } }} [opts]
  */
 async function signAndQueueRetry(webContentsId, opts = {}) {
+  // `webContents.fromId` is native and throws a cryptic ABI-style error
+  // for non-integer input. Reject early with something the caller can act on.
+  if (typeof webContentsId !== 'number' || webContentsId < 0) {
+    throw new Error(`x402: invalid webContentsId: ${webContentsId}`);
+  }
   const detected = getDetectedPayment(webContentsId);
   if (!detected) throw new Error('No pending x402 payment for this tab');
 

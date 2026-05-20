@@ -172,6 +172,28 @@ describe('detectPaymentRequiredHandler', () => {
     }));
   });
 
+  test('auto-pay: a locked-vault failure asks the host renderer to unlock instead of logging an error', () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+
+    detectPaymentRequiredHandler(detail());
+    return new Promise((resolve) => {
+      // Two setImmediate ticks: one to fire signAndQueueRetry, one for
+      // the catch handler's microtask + sendToHost call.
+      setImmediate(() => setImmediate(() => {
+        expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7);
+        expect(mockHostSend).toHaveBeenCalledWith('x402:unlock-needed', {
+          webContentsId: 7,
+          origin: 'https://api.example',
+        });
+        resolve();
+      }));
+    });
+  });
+
   test('accepts a V1 PaymentRequired payload from X-PAYMENT-REQUIRED', () => {
     detectPaymentRequiredHandler(detail({
       responseHeaders: { 'X-PAYMENT-REQUIRED': [sampleRequirementsV1B64] },
@@ -203,6 +225,12 @@ describe('detectPaymentRequiredHandler', () => {
       responseHeaders: { 'PAYMENT-REQUIRED': ['!!not base64!!'] },
     }));
     expect(getDetectedPayment(7)).toBeNull();
+  });
+
+  test('ignores 402 with no webContentsId (service worker, favicon discovery, …)', () => {
+    detectPaymentRequiredHandler(detail({ webContentsId: undefined }));
+    detectPaymentRequiredHandler(detail({ webContentsId: -1 }));
+    expect(mockHostSend).not.toHaveBeenCalled();
   });
 
   test('separates detections by webContentsId (different tabs)', () => {

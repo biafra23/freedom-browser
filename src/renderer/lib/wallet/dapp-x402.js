@@ -24,6 +24,7 @@ import { open as openSidebarPanel, isVisible as isSidebarVisible } from '../side
 import { formatRawTokenBalance, truncateAddress, toAtomicUnits } from './wallet-utils.js';
 import { getPermissionKey } from '../origin-utils.js';
 import { showX402Permissions } from './permission-manage.js';
+import { showVaultUnlock } from './vault-unlock.js';
 
 // Defaults from the WP0 consent decision. The interstitial offers
 // these via the grant toggle; main signs+stores the cap if the toggle
@@ -108,6 +109,29 @@ export function initDappX402() {
       console.error('[x402] failed to show approval:', err);
     });
   });
+
+  // Vault-was-locked-during-auto-pay events. The cap was already granted,
+  // so no permission card — just unlock and resume sign-flow via the
+  // approve IPC (which is a no-op-grant call into signAndQueueRetry).
+  window.electronAPI?.onX402UnlockNeeded?.(({ webContentsId, origin }) => {
+    handleAutoPayUnlock(webContentsId, origin).catch((err) => {
+      console.error('[x402] auto-pay unlock flow failed:', err);
+    });
+  });
+}
+
+async function handleAutoPayUnlock(webContentsId, origin) {
+  try {
+    await showVaultUnlock(origin);
+  } catch {
+    // User cancelled the unlock; nothing to do — the original 402 page
+    // stays rendered, the user can retry by navigating again.
+    return;
+  }
+  const result = await window.electronAPI.x402Approve({ webContentsId });
+  if (!result?.success) {
+    console.error('[x402] resume-after-unlock failed:', result?.error);
+  }
 }
 
 function wireBanner() {

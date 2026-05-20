@@ -235,24 +235,35 @@ function isStatus2xx(statusLine) {
   return / 2\d\d(?: |$)/.test(statusLine);
 }
 
-// Fire the approval-needed event at the HOST window's renderer (the
-// browser shell that owns the sidebar). The webview that hit the 402
-// is a child of the host webContents; sending to host puts the event
-// in front of the wallet sidebar UI.
-function notifyHostOfApprovalNeeded(webviewWebContentsId, payload) {
+// Fire an event at the HOST window's renderer (the browser shell that
+// owns the sidebar). The webview that hit the 402 is a child of the
+// host webContents; sending to host puts the event in front of the
+// wallet sidebar UI.
+function sendToHost(webviewWebContentsId, channel, payload) {
   const wc = webContents.fromId(webviewWebContentsId);
   const host = wc?.hostWebContents;
   if (!host) {
-    log.warn(`[x402:detect] no host webContents for ${webviewWebContentsId}; approval event dropped`);
+    log.warn(`[x402] no host webContents for ${webviewWebContentsId}; ${channel} dropped`);
     return;
   }
-  host.send('x402:approval-needed', payload);
+  host.send(channel, payload);
 }
 
 // === Dispatcher handlers =================================================
 
 function detectPaymentRequiredHandler(details) {
   if (!isStatus402(details.statusLine)) return null;
+
+  // Electron sets `webContentsId` undefined (or -1) for requests not tied
+  // to a renderer — service workers, favicon discovery, Chromium-internal
+  // metadata fetches. We can't re-navigate those, so even if they 402
+  // there's nothing useful we can do.
+  if (typeof details.webContentsId !== 'number' || details.webContentsId < 0) {
+    log.info(
+      `[x402:detect] 402 on ${sanitizeUrlForLog(details.url)} not tied to a webContents; ignoring`
+    );
+    return null;
+  }
 
   const v2 = getHeaderValue(details.responseHeaders, X402_HEADERS.REQUIRED_V2);
   const v1 = getHeaderValue(details.responseHeaders, X402_HEADERS.REQUIRED_V1);
@@ -291,10 +302,21 @@ function detectPaymentRequiredHandler(details) {
   if (getPermissionCoverage(details.url, requirements)?.covers) {
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
     const id = details.webContentsId;
+    const url = details.url;
     setImmediate(() => {
       // Lazy require to dodge the intercept ↔ sign-flow circular dep.
       const { signAndQueueRetry } = require('./sign-flow');
       signAndQueueRetry(id).catch((err) => {
+        // Vault auto-locked between detection and sign: the cap already
+        // authorised the charge, so we don't need a fresh approval — just
+        // a vault unlock. Fire an event at the sidebar; on unlock it'll
+        // call x402:approve which resumes sign-flow against the same
+        // still-detected payment.
+        if (err?.message === 'Vault is locked') {
+          log.info(`[x402:auto-pay] vault locked — requesting unlock for ${sanitizeUrlForLog(url)}`);
+          sendToHost(id, 'x402:unlock-needed', { webContentsId: id, origin: new URL(url).origin });
+          return;
+        }
         log.error(`[x402:auto-pay] failed: ${err.message}\n  cause: ${err.cause?.message || '(none)'}\n  stack: ${err.stack}`);
       });
     });
@@ -303,7 +325,7 @@ function detectPaymentRequiredHandler(details) {
 
   // Otherwise fire the approval event at the host renderer; the
   // sidebar will pop up an approval card.
-  notifyHostOfApprovalNeeded(details.webContentsId, {
+  sendToHost(details.webContentsId, 'x402:approval-needed', {
     webContentsId: details.webContentsId,
     url: details.url,
     requirements,
