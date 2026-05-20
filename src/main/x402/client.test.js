@@ -93,6 +93,11 @@ describe('buildVaultSigner', () => {
 // === createVaultBackedX402Client =========================================
 
 describe('createVaultBackedX402Client', () => {
+  test('exposes the signer address on the client so callers can stamp from_address', async () => {
+    const client = await createVaultBackedX402Client(0);
+    expect(client.address).toBe(TEST_ADDRESS);
+  });
+
   test('returns an x402Client with V2 and V1 schemes wired', async () => {
     const client = await createVaultBackedX402Client(0);
 

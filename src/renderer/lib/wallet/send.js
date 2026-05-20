@@ -1166,7 +1166,14 @@ async function handleSendConfirm() {
       txParams.data = dataResult.data;
     }
 
-    const result = await window.wallet.sendTransaction(txParams);
+    // History captures the *user-visible* counterparty + amount: the real
+    // recipient (not the ERC-20 contract address) and the atomic amount
+    // (not txParams.value which is 0 for token transfers).
+    const result = await window.wallet.sendTransaction(txParams, {
+      asset: token.address,
+      toAddress: sendTxState.recipient,
+      amount: amountResult.value,
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Transaction failed');

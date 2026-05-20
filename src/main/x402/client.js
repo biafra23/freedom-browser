@@ -71,6 +71,9 @@ async function createVaultBackedX402Client(walletIndex = 0) {
   for (const network of V1_NETWORKS) {
     client.registerV1(network, new ExactEvmSchemeV1(signer));
   }
+  // Surface the signer's address on the client so the payment-history
+  // recorder can stamp `from_address` without re-unlocking the vault.
+  client.address = signer.address;
   return client;
 }
 

@@ -295,7 +295,7 @@ function detectPaymentRequiredHandler(details) {
       // Lazy require to dodge the intercept ↔ sign-flow circular dep.
       const { signAndQueueRetry } = require('./sign-flow');
       signAndQueueRetry(id).catch((err) => {
-        log.error(`[x402:auto-pay] failed: ${err.message}`);
+        log.error(`[x402:auto-pay] failed: ${err.message}\n  cause: ${err.cause?.message || '(none)'}\n  stack: ${err.stack}`);
       });
     });
     return null;
