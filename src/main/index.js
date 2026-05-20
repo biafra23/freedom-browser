@@ -52,7 +52,8 @@ process.on('unhandledRejection', (reason, _promise) => {
 const { BrowserWindow, protocol, session } = require('electron');
 const path = require('path');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
-const { registerRequestRewriter } = require('./request-rewriter');
+const { installRequestRewriter } = require('./request-rewriter');
+const { attachWebRequestDispatcher } = require('./webrequest-dispatcher');
 const { registerBzzProtocol } = require('./swarm/bzz-protocol');
 const { registerIpfsProtocol, registerIpnsProtocol } = require('./ipfs/ipfs-protocol');
 
@@ -166,7 +167,11 @@ async function bootstrap() {
     registerIpfsProtocol(defaultSession);
     registerIpnsProtocol(defaultSession);
   }
-  registerRequestRewriter(defaultSession);
+  // All consumers register their handlers first (request-rewriter today,
+  // x402 navigation interception in a later WP); the dispatcher then
+  // attaches exactly one Electron listener per event to the session.
+  installRequestRewriter();
+  attachWebRequestDispatcher(defaultSession);
   allowInteractivePermissions(defaultSession);
   registerWebContentsHandlers();
   setupApplicationMenu();
