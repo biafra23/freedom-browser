@@ -88,10 +88,14 @@ export function initWalletUi() {
   initChequebookDeposit();
   initPublisherIdentities();
 
-  // Load chain registry (updates registeredTokens/registeredChains, then render)
+  // Load chain registry (updates registeredTokens/registeredChains, then
+  // render everything that depends on those — the asset list AND the
+  // recent-payments mini-section which reads symbols/decimals from
+  // walletState.registeredTokens to format amounts).
   loadChainRegistry().then(() => {
     updateChainSwitcherDisplay();
     renderAssetList();
+    refreshRecentPayments().catch((err) => console.error('[wallet-ui] recent payments upgrade-after-registry failed:', err));
   });
 
   // Setup coordinator event listeners

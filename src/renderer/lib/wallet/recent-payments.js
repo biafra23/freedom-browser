@@ -7,7 +7,10 @@ import { createTab } from '../tabs.js';
 import { walletState } from './wallet-state.js';
 import { escapeHtml, truncateAddress, formatRawTokenBalance, timeAgo } from './wallet-utils.js';
 
-const LIMIT = 5;
+// Set to 0 to render only the section header + "View all →" link with no
+// rows — the cleaner-looking default while we live with how busy the
+// section feels. Bump back to 5 (or any small N) to re-enable the list.
+const LIMIT = 0;
 const EMPTY_HTML = '<div class="recent-payments-empty">No payments yet.</div>';
 
 // Status values we have CSS classes for (sidebar.css). Anything else
@@ -44,6 +47,12 @@ export function initRecentPayments() {
 
 export async function refreshRecentPayments() {
   if (!listEl) return;
+  // LIMIT=0 means "header + link only, no rows". Skip the IPC entirely
+  // so the section is purely the deep-link to freedom://payments.
+  if (LIMIT <= 0) {
+    listEl.innerHTML = '';
+    return;
+  }
   const result = await window.payments?.getRecent({ limit: LIMIT });
   const payments = result?.success ? (result.payments || []) : [];
   if (payments.length === 0) {
