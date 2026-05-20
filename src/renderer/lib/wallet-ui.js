@@ -17,6 +17,7 @@ import { initRpcSettings } from './wallet/rpc-settings.js';
 import { initDappConnect, showDappConnect, updateConnectionBanner } from './wallet/dapp-connect.js';
 import { initDappTx, showDappTxApproval } from './wallet/dapp-tx.js';
 import { initDappSign, showDappSignApproval } from './wallet/dapp-sign.js';
+import { initPayments, refreshPayments } from './wallet/payments.js';
 import { initSend, openSend, closeSend } from './wallet/send.js';
 import { initExportMnemonic, closeExportMnemonic } from './wallet/export-mnemonic.js';
 import { initWalletSelector, loadDerivedWallets } from './wallet/wallet-selector.js';
@@ -69,6 +70,7 @@ export function initWalletUi() {
   initSwarmConnect();
   initVaultUnlock();
   initPermissionManage();
+  initPayments();
   initDappTx();
   initDappSign();
   initSend();
@@ -138,6 +140,8 @@ function setupCoordinatorListeners() {
       switchTab(tabName);
       if ((tabName === 'wallet' || tabName === 'nodes') && (walletState.fullAddresses.wallet || walletState.fullAddresses.swarm)) {
         refreshBalances();
+      } else if (tabName === 'payments') {
+        refreshPayments();
       }
     });
   });

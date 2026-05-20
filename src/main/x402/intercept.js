@@ -33,6 +33,7 @@ const { app } = require('electron');
 const log = require('../logger');
 const { parsePaymentRequired } = require('@x402/core/schemas');
 const { registerWebRequestHandler } = require('../webrequest-dispatcher');
+const { append: appendReceipt } = require('./receipts');
 
 // Header names used on the wire. V2 uses the un-prefixed names; V1 (Coinbase
 // original) ships with the `X-` prefix. Centralised so WP4 callers reference
@@ -75,13 +76,17 @@ const detectedPayments = new Map();
 const pendingPayments = new Map();
 
 // "We just injected a payment for this (tab, url) and expect a settlement
-// response on the matching response." The receipt-logging handler short-
-// circuits to a Set.has check for the 99.99% of responses that aren't
-// settlement responses, instead of iterating headers looking for the
-// PAYMENT-RESPONSE name on every subresource fetch. Also tightens
-// security: we only treat PAYMENT-RESPONSE headers from our own
-// injected requests, never arbitrary server-side headers.
-const awaitingResponse = new Set();
+// response on the matching response." The receipt logger short-circuits
+// to a Map.has check for the 99.99% of responses that aren't settlement
+// responses, instead of iterating headers looking for the PAYMENT-RESPONSE
+// name on every subresource fetch. Also tightens security: we only treat
+// PAYMENT-RESPONSE headers from our own injected requests, never arbitrary
+// server-side headers.
+//
+// The value is the receipt context — origin / chainId / asset / amount —
+// that flows from approve through inject so the receipt the logger writes
+// has everything the Payments tab needs to render.
+const awaitingResponse = new Map();
 
 function pendingKey(webContentsId, url) {
   return `${webContentsId ?? ''}|${url}`;
@@ -96,10 +101,18 @@ function pendingKey(webContentsId, url) {
  * @param {string} url
  * @param {{ header: 'PAYMENT-SIGNATURE' | 'X-PAYMENT', value: string }} signed
  */
+/**
+ * Stash a signed PAYMENT-SIGNATURE / X-PAYMENT header for the dispatcher
+ * to attach on the matching retry.
+ *
+ * `signed.header` + `signed.value` are validated strictly — a typo there
+ * would silently fail the payment. Optional fields (`origin`, `chainId`,
+ * `asset`, `amount`) ride along untouched; the injector copies them into
+ * the receipt context, and the receipts module validates its own input,
+ * so we keep this validator focused on the bytes that actually go on
+ * the wire. Callers are trusted in-process code (only `ipc.js`).
+ */
 function setPendingPayment(webContentsId, url, signed) {
-  // Defence-in-depth: a typo in the caller's header constant would cause
-  // a silent payment failure (the server wouldn't recognise the request),
-  // which is exactly the kind of bug we never want in a payment path.
   if (!signed || !VALID_SIGNATURE_HEADERS.has(signed.header)) {
     throw new Error(`x402: invalid pending-payment header: ${signed?.header}`);
   }
@@ -141,7 +154,7 @@ function cleanupWebContents(webContentsId) {
       pendingPayments.delete(key);
     }
   }
-  for (const key of [...awaitingResponse]) {
+  for (const key of [...awaitingResponse.keys()]) {
     if (key.startsWith(prefix)) {
       awaitingResponse.delete(key);
     }
@@ -213,6 +226,15 @@ function isStatus402(statusLine) {
   return typeof statusLine === 'string' && statusLine.includes(' 402 ');
 }
 
+// 2xx detection for the receipt logger. "HTTP/1.1 200 OK" / "HTTP/2 204"
+// both qualify; non-2xx responses (auth failures, server errors) land as
+// receipts with status:'failed' so the user can see "I signed but got
+// nothing back."
+function isStatus2xx(statusLine) {
+  if (typeof statusLine !== 'string') return false;
+  return / 2\d\d(?: |$)/.test(statusLine);
+}
+
 // `file://…/pages/x402.html` — same renderer-pages directory the rest of
 // the app loads its internal pages from. Memoised because Electron's
 // `app` isn't ready at module-load time; the first detection call
@@ -270,26 +292,49 @@ function detectPaymentRequiredHandler(details) {
 
 // onHeadersReceived (chained after detect). On a successful retry the
 // server sends a PAYMENT-RESPONSE header carrying base64-encoded
-// settlement metadata (incl. txHash). WP6 will surface this as a
-// receipt; for now we just log it so devs can verify the round-trip.
+// settlement metadata (incl. txHash). The receipt logger persists this
+// to the Payments-tab ledger.
 //
-// Gated on `awaitingResponse` so we don't iterate response headers on
-// every subresource fetch — the Set.has check is the fast-path miss
-// for 99.99% of responses.
+// Gated on `awaitingResponse` so we don't touch headers on every
+// subresource fetch — the Map.has check is the fast-path miss for
+// 99.99% of responses.
 function paymentResponseLoggingHandler(details) {
   const key = pendingKey(details.webContentsId, details.url);
-  if (!awaitingResponse.has(key)) return null;
+  const expected = awaitingResponse.get(key);
+  if (!expected) return null;
   awaitingResponse.delete(key);
 
+  const success = isStatus2xx(details.statusLine);
+  let txHash = null;
   const value = getHeaderValue(details.responseHeaders, 'PAYMENT-RESPONSE');
-  if (!value) return null;
+  if (value) {
+    try {
+      const decoded = JSON.parse(Buffer.from(value, 'base64').toString('utf-8'));
+      if (typeof decoded.txHash === 'string') txHash = decoded.txHash;
+    } catch {
+      log.warn(
+        `[x402:settled] PAYMENT-RESPONSE on ${sanitizeUrlForLog(details.url)} could not be decoded`
+      );
+    }
+  }
+
   try {
-    const decoded = JSON.parse(Buffer.from(value, 'base64').toString('utf-8'));
-    log.info(
-      `[x402:settled] ${sanitizeUrlForLog(details.url)} txHash=${decoded.txHash ?? 'unknown'}`
-    );
-  } catch {
-    log.warn(`[x402:settled] PAYMENT-RESPONSE on ${sanitizeUrlForLog(details.url)} could not be decoded`);
+    appendReceipt({
+      url: expected.url,
+      origin: expected.origin,
+      chainId: expected.chainId,
+      asset: expected.asset,
+      amount: expected.amount,
+      txHash,
+      status: !success ? 'failed' : txHash ? 'settled' : 'no-receipt',
+      settledAt: Math.floor(Date.now() / 1000),
+    });
+  } catch (err) {
+    log.error(`[x402:settled] receipt append failed: ${err.message}`);
+  }
+
+  if (txHash) {
+    log.info(`[x402:settled] ${sanitizeUrlForLog(details.url)} txHash=${txHash}`);
   }
   return null;
 }
@@ -300,9 +345,18 @@ function injectPaymentSignatureHandler(details) {
   if (!signed) return null;
 
   pendingPayments.delete(key); // one-shot
-  // Arm the receipt logger so it knows to look at THIS response's
-  // headers (and only this one) for the PAYMENT-RESPONSE settlement.
-  awaitingResponse.add(key);
+  // Arm the receipt logger so it knows to look at THIS response for
+  // the PAYMENT-RESPONSE settlement. We also hand off the receipt
+  // context (origin / chainId / asset / amount) that the approve
+  // handler stashed alongside the signed bytes — without it the
+  // logger couldn't write a complete receipt.
+  awaitingResponse.set(key, {
+    url: details.url,
+    origin: signed.origin,
+    chainId: signed.chainId,
+    asset: signed.asset,
+    amount: signed.amount,
+  });
 
   log.info(
     `[x402:inject] attaching ${signed.header} to ${sanitizeUrlForLog(details.url)}`

@@ -5351,3 +5351,111 @@
 [data-theme="light"] .dapp-sign-reject-btn:hover {
   background: rgba(0, 0, 0, 0.06);
 }
+
+/* Payments tab — recent x402 receipts + active allowances */
+
+.x402-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.x402-empty {
+  padding: 10px 12px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.x402-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.x402-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.x402-origin {
+  color: #f0f0f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x402-meta {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.x402-tx {
+  color: #6ec6ff;
+  text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.x402-tx:hover {
+  text-decoration: underline;
+}
+
+.x402-revoke {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.x402-revoke:hover {
+  border-color: rgba(255, 94, 94, 0.5);
+  color: #ffb3b3;
+}
+
+.x402-revoke:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.x402-status {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.x402-status--settled {
+  color: #9ad9b3;
+  background: rgba(76, 175, 80, 0.12);
+}
+
+.x402-status--no-receipt {
+  color: #f1d68b;
+  background: rgba(255, 193, 7, 0.12);
+}
+
+.x402-status--failed {
+  color: #ffb3b3;
+  background: rgba(255, 94, 94, 0.12);
+}
+
+[data-theme='light'] .x402-row {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme='light'] .x402-origin {
+  color: #1a1a1a;
+}
+
+[data-theme='light'] .x402-meta {
+  color: rgba(0, 0, 0, 0.55);
+}

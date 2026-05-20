@@ -13,6 +13,11 @@ jest.mock('../webrequest-dispatcher', () => ({
   registerWebRequestHandler: (...args) => mockRegister(...args),
 }));
 
+const mockAppendReceipt = jest.fn();
+jest.mock('./receipts', () => ({
+  append: (...args) => mockAppendReceipt(...args),
+}));
+
 const {
   X402_HEADERS,
   installX402Interception,
@@ -33,6 +38,7 @@ beforeEach(() => {
   clearAllPendingPayments();
   clearAllDetectedPayments();
   mockRegister.mockClear();
+  mockAppendReceipt.mockReset();
 });
 
 // Canonical Base USDC PaymentRequired (V2). `resource` is an object per
@@ -404,29 +410,95 @@ describe('paymentResponseLoggingHandler', () => {
     expect(result).toBeNull();
   });
 
-  test('fires for the matching (tab, url) after a payment injection', () => {
+  const armInjection = (overrides = {}) => {
     setPendingPayment(7, 'https://api.example/article', {
       header: 'PAYMENT-SIGNATURE',
       value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000',
+      ...overrides,
     });
-    // Arm the awaitingResponse marker by going through the injector.
     injectPaymentSignatureHandler({
       webContentsId: 7,
       url: 'https://api.example/article',
       requestHeaders: {},
     });
+  };
 
-    expect(paymentResponseLoggingHandler({
+  test('on a 200 + PAYMENT-RESPONSE: writes a settled receipt with txHash', () => {
+    armInjection();
+    paymentResponseLoggingHandler({
       webContentsId: 7,
       url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
       responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
-    })).toBeNull();
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://api.example/article',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000',
+      txHash: '0xabc',
+      status: 'settled',
+    }));
+  });
 
-    // One-shot: a follow-up response on the same URL no longer fires.
-    expect(paymentResponseLoggingHandler({
+  test('on a 200 with no PAYMENT-RESPONSE: writes a no-receipt entry (user signed, server confirmed nothing)', () => {
+    armInjection();
+    paymentResponseLoggingHandler({
       webContentsId: 7,
       url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: {},
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      txHash: null,
+      status: 'no-receipt',
+    }));
+  });
+
+  test('on a non-2xx: writes a failed receipt so the user can see they signed but got nothing', () => {
+    armInjection();
+    paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 500 Internal Server Error',
+      responseHeaders: {},
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      txHash: null,
+    }));
+  });
+
+  test('one-shot: a second response to the same URL does not write a duplicate', () => {
+    armInjection();
+    paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
       responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
-    })).toBeNull(); // returns null either way; the assert is the side-effect-free path
+    });
+    paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  test('no injection awaiting: no receipt is written and headers are not touched', () => {
+    paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).not.toHaveBeenCalled();
   });
 });

@@ -693,6 +693,7 @@
           <div class="sidebar-header">
             <div class="sidebar-tabs">
               <button type="button" class="sidebar-tab active" data-tab="wallet">Wallet</button>
+              <button type="button" class="sidebar-tab" data-tab="payments">Payments</button>
               <button type="button" class="sidebar-tab" data-tab="nodes">Nodes</button>
               <button type="button" class="sidebar-tab" data-tab="settings">Settings</button>
             </div>
@@ -983,6 +984,26 @@
                   </div>
                 </div>
               </div><!-- /tab-nodes -->
+
+              <!-- Payments Tab Panel -->
+              <div id="tab-payments" class="tab-panel hidden">
+                <div class="sidebar-section">
+                  <div class="sidebar-section-header">
+                    <h3>Active allowances</h3>
+                  </div>
+                  <div id="x402-allowances-list" class="x402-list">
+                    <div class="x402-empty">No active allowances.</div>
+                  </div>
+                </div>
+                <div class="sidebar-section">
+                  <div class="sidebar-section-header">
+                    <h3>Recent payments</h3>
+                  </div>
+                  <div id="x402-receipts-list" class="x402-list">
+                    <div class="x402-empty">No payments yet.</div>
+                  </div>
+                </div>
+              </div><!-- /tab-payments -->
 
               <!-- Settings Tab Panel -->
               <div id="tab-settings" class="tab-panel hidden">

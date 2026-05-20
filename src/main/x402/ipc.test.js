@@ -45,6 +45,12 @@ jest.mock('../token-registry', () => ({
   getTokenKey: (chainId, addr) => `${chainId}:${addr}`,
 }));
 
+const mockGetRecentReceipts = jest.fn();
+jest.mock('./receipts', () => ({
+  getRecent: (limit) => mockGetRecentReceipts(limit),
+  append: jest.fn(),
+}));
+
 const mockGrant = jest.fn();
 const mockGetPermission = jest.fn();
 const mockTryConsume = jest.fn();
@@ -80,6 +86,7 @@ beforeEach(() => {
   mockTryConsume.mockReset().mockReturnValue(false);
   mockRevoke.mockReset();
   mockGetAllPermissions.mockReset().mockReturnValue([]);
+  mockGetRecentReceipts.mockReset().mockReturnValue([]);
 });
 
 const v2Detected = (overrides = {}) => ({
@@ -373,6 +380,26 @@ describe('x402:approve permission interactions', () => {
     expect(result.success).toBe(true);
     // The consume still runs — the user explicitly approved.
     expect(mockTryConsume).toHaveBeenCalled();
+  });
+});
+
+describe('x402:get-receipts', () => {
+  test('forwards limit to the store and returns the array', async () => {
+    mockGetRecentReceipts.mockReturnValueOnce([
+      { id: 'r-1', url: 'https://api.example/x', status: 'settled' },
+    ]);
+    const result = await ipcHandlers['x402:get-receipts'](senderEvent(42), { limit: 50 });
+    expect(result).toEqual({ success: true, receipts: [
+      { id: 'r-1', url: 'https://api.example/x', status: 'settled' },
+    ] });
+    expect(mockGetRecentReceipts).toHaveBeenCalledWith(50);
+  });
+
+  test('omits the limit gracefully when none is provided', async () => {
+    mockGetRecentReceipts.mockReturnValueOnce([]);
+    const result = await ipcHandlers['x402:get-receipts'](senderEvent(42));
+    expect(result.success).toBe(true);
+    expect(mockGetRecentReceipts).toHaveBeenCalledWith(undefined);
   });
 });
 

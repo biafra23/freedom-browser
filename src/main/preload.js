@@ -56,6 +56,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addHistory: (entry) => ipcRenderer.invoke('history:add', entry),
   removeHistory: (id) => ipcRenderer.invoke('history:remove', id),
   clearHistory: () => ipcRenderer.invoke('history:clear'),
+  // x402 payments (consumed by the Payments sidebar tab)
+  x402GetReceipts: (options) => ipcRenderer.invoke('x402:get-receipts', options),
+  x402GetAllPermissions: () => ipcRenderer.invoke('x402:get-all-permissions'),
+  x402RevokePermission: (args) => ipcRenderer.invoke('x402:revoke-permission', args),
   // Internal
   getWebviewPreloadPath: () => ipcRenderer.invoke('internal:get-webview-preload-path'),
   // Context menu

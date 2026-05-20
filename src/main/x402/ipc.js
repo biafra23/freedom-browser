@@ -41,6 +41,7 @@ const {
   revoke: revokePermission,
   getAllPermissions,
 } = require('./permissions');
+const { getRecent: getRecentReceipts } = require('./receipts');
 const { getActiveWalletIndex } = require('../identity-manager');
 
 // Cancel fallback when the webview has no back history. `about:blank` is
@@ -159,14 +160,26 @@ function registerX402Ipc() {
     const headerValue = Buffer.from(JSON.stringify(payload)).toString('base64');
     const headerName = outgoingHeaderForVersion(detected.requirements.x402Version);
 
-    setPendingPayment(tabId, detected.url, { header: headerName, value: headerValue });
+    // The receipt logger needs origin/chainId/asset/amount to write a
+    // complete receipt when the settlement response arrives — these
+    // ride alongside the signed bytes through the inject path. tuple
+    // is null for non-EIP155 chains; in that case the receipt is
+    // best-effort with only the URL.
+    const tuple = paymentTuple(detected.requirements);
+    setPendingPayment(tabId, detected.url, {
+      header: headerName,
+      value: headerValue,
+      origin,
+      chainId: tuple?.chainId,
+      asset: tuple?.asset,
+      amount: tuple?.amount,
+    });
     clearDetectedPayment(tabId);
 
     // Permission bookkeeping. Order matters: if the renderer passed a
     // fresh `grant` block, replace any existing cap (zeroes spent +
     // starts a new window) BEFORE consuming, so this payment counts
     // against the new cap rather than burning a stale half-spent one.
-    const tuple = paymentTuple(detected.requirements);
     if (tuple) {
       if (grant) {
         try {
@@ -202,6 +215,10 @@ function registerX402Ipc() {
 
   ipcMain.handle(IPC.X402_GET_ALL_PERMISSIONS, async () => {
     return { success: true, permissions: getAllPermissions() };
+  });
+
+  ipcMain.handle(IPC.X402_GET_RECEIPTS, async (_event, { limit } = {}) => {
+    return { success: true, receipts: getRecentReceipts(limit) };
   });
 
   ipcMain.handle(IPC.X402_REVOKE_PERMISSION, async (_event, { origin, chainId, asset }) => {
