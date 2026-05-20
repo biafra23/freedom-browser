@@ -54,6 +54,7 @@ const path = require('path');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
 const { installRequestRewriter } = require('./request-rewriter');
 const { attachWebRequestDispatcher } = require('./webrequest-dispatcher');
+const { installX402Interception } = require('./x402/intercept');
 const { registerBzzProtocol } = require('./swarm/bzz-protocol');
 const { registerIpfsProtocol, registerIpnsProtocol } = require('./ipfs/ipfs-protocol');
 
@@ -167,10 +168,10 @@ async function bootstrap() {
     registerIpfsProtocol(defaultSession);
     registerIpnsProtocol(defaultSession);
   }
-  // All consumers register their handlers first (request-rewriter today,
-  // x402 navigation interception in a later WP); the dispatcher then
+  // All consumers register their handlers first, then the dispatcher
   // attaches exactly one Electron listener per event to the session.
   installRequestRewriter();
+  installX402Interception();
   attachWebRequestDispatcher(defaultSession);
   allowInteractivePermissions(defaultSession);
   registerWebContentsHandlers();
