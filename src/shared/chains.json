@@ -39,5 +39,36 @@
       "anchor": "latest",
       "anchorTtlMs": 30000
     }
+  },
+  "8453": {
+    "chainId": 8453,
+    "chainIdHex": "0x2105",
+    "name": "Base",
+    "shortName": "BASE",
+    "nativeSymbol": "ETH",
+    "blockExplorer": "https://basescan.org",
+    "builtin": true,
+    "verification": {
+      "primary": "quorum"
+    },
+    "quorum": {
+      "k": 3,
+      "m": 2,
+      "timeoutMs": 5000,
+      "anchor": "latest",
+      "anchorTtlMs": 30000
+    }
+  },
+  "84532": {
+    "chainId": 84532,
+    "chainIdHex": "0x14a34",
+    "name": "Base Sepolia",
+    "shortName": "BASE-SEP",
+    "nativeSymbol": "ETH",
+    "blockExplorer": "https://sepolia.basescan.org",
+    "builtin": true,
+    "verification": {
+      "primary": "direct"
+    }
   }
 }
