@@ -4,6 +4,10 @@ jest.mock('../logger', () => ({
   error: jest.fn(),
 }));
 
+jest.mock('electron', () => ({
+  app: { isPackaged: false },
+}));
+
 const mockRegister = jest.fn();
 jest.mock('../webrequest-dispatcher', () => ({
   registerWebRequestHandler: (...args) => mockRegister(...args),
@@ -14,6 +18,7 @@ const {
   installX402Interception,
   detectPaymentRequiredHandler,
   injectPaymentSignatureHandler,
+  paymentResponseLoggingHandler,
   parsePaymentRequiredHeader,
   setPendingPayment,
   getDetectedPayment,
@@ -21,6 +26,7 @@ const {
   clearAllPendingPayments,
   clearAllDetectedPayments,
   cleanupWebContents,
+  getInterstitialFileUrl,
 } = require('./intercept');
 
 beforeEach(() => {
@@ -107,10 +113,11 @@ describe('detectPaymentRequiredHandler', () => {
     ...overrides,
   });
 
-  test('stores detected payment on 402 with V2 PAYMENT-REQUIRED header', () => {
+  test('redirects to the interstitial and stashes the payment on 402 with V2 header', () => {
     const result = detectPaymentRequiredHandler(detail());
 
-    expect(result).toBeNull(); // pass-through; WP4 will redirect
+    expect(result).toEqual({ redirectURL: getInterstitialFileUrl() });
+    expect(getInterstitialFileUrl()).toMatch(/file:\/\/.*\/pages\/x402\.html$/);
     expect(getDetectedPayment(7)).toMatchObject({
       url: 'https://api.example/article',
       requirements: sampleRequirements,
@@ -356,19 +363,70 @@ describe('isStatus402 edge cases (via detector pass-through)', () => {
 // === installX402Interception =============================================
 
 describe('installX402Interception', () => {
-  test('registers detect on onHeadersReceived and inject on onBeforeSendHeaders', () => {
+  test('registers detect+receipt on onHeadersReceived and inject on onBeforeSendHeaders', () => {
     installX402Interception();
 
-    expect(mockRegister).toHaveBeenCalledTimes(2);
+    expect(mockRegister).toHaveBeenCalledTimes(3);
     expect(mockRegister).toHaveBeenCalledWith(
       'onHeadersReceived',
       'x402-detect',
       detectPaymentRequiredHandler
     );
     expect(mockRegister).toHaveBeenCalledWith(
+      'onHeadersReceived',
+      'x402-receipt',
+      paymentResponseLoggingHandler
+    );
+    expect(mockRegister).toHaveBeenCalledWith(
       'onBeforeSendHeaders',
       'x402-inject',
       injectPaymentSignatureHandler
     );
+  });
+});
+
+describe('paymentResponseLoggingHandler', () => {
+  const responseB64 = Buffer.from(JSON.stringify({ txHash: '0xabc', success: true })).toString('base64');
+
+  test('short-circuits without iterating headers when no injection is awaiting', () => {
+    // Set a header that would otherwise be picked up. The handler must
+    // not touch responseHeaders unless armed via injectPaymentSignatureHandler.
+    const responseHeaders = {
+      get [Symbol.iterator]() {
+        throw new Error('paymentResponseLoggingHandler must not iterate headers on the miss path');
+      },
+    };
+    const result = paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      responseHeaders,
+    });
+    expect(result).toBeNull();
+  });
+
+  test('fires for the matching (tab, url) after a payment injection', () => {
+    setPendingPayment(7, 'https://api.example/article', {
+      header: 'PAYMENT-SIGNATURE',
+      value: 'sig',
+    });
+    // Arm the awaitingResponse marker by going through the injector.
+    injectPaymentSignatureHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+
+    expect(paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    })).toBeNull();
+
+    // One-shot: a follow-up response on the same URL no longer fires.
+    expect(paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    })).toBeNull(); // returns null either way; the assert is the side-effect-free path
   });
 });

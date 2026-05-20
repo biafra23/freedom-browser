@@ -26,6 +26,10 @@
  * Both stores expose `clear*` helpers so tests can isolate state.
  */
 
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { app } = require('electron');
+
 const log = require('../logger');
 const { parsePaymentRequired } = require('@x402/core/schemas');
 const { registerWebRequestHandler } = require('../webrequest-dispatcher');
@@ -45,6 +49,17 @@ const VALID_SIGNATURE_HEADERS = new Set([
   X402_HEADERS.SIGNATURE_V1,
 ]);
 
+/**
+ * Outgoing signature header name for a given protocol version. Lives next
+ * to the constants so callers don't accidentally pair the wrong header
+ * with the wrong version. Unknown versions default to V2 — zod-validated
+ * input can only be 1 or 2, so the default just keeps a malformed payload
+ * from crashing the renderer mid-flow.
+ */
+function outgoingHeaderForVersion(version) {
+  return version === 1 ? X402_HEADERS.SIGNATURE_V1 : X402_HEADERS.SIGNATURE_V2;
+}
+
 // === State stores ========================================================
 
 // "Server said this URL needs a payment." Keyed by webContentsId because
@@ -58,6 +73,15 @@ const detectedPayments = new Map();
 // *same* tab triggers the one-shot injection. Cross-tab key separation
 // prevents two tabs pointed at the same paywalled URL from cross-feeding.
 const pendingPayments = new Map();
+
+// "We just injected a payment for this (tab, url) and expect a settlement
+// response on the matching response." The receipt-logging handler short-
+// circuits to a Set.has check for the 99.99% of responses that aren't
+// settlement responses, instead of iterating headers looking for the
+// PAYMENT-RESPONSE name on every subresource fetch. Also tightens
+// security: we only treat PAYMENT-RESPONSE headers from our own
+// injected requests, never arbitrary server-side headers.
+const awaitingResponse = new Set();
 
 function pendingKey(webContentsId, url) {
   return `${webContentsId ?? ''}|${url}`;
@@ -115,6 +139,11 @@ function cleanupWebContents(webContentsId) {
   for (const key of [...pendingPayments.keys()]) {
     if (key.startsWith(prefix)) {
       pendingPayments.delete(key);
+    }
+  }
+  for (const key of [...awaitingResponse]) {
+    if (key.startsWith(prefix)) {
+      awaitingResponse.delete(key);
     }
   }
 }
@@ -184,6 +213,20 @@ function isStatus402(statusLine) {
   return typeof statusLine === 'string' && statusLine.includes(' 402 ');
 }
 
+// `file://…/pages/x402.html` — same renderer-pages directory the rest of
+// the app loads its internal pages from. Memoised because Electron's
+// `app` isn't ready at module-load time; the first detection call
+// resolves it.
+let cachedInterstitialUrl = null;
+function getInterstitialFileUrl() {
+  if (cachedInterstitialUrl) return cachedInterstitialUrl;
+  const filePath = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar', 'src', 'renderer', 'pages', 'x402.html')
+    : path.join(__dirname, '..', '..', 'renderer', 'pages', 'x402.html');
+  cachedInterstitialUrl = pathToFileURL(filePath).toString();
+  return cachedInterstitialUrl;
+}
+
 // === Dispatcher handlers =================================================
 
 function detectPaymentRequiredHandler(details) {
@@ -219,8 +262,35 @@ function detectPaymentRequiredHandler(details) {
     `[x402:detect] v${requirements.x402Version} payment required for ${sanitizeUrlForLog(details.url)}`
   );
 
-  // WP3 stops here — the 402 response renders normally. WP4 swaps this
-  // to a redirect into the freedom://x402 interstitial.
+  // Redirect the navigation to the interstitial. The page lives in the
+  // same webview, so its IPC `event.sender.id` matches the webContentsId
+  // we just keyed the state under — no query-string handoff needed.
+  return { redirectURL: getInterstitialFileUrl() };
+}
+
+// onHeadersReceived (chained after detect). On a successful retry the
+// server sends a PAYMENT-RESPONSE header carrying base64-encoded
+// settlement metadata (incl. txHash). WP6 will surface this as a
+// receipt; for now we just log it so devs can verify the round-trip.
+//
+// Gated on `awaitingResponse` so we don't iterate response headers on
+// every subresource fetch — the Set.has check is the fast-path miss
+// for 99.99% of responses.
+function paymentResponseLoggingHandler(details) {
+  const key = pendingKey(details.webContentsId, details.url);
+  if (!awaitingResponse.has(key)) return null;
+  awaitingResponse.delete(key);
+
+  const value = getHeaderValue(details.responseHeaders, 'PAYMENT-RESPONSE');
+  if (!value) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(value, 'base64').toString('utf-8'));
+    log.info(
+      `[x402:settled] ${sanitizeUrlForLog(details.url)} txHash=${decoded.txHash ?? 'unknown'}`
+    );
+  } catch {
+    log.warn(`[x402:settled] PAYMENT-RESPONSE on ${sanitizeUrlForLog(details.url)} could not be decoded`);
+  }
   return null;
 }
 
@@ -230,6 +300,9 @@ function injectPaymentSignatureHandler(details) {
   if (!signed) return null;
 
   pendingPayments.delete(key); // one-shot
+  // Arm the receipt logger so it knows to look at THIS response's
+  // headers (and only this one) for the PAYMENT-RESPONSE settlement.
+  awaitingResponse.add(key);
 
   log.info(
     `[x402:inject] attaching ${signed.header} to ${sanitizeUrlForLog(details.url)}`
@@ -246,15 +319,19 @@ function injectPaymentSignatureHandler(details) {
 
 function installX402Interception() {
   registerWebRequestHandler('onHeadersReceived', 'x402-detect', detectPaymentRequiredHandler);
+  registerWebRequestHandler('onHeadersReceived', 'x402-receipt', paymentResponseLoggingHandler);
   registerWebRequestHandler('onBeforeSendHeaders', 'x402-inject', injectPaymentSignatureHandler);
 }
 
 module.exports = {
   X402_HEADERS,
+  outgoingHeaderForVersion,
   installX402Interception,
   detectPaymentRequiredHandler,
   injectPaymentSignatureHandler,
+  paymentResponseLoggingHandler,
   parsePaymentRequiredHeader,
+  getInterstitialFileUrl,
   setPendingPayment,
   getDetectedPayment,
   clearDetectedPayment,

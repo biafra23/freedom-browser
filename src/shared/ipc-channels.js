@@ -155,6 +155,11 @@ module.exports = {
   WALLET_GET_TRANSACTION_STATUS: 'wallet:get-transaction-status',
   WALLET_WAIT_FOR_TRANSACTION: 'wallet:wait-for-transaction',
 
+  // x402 — payment interstitial (renderer ↔ main)
+  X402_GET_DETAILS: 'x402:get-details',
+  X402_APPROVE: 'x402:approve',
+  X402_CANCEL: 'x402:cancel',
+
   // dApp Permissions
   DAPP_GET_PERMISSION: 'dapp:get-permission',
   DAPP_GRANT_PERMISSION: 'dapp:grant-permission',

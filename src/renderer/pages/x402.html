@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:;"
+    />
+    <title>Payment required</title>
+    <link rel="stylesheet" href="styles/interstitial.css" />
+    <link rel="stylesheet" href="styles/x402.css" />
+  </head>
+  <body class="x402">
+    <div class="container">
+      <h1>
+        <svg class="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9 13c0 1.5 1.5 2 3 2s3-0.6 3-2-1.5-1.7-3-2-3-0.5-3-2 1.5-2 3-2 3 0.6 3 2" />
+          <line x1="12" y1="6" x2="12" y2="8" />
+          <line x1="12" y1="16" x2="12" y2="18" />
+        </svg>
+        Payment required
+      </h1>
+      <p>
+        The page you tried to open asks for a small on-chain payment before showing its contents.
+        Approve below to pay with your wallet and load the page; cancel to go back.
+      </p>
+
+      <div class="payment-block">
+        <div class="row">
+          <span class="label">Page</span>
+          <span class="value" id="page-url"></span>
+        </div>
+        <div class="row">
+          <span class="label">Amount</span>
+          <span class="value" id="amount"></span>
+        </div>
+        <div class="row">
+          <span class="label">To</span>
+          <span class="value" id="pay-to"></span>
+        </div>
+        <div class="row">
+          <span class="label">Network</span>
+          <span class="value" id="network"></span>
+        </div>
+      </div>
+
+      <div class="error" id="error" role="status" aria-live="polite" hidden></div>
+
+      <div class="buttons">
+        <button id="approve-btn" class="button-primary">Pay and continue</button>
+        <button id="cancel-btn">Cancel</button>
+      </div>
+
+      <p class="learn-more">
+        Payment is sent off-chain as a signed authorization; no gas leaves your wallet — the
+        server settles on-chain. You'll only see the destination above charged.
+      </p>
+    </div>
+    <script src="scripts/x402.js"></script>
+  </body>
+</html>

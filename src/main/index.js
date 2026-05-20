@@ -55,6 +55,7 @@ const { registerBaseIpcHandlers } = require('./ipc-handlers');
 const { installRequestRewriter } = require('./request-rewriter');
 const { attachWebRequestDispatcher } = require('./webrequest-dispatcher');
 const { installX402Interception } = require('./x402/intercept');
+const { registerX402Ipc } = require('./x402/ipc');
 const { registerBzzProtocol } = require('./swarm/bzz-protocol');
 const { registerIpfsProtocol, registerIpnsProtocol } = require('./ipfs/ipfs-protocol');
 
@@ -153,6 +154,7 @@ async function bootstrap() {
   registerRpcManagerIpc();
   registerNetworkConfigIpc();
   registerDappPermissionsIpc();
+  registerX402Ipc();
   registerSwarmIpc();
   registerPublishIpc();
   registerPublishHistoryIpc();
