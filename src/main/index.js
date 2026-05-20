@@ -157,6 +157,7 @@ async function bootstrap() {
   registerNetworkConfigIpc();
   registerDappPermissionsIpc();
   registerX402Ipc();
+  paymentHistory.registerPaymentHistoryIpc();
   registerSwarmIpc();
   registerPublishIpc();
   registerPublishHistoryIpc();

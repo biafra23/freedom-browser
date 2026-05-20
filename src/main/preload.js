@@ -372,6 +372,16 @@ contextBridge.exposeInMainWorld('networks', {
   removeChain: (chainId) => ipcRenderer.invoke('networks:remove-chain', chainId),
 });
 
+// Unified payment history. The renderer (Wallet sidebar mini-section,
+// future freedom://payments page) reads from this — never writes.
+// Producers (x402 intercept, wallet/dapp sends) record in main directly.
+contextBridge.exposeInMainWorld('payments', {
+  getRecent: (filters) => ipcRenderer.invoke('payments:get-recent', filters),
+  getById: (id) => ipcRenderer.invoke('payments:get-by-id', id),
+  getCount: (filters) => ipcRenderer.invoke('payments:get-count', filters),
+  clear: () => ipcRenderer.invoke('payments:clear'),
+});
+
 contextBridge.exposeInMainWorld('tokens', {
   getTokens: (chainId) => ipcRenderer.invoke('tokens:get-tokens', chainId),
   getToken: (key) => ipcRenderer.invoke('tokens:get-token', key),

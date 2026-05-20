@@ -165,6 +165,12 @@ module.exports = {
   X402_UPDATE_PERMISSION: 'x402:update-permission',
   X402_GET_RECEIPTS: 'x402:get-receipts',
 
+  // Unified payment history (x402 + wallet sends + dapp sends)
+  PAYMENTS_GET_RECENT: 'payments:get-recent',
+  PAYMENTS_GET_BY_ID: 'payments:get-by-id',
+  PAYMENTS_GET_COUNT: 'payments:get-count',
+  PAYMENTS_CLEAR: 'payments:clear',
+
   // dApp Permissions
   DAPP_GET_PERMISSION: 'dapp:get-permission',
   DAPP_GRANT_PERMISSION: 'dapp:grant-permission',

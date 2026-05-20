@@ -13,10 +13,11 @@
  */
 
 const log = require('./logger');
-const { app } = require('electron');
+const { app, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const IPC = require('../shared/ipc-channels');
 
 const SCHEMA_VERSION = 1;
 const DB_FILE = 'payment-history.sqlite';
@@ -314,8 +315,29 @@ function markFailed(id, { reason, gasUsed, gasPrice } = {}) {
   });
 }
 
-// Build a WHERE fragment + parameter array from a filter object. Used by
-// both getRecent and getCount so the filter shape stays in lock-step.
+// Filter keys the store accepts; anything else is silently dropped so the
+// renderer can pass through UI state without breaking. Clamping `limit`
+// and `offset` guards against a runaway page-size request pulling the
+// entire table across IPC.
+const FILTER_KEYS = ['kind', 'chainId', 'origin', 'status'];
+const MAX_LIMIT = 500;
+
+function sanitizeFilters(raw = {}) {
+  const out = {};
+  for (const key of FILTER_KEYS) {
+    if (raw[key] !== undefined) out[key] = raw[key];
+  }
+  if (raw.limit !== undefined) {
+    out.limit = Math.min(Math.max(0, Number(raw.limit) | 0), MAX_LIMIT);
+  }
+  if (raw.offset !== undefined) {
+    out.offset = Math.max(0, Number(raw.offset) | 0);
+  }
+  return out;
+}
+
+// Build a WHERE fragment + parameter array from a sanitised filter object.
+// Used by both getRecent and getCount so the filter shape stays in lock-step.
 function buildWhere(filters) {
   const where = [];
   const params = [];
@@ -339,11 +361,12 @@ function buildWhere(filters) {
  * @param {number} [filters.offset=0]
  */
 function getRecent(filters = {}) {
-  const { clause, params } = buildWhere(filters);
+  const safe = sanitizeFilters(filters);
+  const { clause, params } = buildWhere(safe);
   const sql = `SELECT * FROM payments ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
   return getDb()
     .prepare(sql)
-    .all(...params, filters.limit ?? 50, filters.offset ?? 0)
+    .all(...params, safe.limit ?? 50, safe.offset ?? 0)
     .map(rowToEntry);
 }
 
@@ -352,7 +375,7 @@ function getById(id) {
 }
 
 function getCount(filters = {}) {
-  const { clause, params } = buildWhere(filters);
+  const { clause, params } = buildWhere(sanitizeFilters(filters));
   return getDb().prepare(`SELECT COUNT(*) AS n FROM payments ${clause}`).get(...params).n;
 }
 
@@ -405,6 +428,51 @@ async function repollPending(getStatusFn) {
   return { resolved, stillPending, errors };
 }
 
+// === IPC =================================================================
+
+function registerPaymentHistoryIpc() {
+  ipcMain.handle(IPC.PAYMENTS_GET_RECENT, (_event, filters) => {
+    try {
+      return { success: true, payments: getRecent(filters) };
+    } catch (err) {
+      log.error('[PaymentHistory] get-recent failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.PAYMENTS_GET_BY_ID, (_event, id) => {
+    if (!Number.isInteger(id)) {
+      return { success: false, error: 'id must be an integer' };
+    }
+    try {
+      return { success: true, payment: getById(id) };
+    } catch (err) {
+      log.error('[PaymentHistory] get-by-id failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.PAYMENTS_GET_COUNT, (_event, filters) => {
+    try {
+      return { success: true, count: getCount(filters) };
+    } catch (err) {
+      log.error('[PaymentHistory] get-count failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.PAYMENTS_CLEAR, () => {
+    try {
+      return { success: true, removed: clear() };
+    } catch (err) {
+      log.error('[PaymentHistory] clear failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  log.info('[PaymentHistory] IPC handlers registered');
+}
+
 module.exports = {
   KINDS,
   STATUSES,
@@ -420,4 +488,5 @@ module.exports = {
   clear,
   removeById,
   repollPending,
+  registerPaymentHistoryIpc,
 };

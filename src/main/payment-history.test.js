@@ -357,4 +357,86 @@ expect(mod.KINDS).toMatchObject({ X402: 'x402', WALLET_SEND: 'wallet-send', DAPP
       SETTLED: 'settled', NO_RECEIPT: 'no-receipt',
     });
   });
+
+  // === IPC handlers ====================================================
+
+  describe('registerPaymentHistoryIpc', () => {
+    let ipcMain;
+    beforeEach(() => {
+      // Re-load the module with a captured ipcMain so we can drive the
+      // registered handlers directly.
+      if (mod?.closeDb) mod.closeDb();
+      ({ mod, ipcMain } = loadPaymentHistoryModule({ userDataDir }));
+      mod.registerPaymentHistoryIpc();
+    });
+
+    test('payments:get-recent forwards filters to the store', async () => {
+      mod.append({ kind: 'x402', chainId: 1, amount: '1', status: 'settled' });
+      mod.append({ kind: 'wallet-send', chainId: 1, amount: '2' });
+
+      const result = await ipcMain.invoke('payments:get-recent', { kind: 'x402' });
+      expect(result.success).toBe(true);
+      expect(result.payments).toHaveLength(1);
+      expect(result.payments[0]).toMatchObject({ kind: 'x402' });
+    });
+
+    test('payments:get-recent drops unknown filter keys silently', async () => {
+      mod.append({ kind: 'x402', chainId: 1, amount: '1', status: 'settled' });
+      const result = await ipcMain.invoke('payments:get-recent', { kind: 'x402', bogus: 'foo' });
+      expect(result.success).toBe(true);
+      expect(result.payments).toHaveLength(1);
+    });
+
+    test('payments:get-recent is robust to a JSON-wire __proto__ own-property attack', async () => {
+      mod.append({ kind: 'x402', chainId: 1, amount: '1', status: 'settled' });
+      // Object literals treat `__proto__` as the prototype-setting form,
+      // not an own property — IPC payloads come off the wire via
+      // structured-clone / JSON.parse, which DOES create an own __proto__.
+      const malicious = JSON.parse('{"kind":"x402","__proto__":{"evil":true}}');
+      const result = await ipcMain.invoke('payments:get-recent', malicious);
+      expect(result.success).toBe(true);
+      expect(result.payments).toHaveLength(1);
+      expect({}.evil).toBeUndefined();
+    });
+
+    test('payments:get-recent clamps oversized limit to MAX_LIMIT', async () => {
+      for (let i = 0; i < 5; i++) {
+        mod.append({ kind: 'x402', chainId: 1, amount: String(i + 1), status: 'settled' });
+      }
+      const result = await ipcMain.invoke('payments:get-recent', { limit: 10_000_000 });
+      // We can't observe the clamp directly here, but a 5-row table with a
+      // huge limit still returns 5 rows — i.e. doesn't throw or hang on
+      // a query the SQL layer would otherwise be forced to materialise.
+      expect(result.success).toBe(true);
+      expect(result.payments).toHaveLength(5);
+    });
+
+    test('payments:get-by-id returns the row', async () => {
+      const row = mod.append({ kind: 'x402', chainId: 1, amount: '1', status: 'settled' });
+      const result = await ipcMain.invoke('payments:get-by-id', row.id);
+      expect(result.success).toBe(true);
+      expect(result.payment.id).toBe(row.id);
+    });
+
+    test('payments:get-by-id rejects non-integer id', async () => {
+      const result = await ipcMain.invoke('payments:get-by-id', 'not-an-int');
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/integer/);
+    });
+
+    test('payments:get-count respects filters', async () => {
+      mod.append({ kind: 'x402', chainId: 1, amount: '1', status: 'settled' });
+      mod.append({ kind: 'wallet-send', chainId: 1, amount: '2' });
+      const result = await ipcMain.invoke('payments:get-count', { kind: 'x402' });
+      expect(result).toEqual({ success: true, count: 1 });
+    });
+
+    test('payments:clear empties the table', async () => {
+      mod.append({ kind: 'x402', chainId: 1, amount: '1', status: 'settled' });
+      mod.append({ kind: 'wallet-send', chainId: 1, amount: '2' });
+      const result = await ipcMain.invoke('payments:clear');
+      expect(result).toEqual({ success: true, removed: 2 });
+      expect(mod.getCount({})).toBe(0);
+    });
+  });
 });

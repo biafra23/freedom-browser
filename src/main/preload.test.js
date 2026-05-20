@@ -85,7 +85,7 @@ describe('preload', () => {
       ipfsGatewayEnv: 'http://127.0.0.1:9090',
     });
 
-    expect(contextBridge.exposeInMainWorld).toHaveBeenCalledTimes(19);
+    expect(contextBridge.exposeInMainWorld).toHaveBeenCalledTimes(20);
     expect(Object.keys(exposures)).toEqual([
       'nodeConfig',
       'internalPages',
@@ -100,6 +100,7 @@ describe('preload', () => {
       'wallet',
       'swarmNode',
       'networks',
+      'payments',
       'tokens',
       'rpcManager',
       'dappPermissions',
