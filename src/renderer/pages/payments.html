@@ -636,6 +636,19 @@
           resultsEl.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(err.message)}</p></div>`;
         }),
       ]);
+
+      // Live refresh on every row mutation. Main broadcasts this after
+      // append / pending→confirmed / pending→failed / clear / removeById
+      // and after x402 settlement receipts land. Trailing-edge debounce
+      // coalesces bursts (concurrent Range segments, repollPending
+      // resolving N pending rows on boot) into a single re-query.
+      let refreshTimer = null;
+      window.freedomAPI.onPaymentRecorded?.(() => {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => {
+          loadPayments().catch((err) => console.error('[payments] live refresh failed:', err));
+        }, 150);
+      });
     </script>
   </body>
 </html>

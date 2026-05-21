@@ -181,6 +181,11 @@ module.exports = {
   PAYMENTS_GET_BY_ID: 'payments:get-by-id',
   PAYMENTS_GET_COUNT: 'payments:get-count',
   PAYMENTS_CLEAR: 'payments:clear',
+  // Main→renderer broadcast on every row mutation (append / mark-
+  // confirmed / mark-failed). Recent-payments mini-section + the
+  // freedom://payments page subscribe; the row is already written by
+  // the time it fires, so receivers just re-query.
+  PAYMENTS_TX_RECORDED: 'payments:tx-recorded',
 
   // dApp Permissions
   DAPP_GET_PERMISSION: 'dapp:get-permission',

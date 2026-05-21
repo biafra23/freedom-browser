@@ -230,6 +230,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
 
   // Auto-unsubscribed on pagehide.
   onSettingsUpdated: guardInternalSubscription('onSettingsUpdated', 'settings:updated'),
+  // freedom://payments uses this for live refresh on settlements (no
+  // user-driven event for a server-acknowledged paid request).
+  onPaymentRecorded: guardInternalSubscription('onPaymentRecorded', 'payments:tx-recorded'),
 
   // Bookmarks (read-only for internal pages)
   getBookmarks: guardInternal('getBookmarks', () => ipcRenderer.invoke('bookmarks:get')),

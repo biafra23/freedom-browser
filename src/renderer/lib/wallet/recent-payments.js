@@ -30,11 +30,12 @@ export function initRecentPayments() {
     createTab('freedom://payments');
   });
 
-  // Send modal dispatches this on a successful broadcast; main has already
-  // appended the row by then, so the refresh picks it up.
-  window.addEventListener('wallet:tx-success', () => {
+  // Canonical "table changed" signal — fires on every main-side row
+  // mutation, including the previously-silent x402 settlements and
+  // pending→confirmed/failed transitions.
+  window.addEventListener('payments:tx-recorded', () => {
     refreshRecentPayments().catch((err) => {
-      console.error('[recent-payments] refresh after tx-success failed:', err);
+      console.error('[recent-payments] refresh after tx-recorded failed:', err);
     });
   });
 

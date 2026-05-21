@@ -348,6 +348,87 @@ describe('payment-history (sqlite)', () => {
     });
   });
 
+  // === payments:tx-recorded broadcast ====================================
+
+  describe('payments:tx-recorded broadcast', () => {
+    let send;
+    beforeEach(() => {
+      if (mod?.closeDb) mod.closeDb();
+      send = jest.fn();
+      ({ mod } = loadPaymentHistoryModule({
+        userDataDir,
+        webContents: { getAllWebContents: () => [{ send }, { send }] },
+      }));
+    });
+
+    test('append broadcasts the inserted row to every webContents', () => {
+      const entry = mod.append({
+        kind: 'x402', chainId: BASE_CHAIN, asset: USDC_BASE,
+        amount: TEN_USDC, txHash: '0xabc', status: 'settled',
+      });
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(send).toHaveBeenCalledWith('payments:tx-recorded', {
+        id: entry.id, kind: 'x402', status: 'settled', txHash: '0xabc',
+      });
+    });
+
+    test('markConfirmed broadcasts the updated row', () => {
+      const pending = mod.append({
+        kind: 'wallet-send', chainId: 1, txHash: '0x1', amount: '1',
+      });
+      send.mockClear();
+      mod.markConfirmed(pending.id, { gasUsed: '21000', gasPrice: '20000000000' });
+      expect(send).toHaveBeenCalledWith('payments:tx-recorded',
+        expect.objectContaining({ id: pending.id, status: 'confirmed' }));
+    });
+
+    test('markFailed broadcasts the updated row', () => {
+      const pending = mod.append({
+        kind: 'wallet-send', chainId: 1, txHash: '0x2', amount: '1',
+      });
+      send.mockClear();
+      mod.markFailed(pending.id, { reason: 'reverted' });
+      expect(send).toHaveBeenCalledWith('payments:tx-recorded',
+        expect.objectContaining({ id: pending.id, status: 'failed' }));
+    });
+
+    test('clear broadcasts a null-id sentinel so listeners re-query an empty table', () => {
+      mod.append({ kind: 'x402', chainId: BASE_CHAIN, amount: TEN_USDC, status: 'settled' });
+      send.mockClear();
+      mod.clear();
+      expect(send).toHaveBeenCalledWith('payments:tx-recorded', { id: null });
+    });
+
+    test('removeById broadcasts on a successful delete and stays quiet on a miss', () => {
+      const row = mod.append({ kind: 'x402', chainId: BASE_CHAIN, amount: TEN_USDC, status: 'settled' });
+      send.mockClear();
+      mod.removeById(row.id);
+      expect(send).toHaveBeenCalledWith('payments:tx-recorded', { id: null });
+
+      send.mockClear();
+      mod.removeById(99999);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    test('a destroyed webContents send-throwing does not break the broadcast', () => {
+      // Mid-loop throw used to break the rest of the loop. Verify the
+      // catch in broadcastTxRecorded keeps the remaining webContents
+      // receiving the event.
+      const ok = jest.fn();
+      const dead = jest.fn(() => { throw new Error('destroyed'); });
+      if (mod?.closeDb) mod.closeDb();
+      ({ mod } = loadPaymentHistoryModule({
+        userDataDir,
+        webContents: { getAllWebContents: () => [{ send: dead }, { send: ok }] },
+      }));
+      mod.append({
+        kind: 'x402', chainId: BASE_CHAIN, amount: TEN_USDC, status: 'settled',
+      });
+      expect(dead).toHaveBeenCalled();
+      expect(ok).toHaveBeenCalled();
+    });
+  });
+
   // === KINDS / STATUSES re-export ========================================
 
   test('exposes KINDS and STATUSES constants for callers', () => {

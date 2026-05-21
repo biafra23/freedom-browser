@@ -18,6 +18,7 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 const IPC = require('../shared/ipc-channels');
+const { broadcastToAllWebContents } = require('./lib/broadcast-to-all-webcontents');
 
 const SCHEMA_VERSION = 1;
 const DB_FILE = 'payment-history.sqlite';
@@ -250,6 +251,19 @@ function rowToEntry(row) {
  * @param {number} [entry.createdAt] — ms epoch; defaults to now
  * @param {object|null} [entry.metadata]
  */
+// "Table changed, re-query." Receivers ignore the payload and pull
+// fresh state via `payments:get-recent`; the id/kind/status/txHash
+// fields are forward-compat for receivers that may want to filter
+// (e.g. "ignore unless kind === 'x402'") without an extra IPC.
+function broadcastTxRecorded(entry) {
+  broadcastToAllWebContents(IPC.PAYMENTS_TX_RECORDED, entry ? {
+    id: entry.id,
+    kind: entry.kind,
+    status: entry.status,
+    txHash: entry.txHash ?? null,
+  } : { id: null });
+}
+
 function append(entry = {}) {
   if (!Object.values(KINDS).includes(entry.kind)) {
     throw new Error(`payment-history: unknown kind '${entry.kind}'`);
@@ -272,7 +286,9 @@ function append(entry = {}) {
     metadata: entry.metadata ? JSON.stringify(entry.metadata) : null,
   });
 
-  return rowToEntry(getStatements().getById.get(result.lastInsertRowid));
+  const inserted = rowToEntry(getStatements().getById.get(result.lastInsertRowid));
+  broadcastTxRecorded(inserted);
+  return inserted;
 }
 
 /**
@@ -294,7 +310,9 @@ function update(id, patch = {}) {
     id,
   );
   if (result.changes === 0) return null;
-  return rowToEntry(getStatements().getById.get(id));
+  const updated = rowToEntry(getStatements().getById.get(id));
+  broadcastTxRecorded(updated);
+  return updated;
 }
 
 function markConfirmed(id, receipt = {}) {
@@ -380,11 +398,15 @@ function getCount(filters = {}) {
 }
 
 function clear() {
-  return getStatements().clear.run().changes;
+  const changes = getStatements().clear.run().changes;
+  if (changes > 0) broadcastTxRecorded(null);
+  return changes;
 }
 
 function removeById(id) {
-  return getStatements().deleteById.run(id).changes > 0;
+  const removed = getStatements().deleteById.run(id).changes > 0;
+  if (removed) broadcastTxRecorded(null);
+  return removed;
 }
 
 /**
