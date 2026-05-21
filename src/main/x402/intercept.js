@@ -868,29 +868,31 @@ function paymentResponseLoggingHandler(details) {
 }
 
 // Run the cap consume for an inject attempt and decide whether the
-// signature is still authorized to go out. Returns `true` to withhold
-// (caller must drop the pending entry and bail), `false` to proceed.
+// signature is still authorized to go out. Returns `{ withhold, consumed }`:
+//   - withhold: true → caller must drop the pending entry and bail
+//   - consumed: true → a cap entry was actually decremented (sidebar
+//     banner / recent-payments should refresh)
 // See `AUTHORIZED_BY` for the consent model. `undefined` authorizedBy
 // is intentionally treated as `MANUAL` — backward-compat with callers
 // that predate the field.
 function consumeOrWithhold(signed, urlForLog) {
   if (!signed.origin || !signed.chainId || !signed.asset || !signed.amount) {
-    return false;
+    return { withhold: false, consumed: false };
   }
   const consumed = tryConsume(signed.origin, signed.chainId, signed.asset, signed.amount);
-  if (consumed) return false;
+  if (consumed) return { withhold: false, consumed: true };
   if (signed.authorizedBy === AUTHORIZED_BY.CAP) {
     log.warn(
       `[x402:inject] cap raced over for ${urlForLog} (authorizedBy=cap); ` +
       `withholding signature, falling back to manual approval`
     );
-    return true;
+    return { withhold: true, consumed: false };
   }
   log.warn(
     `[x402:inject] cap consume returned false for ${signed.origin} ${signed.amount} ` +
     `(authorizedBy=${signed.authorizedBy ?? AUTHORIZED_BY.MANUAL}); charge proceeds, cap accounting may be off`
   );
-  return false;
+  return { withhold: false, consumed: false };
 }
 
 function injectPaymentSignatureHandler(details) {
@@ -907,12 +909,20 @@ function injectPaymentSignatureHandler(details) {
     return null;
   }
 
-  if (consumeOrWithhold(signed, sanitizeUrlForLog(details.url))) {
+  const { withhold, consumed } = consumeOrWithhold(signed, sanitizeUrlForLog(details.url));
+  if (withhold) {
     pendingPayments.delete(key); // one-shot even on withhold
     return null;
   }
 
   pendingPayments.delete(key); // one-shot on the happy path
+  // Silent auto-pay doesn't round-trip through the renderer, so the
+  // sidebar banner's spend counter would stay stale until the next
+  // navigation. Origin lets the renderer skip the IPC when the event
+  // belongs to a different tab from the one whose banner is showing.
+  if (consumed) {
+    sendToHost(details.webContentsId, 'x402:cap-consumed', { origin: signed.origin });
+  }
   // Arm the receipt logger so it knows to look at THIS response for the
   // PAYMENT-RESPONSE settlement. `signedHeader` lets the receipt logger
   // pick the V1 vs V2 settlement header.

@@ -126,6 +126,18 @@ export function initDappX402() {
       console.error('[x402] auto-pay unlock flow failed:', err);
     });
   });
+
+  // Silent cap-covered auto-pay (video segments, lazy paragraphs, …)
+  // doesn't round-trip through the renderer, so the banner's spend
+  // counter would otherwise only refresh on navigation. Filter by
+  // origin so multi-tab pays on other origins don't trigger a
+  // full x402GetAllPermissions round-trip we'd just throw away.
+  window.electronAPI?.onX402CapConsumed?.(({ origin } = {}) => {
+    if (!isSidebarVisible() || origin !== currentBannerKey) return;
+    updateX402ConnectionBanner().catch((err) => {
+      console.error('[x402] banner refresh after cap-consumed failed:', err);
+    });
+  });
 }
 
 async function handleAutoPayUnlock(webContentsId, origin) {

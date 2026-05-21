@@ -98,6 +98,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('x402:unlock-needed', handler);
     return () => ipcRenderer.removeListener('x402:unlock-needed', handler);
   },
+  // Main fires this after the inject handler actually decremented a
+  // per-origin cap. Silent auto-pay (video segments, lazy paragraphs)
+  // never round-trips through the renderer otherwise, so the auto-pay
+  // banner's spend counter would stay stale until the next navigation.
+  onX402CapConsumed: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:cap-consumed', handler);
+    return () => ipcRenderer.removeListener('x402:cap-consumed', handler);
+  },
   // Internal
   getWebviewPreloadPath: () => ipcRenderer.invoke('internal:get-webview-preload-path'),
   // Context menu

@@ -260,9 +260,11 @@ describe('detectPaymentRequiredHandler', () => {
     const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
 
     // No 307, no approval-needed event — receipt handler will log failed.
+    // (The earlier injectPaymentSignatureHandler fires x402:cap-consumed
+    // during setup; we only care that no approval-needed event leaked.)
     expect(result).toBeNull();
     expect(mockSignAndQueueRetry).not.toHaveBeenCalled();
-    expect(mockHostSend).not.toHaveBeenCalled();
+    expect(mockHostSend).not.toHaveBeenCalledWith('x402:approval-needed', expect.anything());
   });
 
   test('loop guard: 402 on a request we already signed does NOT re-sign (server rejected the signature)', async () => {
@@ -977,6 +979,59 @@ describe('injectPaymentSignatureHandler', () => {
     expect(injectPaymentSignatureHandler(detail())).toBeNull();
     // One-shot drop even on withhold — a second inject attempt finds nothing.
     expect(injectPaymentSignatureHandler(detail())).toBeNull();
+  });
+
+  test('fires x402:cap-consumed at the host when the inject actually decremented a cap', () => {
+    // Silent auto-pay (video segments, lazy paragraphs) never round-
+    // trips through the renderer; without this event the sidebar's
+    // auto-pay banner spend counter would stay stale until the next
+    // page navigation.
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+      authorizedBy: 'cap',
+    });
+    // tryConsume defaults to mockReturnValue(true) in beforeEach.
+    injectPaymentSignatureHandler(detail());
+    // Origin is the only field the renderer needs (to filter multi-tab
+    // payments) — full cap state is pulled fresh on the refresh IPC.
+    expect(mockHostSend).toHaveBeenCalledWith('x402:cap-consumed', {
+      origin: 'https://api.example',
+    });
+  });
+
+  test('does NOT fire x402:cap-consumed when no cap was decremented (cap-raced withhold)', () => {
+    mockTryConsume.mockReturnValueOnce(false);
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+      authorizedBy: 'cap',
+    });
+    injectPaymentSignatureHandler(detail());
+    expect(mockHostSend).not.toHaveBeenCalledWith('x402:cap-consumed', expect.anything());
+  });
+
+  test('does NOT fire x402:cap-consumed for a manual pay without an existing cap (nothing to refresh)', () => {
+    mockTryConsume.mockReturnValueOnce(false);
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+      authorizedBy: 'manual',
+    });
+    injectPaymentSignatureHandler(detail());
+    expect(mockHostSend).not.toHaveBeenCalledWith('x402:cap-consumed', expect.anything());
   });
 
   test('default (no authorizedBy field) treats as manual — backward-compatible', () => {
