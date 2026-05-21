@@ -52,6 +52,7 @@ const {
   clearDetectedPayment,
   clearAllPendingPayments,
   clearAllDetectedPayments,
+  clearAllAwaitingResponse,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
   cleanupWebContents,
@@ -60,6 +61,7 @@ const {
 beforeEach(() => {
   clearAllPendingPayments();
   clearAllDetectedPayments();
+  clearAllAwaitingResponse();
   clearAllPendingUnlockResume();
   mockRegister.mockClear();
   mockAppendReceipt.mockReset();
@@ -147,11 +149,12 @@ describe('detectPaymentRequiredHandler', () => {
     ...overrides,
   });
 
-  test('on 402 with V2 header: stashes the payment and fires the approval event at the host', () => {
-    const result = detectPaymentRequiredHandler(detail());
+  test('on 402 with V2 header: stashes the payment and fires the approval event at the host', async () => {
+    // Handler is async (returns a Promise — see the 307 path for why).
+    // Non-cap-covered branch still resolves to null; side effects are
+    // synchronous before the function ever awaits anything.
+    const result = await detectPaymentRequiredHandler(detail());
 
-    // Pass-through — the host renderer's sidebar handles the approval
-    // UI; the webview's response renders whatever the server sent.
     expect(result).toBeNull();
     expect(getDetectedPayment(7)).toMatchObject({
       url: 'https://api.example/article',
@@ -185,6 +188,83 @@ describe('detectPaymentRequiredHandler', () => {
     // Default mockGetPermission returns null → no coverage → approval card path.
     detectPaymentRequiredHandler(detail());
     expect(getDetectedPayment(7)?.authorizedBy).toBeUndefined();
+  });
+
+  test('subresource cap-covered 402 returns a same-URL 307 redirect (Chromium follows it transparently)', async () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    // mockSignAndQueueRetry defaults to resolve(undefined) in beforeEach
+    // — the handler awaits this synchronously before returning the 307.
+    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    expect(result).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: {
+        Location: ['https://api.example/article'],
+      },
+    });
+    expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, expect.objectContaining({
+      detection: expect.objectContaining({
+        url: 'https://api.example/article',
+        resourceType: 'xhr',
+      }),
+      authorizedBy: 'cap',
+    }));
+    // No approval-needed event — auto-pay is silent.
+    expect(mockHostSend).not.toHaveBeenCalled();
+  });
+
+  test('loop guard: 402 on a request we already signed does NOT re-sign (server rejected the signature)', async () => {
+    // Set up the "we already signed and injected" state: pending +
+    // awaitingResponse both populated. This is what `injectPaymentSignatureHandler`
+    // leaves on the map after attaching a PAYMENT-SIGNATURE to an
+    // outgoing request — then the server returns 402 (rejected) and
+    // we hit the detector again with the same (id, url).
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000',
+      authorizedBy: 'cap',
+    });
+    injectPaymentSignatureHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+    // Cap still covers — without the guard the detector would re-sign.
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '10000',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+
+    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+
+    // No re-sign, no 307; the receipt handler (next in the chain) will
+    // see the failed signed attempt and log a `failed` row.
+    expect(result).toBeNull();
+    expect(mockSignAndQueueRetry).not.toHaveBeenCalled();
+  });
+
+  test('subresource cap-covered 402 with locked vault lets the 402 through and fires unlock-needed', async () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    // Original 402 passes through (no 307) so the page can see the
+    // error or its retry logic kicks in after the unlock.
+    expect(result).toBeNull();
+    expect(mockHostSend).toHaveBeenCalledWith('x402:unlock-needed', {
+      webContentsId: 7,
+      origin: 'https://api.example',
+    });
+    const resume = consumePendingUnlockResume(7);
+    expect(resume?.authorizedBy).toBe('cap');
   });
 
   test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry with a detection snapshot and authorizedBy=cap', () => {

@@ -198,6 +198,10 @@ function clearAllDetectedPayments() {
   detectedPayments.clear();
 }
 
+function clearAllAwaitingResponse() {
+  awaitingResponse.clear();
+}
+
 /**
  * Stash a snapshot+authorizedBy for the unlock-resume path. Single slot
  * per tab — a second locked-vault auto-pay before unlock replaces the
@@ -341,7 +345,33 @@ function sendToHost(webviewWebContentsId, channel, payload) {
 
 // === Dispatcher handlers =================================================
 
-function detectPaymentRequiredHandler(details) {
+// Stash the unlock-resume token + fire the sidebar event. Used by both
+// the subresource self-307 path and the mainFrame setImmediate path
+// when sign-flow throws "Vault is locked". The two paths converge on
+// identical inputs (id, detection, url, CAP authorization), so keep the
+// "what to do when the vault is locked mid-auto-pay" contract in one
+// place. See `setPendingUnlockResume` / `X402_RESUME_UNLOCK` for the
+// resume contract.
+function requestVaultUnlockForAutoPay(webContentsId, detection, url) {
+  setPendingUnlockResume(webContentsId, { detection, authorizedBy: AUTHORIZED_BY.CAP });
+  sendToHost(webContentsId, 'x402:unlock-needed', {
+    webContentsId,
+    origin: new URL(url).origin,
+  });
+}
+
+/**
+ * Detect 402+PAYMENT-REQUIRED in a response and either auto-pay (cap
+ * covers) or surface an approval card. Async so the cap-covered
+ * subresource path can sign inline and return a same-URL 307 directive.
+ *
+ * Test contract: many tests in `intercept.test.js` and `ipc.test.js`
+ * call this handler without awaiting and rely on the side effects
+ * (`detectedPayments.set`, `sendToHost`, `setImmediate` scheduling)
+ * happening synchronously before the first `await`. Preserve that
+ * ordering when modifying this function.
+ */
+async function detectPaymentRequiredHandler(details) {
   if (!isStatus402(details.statusLine)) return null;
 
   // Electron sets `webContentsId` undefined (or -1) for requests not tied
@@ -392,47 +422,94 @@ function detectPaymentRequiredHandler(details) {
   );
 
   // Auto-pay branch — if an active cap covers this charge, sign and
-  // re-navigate silently. Deferred via setImmediate so we don't block
-  // Chromium on the vault round-trip; the original 402 response will
-  // render briefly while the retry kicks off.
+  // either (subresource) return a same-URL 307 redirect so Chromium
+  // re-issues the request transparently with PAYMENT-SIGNATURE, or
+  // (mainFrame) sign via setImmediate + wc.loadURL so we don't block
+  // Chromium on the vault round-trip. The subresource path was
+  // validated against the test rig end-to-end (lazy paragraphs +
+  // fragmented MP4 video with Range headers); Chromium preserves
+  // request headers, cookies, and credentials across the same-origin
+  // redirect, so no custom protocol or paid-cache is needed.
   if (getPermissionCoverage(details.url, requirements)?.covers) {
+    // Loop guard: if `awaitingResponse` is armed for this (id, url),
+    // a request we already signed is the one that just 402'd — the
+    // server rejected our signature (broken facilitator, wrong wallet,
+    // expired authorization, ...). Re-signing would either spin until
+    // Chromium's redirect limit or until the cap is exhausted. Pass
+    // through; the receipt handler runs next, sees the failed signed
+    // attempt, and writes a `failed` row the user can see.
+    if (awaitingResponse.has(pendingKey(details.webContentsId, details.url))) {
+      log.warn(
+        `[x402:detect] 402 on a request we already signed (server rejected); ` +
+        `not re-signing ${sanitizeUrlForLog(details.url)}`
+      );
+      return null;
+    }
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
     const id = details.webContentsId;
     const url = details.url;
     // Tag the stored detection with the consent provenance. The direct
-    // auto-pay path uses the snapshot below and passes authorizedBy
-    // explicitly to signAndQueueRetry; the *resume* path after a locked
-    // vault routes through the standard x402:approve IPC, which reads
-    // the tag from the map. Without this, an unlock-resume would default
-    // to MANUAL and bypass the inject-time withhold gate if the cap was
-    // exhausted/revoked while the unlock dialog was open.
+    // auto-pay path passes authorizedBy explicitly to signAndQueueRetry;
+    // the *resume* path after a locked vault routes through the standard
+    // x402:approve IPC, which reads the tag from the map. Without this,
+    // an unlock-resume would default to MANUAL and bypass the
+    // inject-time withhold gate if the cap was exhausted/revoked while
+    // the unlock dialog was open.
     detectedPayments.set(id, {
       ...detectedPayments.get(id),
       authorizedBy: AUTHORIZED_BY.CAP,
     });
-    // Snapshot the detection at schedule time. Without this, a second
-    // 402 on the same tab firing between this setImmediate and its run
-    // would replace `detectedPayments[id]`, and the auto-pay would sign
-    // the new charge using the (already-passed) cap check for the old
-    // one. The IPC approve path has a parallel latent gap tracked
-    // separately; full request-keyed state for both is future work.
+    // Snapshot the detection at the point of decision. The mainFrame
+    // path captures it for the setImmediate closure (so a second 402 on
+    // the same tab firing between schedule and run can't replace
+    // detectedPayments[id] and redirect the auto-pay to a different
+    // charge). The subresource path uses it inline. The IPC approve path
+    // has a parallel latent gap tracked separately; full request-keyed
+    // state for both is future work.
     const detection = { url, requirements, resourceType: details.resourceType };
+
+    if (details.resourceType !== 'mainFrame') {
+      // SUBRESOURCE PATH: sign inline, return a same-URL 307 from this
+      // onHeadersReceived handler. Chromium follows the redirect; the
+      // followed request hits onBeforeSendHeaders where our existing
+      // injector matches (webContentsId, url) and attaches
+      // PAYMENT-SIGNATURE. Page never sees the 402.
+      try {
+        // Lazy require to dodge the intercept ↔ sign-flow circular dep.
+        const { signAndQueueRetry } = require('./sign-flow');
+        await signAndQueueRetry(id, { detection, authorizedBy: AUTHORIZED_BY.CAP });
+        log.info(`[x402:auto-pay] subresource signed; returning 307 → ${sanitizeUrlForLog(url)}`);
+        return {
+          statusLine: 'HTTP/1.1 307 Temporary Redirect',
+          responseHeaders: { Location: [url] },
+        };
+      } catch (err) {
+        if (err?.message === 'Vault is locked') {
+          log.info(`[x402:auto-pay] vault locked — letting the 402 through, requesting unlock`);
+          requestVaultUnlockForAutoPay(id, detection, url);
+          return null;
+        }
+        log.error(`[x402:auto-pay] sign failed: ${err.message}\n  stack: ${err.stack}`);
+        return null;
+      }
+    }
+
+    // MAINFRAME PATH (existing — unchanged). setImmediate so we don't
+    // block Chromium on the vault round-trip; original 402 renders
+    // briefly while wc.loadURL kicks off the retry.
     setImmediate(() => {
       // Lazy require to dodge the intercept ↔ sign-flow circular dep.
       const { signAndQueueRetry } = require('./sign-flow');
       signAndQueueRetry(id, { detection, authorizedBy: AUTHORIZED_BY.CAP }).catch((err) => {
         // Vault auto-locked between detection and sign: the cap already
-        // authorised the charge, so we don't need a fresh approval — just
-        // a vault unlock. Stash a resume token carrying THIS detection's
-        // snapshot + CAP authorization, then fire an event at the sidebar.
-        // On unlock, the standard x402:approve IPC will pick up the token
-        // and sign the same charge — even if a newer 402 has since
-        // replaced `detectedPayments[id]`. Tag-on-map alone wouldn't be
-        // enough; the newer detection would overwrite the tag.
+        // authorised the charge, so we don't need a fresh approval —
+        // just a vault unlock. Stash a resume token carrying THIS
+        // detection's snapshot + CAP authorization so the unlock-resume
+        // signs the right charge even if a newer 402 replaced
+        // detectedPayments[id] while the unlock dialog was open.
         if (err?.message === 'Vault is locked') {
           log.info(`[x402:auto-pay] vault locked — requesting unlock for ${sanitizeUrlForLog(url)}`);
-          setPendingUnlockResume(id, { detection, authorizedBy: AUTHORIZED_BY.CAP });
-          sendToHost(id, 'x402:unlock-needed', { webContentsId: id, origin: new URL(url).origin });
+          requestVaultUnlockForAutoPay(id, detection, url);
           return;
         }
         log.error(`[x402:auto-pay] failed: ${err.message}\n  cause: ${err.cause?.message || '(none)'}\n  stack: ${err.stack}`);
@@ -607,6 +684,7 @@ module.exports = {
   clearDetectedPayment,
   clearAllPendingPayments,
   clearAllDetectedPayments,
+  clearAllAwaitingResponse,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
   cleanupWebContents,

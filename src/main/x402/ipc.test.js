@@ -81,6 +81,7 @@ beforeAll(() => {
 beforeEach(() => {
   intercept.clearAllDetectedPayments();
   intercept.clearAllPendingPayments();
+  intercept.clearAllAwaitingResponse();
   intercept.clearAllPendingUnlockResume();
   mockClient.createPaymentPayload.mockReset();
   mockCreateClient.mockReset().mockResolvedValue(mockClient);
