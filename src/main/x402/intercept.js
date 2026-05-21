@@ -651,62 +651,72 @@ async function detectPaymentRequiredHandler(details) {
     return null;
   }
 
-  let decision;
-  try {
-    decision = await setPendingApproval(detectionId, {
-      webContentsId: details.webContentsId,
-      url: details.url,
-      requirements,
-    });
-  } catch (err) {
-    // Abort path: tab destroyed, superseded by newer 402, or Chromium
-    // aborted our held-open response (the last is defensive — not seen
-    // in smoke; if it ever fires, this log is how we find out).
-    if (err?.message && /aborted|cancelled/i.test(err.message)) {
-      log.warn(`[x402:approval] response aborted while waiting for user; webContentsId=${details.webContentsId}: ${err.message}`);
-    } else {
-      log.info(`[x402:approval] subresource approval aborted: ${err?.message ?? err}`);
+  // Retry loop: on sign failure (most commonly "Vault is locked"
+  // between render and click), we send the failure event AND re-arm
+  // pendingApproval so the user's next Pay click — after unlocking
+  // inline — settles cleanly and signs. The original held-open fetch
+  // stays open across attempts; on eventual success Chromium follows
+  // the 307 and the page resolves with paid bytes transparently. Reject
+  // or abort (tab destroyed, superseded) exits with null.
+  while (true) {
+    let decision;
+    try {
+      decision = await setPendingApproval(detectionId, {
+        webContentsId: details.webContentsId,
+        url: details.url,
+        requirements,
+      });
+    } catch (err) {
+      if (err?.message && /aborted|cancelled/i.test(err.message)) {
+        log.warn(`[x402:approval] response aborted while waiting for user; webContentsId=${details.webContentsId}: ${err.message}`);
+      } else {
+        log.info(`[x402:approval] subresource approval aborted: ${err?.message ?? err}`);
+      }
+      return null;
     }
-    return null;
-  }
 
-  if (!decision.approved) {
-    log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} rejected; passing 402 through`);
-    return null;
-  }
+    if (!decision.approved) {
+      log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} rejected; passing 402 through`);
+      return null;
+    }
 
-  try {
-    const { signAndQueueRetry } = require('./sign-flow');
-    await signAndQueueRetry(details.webContentsId, {
-      detection: { url: details.url, requirements, resourceType: details.resourceType },
-      authorizedBy: AUTHORIZED_BY.MANUAL,
-      grant: decision.grant,
-    });
-    log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} signed; returning 307`);
-    // Tell the sidebar the card can close. The IPC approve handler
-    // returned synchronously with `pending: true` before sign ran.
-    sendToHost(details.webContentsId, 'x402:approval-result', {
-      detectionId,
-      success: true,
-    });
-    return {
-      statusLine: 'HTTP/1.1 307 Temporary Redirect',
-      responseHeaders: { Location: [details.url] },
-    };
-  } catch (err) {
-    log.error(
-      `[x402:approval] sign failed AFTER user approved ${sanitizeUrlForLog(details.url)}: ` +
-      `${err.message}\n  stack: ${err.stack}`
-    );
-    // Surface the failure to the sidebar so it can restore the card
-    // to a clickable state and show the same vault-locked / sign-error
-    // UI mainFrame already has.
-    sendToHost(details.webContentsId, 'x402:approval-result', {
-      detectionId,
-      success: false,
-      error: err.message,
-    });
-    return null;
+    try {
+      const { signAndQueueRetry } = require('./sign-flow');
+      await signAndQueueRetry(details.webContentsId, {
+        detection: { url: details.url, requirements, resourceType: details.resourceType },
+        authorizedBy: AUTHORIZED_BY.MANUAL,
+        grant: decision.grant,
+      });
+      log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} signed; returning 307`);
+      sendToHost(details.webContentsId, 'x402:approval-result', {
+        detectionId,
+        success: true,
+      });
+      return {
+        statusLine: 'HTTP/1.1 307 Temporary Redirect',
+        responseHeaders: { Location: [details.url] },
+      };
+    } catch (err) {
+      // Vault-locked is the expected recoverable case (vault auto-locked
+      // between render and click); user unlocks inline and clicks Pay
+      // again. Other errors are usually real bugs but the user can still
+      // click Reject to exit; no need for the retry loop to special-case
+      // unrecoverable errors.
+      if (err?.message === 'Vault is locked') {
+        log.warn(`[x402:approval] sign blocked by locked vault for ${sanitizeUrlForLog(details.url)}; waiting for unlock + retry`);
+      } else {
+        log.error(
+          `[x402:approval] sign failed AFTER user approved ${sanitizeUrlForLog(details.url)}: ` +
+          `${err.message}\n  stack: ${err.stack}`
+        );
+      }
+      sendToHost(details.webContentsId, 'x402:approval-result', {
+        detectionId,
+        success: false,
+        error: err.message,
+      });
+      // fall through to next iteration
+    }
   }
 }
 

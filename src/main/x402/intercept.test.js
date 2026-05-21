@@ -62,6 +62,15 @@ const {
   cleanupWebContents,
 } = require('./intercept');
 
+// Yield enough microtasks for the detector's retry loop to settle a
+// decision, run the sign attempt + catch, fire the result event, and
+// re-arm pendingApproval. 5 is the observed minimum across the chain
+// (decision-resolve → sign-throw → catch → sendToHost → loop iter →
+// new setPendingApproval) — bump if the loop body gains more awaits.
+const flushRetryMicrotasks = async () => {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+};
+
 beforeEach(() => {
   clearAllPendingPayments();
   clearAllDetectedPayments();
@@ -509,23 +518,98 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
     });
   });
 
-  test('on sign failure AFTER approve: fires approval-result with error so the sidebar can restore the card', async () => {
+  test('on sign failure AFTER approve: fires approval-result error event AND keeps the held response open (retry loop)', async () => {
+    // Detector loops on sign failure — re-arms pendingApproval so the
+    // renderer's restored card can submit again after the user fixes
+    // the cause (typically: unlocks the vault). This test verifies the
+    // failure event fires AND the handler does NOT resolve until the
+    // user makes a final decision in a follow-up iteration.
     mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
     const handlerPromise = detectPaymentRequiredHandler(detail());
     await Promise.resolve();
 
     settlePendingApproval('req-1001', { approved: true });
+    // Yield enough times for: decision-resolve, sign-throw, catch,
+    // sendToHost, loop iter, new setPendingApproval.
+    await flushRetryMicrotasks();
 
-    const result = await handlerPromise;
-    // Detector returns null because sign threw; page sees the 402.
-    expect(result).toBeNull();
-    // P2: sidebar gets the error so it can show "Vault is locked" and
-    // re-check unlock state — the same recovery UI mainFrame has.
     expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result', {
       detectionId: 'req-1001',
       success: false,
       error: 'Vault is locked',
     });
+    // A new pending approval entry exists so the user's next click can
+    // submit again. The handler is still awaiting it.
+    expect(hasPendingApproval('req-1001')).toBe(true);
+
+    // End the test cleanly by rejecting the second iteration.
+    settlePendingApproval('req-1001', { approved: false });
+    const result = await handlerPromise;
+    expect(result).toBeNull();
+  });
+
+  test('retry loop: sign failure followed by a successful second click → returns 307; original load resumes', async () => {
+    mockSignAndQueueRetry.mockReset()
+      .mockRejectedValueOnce(new Error('Vault is locked'))
+      .mockResolvedValueOnce(undefined);
+
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    // First click: user thought the vault was unlocked but it wasn't.
+    settlePendingApproval('req-1001', { approved: true });
+    await flushRetryMicrotasks();
+
+    // Renderer would have restored the card; user unlocks; clicks again.
+    expect(hasPendingApproval('req-1001')).toBe(true);
+    settlePendingApproval('req-1001', { approved: true });
+
+    const result = await handlerPromise;
+    expect(result).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: ['https://api.example/segment/0'] },
+    });
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(2);
+    // Both events fired: failure then success.
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result',
+      expect.objectContaining({ success: false }));
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result',
+      expect.objectContaining({ success: true }));
+  });
+
+  test('retry loop: sign failure followed by Reject on the second click → returns null', async () => {
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    settlePendingApproval('req-1001', { approved: true });
+    await flushRetryMicrotasks();
+
+    // User clicks Reject the second time around.
+    settlePendingApproval('req-1001', { approved: false });
+
+    const result = await handlerPromise;
+    expect(result).toBeNull();
+    // Sign was only attempted once (the second iteration short-circuited
+    // on the reject before reaching signAndQueueRetry).
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(1);
+  });
+
+  test('retry loop: sign failure followed by tab destroy → returns null', async () => {
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    settlePendingApproval('req-1001', { approved: true });
+    await flushRetryMicrotasks();
+
+    expect(hasPendingApproval('req-1001')).toBe(true);
+    cleanupWebContents(7);
+
+    const result = await handlerPromise;
+    expect(result).toBeNull();
   });
 
   test('on reject: returns null so the page sees the 402', async () => {
