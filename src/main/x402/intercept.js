@@ -353,6 +353,17 @@ function detectPaymentRequiredHandler(details) {
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
     const id = details.webContentsId;
     const url = details.url;
+    // Tag the stored detection with the consent provenance. The direct
+    // auto-pay path uses the snapshot below and passes authorizedBy
+    // explicitly to signAndQueueRetry; the *resume* path after a locked
+    // vault routes through the standard x402:approve IPC, which reads
+    // the tag from the map. Without this, an unlock-resume would default
+    // to MANUAL and bypass the inject-time withhold gate if the cap was
+    // exhausted/revoked while the unlock dialog was open.
+    detectedPayments.set(id, {
+      ...detectedPayments.get(id),
+      authorizedBy: AUTHORIZED_BY.CAP,
+    });
     // Snapshot the detection at schedule time. Without this, a second
     // 402 on the same tab firing between this setImmediate and its run
     // would replace `detectedPayments[id]`, and the auto-pay would sign

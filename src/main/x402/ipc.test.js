@@ -329,6 +329,34 @@ describe('x402:approve', () => {
     expect(injected).toBeNull();
   });
 
+  test('IPC approve on a cap-tagged detection (vault-unlock resume path) signs with cap authorization', async () => {
+    // Auto-pay was blocked by a locked vault. The detector tagged the
+    // detection authorizedBy=cap (covered by an intercept.test.js test);
+    // here we simulate the end state and verify that x402:approve reads
+    // the tag and threads it through to signAndQueueRetry, so the inject
+    // handler will still withhold on a raced-over cap.
+    seedDetection(42);
+    Object.assign(intercept.getDetectedPayment(42), { authorizedBy: 'cap' });
+
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const result = await ipcHandlers['x402:approve'](senderEvent(42));
+    expect(result.success).toBe(true);
+
+    // The pending payment carries CAP authorization. Race-over withholds.
+    mockTryConsume.mockReturnValueOnce(false);
+    const injected = intercept.injectPaymentSignatureHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+    expect(injected).toBeNull();
+  });
+
   test('manual approve path stamps authorizedBy=manual so a false consume still attaches the header', async () => {
     seedDetection(42);
     webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });

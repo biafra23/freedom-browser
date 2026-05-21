@@ -97,7 +97,17 @@ function registerX402Ipc() {
   ipcMain.handle(IPC.X402_APPROVE, async (event, args = {}) => {
     const id = args.webContentsId ?? event.sender.id;
     try {
-      await signAndQueueRetry(id, { grant: args.grant });
+      // Preserve consent provenance through the resume-after-vault-unlock
+      // path: the detector tags cap-covered detections with `authorizedBy`,
+      // and we thread it into sign-flow so the unlock-resume bypasses
+      // neither the inject-time withhold gate nor the cap accounting.
+      // Untagged detections (sidebar approval card path) read as undefined
+      // and sign-flow defaults to MANUAL.
+      const detected = getDetectedPayment(id);
+      await signAndQueueRetry(id, {
+        grant: args.grant,
+        authorizedBy: detected?.authorizedBy,
+      });
       return { success: true };
     } catch (err) {
       // Vault locked / unparseable URL / sdk error all surface verbatim

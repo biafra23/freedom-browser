@@ -169,6 +169,21 @@ describe('detectPaymentRequiredHandler', () => {
     expect(getDetectedPayment(7)?.resourceType).toBe('mainFrame');
   });
 
+  test('cap-covered detection is tagged authorizedBy=cap on the stored entry so the resume-after-vault-unlock path preserves consent', () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    detectPaymentRequiredHandler(detail());
+    expect(getDetectedPayment(7)?.authorizedBy).toBe('cap');
+  });
+
+  test('non-cap-covered detection has no authorizedBy tag (sidebar approval = manual)', () => {
+    // Default mockGetPermission returns null → no coverage → approval card path.
+    detectPaymentRequiredHandler(detail());
+    expect(getDetectedPayment(7)?.authorizedBy).toBeUndefined();
+  });
+
   test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry with a detection snapshot and authorizedBy=cap', () => {
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
