@@ -22,6 +22,7 @@ const { createVaultBackedX402Client } = require('./client');
 const { getActiveWalletIndex } = require('../identity-manager');
 const {
   X402_HEADERS,
+  AUTHORIZED_BY,
   outgoingHeaderForVersion,
   getDetectedPayment,
   clearDetectedPayment,
@@ -41,10 +42,16 @@ const { paymentTuple } = require('./payment-utils');
  * sign to a different charge. When omitted (IPC approve path) we fall
  * back to looking up the current detection by webContentsId.
  *
+ * `opts.authorizedBy` rides through to the pending payment so the inject
+ * handler can withhold the signature if a cap-authorized auto-pay races
+ * over the cap. Defaults to MANUAL — callers that aren't auto-pay should
+ * omit it. The auto-pay path must pass CAP explicitly.
+ *
  * @param {number} webContentsId
  * @param {{
  *   grant?: { capAmount: string, windowSeconds: number },
  *   detection?: { url: string, requirements: object, resourceType?: string },
+ *   authorizedBy?: 'cap' | 'manual',
  * }} [opts]
  */
 async function signAndQueueRetry(webContentsId, opts = {}) {
@@ -77,8 +84,15 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
     amount: tuple?.amount,
     payTo,
     fromAddress: client.address,
+    authorizedBy: opts.authorizedBy ?? AUTHORIZED_BY.MANUAL,
   });
-  clearDetectedPayment(webContentsId);
+  // Only clear the map when we sourced FROM it. With a snapshot we used
+  // our own copy and clearing here would erase whatever detection has
+  // since taken its place (e.g. a second 402 that fired during our async
+  // sign and is now showing in the sidebar).
+  if (!opts.detection) {
+    clearDetectedPayment(webContentsId);
+  }
 
   // `grant` (create-a-cap) is an explicit user action from the approval
   // card and happens here, at sign time. `tryConsume` (burn-from-cap)

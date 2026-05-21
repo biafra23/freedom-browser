@@ -169,7 +169,7 @@ describe('detectPaymentRequiredHandler', () => {
     expect(getDetectedPayment(7)?.resourceType).toBe('mainFrame');
   });
 
-  test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry with a detection snapshot and skips the host event', () => {
+  test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry with a detection snapshot and authorizedBy=cap', () => {
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
@@ -178,14 +178,13 @@ describe('detectPaymentRequiredHandler', () => {
     // actually fires.
     detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
     return new Promise((resolve) => setImmediate(() => {
-      // Snapshot is passed so a second 402 firing on the same tab between
-      // schedule and fire can't redirect the sign to a different charge.
       expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, {
         detection: expect.objectContaining({
           url: 'https://api.example/article',
           requirements: sampleRequirements,
           resourceType: 'mainFrame',
         }),
+        authorizedBy: 'cap',  // matches AUTHORIZED_BY.CAP
       });
       expect(mockHostSend).not.toHaveBeenCalled();
       resolve();
@@ -405,7 +404,7 @@ describe('injectPaymentSignatureHandler', () => {
     expect(mockTryConsume).not.toHaveBeenCalled();
   });
 
-  test('cap-consume returning false logs a warning but still attaches the header', () => {
+  test('manual authorization: tryConsume returning false still attaches the header (user-explicit consent)', () => {
     mockTryConsume.mockReturnValueOnce(false);
     setPendingPayment(7, 'https://api.example/article', {
       header: X402_HEADERS.SIGNATURE_V2,
@@ -414,9 +413,47 @@ describe('injectPaymentSignatureHandler', () => {
       chainId: 8453,
       asset: '0xabc',
       amount: '10000',
+      authorizedBy: 'manual',
     });
     const result = injectPaymentSignatureHandler(detail());
     expect(result.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig');
+  });
+
+  test('cap authorization: tryConsume returning false withholds the signature and drops the pending entry', () => {
+    // Parallel-overshoot: two concurrent detections both passed the cap
+    // check before either reached inject; the second one now finds the
+    // cap exhausted and must NOT attach the signature (the cap was the
+    // only consent). The detector will fire again on the resulting 402
+    // and route to manual approval.
+    mockTryConsume.mockReturnValueOnce(false);
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+      authorizedBy: 'cap',
+    });
+
+    expect(injectPaymentSignatureHandler(detail())).toBeNull();
+    // One-shot drop even on withhold — a second inject attempt finds nothing.
+    expect(injectPaymentSignatureHandler(detail())).toBeNull();
+  });
+
+  test('default (no authorizedBy field) treats as manual — backward-compatible', () => {
+    mockTryConsume.mockReturnValueOnce(false);
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+      // no authorizedBy
+    });
+    const result = injectPaymentSignatureHandler(detail());
+    expect(result?.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig');
   });
 
   test('drops a stale pending entry past its TTL and does not attach the header', () => {
@@ -437,6 +474,38 @@ describe('injectPaymentSignatureHandler', () => {
       // And the consume must NOT have fired — stale signatures don't
       // charge the cap.
       expect(mockTryConsume).not.toHaveBeenCalled();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test('lazy sweep on setPendingPayment drops previously-expired entries from the map', () => {
+    // Stash an entry, jump time past TTL, stash a fresh entry. The
+    // fresh setPendingPayment should sweep the old one before adding.
+    setPendingPayment(7, 'https://api.example/old', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'old-sig',
+    });
+    const realNow = Date.now;
+    Date.now = () => realNow() + 61_000;
+    try {
+      setPendingPayment(7, 'https://api.example/new', {
+        header: X402_HEADERS.SIGNATURE_V2,
+        value: 'new-sig',
+      });
+      // Old entry is gone (without this test even attempting to inject it).
+      expect(injectPaymentSignatureHandler({
+        webContentsId: 7,
+        url: 'https://api.example/old',
+        requestHeaders: {},
+      })).toBeNull();
+      // New entry survives.
+      const result = injectPaymentSignatureHandler({
+        webContentsId: 7,
+        url: 'https://api.example/new',
+        requestHeaders: {},
+      });
+      expect(result?.requestHeaders['PAYMENT-SIGNATURE']).toBe('new-sig');
     } finally {
       Date.now = realNow;
     }

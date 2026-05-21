@@ -264,6 +264,89 @@ describe('x402:approve', () => {
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
+  test('snapshot path (auto-pay): does NOT clear the tab-keyed detection so a newer pending approval flow survives', async () => {
+    // Auto-pay captured snapshot A. Before A's setImmediate fires, a
+    // second 402 (B) replaces detectedPayments[42]. When sign-flow
+    // completes for A, it must not clear the map and erase B.
+    seedDetection(42);  // simulate B sitting in the map
+    expect(intercept.getDetectedPayment(42)).not.toBeNull();
+
+    const snapshot = {
+      url: 'https://api.example/article',
+      requirements: v2Detected().requirements,
+      resourceType: 'mainFrame',
+    };
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const { signAndQueueRetry } = require('./sign-flow');
+    await signAndQueueRetry(42, { detection: snapshot });
+
+    // Map entry survives — whatever is in the map (e.g. B's approval
+    // card) remains accessible to the IPC handlers.
+    expect(intercept.getDetectedPayment(42)).not.toBeNull();
+  });
+
+  test('IPC approve path (no snapshot): does clear the tab-keyed detection on success', async () => {
+    // Sanity-check that the lookup-by-id path retains its existing clear
+    // behaviour.
+    seedDetection(42);
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+    const result = await ipcHandlers['x402:approve'](senderEvent(42), {});
+    expect(result.success).toBe(true);
+    expect(intercept.getDetectedPayment(42)).toBeNull();
+  });
+
+  test('cap-authorized inject (snapshot path) stamps authorizedBy=cap so a raced-over cap withholds the signature', async () => {
+    const snapshot = {
+      url: 'https://api.example/article',
+      requirements: v2Detected().requirements,
+      resourceType: 'mainFrame',
+    };
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const { signAndQueueRetry } = require('./sign-flow');
+    await signAndQueueRetry(42, { detection: snapshot, authorizedBy: 'cap' });
+
+    // Now simulate the raced-over cap by returning false on the inject.
+    mockTryConsume.mockReturnValueOnce(false);
+    const injected = intercept.injectPaymentSignatureHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+    expect(injected).toBeNull();
+  });
+
+  test('manual approve path stamps authorizedBy=manual so a false consume still attaches the header', async () => {
+    seedDetection(42);
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+    await ipcHandlers['x402:approve'](senderEvent(42), {});
+
+    mockTryConsume.mockReturnValueOnce(false);
+    const injected = intercept.injectPaymentSignatureHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+    expect(injected?.requestHeaders['PAYMENT-SIGNATURE']).toBeDefined();
+  });
+
   test('subresource 402 (xhr/fetch/media/...): pays and stashes signature but does NOT navigate the tab', async () => {
     // The whole point: a 402 on a page's fetch() must not yank the tab
     // away from the page that initiated the fetch. We still sign + stash

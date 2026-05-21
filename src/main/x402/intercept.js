@@ -48,6 +48,17 @@ const X402_HEADERS = Object.freeze({
   RESPONSE_V1: 'X-PAYMENT-RESPONSE',
 });
 
+// Source of consent for a pending payment. `CAP` = auto-pay against an
+// active per-origin allowance (the cap IS the consent — if it doesn't
+// cover at inject time, the signature must be withheld). `MANUAL` =
+// user explicitly clicked Pay in the sidebar (the click is the consent,
+// independent of cap state). Used by `injectPaymentSignatureHandler`'s
+// withhold gate.
+const AUTHORIZED_BY = Object.freeze({
+  CAP: 'cap',
+  MANUAL: 'manual',
+});
+
 const VALID_SIGNATURE_HEADERS = new Set([
   X402_HEADERS.SIGNATURE_V2,
   X402_HEADERS.SIGNATURE_V1,
@@ -117,11 +128,18 @@ const PENDING_TTL_MS = 60_000;
  * focused on the bytes that actually go on the wire. Callers are trusted
  * in-process code (only `sign-flow.js`).
  *
+ * `authorizedBy` distinguishes the consent source for the inject-time
+ * cap-consume gate; see `AUTHORIZED_BY`. Cap-authorized signatures
+ * MUST NOT be attached if `tryConsume` fails at inject (race-over);
+ * manual ones proceed regardless. Undefined is treated as MANUAL for
+ * backward-compat with callers that predate the field.
+ *
  * @param {number} webContentsId
  * @param {string} url
  * @param {{
  *   header: 'PAYMENT-SIGNATURE' | 'X-PAYMENT',
  *   value: string,
+ *   authorizedBy?: 'cap' | 'manual',
  *   origin?: string, chainId?: number, asset?: string, amount?: string,
  *   payTo?: string, fromAddress?: string,
  * }} signed
@@ -133,9 +151,18 @@ function setPendingPayment(webContentsId, url, signed) {
   if (typeof signed.value !== 'string' || signed.value.length === 0) {
     throw new Error('x402: pending-payment value must be a non-empty string');
   }
+  const now = Date.now();
+  // Lazy sweep — naive pages that never retry would otherwise leave
+  // entries stranded until tab destruction. Fires only when we're
+  // already touching the Map, so no timer lifecycle to manage.
+  for (const [k, entry] of pendingPayments) {
+    if (entry.expiresAt && now > entry.expiresAt) {
+      pendingPayments.delete(k);
+    }
+  }
   pendingPayments.set(pendingKey(webContentsId, url), {
     ...signed,
-    expiresAt: Date.now() + PENDING_TTL_MS,
+    expiresAt: now + PENDING_TTL_MS,
   });
 }
 
@@ -330,13 +357,13 @@ function detectPaymentRequiredHandler(details) {
     // 402 on the same tab firing between this setImmediate and its run
     // would replace `detectedPayments[id]`, and the auto-pay would sign
     // the new charge using the (already-passed) cap check for the old
-    // one. The IPC approve path retains its lookup-by-id behaviour;
-    // full request-keyed state for both paths is future work.
+    // one. The IPC approve path has a parallel latent gap tracked
+    // separately; full request-keyed state for both is future work.
     const detection = { url, requirements, resourceType: details.resourceType };
     setImmediate(() => {
       // Lazy require to dodge the intercept ↔ sign-flow circular dep.
       const { signAndQueueRetry } = require('./sign-flow');
-      signAndQueueRetry(id, { detection }).catch((err) => {
+      signAndQueueRetry(id, { detection, authorizedBy: AUTHORIZED_BY.CAP }).catch((err) => {
         // Vault auto-locked between detection and sign: the cap already
         // authorised the charge, so we don't need a fresh approval — just
         // a vault unlock. Fire an event at the sidebar; on unlock it'll
@@ -426,6 +453,32 @@ function paymentResponseLoggingHandler(details) {
   return null;
 }
 
+// Run the cap consume for an inject attempt and decide whether the
+// signature is still authorized to go out. Returns `true` to withhold
+// (caller must drop the pending entry and bail), `false` to proceed.
+// See `AUTHORIZED_BY` for the consent model. `undefined` authorizedBy
+// is intentionally treated as `MANUAL` — backward-compat with callers
+// that predate the field.
+function consumeOrWithhold(signed, urlForLog) {
+  if (!signed.origin || !signed.chainId || !signed.asset || !signed.amount) {
+    return false;
+  }
+  const consumed = tryConsume(signed.origin, signed.chainId, signed.asset, signed.amount);
+  if (consumed) return false;
+  if (signed.authorizedBy === AUTHORIZED_BY.CAP) {
+    log.warn(
+      `[x402:inject] cap raced over for ${urlForLog} (authorizedBy=cap); ` +
+      `withholding signature, falling back to manual approval`
+    );
+    return true;
+  }
+  log.warn(
+    `[x402:inject] cap consume returned false for ${signed.origin} ${signed.amount} ` +
+    `(authorizedBy=${signed.authorizedBy ?? AUTHORIZED_BY.MANUAL}); charge proceeds, cap accounting may be off`
+  );
+  return false;
+}
+
 function injectPaymentSignatureHandler(details) {
   const key = pendingKey(details.webContentsId, details.url);
   const signed = pendingPayments.get(key);
@@ -440,13 +493,15 @@ function injectPaymentSignatureHandler(details) {
     return null;
   }
 
-  pendingPayments.delete(key); // one-shot
-  // Arm the receipt logger so it knows to look at THIS response for
-  // the PAYMENT-RESPONSE settlement. We also hand off the receipt
-  // context (origin / chainId / asset / amount) that the approve
-  // handler stashed alongside the signed bytes — without it the
-  // logger couldn't write a complete receipt. `signedHeader` lets the
-  // receipt logger pick the V1 vs V2 settlement header.
+  if (consumeOrWithhold(signed, sanitizeUrlForLog(details.url))) {
+    pendingPayments.delete(key); // one-shot even on withhold
+    return null;
+  }
+
+  pendingPayments.delete(key); // one-shot on the happy path
+  // Arm the receipt logger so it knows to look at THIS response for the
+  // PAYMENT-RESPONSE settlement. `signedHeader` lets the receipt logger
+  // pick the V1 vs V2 settlement header.
   awaitingResponse.set(key, {
     url: details.url,
     origin: signed.origin,
@@ -457,23 +512,6 @@ function injectPaymentSignatureHandler(details) {
     fromAddress: signed.fromAddress ?? null,
     signedHeader: signed.header,
   });
-
-  // Burn the cap here, not at sign time — for subresource 402s where
-  // the page might never retry, signing-without-consuming leaves the
-  // cap intact. The cap check already passed at detection; a false
-  // return here (two concurrent detections both passing before either
-  // injected) doesn't block the inject because the signature is already
-  // on the wire conceptually. Reservation/rollback would close that
-  // overshoot window cleanly.
-  if (signed.origin && signed.chainId && signed.asset && signed.amount) {
-    const consumed = tryConsume(signed.origin, signed.chainId, signed.asset, signed.amount);
-    if (!consumed) {
-      log.warn(
-        `[x402:inject] cap consume returned false for ${signed.origin} ${signed.amount} ` +
-        `— charge proceeds (already signed) but cap accounting may be off`
-      );
-    }
-  }
 
   log.info(
     `[x402:inject] attaching ${signed.header} to ${sanitizeUrlForLog(details.url)}`
@@ -496,6 +534,7 @@ function installX402Interception() {
 
 module.exports = {
   X402_HEADERS,
+  AUTHORIZED_BY,
   outgoingHeaderForVersion,
   installX402Interception,
   detectPaymentRequiredHandler,
