@@ -157,6 +157,15 @@ describe('detectPaymentRequiredHandler', () => {
     }));
   });
 
+  test('captures resourceType on the detection so sign-flow can route the retry correctly', () => {
+    detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    expect(getDetectedPayment(7)?.resourceType).toBe('xhr');
+
+    clearDetectedPayment(7);
+    detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
+    expect(getDetectedPayment(7)?.resourceType).toBe('mainFrame');
+  });
+
   test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry and skips the host event', () => {
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',

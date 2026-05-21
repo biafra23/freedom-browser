@@ -86,12 +86,25 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   }
 
   const wc = webContents.fromId(webContentsId);
-  if (wc) {
+  if (!wc) {
+    log.warn(`[x402:sign] webContents ${webContentsId} vanished before re-navigation`);
+    return;
+  }
+  // `wc.loadURL` is a tab-level navigation — correct when the 402 came
+  // from a top-level navigation (the tab was *between pages*), but for
+  // subresource 402s (xhr/fetch/media/image/...) it would evict the page
+  // that initiated the fetch and replace it with the raw subresource URL.
+  // Subresources are left for x402-aware page JS to retry; the injector
+  // matches the next request to the same URL and attaches the signature.
+  if (detected.resourceType === 'mainFrame') {
     wc.loadURL(detected.url).catch((err) => {
       log.error(`[x402:sign] re-navigation failed: ${err.message}`);
     });
   } else {
-    log.warn(`[x402:sign] webContents ${webContentsId} vanished before re-navigation`);
+    log.info(
+      `[x402:sign] subresource ${detected.resourceType ?? '<unknown>'} 402 paid; ` +
+      `awaiting page retry of ${detected.url}`
+    );
   }
 }
 

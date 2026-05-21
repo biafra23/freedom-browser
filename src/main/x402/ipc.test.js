@@ -194,11 +194,17 @@ describe('x402:get-details', () => {
 // === x402:approve ========================================================
 
 describe('x402:approve', () => {
-  const seedDetection = (tabId = 42) => {
+  // `resourceType` is what gates the re-navigation in sign-flow. The
+  // approve IPC flow is the "user clicked Pay in the sidebar after the
+  // article 402'd" path — that's always a mainFrame navigation, so
+  // seeding with mainFrame matches production. Subresource behaviour
+  // (no tab navigation) is exercised in a dedicated test below.
+  const seedDetection = (tabId = 42, resourceType = 'mainFrame') => {
     require('./intercept').detectPaymentRequiredHandler({
       webContentsId: tabId,
       url: 'https://api.example/article',
       statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType,
       responseHeaders: {
         'PAYMENT-REQUIRED': [
           Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
@@ -257,6 +263,32 @@ describe('x402:approve', () => {
     expect(result.success).toBe(false);
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
+
+  test('subresource 402 (xhr/fetch/media/...): pays and stashes signature but does NOT navigate the tab', async () => {
+    // The whole point: a 402 on a page's fetch() must not yank the tab
+    // away from the page that initiated the fetch. We still sign + stash
+    // the pending PAYMENT-SIGNATURE so an x402-aware page that retries
+    // gets the injection on its next outbound request.
+    seedDetection(42, 'xhr');
+    const loadURL = jest.fn().mockResolvedValue();
+    webContents.fromId.mockReturnValue({ loadURL });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const result = await ipcHandlers['x402:approve'](senderEvent(42));
+
+    expect(result.success).toBe(true);
+    expect(loadURL).not.toHaveBeenCalled();
+    // Injection is still armed so a page-initiated retry gets paid.
+    const injected = intercept.injectPaymentSignatureHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+    expect(injected?.requestHeaders['PAYMENT-SIGNATURE']).toBeDefined();
+  });
 });
 
 // === auto-pay state + grant + consume ====================================
@@ -267,6 +299,7 @@ describe('x402:get-details autoPay', () => {
       webContentsId: 42,
       url: 'https://api.example/article',
       statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
       responseHeaders: {
         'PAYMENT-REQUIRED': [
           Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
@@ -325,6 +358,7 @@ describe('x402:approve permission interactions', () => {
       webContentsId: 42,
       url: 'https://api.example/article',
       statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
       responseHeaders: {
         'PAYMENT-REQUIRED': [
           Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),

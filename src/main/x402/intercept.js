@@ -286,9 +286,15 @@ function detectPaymentRequiredHandler(details) {
   // The data's own x402Version field is the canonical protocol version
   // (zod's discriminated union routed parsing through V1 or V2 already).
   // The header name we found it under is correlated but redundant.
+  //
+  // `resourceType` decides whether the retry can use `wc.loadURL` (a top-
+  // level navigation; correct for `mainFrame`) or has to leave the tab
+  // alone (subresource fetches — wc.loadURL would yank the user off the
+  // page that initiated the fetch). See sign-flow.js for the gate.
   detectedPayments.set(details.webContentsId, {
     url: details.url,
     requirements,
+    resourceType: details.resourceType,
     detectedAt: Date.now(),
   });
   log.info(
