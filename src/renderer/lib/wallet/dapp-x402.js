@@ -119,7 +119,8 @@ export function initDappX402() {
 
   // Vault-was-locked-during-auto-pay events. The cap was already granted,
   // so no permission card — just unlock and resume sign-flow via the
-  // approve IPC (which is a no-op-grant call into signAndQueueRetry).
+  // dedicated x402:resume-unlock IPC (NOT x402:approve — see
+  // handleAutoPayUnlock for the source-separation rationale).
   window.electronAPI?.onX402UnlockNeeded?.(({ webContentsId, origin }) => {
     handleAutoPayUnlock(webContentsId, origin).catch((err) => {
       console.error('[x402] auto-pay unlock flow failed:', err);

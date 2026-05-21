@@ -991,15 +991,18 @@ describe('isStatus402 edge cases (via detector pass-through)', () => {
   };
 
   test.each([
-    ['undefined statusLine', undefined],
-    ['null statusLine', null],
-    ['number statusLine', 42],
-    ['empty string', ''],
-    ['HTTP/2 402 (no period in protocol)', 'HTTP/2 402 Payment Required'],
-  ])('%s', (label, statusLine) => {
+    ['undefined statusLine', undefined, false],
+    ['null statusLine', null, false],
+    ['number statusLine', 42, false],
+    ['empty string', '', false],
+    ['HTTP/2 402 Payment Required (with reason phrase)', 'HTTP/2 402 Payment Required', true],
+    // HTTP/2 status lines can omit the reason phrase — Electron emits
+    // just "HTTP/2 402" with no trailing space. The 402 must still be
+    // detected; the regex anchors to end-of-string for this.
+    ['HTTP/2 402 (no reason phrase)', 'HTTP/2 402', true],
+  ])('%s', (_label, statusLine, expectDetected) => {
     const result = driveWith(statusLine);
-    // The first four should NOT detect; HTTP/2 SHOULD (it contains ' 402 ').
-    if (label.startsWith('HTTP/2')) {
+    if (expectDetected) {
       expect(result).not.toBeNull();
     } else {
       expect(result).toBeNull();

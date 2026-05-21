@@ -116,8 +116,10 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   // from a top-level navigation (the tab was *between pages*), but for
   // subresource 402s (xhr/fetch/media/image/...) it would evict the page
   // that initiated the fetch and replace it with the raw subresource URL.
-  // Subresources are left for x402-aware page JS to retry; the injector
-  // matches the next request to the same URL and attaches the signature.
+  // Subresources don't navigate here at all; the detector's self-307
+  // path (and the approval-card retry loop) returns the 307 directly
+  // from onHeadersReceived. This function only stashes the pending
+  // signature; the injector attaches it on the followed-redirect request.
   if (detected.resourceType === 'mainFrame') {
     wc.loadURL(detected.url).catch((err) => {
       log.error(`[x402:sign] re-navigation failed: ${err.message}`);

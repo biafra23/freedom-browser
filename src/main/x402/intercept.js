@@ -400,11 +400,12 @@ function sanitizeUrlForLog(url) {
 
 // Electron exposes `statusLine` as e.g. "HTTP/1.1 402 Payment Required"
 // or "HTTP/2 402 …". `statusCode` is not in the details object Electron
-// 30+ ships, so we check for the space-padded code inside the line —
-// avoids an array allocation per response (this fires on every response,
-// including subresources, so it's a hot path).
+// 30+ ships, so we match the space-padded code inside the line — fast
+// (no array allocation) and tolerant of an HTTP/2 status line that
+// drops the reason phrase entirely (just "HTTP/2 402"). Same shape as
+// `isStatus2xx` below.
 function isStatus402(statusLine) {
-  return typeof statusLine === 'string' && statusLine.includes(' 402 ');
+  return typeof statusLine === 'string' && / 402(?: |$)/.test(statusLine);
 }
 
 // 2xx detection for the receipt logger. "HTTP/1.1 200 OK" / "HTTP/2 204"
