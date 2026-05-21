@@ -125,10 +125,14 @@ async function handleAutoPayUnlock(webContentsId, origin) {
     await showVaultUnlock(origin);
   } catch {
     // User cancelled the unlock; nothing to do — the original 402 page
-    // stays rendered, the user can retry by navigating again.
+    // stays rendered, the user can retry by navigating again. Main's
+    // resume token expires via TTL.
     return;
   }
-  const result = await window.electronAPI.x402Approve({ webContentsId });
+  // Dedicated resume channel — NOT x402Approve. The resume token in main
+  // is consent-source-specific (CAP from the original auto-pay) and must
+  // not be consumed by a manual approval click on a different charge.
+  const result = await window.electronAPI.x402ResumeUnlock({ webContentsId });
   if (!result?.success) {
     console.error('[x402] resume-after-unlock failed:', result?.error);
   }

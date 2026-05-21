@@ -98,24 +98,16 @@ function registerX402Ipc() {
   ipcMain.handle(IPC.X402_APPROVE, async (event, args = {}) => {
     const id = args.webContentsId ?? event.sender.id;
     try {
-      // Vault-unlock-resume path: if a locked-vault auto-pay stashed a
-      // resume token, use the captured snapshot so a newer 402 that
-      // replaced `detectedPayments[id]` during the unlock dialog can't
-      // redirect the sign. The token also carries CAP authorization,
-      // which threads into the inject-time withhold gate.
-      const resume = consumePendingUnlockResume(id);
-      if (resume) {
-        await signAndQueueRetry(id, {
-          grant: args.grant,
-          detection: resume.detection,
-          authorizedBy: resume.authorizedBy,
-        });
-        return { success: true };
-      }
-      // Standard approve path — user clicked Pay on the sidebar card.
+      // Manual approve path — user clicked Pay on the sidebar card.
+      // `pendingUnlockResume` is intentionally NOT consumed here; that
+      // token is dedicated to the locked-vault auto-pay flow and only
+      // X402_RESUME_UNLOCK touches it. Mixing the two would let a click
+      // on B's approval card consume A's resume token and sign A.
+      //
       // detectedPayments may carry `authorizedBy` from a prior cap-
-      // covered detection (defence in depth); sign-flow defaults to
-      // MANUAL when undefined.
+      // covered detection (defence in depth — same-detection unlock
+      // resume falls back here if the resume token expired); sign-flow
+      // defaults to MANUAL when undefined.
       const detected = getDetectedPayment(id);
       await signAndQueueRetry(id, {
         grant: args.grant,
@@ -125,6 +117,28 @@ function registerX402Ipc() {
     } catch (err) {
       // Vault locked / unparseable URL / sdk error all surface verbatim
       // so the sidebar can prompt the right next step.
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.X402_RESUME_UNLOCK, async (event, args = {}) => {
+    // Dedicated channel for the renderer's `handleAutoPayUnlock`. Pulls
+    // the resume token (carrying the original detection snapshot + CAP
+    // marker) and signs it. If the token is missing — TTL'd, already
+    // consumed, or the user dismissed the unlock dialog — return a
+    // distinct error so the renderer knows there's nothing to resume.
+    const id = args.webContentsId ?? event.sender.id;
+    try {
+      const resume = consumePendingUnlockResume(id);
+      if (!resume) {
+        return { success: false, error: 'No pending unlock-resume for this tab' };
+      }
+      await signAndQueueRetry(id, {
+        detection: resume.detection,
+        authorizedBy: resume.authorizedBy,
+      });
+      return { success: true };
+    } catch (err) {
       return { success: false, error: err.message };
     }
   });

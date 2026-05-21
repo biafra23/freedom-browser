@@ -158,6 +158,11 @@ module.exports = {
   // x402 — payment interstitial (renderer ↔ main)
   X402_GET_DETAILS: 'x402:get-details',
   X402_APPROVE: 'x402:approve',
+  // Dedicated resume channel for the locked-vault auto-pay flow. The
+  // renderer's `handleAutoPayUnlock` is the only caller. Manual approve
+  // clicks go through X402_APPROVE and must not consume an unlock-resume
+  // token meant for a different charge.
+  X402_RESUME_UNLOCK: 'x402:resume-unlock',
   X402_CANCEL: 'x402:cancel',
   X402_GET_ALL_PERMISSIONS: 'x402:get-all-permissions',
   X402_REVOKE_PERMISSION: 'x402:revoke-permission',
