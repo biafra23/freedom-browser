@@ -127,7 +127,7 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   } else {
     log.info(
       `[x402:sign] subresource ${detected.resourceType ?? '<unknown>'} 402 paid; ` +
-      `awaiting page retry of ${detected.url}`
+      `signature stashed for the self-307 follow-up to ${detected.url}`
     );
   }
 }
