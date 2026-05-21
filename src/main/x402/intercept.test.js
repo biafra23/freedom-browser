@@ -487,14 +487,11 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
     abortPendingApproval('req-1001', new Error('test cleanup'));
   });
 
-  test('on approve: signs with MANUAL authorization and returns a same-URL 307', async () => {
+  test('on approve: signs with MANUAL authorization, returns 307, and fires approval-result success event', async () => {
     const handlerPromise = detectPaymentRequiredHandler(detail());
-    // Yield so the detector reaches the await.
     await Promise.resolve();
 
-    // Sidebar's Approve → settle the pending Promise.
-    const settled = settlePendingApproval('req-1001', { approved: true });
-    expect(settled).toBe(true);
+    settlePendingApproval('req-1001', { approved: true });
 
     const result = await handlerPromise;
     expect(result).toEqual({
@@ -505,6 +502,30 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
       detection: expect.objectContaining({ url: 'https://api.example/segment/0' }),
       authorizedBy: 'manual',
     }));
+    // P2: detector signals completion so the sidebar can close the card.
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result', {
+      detectionId: 'req-1001',
+      success: true,
+    });
+  });
+
+  test('on sign failure AFTER approve: fires approval-result with error so the sidebar can restore the card', async () => {
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    settlePendingApproval('req-1001', { approved: true });
+
+    const result = await handlerPromise;
+    // Detector returns null because sign threw; page sees the 402.
+    expect(result).toBeNull();
+    // P2: sidebar gets the error so it can show "Vault is locked" and
+    // re-check unlock state — the same recovery UI mainFrame has.
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result', {
+      detectionId: 'req-1001',
+      success: false,
+      error: 'Vault is locked',
+    });
   });
 
   test('on reject: returns null so the page sees the 402', async () => {

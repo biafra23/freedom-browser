@@ -130,11 +130,29 @@ function registerX402Ipc() {
     const { detectionId, grant } = args;
 
     // WP7.1 subresource path: detector is awaiting the approval Promise.
-    // Settle it (the detector handler does sign + 307). Distinct from
-    // the mainFrame path which calls signAndQueueRetry + wc.loadURL here.
+    // Settle it (the detector handler does sign + 307). Returns
+    // `pending: true` so the renderer keeps the card in "Signing..."
+    // state and waits for the x402:approval-result event — the actual
+    // sign happens inside the detector after this IPC returns, and we
+    // need to surface its success/failure back to the UI.
     if (detectionId && hasPendingApproval(detectionId)) {
-      const settled = settlePendingApproval(detectionId, { approved: true, grant });
-      return { success: settled };
+      settlePendingApproval(detectionId, { approved: true, grant });
+      return { success: true, pending: true };
+    }
+
+    // P1: stale detectionId must NOT silently fall through to the
+    // tab-keyed mainFrame path. If A's card click arrives after B's
+    // 402 has superseded A in main, we MUST refuse — falling through
+    // would sign B (whatever's currently in detectedPayments[id]) and
+    // re-create the "approved A, paid B" race we designed against.
+    // Only allow fallback when the tab-keyed detection's detectionId
+    // still matches (i.e. the mainFrame approval-card flow where the
+    // map entry carries the same detectionId).
+    if (detectionId) {
+      const stored = getDetectedPayment(id);
+      if (!stored || stored.detectionId !== detectionId) {
+        return { success: false, error: 'Approval is stale — the detection has been superseded' };
+      }
     }
 
     try {

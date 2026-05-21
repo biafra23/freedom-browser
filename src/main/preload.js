@@ -81,6 +81,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('x402:approval-needed', handler);
     return () => ipcRenderer.removeListener('x402:approval-needed', handler);
   },
+  // Main fires this AFTER a subresource sign-after-approve completes
+  // (success or failure). x402:approve for the subresource path returns
+  // `{ pending: true }` synchronously; the renderer keeps the card in
+  // "Signing..." state and listens here for the final outcome.
+  onX402ApprovalResult: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:approval-result', handler);
+    return () => ipcRenderer.removeListener('x402:approval-result', handler);
+  },
   // Main fires this when auto-pay would have fired but the vault is
   // locked. The cap is already authorised; we just need the user to
   // unlock so sign-flow can resume.

@@ -683,6 +683,12 @@ async function detectPaymentRequiredHandler(details) {
       grant: decision.grant,
     });
     log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} signed; returning 307`);
+    // Tell the sidebar the card can close. The IPC approve handler
+    // returned synchronously with `pending: true` before sign ran.
+    sendToHost(details.webContentsId, 'x402:approval-result', {
+      detectionId,
+      success: true,
+    });
     return {
       statusLine: 'HTTP/1.1 307 Temporary Redirect',
       responseHeaders: { Location: [details.url] },
@@ -692,6 +698,14 @@ async function detectPaymentRequiredHandler(details) {
       `[x402:approval] sign failed AFTER user approved ${sanitizeUrlForLog(details.url)}: ` +
       `${err.message}\n  stack: ${err.stack}`
     );
+    // Surface the failure to the sidebar so it can restore the card
+    // to a clickable state and show the same vault-locked / sign-error
+    // UI mainFrame already has.
+    sendToHost(details.webContentsId, 'x402:approval-result', {
+      detectionId,
+      success: false,
+      error: err.message,
+    });
     return null;
   }
 }

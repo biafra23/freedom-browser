@@ -110,6 +110,13 @@ export function initDappX402() {
     });
   });
 
+  // Subresource sign-after-approve completion. The IPC approve handler
+  // returns `pending: true` for subresource — the card stays in
+  // "Signing..." until this event arrives with success or error.
+  window.electronAPI?.onX402ApprovalResult?.((payload) => {
+    handleApprovalResult(payload);
+  });
+
   // Vault-was-locked-during-auto-pay events. The cap was already granted,
   // so no permission card — just unlock and resume sign-flow via the
   // approve IPC (which is a no-op-grant call into signAndQueueRetry).
@@ -343,19 +350,45 @@ async function approve() {
   });
 
   if (result?.success) {
+    // Subresource path returns pending:true; card stays in "Signing..."
+    // and handleApprovalResult finalises it. mainFrame path returns
+    // success without pending — close immediately.
+    if (result.pending) return;
     closeAndReset();
     updateX402ConnectionBanner().catch(() => {});
     return;
   }
 
+  restoreCardWithError(result?.error);
+}
+
+// Restore the approval card to its clickable state and show an error.
+// Used by both the synchronous mainFrame error path (in approve()) and
+// the async subresource sign-after-approve failure (in
+// handleApprovalResult). The locked-vault re-check is the non-obvious
+// behaviour worth centralising — without it the unlock UI won't re-
+// appear when the vault auto-locked between render and click.
+function restoreCardWithError(error) {
   approveBtn.textContent = 'Pay';
   approveBtn.disabled = false;
   rejectBtn.disabled = false;
-  showError(result?.error || 'Payment failed.');
-  // Common case: vault locked between render and click; re-check state.
-  if (/locked/i.test(result?.error || '')) {
+  showError(error || 'Payment failed.');
+  if (/locked/i.test(error || '')) {
     checkUnlockState();
   }
+}
+
+// Finalises the subresource "Signing..." state when the detector's
+// async sign completes. detectionId-match guards against a stale event
+// for a previously-rendered card.
+function handleApprovalResult({ detectionId, success, error }) {
+  if (!pending || pending.detectionId !== detectionId) return;
+  if (success) {
+    closeAndReset();
+    updateX402ConnectionBanner().catch(() => {});
+    return;
+  }
+  restoreCardWithError(error);
 }
 
 async function reject() {

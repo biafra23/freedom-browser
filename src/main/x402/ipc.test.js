@@ -787,6 +787,92 @@ describe('x402:reject (subresource approval-card decline)', () => {
   });
 });
 
+describe('x402:approve with detectionId — strict identity (P1)', () => {
+  test('returns pending:true so the renderer waits for the approval-result event', async () => {
+    const handlerPromise = require('./intercept').detectPaymentRequiredHandler({
+      id: 9100,
+      webContentsId: 42,
+      url: 'https://api.example/segment/0',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'xhr',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    await Promise.resolve();
+
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const result = await ipcHandlers['x402:approve'](senderEvent(42), {
+      detectionId: 'req-9100',
+    });
+    expect(result).toEqual({ success: true, pending: true });
+
+    // Detector continues and ends up resolving with the 307.
+    await handlerPromise;
+  });
+
+  test('stale detectionId does NOT fall through to mainFrame path (closes the approved-A-paid-B race)', async () => {
+    // A's card was shown for detectionId-A. B's 402 already replaced
+    // detectedPayments[id] with detectionId-B. A stale click now arrives.
+    // The IPC must refuse — falling through would sign B as if A.
+    intercept.detectPaymentRequiredHandler({
+      id: 9200,
+      webContentsId: 42,
+      url: 'https://api.example/segment/B',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame', // not in approval-await; just populates map
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    // Map now has detectionId=req-9200 for tab 42. Click arrives for A.
+    const result = await ipcHandlers['x402:approve'](senderEvent(42), {
+      detectionId: 'req-NONEXISTENT-A',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/stale|superseded/i);
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  test('detectionId that matches the tab-keyed map IS allowed to fall through (mainFrame approval-card)', async () => {
+    // Seed a mainFrame detection — detectedPayments[42].detectionId
+    // will be 'req-9300'. The sidebar's Approve click for that same
+    // detectionId should sign via the existing mainFrame flow.
+    intercept.detectPaymentRequiredHandler({
+      id: 9300,
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+    const result = await ipcHandlers['x402:approve'](senderEvent(42), {
+      detectionId: 'req-9300',
+    });
+    expect(result.success).toBe(true);
+    expect(result.pending).toBeUndefined();
+    expect(mockCreateClient).toHaveBeenCalled();
+  });
+});
+
 describe('x402:approve with detectionId (subresource approval-card sign-on-click)', () => {
   test('settles the pending approval; detector signs and returns 307', async () => {
     const handlerPromise = require('./intercept').detectPaymentRequiredHandler({
