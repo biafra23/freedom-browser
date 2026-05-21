@@ -215,6 +215,37 @@ describe('detectPaymentRequiredHandler', () => {
     expect(mockHostSend).not.toHaveBeenCalled();
   });
 
+  test('loop guard fires even when the cap no longer covers (rejected retry exhausted the cap; do not fall into approval-card flow)', async () => {
+    // Bad interleaving: the rejected signed attempt consumed the last
+    // headroom; getPermissionCoverage now reports no cover. Without the
+    // guard sitting ABOVE the coverage check, this falls into the
+    // approval-card path and prompts the user to re-authorise a charge
+    // the server is refusing.
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000',
+      authorizedBy: 'cap',
+    });
+    injectPaymentSignatureHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+    // Cap is exhausted (or revoked, or any other "no cover" state).
+    mockGetPermission.mockReturnValueOnce(null);
+
+    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+
+    // No 307, no approval-needed event — receipt handler will log failed.
+    expect(result).toBeNull();
+    expect(mockSignAndQueueRetry).not.toHaveBeenCalled();
+    expect(mockHostSend).not.toHaveBeenCalled();
+  });
+
   test('loop guard: 402 on a request we already signed does NOT re-sign (server rejected the signature)', async () => {
     // Set up the "we already signed and injected" state: pending +
     // awaitingResponse both populated. This is what `injectPaymentSignatureHandler`

@@ -103,14 +103,13 @@ const pendingPayments = new Map();
 const awaitingResponse = new Map();
 
 // "Auto-pay tried to sign but the vault was locked; the user will unlock
-// via the sidebar and the standard x402:approve IPC will fire to resume."
-// Keyed by webContentsId. The value carries a snapshot of the original
-// detection PLUS its authorizedBy marker, so the resume signs the right
-// charge with the right consent — even if a newer 402 has since replaced
-// `detectedPayments[id]` while the unlock dialog was open. Without this
-// token the IPC handler would read whatever is currently in the map and
-// could end up signing a different charge as MANUAL just because the
-// user unlocked their vault.
+// via the sidebar and the dedicated x402:resume-unlock IPC will fire to
+// resume." Keyed by webContentsId. The value carries a snapshot of the
+// original detection PLUS its authorizedBy marker, so the resume signs
+// the right charge with the right consent — even if a newer 402 has
+// since replaced `detectedPayments[id]` while the unlock dialog was open.
+// Source-separated from x402:approve so a manual approval click on a
+// different charge cannot consume this token.
 const pendingUnlockResume = new Map();
 
 // Vault unlocks should be quick (Touch ID is instant; password is
@@ -421,6 +420,24 @@ async function detectPaymentRequiredHandler(details) {
     `[x402:detect] v${requirements.x402Version} payment required for ${sanitizeUrlForLog(details.url)}`
   );
 
+  // Loop guard: if `awaitingResponse` is armed for this (id, url), a
+  // request we already signed is the one that just 402'd — the server
+  // rejected our signature (broken facilitator, wrong wallet, expired
+  // authorization, ...). This sits ABOVE the cap-coverage check on
+  // purpose: if the rejected attempt consumed the last of the cap,
+  // re-evaluating coverage would say "no cap" and fall into the
+  // approval-card flow, prompting the user to re-authorise a charge we
+  // already know the server is refusing. Pass through; the receipt
+  // handler runs next, sees the failed signed attempt, and writes a
+  // `failed` row the user can see.
+  if (awaitingResponse.has(pendingKey(details.webContentsId, details.url))) {
+    log.warn(
+      `[x402:detect] 402 on a request we already signed (server rejected); ` +
+      `not re-signing ${sanitizeUrlForLog(details.url)}`
+    );
+    return null;
+  }
+
   // Auto-pay branch — if an active cap covers this charge, sign and
   // either (subresource) return a same-URL 307 redirect so Chromium
   // re-issues the request transparently with PAYMENT-SIGNATURE, or
@@ -431,30 +448,15 @@ async function detectPaymentRequiredHandler(details) {
   // request headers, cookies, and credentials across the same-origin
   // redirect, so no custom protocol or paid-cache is needed.
   if (getPermissionCoverage(details.url, requirements)?.covers) {
-    // Loop guard: if `awaitingResponse` is armed for this (id, url),
-    // a request we already signed is the one that just 402'd — the
-    // server rejected our signature (broken facilitator, wrong wallet,
-    // expired authorization, ...). Re-signing would either spin until
-    // Chromium's redirect limit or until the cap is exhausted. Pass
-    // through; the receipt handler runs next, sees the failed signed
-    // attempt, and writes a `failed` row the user can see.
-    if (awaitingResponse.has(pendingKey(details.webContentsId, details.url))) {
-      log.warn(
-        `[x402:detect] 402 on a request we already signed (server rejected); ` +
-        `not re-signing ${sanitizeUrlForLog(details.url)}`
-      );
-      return null;
-    }
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
     const id = details.webContentsId;
     const url = details.url;
     // Tag the stored detection with the consent provenance. The direct
-    // auto-pay path passes authorizedBy explicitly to signAndQueueRetry;
-    // the *resume* path after a locked vault routes through the standard
-    // x402:approve IPC, which reads the tag from the map. Without this,
-    // an unlock-resume would default to MANUAL and bypass the
-    // inject-time withhold gate if the cap was exhausted/revoked while
-    // the unlock dialog was open.
+    // auto-pay path passes authorizedBy explicitly to signAndQueueRetry.
+    // The unlock-resume path uses the dedicated x402:resume-unlock IPC,
+    // which prefers the resume token's CAP marker but also reads this
+    // map-tag as defence-in-depth — without either, an unlock-resume
+    // would default to MANUAL and bypass the inject-time withhold gate.
     detectedPayments.set(id, {
       ...detectedPayments.get(id),
       authorizedBy: AUTHORIZED_BY.CAP,
