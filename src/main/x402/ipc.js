@@ -35,6 +35,8 @@ const {
   getDetectedPayment,
   clearDetectedPayment,
   consumePendingUnlockResume,
+  hasPendingUnlockWait,
+  settlePendingUnlockWait,
   hasPendingApproval,
   getPendingApproval,
   settlePendingApproval,
@@ -193,12 +195,18 @@ function registerX402Ipc() {
   });
 
   ipcMain.handle(IPC.X402_RESUME_UNLOCK, async (event, args = {}) => {
-    // Dedicated channel for the renderer's `handleAutoPayUnlock`. Pulls
-    // the resume token (carrying the original detection snapshot + CAP
-    // marker) and signs it. If the token is missing — TTL'd, already
-    // consumed, or the user dismissed the unlock dialog — return a
-    // distinct error so the renderer knows there's nothing to resume.
+    // Two resume shapes converge here: (1) subresource — settle the
+    // wait, the detector's closure retries sign + 307 inline; (2)
+    // mainFrame — consume the resume token and dispatch via
+    // signAndQueueRetry (closure is gone). Discard any orphan resume
+    // token alongside the wait — they pair to different paths and a
+    // surviving token would be consumed by a stale future call.
     const id = args.webContentsId ?? event.sender.id;
+    if (hasPendingUnlockWait(id)) {
+      consumePendingUnlockResume(id);
+      settlePendingUnlockWait(id);
+      return { success: true };
+    }
     try {
       const resume = consumePendingUnlockResume(id);
       if (!resume) {

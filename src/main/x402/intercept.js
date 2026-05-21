@@ -132,6 +132,18 @@ const UNLOCK_RESUME_TTL_MS = 5 * 60 * 1000;
 // detector awaits.
 const pendingApprovals = new Map();
 
+// "Cap-covered subresource detector hit `Vault is locked`; the original
+// page fetch is being held open while the sidebar prompts the user to
+// unlock." Keyed by webContentsId. Value: { resolve, reject, timer }.
+// The detector awaits this Promise; x402:resume-unlock settles it after
+// the user unlocks, and the detector then retries sign + returns 307
+// inline. No resume token is needed on this path — the detection
+// snapshot lives in the detector's closure. Distinct from
+// `pendingUnlockResume`, which serves the mainFrame setImmediate path
+// where the original detector closure is already gone by the time the
+// user unlocks.
+const pendingUnlockWaits = new Map();
+
 function pendingKey(webContentsId, url) {
   return `${webContentsId ?? ''}|${url}`;
 }
@@ -246,6 +258,55 @@ function clearAllPendingUnlockResume() {
 }
 
 /**
+ * Register a wait for the cap-covered subresource locked-vault retry
+ * loop. The detector awaits the returned Promise; `x402:resume-unlock`
+ * settles it after the user unlocks. One wait per webContents — a fresh
+ * locked-vault aborts the older entry so the previous detector returns
+ * cleanly instead of hanging. An expiry timer mirrors the resume-token
+ * TTL so a same-tab navigation (or any path that doesn't fire
+ * `cleanupWebContents`) can't strand the entry.
+ */
+function setPendingUnlockWait(webContentsId) {
+  abortPendingUnlockWait(webContentsId, new Error('superseded by newer locked-vault wait'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => abortPendingUnlockWait(webContentsId, new Error('unlock-wait expired')),
+      UNLOCK_RESUME_TTL_MS,
+    );
+    timer.unref?.();
+    pendingUnlockWaits.set(webContentsId, { resolve, reject, timer });
+  });
+}
+
+function hasPendingUnlockWait(webContentsId) {
+  return pendingUnlockWaits.has(webContentsId);
+}
+
+function settlePendingUnlockWait(webContentsId) {
+  const entry = pendingUnlockWaits.get(webContentsId);
+  if (!entry) return false;
+  pendingUnlockWaits.delete(webContentsId);
+  clearTimeout(entry.timer);
+  entry.resolve();
+  return true;
+}
+
+function abortPendingUnlockWait(webContentsId, reason = new Error('aborted')) {
+  const entry = pendingUnlockWaits.get(webContentsId);
+  if (!entry) return false;
+  pendingUnlockWaits.delete(webContentsId);
+  clearTimeout(entry.timer);
+  entry.reject(reason);
+  return true;
+}
+
+function clearAllPendingUnlockWaits() {
+  for (const [id] of pendingUnlockWaits) {
+    abortPendingUnlockWait(id, new Error('cleared'));
+  }
+}
+
+/**
  * Mint a detectionId. Prefers Electron's stable per-request `details.id`
  * (a non-negative integer) so the id is greppable in logs.
  */
@@ -327,6 +388,7 @@ function cleanupWebContents(webContentsId) {
   // detector's `await` would hang forever and the dispatcher's
   // onHeadersReceived callback would never release.
   abortPendingApprovalsForTab(webContentsId, new Error('tab destroyed'));
+  abortPendingUnlockWait(webContentsId, new Error('tab destroyed'));
   const prefix = `${webContentsId}|`;
   // Snapshot keys before mutating — Map iteration is safe under delete in
   // V8 today but the snapshot keeps the invariant explicit.
@@ -433,19 +495,26 @@ function sendToHost(webviewWebContentsId, channel, payload) {
 
 // === Dispatcher handlers =================================================
 
-// Stash the unlock-resume token + fire the sidebar event. Used by both
-// the subresource self-307 path and the mainFrame setImmediate path
-// when sign-flow throws "Vault is locked". The two paths converge on
-// identical inputs (id, detection, url, CAP authorization), so keep the
-// "what to do when the vault is locked mid-auto-pay" contract in one
-// place. See `setPendingUnlockResume` / `X402_RESUME_UNLOCK` for the
-// resume contract.
-function requestVaultUnlockForAutoPay(webContentsId, detection, url) {
-  setPendingUnlockResume(webContentsId, { detection, authorizedBy: AUTHORIZED_BY.CAP });
+// Fire the sidebar's vault-unlock event. Single call site so the payload
+// shape and log call stay consistent across the subresource self-307
+// path (detector holds the response open via pendingUnlockWaits) and the
+// mainFrame setImmediate path (detector closure is gone, resume token is
+// stashed instead).
+function notifyVaultUnlockNeeded(webContentsId, url) {
   sendToHost(webContentsId, 'x402:unlock-needed', {
     webContentsId,
     origin: new URL(url).origin,
   });
+}
+
+// mainFrame helper: the setImmediate dispatch has already lost its
+// closure to the sign-throw, so the detection snapshot has to be stashed
+// for x402:resume-unlock to consume. Subresource path doesn't call this
+// — its detector keeps the snapshot in scope and awaits a wait entry
+// instead. See `setPendingUnlockResume` / `X402_RESUME_UNLOCK`.
+function requestVaultUnlockForAutoPay(webContentsId, detection, url) {
+  setPendingUnlockResume(webContentsId, { detection, authorizedBy: AUTHORIZED_BY.CAP });
+  notifyVaultUnlockNeeded(webContentsId, url);
 }
 
 /**
@@ -560,28 +629,41 @@ async function detectPaymentRequiredHandler(details) {
     const detection = { url, requirements, resourceType: details.resourceType };
 
     if (details.resourceType !== 'mainFrame') {
-      // SUBRESOURCE PATH: sign inline, return a same-URL 307 from this
-      // onHeadersReceived handler. Chromium follows the redirect; the
-      // followed request hits onBeforeSendHeaders where our existing
-      // injector matches (webContentsId, url) and attaches
-      // PAYMENT-SIGNATURE. Page never sees the 402.
-      try {
-        // Lazy require to dodge the intercept ↔ sign-flow circular dep.
-        const { signAndQueueRetry } = require('./sign-flow');
-        await signAndQueueRetry(id, { detection, authorizedBy: AUTHORIZED_BY.CAP });
-        log.info(`[x402:auto-pay] subresource signed; returning 307 → ${sanitizeUrlForLog(url)}`);
-        return {
-          statusLine: 'HTTP/1.1 307 Temporary Redirect',
-          responseHeaders: { Location: [url] },
-        };
-      } catch (err) {
-        if (isVaultLockedError(err)) {
-          log.info(`[x402:auto-pay] vault locked — letting the 402 through, requesting unlock`);
-          requestVaultUnlockForAutoPay(id, detection, url);
-          return null;
+      // SUBRESOURCE PATH: sign + return a same-URL 307; Chromium follows
+      // it and the injector attaches PAYMENT-SIGNATURE on the followed
+      // request. The page's fetch resolves with paid bytes — never sees
+      // the 402.
+      //
+      // On `Vault is locked` the loop holds this onHeadersReceived
+      // callback open across user unlock: fire unlock-needed, await
+      // the wait entry, retry sign. The closure carries the detection
+      // snapshot, so no resume token. Wait abort (tab destroyed, newer
+      // locked-vault on same tab, TTL) bails to null.
+      // Lazy require to dodge the intercept ↔ sign-flow circular dep;
+      // hoisted out of the loop so we hit the module cache once.
+      const { signAndQueueRetry } = require('./sign-flow');
+      while (true) {
+        try {
+          await signAndQueueRetry(id, { detection, authorizedBy: AUTHORIZED_BY.CAP });
+          log.info(`[x402:auto-pay] subresource signed; returning 307 → ${sanitizeUrlForLog(url)}`);
+          return {
+            statusLine: 'HTTP/1.1 307 Temporary Redirect',
+            responseHeaders: { Location: [url] },
+          };
+        } catch (err) {
+          if (!isVaultLockedError(err)) {
+            log.error(`[x402:auto-pay] sign failed: ${err.message}\n  stack: ${err.stack}`);
+            return null;
+          }
+          log.info(`[x402:auto-pay] vault locked — holding subresource open, requesting unlock for ${sanitizeUrlForLog(url)}`);
+          notifyVaultUnlockNeeded(id, url);
+          try {
+            await setPendingUnlockWait(id);
+          } catch (waitErr) {
+            log.info(`[x402:auto-pay] unlock-wait aborted (${waitErr?.message ?? waitErr}); passing 402 through`);
+            return null;
+          }
         }
-        log.error(`[x402:auto-pay] sign failed: ${err.message}\n  stack: ${err.stack}`);
-        return null;
       }
     }
 
@@ -881,6 +963,10 @@ module.exports = {
   clearAllAwaitingResponse,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
+  setPendingUnlockWait,
+  hasPendingUnlockWait,
+  settlePendingUnlockWait,
+  clearAllPendingUnlockWaits,
   hasPendingApproval,
   getPendingApproval,
   settlePendingApproval,

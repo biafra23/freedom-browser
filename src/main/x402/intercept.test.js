@@ -40,6 +40,7 @@ jest.mock('./permissions', () => ({
   tryConsume: (...args) => mockTryConsume(...args),
 }));
 
+const { VAULT_LOCKED_MESSAGE } = require('../wallet/vault-errors');
 const {
   X402_HEADERS,
   installX402Interception,
@@ -55,6 +56,9 @@ const {
   clearAllAwaitingResponse,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
+  hasPendingUnlockWait,
+  settlePendingUnlockWait,
+  clearAllPendingUnlockWaits,
   hasPendingApproval,
   settlePendingApproval,
   abortPendingApproval,
@@ -76,6 +80,7 @@ beforeEach(() => {
   clearAllDetectedPayments();
   clearAllAwaitingResponse();
   clearAllPendingUnlockResume();
+  clearAllPendingUnlockWaits();
   clearAllPendingApprovals();
   mockRegister.mockClear();
   mockAppendReceipt.mockReset();
@@ -294,22 +299,133 @@ describe('detectPaymentRequiredHandler', () => {
     expect(mockSignAndQueueRetry).not.toHaveBeenCalled();
   });
 
-  test('subresource cap-covered 402 with locked vault lets the 402 through and fires unlock-needed', async () => {
+  test('subresource cap-covered 402 with locked vault HOLDS the response open until x402:resume-unlock, then retries sign and returns 307', async () => {
+    // The detector must NOT return null here — that would lose the
+    // original fetch for vanilla `fetch()`/lazy-load/video callers that
+    // don't retry. Hold the response open across user unlock instead.
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
-    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
-    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
-    // Original 402 passes through (no 307) so the page can see the
-    // error or its retry logic kicks in after the unlock.
-    expect(result).toBeNull();
+    mockSignAndQueueRetry.mockReset()
+      .mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE))
+      .mockResolvedValueOnce(undefined);
+
+    // Don't await — detector hangs on the wait entry.
+    const handlerPromise = detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    // Yield for: sign-attempt-throw, catch, sendToHost, setPendingUnlockWait.
+    await flushRetryMicrotasks();
+
     expect(mockHostSend).toHaveBeenCalledWith('x402:unlock-needed', {
       webContentsId: 7,
       origin: 'https://api.example',
     });
-    const resume = consumePendingUnlockResume(7);
-    expect(resume?.authorizedBy).toBe('cap');
+    expect(hasPendingUnlockWait(7)).toBe(true);
+    // No resume token on the subresource path — the closure carries the snapshot.
+    expect(consumePendingUnlockResume(7)).toBeNull();
+
+    // User unlocks; IPC settles the wait. Detector retries sign → 307.
+    settlePendingUnlockWait(7);
+
+    const result = await handlerPromise;
+    expect(result).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: ['https://api.example/article'] },
+    });
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(2);
+  });
+
+  test('subresource cap-covered locked-vault: tab destruction aborts the wait → handler returns null without re-signing', async () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
+
+    const handlerPromise = detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    await flushRetryMicrotasks();
+    expect(hasPendingUnlockWait(7)).toBe(true);
+
+    cleanupWebContents(7);
+
+    expect(hasPendingUnlockWait(7)).toBe(false);
+    const result = await handlerPromise;
+    expect(result).toBeNull();
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(1);
+  });
+
+  test('subresource cap-covered locked-vault: if the second sign also fails locked, fires unlock-needed again and re-arms the wait', async () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockSignAndQueueRetry.mockReset()
+      .mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE))
+      .mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE))
+      .mockResolvedValueOnce(undefined);
+
+    const handlerPromise = detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    await flushRetryMicrotasks();
+    expect(hasPendingUnlockWait(7)).toBe(true);
+
+    settlePendingUnlockWait(7);
+    await flushRetryMicrotasks();
+
+    // Second sign also threw locked → new wait registered, second unlock-needed fired.
+    expect(hasPendingUnlockWait(7)).toBe(true);
+    const unlockCalls = mockHostSend.mock.calls.filter((c) => c[0] === 'x402:unlock-needed');
+    expect(unlockCalls).toHaveLength(2);
+
+    settlePendingUnlockWait(7);
+    const result = await handlerPromise;
+    expect(result).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: ['https://api.example/article'] },
+    });
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(3);
+  });
+
+  test('subresource cap-covered locked-vault: the wait entry has a TTL so a same-tab navigation cannot strand it indefinitely', async () => {
+    // Without this, a tab that navigates away without firing the
+    // `destroyed` event (so cleanupWebContents never runs) leaves the
+    // wait entry and the held-open onHeadersReceived sitting in memory.
+    jest.useFakeTimers();
+    try {
+      mockGetPermission.mockReturnValueOnce({
+        capAmount: '20000', spentAmount: '0',
+        createdAt: 1, expiresAt: 9999999999,
+      });
+      mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
+
+      const handlerPromise = detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+      // flushRetryMicrotasks reaches into queueMicrotask via Promise.resolve;
+      // safe under fakeTimers (only setTimeout is faked).
+      await flushRetryMicrotasks();
+      expect(hasPendingUnlockWait(7)).toBe(true);
+
+      // Advance past the 5-minute TTL (matches UNLOCK_RESUME_TTL_MS).
+      jest.advanceTimersByTime(6 * 60 * 1000);
+
+      expect(hasPendingUnlockWait(7)).toBe(false);
+      const result = await handlerPromise;
+      expect(result).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('subresource cap-covered: non-vault-locked sign failure returns null without entering the retry loop', async () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('signTypedData reverted'));
+
+    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'xhr' }));
+    expect(result).toBeNull();
+    expect(hasPendingUnlockWait(7)).toBe(false);
+    expect(mockHostSend).not.toHaveBeenCalledWith('x402:unlock-needed', expect.anything());
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(1);
   });
 
   test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry with a detection snapshot and authorizedBy=cap', () => {
@@ -334,14 +450,18 @@ describe('detectPaymentRequiredHandler', () => {
     }));
   });
 
-  test('auto-pay: a locked-vault failure asks the host renderer to unlock AND stashes a resume token with the original snapshot', () => {
+  test('auto-pay: a locked-vault failure on mainFrame asks the host renderer to unlock AND stashes a resume token with the original snapshot', () => {
+    // mainFrame-specific: the setImmediate dispatch loses the detector
+    // closure by the time the user unlocks, so the snapshot has to live
+    // in the resume token. (Subresource keeps the snapshot in the
+    // awaiting detector's closure — see the wait-loop tests above.)
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
-    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
 
-    detectPaymentRequiredHandler(detail());
+    detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
     return new Promise((resolve) => {
       // Two setImmediate ticks: one to fire signAndQueueRetry, one for
       // the catch handler's microtask + sendToHost call.
@@ -369,6 +489,10 @@ describe('detectPaymentRequiredHandler', () => {
   });
 
   test('consumePendingUnlockResume returns null past the TTL', async () => {
+    // mainFrame keeps the legacy resume-token path (setImmediate dispatch
+    // loses the detector closure, so the snapshot is stashed for the IPC
+    // to consume on unlock). The subresource path keeps its snapshot in
+    // the awaiting detector's closure and doesn't stash a token at all.
     const realNow = Date.now;
     const t0 = realNow();
     Date.now = () => t0;
@@ -377,8 +501,8 @@ describe('detectPaymentRequiredHandler', () => {
         capAmount: '20000', spentAmount: '0',
         createdAt: 1, expiresAt: 9999999999,
       });
-      mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
-      detectPaymentRequiredHandler(detail());
+      mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
+      detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
       await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 
       // Jump past the 5-minute TTL.
@@ -389,13 +513,13 @@ describe('detectPaymentRequiredHandler', () => {
     }
   });
 
-  test('cleanupWebContents drops a stashed resume token for the closed tab', () => {
+  test('cleanupWebContents drops a stashed mainFrame resume token for the closed tab', () => {
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
-    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
-    detectPaymentRequiredHandler(detail());
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
+    detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
     return new Promise((resolve) => {
       setImmediate(() => setImmediate(() => {
         cleanupWebContents(7);
@@ -524,7 +648,7 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
     // the cause (typically: unlocks the vault). This test verifies the
     // failure event fires AND the handler does NOT resolve until the
     // user makes a final decision in a follow-up iteration.
-    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
     const handlerPromise = detectPaymentRequiredHandler(detail());
     await Promise.resolve();
 
@@ -536,7 +660,7 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
     expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result', {
       detectionId: 'req-1001',
       success: false,
-      error: 'Vault is locked',
+      error: VAULT_LOCKED_MESSAGE,
     });
     // A new pending approval entry exists so the user's next click can
     // submit again. The handler is still awaiting it.
@@ -550,7 +674,7 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
 
   test('retry loop: sign failure followed by a successful second click → returns 307; original load resumes', async () => {
     mockSignAndQueueRetry.mockReset()
-      .mockRejectedValueOnce(new Error('Vault is locked'))
+      .mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE))
       .mockResolvedValueOnce(undefined);
 
     const handlerPromise = detectPaymentRequiredHandler(detail());
@@ -578,7 +702,7 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
   });
 
   test('retry loop: sign failure followed by Reject on the second click → returns null', async () => {
-    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
 
     const handlerPromise = detectPaymentRequiredHandler(detail());
     await Promise.resolve();
@@ -597,7 +721,7 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
   });
 
   test('retry loop: sign failure followed by tab destroy → returns null', async () => {
-    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
 
     const handlerPromise = detectPaymentRequiredHandler(detail());
     await Promise.resolve();

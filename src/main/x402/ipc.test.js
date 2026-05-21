@@ -70,6 +70,7 @@ jest.mock('./permissions', () => ({
 }));
 
 const { webContents } = require('electron');
+const { VAULT_LOCKED_MESSAGE } = require('../wallet/vault-errors');
 const intercept = require('./intercept');
 const { outgoingHeaderForVersion } = require('./intercept');
 const { registerX402Ipc } = require('./ipc');
@@ -83,6 +84,7 @@ beforeEach(() => {
   intercept.clearAllPendingPayments();
   intercept.clearAllAwaitingResponse();
   intercept.clearAllPendingUnlockResume();
+  intercept.clearAllPendingUnlockWaits();
   mockClient.createPaymentPayload.mockReset();
   mockCreateClient.mockReset().mockResolvedValue(mockClient);
   mockGetActiveWalletIndex.mockReturnValue(0);
@@ -247,11 +249,11 @@ describe('x402:approve', () => {
 
   test('surfaces a vault-locked error verbatim to the renderer', async () => {
     seedDetection(42);
-    mockCreateClient.mockRejectedValueOnce(new Error('Vault is locked'));
+    mockCreateClient.mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
 
     const result = await ipcHandlers['x402:approve'](senderEvent(42));
     expect(result.success).toBe(false);
-    expect(result.error).toBe('Vault is locked');
+    expect(result.error).toBe(VAULT_LOCKED_MESSAGE);
     // No pending payment armed when signing failed.
     expect(intercept.injectPaymentSignatureHandler({
       webContentsId: 42,
@@ -379,7 +381,7 @@ describe('x402:approve', () => {
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
-    mockCreateClient.mockRejectedValueOnce(new Error('Vault is locked'));
+    mockCreateClient.mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
 
     intercept.detectPaymentRequiredHandler({
       webContentsId: 42,
@@ -446,7 +448,7 @@ describe('x402:approve', () => {
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
-    mockCreateClient.mockRejectedValueOnce(new Error('Vault is locked'));
+    mockCreateClient.mockRejectedValueOnce(new Error(VAULT_LOCKED_MESSAGE));
     intercept.detectPaymentRequiredHandler({
       webContentsId: 42, url: urlA,
       statusLine: 'HTTP/1.1 402 Payment Required',
@@ -493,6 +495,18 @@ describe('x402:approve', () => {
     const result = await ipcHandlers['x402:resume-unlock'](senderEvent(42));
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/no pending unlock-resume/i);
+  });
+
+  test('x402:resume-unlock settles a pending unlock-wait (subresource path) without invoking signAndQueueRetry from the IPC', async () => {
+    // The IPC must NOT call signAndQueueRetry on the wait path —
+    // calling it would double-sign for the closure-driven attempt.
+    const waitPromise = intercept.setPendingUnlockWait(42);
+
+    const result = await ipcHandlers['x402:resume-unlock'](senderEvent(42));
+    expect(result).toEqual({ success: true });
+    expect(intercept.hasPendingUnlockWait(42)).toBe(false);
+    await expect(waitPromise).resolves.toBeUndefined();
+    expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
   test('manual approve path stamps authorizedBy=manual so a false consume still attaches the header', async () => {
