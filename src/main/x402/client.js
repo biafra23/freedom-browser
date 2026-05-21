@@ -22,7 +22,12 @@ const { signTypedData: signTypedDataWithKey } = require('../wallet/transaction-s
 
 // V1 servers use string network names (not CAIP-2); unknown ones fall
 // through to whichever V2 `accepts[]` entry the server also exposed.
-const V1_NETWORKS = ['base', 'base-sepolia', 'ethereum'];
+// Base Sepolia was supported earlier in the branch; removed because
+// the asset allowlist no longer carries Sepolia USDC — a V1 server
+// billing on sepolia would parse OK but the asset would be unknown
+// and the Pay button would be disabled. Drop it from the network
+// allowlist so the failure shows up consistently at protocol time.
+const V1_NETWORKS = ['base', 'ethereum'];
 
 /**
  * Build a vault-backed `ClientEvmSigner` for the given wallet index.

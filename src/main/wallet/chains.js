@@ -37,10 +37,6 @@ const CHAIN_METADATA = {
     nativeCurrency: ETHER_NATIVE_CURRENCY,
     supportsHelios: false,
   },
-  84532: {
-    nativeCurrency: ETHER_NATIVE_CURRENCY,
-    supportsHelios: false,
-  },
 };
 
 // Default chain

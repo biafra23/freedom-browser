@@ -121,9 +121,9 @@ const sampleRequirementsV1 = {
   accepts: [
     {
       scheme: 'exact',
-      network: 'base-sepolia',
+      network: 'base',
       maxAmountRequired: '10000',
-      asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
       payTo: '0x209693Bc6afc0C5328bA36FaF03C514EF312287C',
       maxTimeoutSeconds: 60,
       resource: 'https://api.example/article',

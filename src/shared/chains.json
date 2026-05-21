@@ -58,17 +58,5 @@
       "anchor": "latest",
       "anchorTtlMs": 30000
     }
-  },
-  "84532": {
-    "chainId": 84532,
-    "chainIdHex": "0x14a34",
-    "name": "Base Sepolia",
-    "shortName": "BASE-SEP",
-    "nativeSymbol": "ETH",
-    "blockExplorer": "https://sepolia.basescan.org",
-    "builtin": true,
-    "verification": {
-      "primary": "direct"
-    }
   }
 }

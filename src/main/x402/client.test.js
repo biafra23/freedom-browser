@@ -121,23 +121,24 @@ describe('createVaultBackedX402Client', () => {
     const v1Pick = client.selectPaymentRequirements(1, [
       {
         scheme: 'exact',
-        network: 'base-sepolia',
+        network: 'base',
         maxAmountRequired: '10000',
-        asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         payTo: '0x209693Bc6afc0C5328bA36FaF03C514EF312287C',
         maxTimeoutSeconds: 60,
         resource: 'https://api.example/article',
         extra: { name: 'USD Coin', version: '2' },
       },
     ]);
-    expect(v1Pick).toMatchObject({ scheme: 'exact', network: 'base-sepolia' });
+    expect(v1Pick).toMatchObject({ scheme: 'exact', network: 'base' });
   });
 
-  test('V1_NETWORKS covers Base / Base Sepolia / Ethereum', () => {
+  test('V1_NETWORKS covers Base / Ethereum', () => {
     // Asset-allowlist parity: a V1 server on any of these networks must
-    // be reachable. Adding more is cheap; silently dropping one would
-    // break paying customers on legacy endpoints.
-    expect(V1_NETWORKS).toEqual(expect.arrayContaining(['base', 'base-sepolia', 'ethereum']));
+    // be reachable. Base Sepolia was previously included but was dropped
+    // along with the Sepolia builtin chain/token entries — a V1 paywall
+    // on sepolia wouldn't have a known asset anyway.
+    expect(V1_NETWORKS).toEqual(expect.arrayContaining(['base', 'ethereum']));
   });
 
   test('produces a verifiable V2 payment payload end-to-end (Base / USDC)', async () => {
