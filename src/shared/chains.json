@@ -47,6 +47,7 @@
     "shortName": "BASE",
     "nativeSymbol": "ETH",
     "blockExplorer": "https://basescan.org",
+    "logo": "base.png",
     "builtin": true,
     "verification": {
       "primary": "quorum"
