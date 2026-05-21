@@ -492,7 +492,19 @@ const createWebview = (tabId, initialUrl) => {
       // touch tab/navigation state.
       if (event.channel === 'link-status:zone') {
         if (tabId === tabState.activeTabId) {
+          const tab = tabState.tabs.find((t) => t.id === tabId);
           const inLeftZone = event.args?.[0]?.inLeftZone === true;
+          // Remember per-tab so switchTab can restore without waiting for
+          // the preload to re-emit. The preload only emits on zone
+          // transitions, and a hidden webview's `linkStatusInZone` freezes
+          // at whatever value it held when the tab was backgrounded — so
+          // without per-tab state, returning to a tab whose pointer is
+          // still in the bottom-left band would leave the bar on the
+          // default `left` side and paint it over the hovered link until
+          // the pointer leaves and re-enters the zone.
+          if (tab) {
+            tab.linkStatusInLeftZone = inLeftZone;
+          }
           setLinkStatusSide(inLeftZone ? 'right' : 'left');
         }
         return;
@@ -1132,11 +1144,16 @@ export const switchTab = (tabId, options = {}) => {
 
   // Reset the link-hover preview before swapping active tabs:
   // - immediate clear so the previous tab's URL never trails into the new tab
-  // - reset side because `currentSide` is module-level state shared across
-  //   tabs; the new tab's preload will re-arm the zone tracker on first
-  //   mousemove and update side accordingly.
+  // - restore side from the incoming tab's last-known cursor-zone state
+  //   rather than blindly resetting to `left`. The preload's zone tracker
+  //   only emits on transitions, and a hidden webview's `linkStatusInZone`
+  //   freezes at whatever value it held when the tab was backgrounded —
+  //   so the next zone IPC may never arrive until the pointer leaves and
+  //   re-enters the band. Without restoring per-tab state, returning to
+  //   a tab whose pointer is in the bottom-left band would leave the bar
+  //   on `left` and paint it over the hovered link.
   clearLinkStatus({ immediate: true });
-  setLinkStatusSide('left');
+  setLinkStatusSide(tab.linkStatusInLeftZone ? 'right' : 'left');
   tabState.activeTabId = tabId;
 
   // Hide all webviews, show active one

@@ -1070,7 +1070,10 @@ describe('tabs ui behavior', () => {
     expect(linkStatusMocks.setLinkStatusSide).not.toHaveBeenCalled();
   });
 
-  test('switchTab clears the link status immediately and resets side', async () => {
+  test('switchTab clears the link status immediately and restores per-tab side', async () => {
+    // Per-tab side is restored from the tab's last-known cursor-zone
+    // state instead of being blindly reset to 'left'. With no prior
+    // zone events on either tab, the restored side is 'left' for both.
     const { mod, linkStatusMocks } = await loadTabsModule();
     await mod.initTabs();
 
@@ -1090,5 +1093,51 @@ describe('tabs ui behavior', () => {
     mod.switchTab(secondTab.id);
     expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
     expect(linkStatusMocks.setLinkStatusSide).toHaveBeenCalledWith('left');
+  });
+
+  test('switchTab restores the active tab side from the per-tab zone state', async () => {
+    // Regression: the preload only emits link-status:zone events on
+    // transitions, and a hidden webview's `linkStatusInZone` freezes at
+    // whatever value it held when the tab was backgrounded. If the
+    // renderer reset `currentSide` to 'left' on every switch (the
+    // previous behavior), returning to a tab whose pointer is still in
+    // the bottom-left band would leave the bar on `left` until the
+    // pointer leaves and re-enters the zone — painting it over the
+    // link the user is hovering.
+    //
+    // The fix tracks per-tab zone state in tabs.js and restores it on
+    // activation so the bar's side matches the destination tab's
+    // current pointer position immediately.
+    const { mod, linkStatusMocks } = await loadTabsModule();
+    await mod.initTabs();
+
+    const firstTab = mod.getActiveTab();
+    const secondTab = mod.createTab('https://second.example');
+    mod.switchTab(firstTab.id);
+
+    // Pointer enters the bottom-left band on the first tab → bar flips
+    // to the right side and per-tab state remembers the zone hit.
+    firstTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: true }],
+    });
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    // Switch to a tab whose preload has never emitted — side restores to
+    // its default 'left'.
+    mod.switchTab(secondTab.id);
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('left');
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    // Switch back to the first tab — the per-tab state is replayed so
+    // the bar sits on the correct side without waiting for a new
+    // pointer transition inside the (still-in-zone) preload.
+    mod.switchTab(firstTab.id);
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('right');
   });
 });

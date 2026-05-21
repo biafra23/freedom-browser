@@ -160,15 +160,19 @@ document.addEventListener('auxclick', handleDwebLinkActivation, true);
 // on zone transitions to keep IPC traffic minimal — for typical browsing
 // the channel is silent.
 //
-// Width must track the actual bar's `max-width: min(70vw, 640px)` from
-// link-status.css. A fixed width was too narrow on wide viewports, so a
-// link hovered between the band's right edge and the bar's right edge
-// would sit under the bar without triggering the flip.
+// Width must track the actual bar's `max-width: min(70%, 640px)` from
+// link-status.css. Both reference the webview content area — the CSS
+// `%` resolves against the bar's positioning ancestor `.content-page`,
+// and `window.innerWidth` here is the guest webview's viewport, which
+// is the same width as `.content-page`. Keeping these consistent
+// matters when the sidebar is open: a `vw`-based CSS width plus a
+// webview-relative zone width would diverge by the sidebar's 320 px
+// and leave a band where the bar covers the link the user is hovering.
 const LINK_STATUS_ZONE_BAND_PX = 28; // bottom band height (~bar height)
 const LINK_STATUS_ZONE_MAX_WIDTH_PX = 640;
-const LINK_STATUS_ZONE_VW_FRACTION = 0.7;
+const LINK_STATUS_ZONE_CONTENT_FRACTION = 0.7;
 const linkStatusZoneWidth = () =>
-  Math.min(LINK_STATUS_ZONE_MAX_WIDTH_PX, window.innerWidth * LINK_STATUS_ZONE_VW_FRACTION);
+  Math.min(LINK_STATUS_ZONE_MAX_WIDTH_PX, window.innerWidth * LINK_STATUS_ZONE_CONTENT_FRACTION);
 let linkStatusInZone = false;
 const sendLinkStatusZone = (inZone) => {
   if (linkStatusInZone === inZone) return;

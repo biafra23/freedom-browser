@@ -20,7 +20,17 @@
   right: auto;
   bottom: 0;
   z-index: 2;
-  max-width: min(70vw, 640px);
+  /* Anchor max-width to the positioning context (.content-page), not the
+   * window viewport. A `vw` here would resolve against the host window,
+   * but inside the guest <webview> the preload's zone-tracker uses
+   * `window.innerWidth` — which is the *webview's* width. With the
+   * sidebar open (320 px), those two reference widths differ, and the
+   * trigger zone would lag behind the visible bar — exactly the
+   * cover-the-link case the trigger zone exists to prevent. `%`
+   * resolves against `.content-page`, which equals the webview width,
+   * keeping the bar and the zone in lockstep regardless of sidebar
+   * state. */
+  max-width: min(70%, 640px);
   padding: 3px 8px 3px 12px;
   border-top: 1px solid var(--border);
   border-right: 1px solid var(--border);
