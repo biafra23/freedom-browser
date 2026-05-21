@@ -104,10 +104,10 @@ function registerX402Ipc() {
       // X402_RESUME_UNLOCK touches it. Mixing the two would let a click
       // on B's approval card consume A's resume token and sign A.
       //
-      // detectedPayments may carry `authorizedBy` from a prior cap-
-      // covered detection (defence in depth — same-detection unlock
-      // resume falls back here if the resume token expired); sign-flow
-      // defaults to MANUAL when undefined.
+      // detectedPayments may carry `authorizedBy` if the auto-pay
+      // detector tagged the map — pure defence-in-depth here, since the
+      // normal cap-covered flow signs without UI and never reaches this
+      // handler. sign-flow defaults to MANUAL when undefined.
       const detected = getDetectedPayment(id);
       await signAndQueueRetry(id, {
         grant: args.grant,
