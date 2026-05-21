@@ -27,10 +27,7 @@ const {
   clearDetectedPayment,
   setPendingPayment,
 } = require('./intercept');
-const {
-  grant: grantPermission,
-  tryConsume,
-} = require('./permissions');
+const { grant: grantPermission } = require('./permissions');
 const { paymentTuple } = require('./payment-utils');
 
 /**
@@ -38,8 +35,17 @@ const { paymentTuple } = require('./payment-utils');
  * retry of the original URL. Throws on any failure (vault locked, URL
  * unparseable, client error). Caller decides how to surface the error.
  *
+ * `opts.detection` lets the caller pass an explicit snapshot of the
+ * detection to sign — used by the auto-pay path so a second 402 firing
+ * between setImmediate-schedule and setImmediate-run can't redirect the
+ * sign to a different charge. When omitted (IPC approve path) we fall
+ * back to looking up the current detection by webContentsId.
+ *
  * @param {number} webContentsId
- * @param {{ grant?: { capAmount: string, windowSeconds: number } }} [opts]
+ * @param {{
+ *   grant?: { capAmount: string, windowSeconds: number },
+ *   detection?: { url: string, requirements: object, resourceType?: string },
+ * }} [opts]
  */
 async function signAndQueueRetry(webContentsId, opts = {}) {
   // `webContents.fromId` is native and throws a cryptic ABI-style error
@@ -47,7 +53,7 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   if (typeof webContentsId !== 'number' || webContentsId < 0) {
     throw new Error(`x402: invalid webContentsId: ${webContentsId}`);
   }
-  const detected = getDetectedPayment(webContentsId);
+  const detected = opts.detection ?? getDetectedPayment(webContentsId);
   if (!detected) throw new Error('No pending x402 payment for this tab');
 
   let origin;
@@ -74,15 +80,17 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   });
   clearDetectedPayment(webContentsId);
 
-  if (tuple) {
-    if (opts.grant) {
-      try {
-        grantPermission(origin, tuple.chainId, tuple.asset, opts.grant.capAmount, opts.grant.windowSeconds);
-      } catch (err) {
-        log.warn(`[x402:sign] grant rejected: ${err.message}`);
-      }
+  // `grant` (create-a-cap) is an explicit user action from the approval
+  // card and happens here, at sign time. `tryConsume` (burn-from-cap)
+  // lives in the inject handler so we only bump `spentAmount` when the
+  // signature actually rides out on a real request — subresource 402s
+  // that sign-but-never-retry must not burn cap headroom.
+  if (tuple && opts.grant) {
+    try {
+      grantPermission(origin, tuple.chainId, tuple.asset, opts.grant.capAmount, opts.grant.windowSeconds);
+    } catch (err) {
+      log.warn(`[x402:sign] grant rejected: ${err.message}`);
     }
-    tryConsume(origin, tuple.chainId, tuple.asset, tuple.amount);
   }
 
   const wc = webContents.fromId(webContentsId);

@@ -34,8 +34,10 @@ jest.mock('./sign-flow', () => ({
 }));
 
 const mockGetPermission = jest.fn(() => null);
+const mockTryConsume = jest.fn(() => true);
 jest.mock('./permissions', () => ({
   getPermission: (...args) => mockGetPermission(...args),
+  tryConsume: (...args) => mockTryConsume(...args),
 }));
 
 const {
@@ -61,6 +63,7 @@ beforeEach(() => {
   mockHostSend.mockClear();
   mockSignAndQueueRetry.mockReset().mockResolvedValue(undefined);
   mockGetPermission.mockReset().mockReturnValue(null);
+  mockTryConsume.mockReset().mockReturnValue(true);
 });
 
 // Canonical Base USDC PaymentRequired (V2). `resource` is an object per
@@ -166,16 +169,24 @@ describe('detectPaymentRequiredHandler', () => {
     expect(getDetectedPayment(7)?.resourceType).toBe('mainFrame');
   });
 
-  test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry and skips the host event', () => {
+  test('auto-pay: when an active cap covers the charge, calls signAndQueueRetry with a detection snapshot and skips the host event', () => {
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
     // Use real timers so the setImmediate inside the auto-pay branch
     // actually fires.
-    detectPaymentRequiredHandler(detail());
+    detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
     return new Promise((resolve) => setImmediate(() => {
-      expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7);
+      // Snapshot is passed so a second 402 firing on the same tab between
+      // schedule and fire can't redirect the sign to a different charge.
+      expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, {
+        detection: expect.objectContaining({
+          url: 'https://api.example/article',
+          requirements: sampleRequirements,
+          resourceType: 'mainFrame',
+        }),
+      });
       expect(mockHostSend).not.toHaveBeenCalled();
       resolve();
     }));
@@ -193,7 +204,9 @@ describe('detectPaymentRequiredHandler', () => {
       // Two setImmediate ticks: one to fire signAndQueueRetry, one for
       // the catch handler's microtask + sendToHost call.
       setImmediate(() => setImmediate(() => {
-        expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7);
+        expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, expect.objectContaining({
+          detection: expect.objectContaining({ url: 'https://api.example/article' }),
+        }));
         expect(mockHostSend).toHaveBeenCalledWith('x402:unlock-needed', {
           webContentsId: 7,
           origin: 'https://api.example',
@@ -357,6 +370,76 @@ describe('injectPaymentSignatureHandler', () => {
     }))).toBeNull();
     // The original pending payment must still be there, not consumed.
     expect(injectPaymentSignatureHandler(detail())).not.toBeNull();
+  });
+
+  test('consumes the cap on inject (not on sign) using the stashed receipt context', () => {
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount: '10000',
+    });
+    expect(mockTryConsume).not.toHaveBeenCalled();
+
+    injectPaymentSignatureHandler(detail());
+
+    expect(mockTryConsume).toHaveBeenCalledWith(
+      'https://api.example',
+      8453,
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '10000'
+    );
+  });
+
+  test('skips cap consume when receipt context is incomplete (defensive)', () => {
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      // no origin/chainId/asset/amount — production sign-flow always
+      // stashes these, but the inject handler shouldn't blow up if a
+      // test or future caller skips them.
+    });
+    injectPaymentSignatureHandler(detail());
+    expect(mockTryConsume).not.toHaveBeenCalled();
+  });
+
+  test('cap-consume returning false logs a warning but still attaches the header', () => {
+    mockTryConsume.mockReturnValueOnce(false);
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+    });
+    const result = injectPaymentSignatureHandler(detail());
+    expect(result.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig');
+  });
+
+  test('drops a stale pending entry past its TTL and does not attach the header', () => {
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+    });
+    // Jump Date.now past PENDING_TTL_MS (60s).
+    const realNow = Date.now;
+    Date.now = () => realNow() + 61_000;
+    try {
+      const result = injectPaymentSignatureHandler(detail());
+      expect(result).toBeNull();
+      // And the consume must NOT have fired — stale signatures don't
+      // charge the cap.
+      expect(mockTryConsume).not.toHaveBeenCalled();
+    } finally {
+      Date.now = realNow;
+    }
   });
 });
 
@@ -580,5 +663,34 @@ describe('paymentResponseLoggingHandler', () => {
       responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
     });
     expect(mockAppendReceipt).not.toHaveBeenCalled();
+  });
+
+  test('reads X-PAYMENT-RESPONSE (V1 canonical settlement header) when the pending payment was V1', () => {
+    armInjection({ header: 'X-PAYMENT' });  // V1 signed-header marker
+    paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'X-PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      txHash: '0xabc',
+      status: 'settled',
+    }));
+  });
+
+  test('falls back to the other version-header when the canonical one is missing', () => {
+    // V1 signed but server emitted V2 header (drift). Still logs.
+    armInjection({ header: 'X-PAYMENT' });
+    paymentResponseLoggingHandler({
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      txHash: '0xabc',
+      status: 'settled',
+    }));
   });
 });

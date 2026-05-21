@@ -375,14 +375,7 @@ describe('x402:approve permission interactions', () => {
     });
   });
 
-  test('with a grant arg: persists the cap before consuming this charge', async () => {
-    const callOrder = [];
-    mockGrant.mockImplementation(() => callOrder.push('grant'));
-    mockTryConsume.mockImplementation(() => {
-      callOrder.push('consume');
-      return true;
-    });
-
+  test('with a grant arg: persists the cap (consume is deferred until inject — see intercept.test.js)', async () => {
     const result = await ipcHandlers['x402:approve'](senderEvent(42), {
       grant: { capAmount: '10000000', windowSeconds: 30 * 24 * 60 * 60 },
     });
@@ -395,20 +388,17 @@ describe('x402:approve permission interactions', () => {
       '10000000',
       30 * 24 * 60 * 60
     );
-    // grant must precede consume so the consume bumps the new cap, not
-    // the previous half-spent one (the order the comment in ipc.js promises).
-    expect(callOrder).toEqual(['grant', 'consume']);
+    // tryConsume no longer fires in sign-flow — it moved to the inject
+    // handler so subresource 402s that sign-but-never-retry don't silently
+    // burn cap headroom. See injectPaymentSignatureHandler's "consumes
+    // the cap on inject" test in intercept.test.js.
+    expect(mockTryConsume).not.toHaveBeenCalled();
   });
 
-  test('without a grant arg: only consumes against any existing cap', async () => {
+  test('without a grant arg: does not grant, does not consume (consume fires on inject)', async () => {
     await ipcHandlers['x402:approve'](senderEvent(42), {});
     expect(mockGrant).not.toHaveBeenCalled();
-    expect(mockTryConsume).toHaveBeenCalledWith(
-      'https://api.example',
-      8453,
-      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      '10000'
-    );
+    expect(mockTryConsume).not.toHaveBeenCalled();
   });
 
   test('a failed grant does not block the sign / pay flow', async () => {
@@ -419,8 +409,8 @@ describe('x402:approve permission interactions', () => {
       grant: { capAmount: '10000000', windowSeconds: -1 },
     });
     expect(result.success).toBe(true);
-    // The consume still runs — the user explicitly approved.
-    expect(mockTryConsume).toHaveBeenCalled();
+    // Sign-flow no longer calls tryConsume; the failed grant still
+    // doesn't break the approve flow.
   });
 });
 

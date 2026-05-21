@@ -34,6 +34,7 @@ const { registerWebRequestHandler } = require('../webrequest-dispatcher');
 const paymentHistory = require('../payment-history');
 const { KINDS: PAYMENT_KINDS, STATUSES: PAYMENT_STATUSES } = paymentHistory;
 const { getPermissionCoverage } = require('./payment-utils');
+const { tryConsume } = require('./permissions');
 
 // Header names used on the wire. V2 uses the un-prefixed names; V1 (Coinbase
 // original) ships with the `X-` prefix. Centralised so WP4 callers reference
@@ -43,6 +44,8 @@ const X402_HEADERS = Object.freeze({
   REQUIRED_V1: 'X-PAYMENT-REQUIRED',
   SIGNATURE_V2: 'PAYMENT-SIGNATURE',
   SIGNATURE_V1: 'X-PAYMENT',
+  RESPONSE_V2: 'PAYMENT-RESPONSE',
+  RESPONSE_V1: 'X-PAYMENT-RESPONSE',
 });
 
 const VALID_SIGNATURE_HEADERS = new Set([
@@ -92,25 +95,36 @@ function pendingKey(webContentsId, url) {
   return `${webContentsId ?? ''}|${url}`;
 }
 
+// Pending signatures expire after `PENDING_TTL_MS`. EIP-3009 carries its
+// own `validAfter`/`validBefore` window (typically the requirements'
+// `maxTimeoutSeconds`, default 60s), so even if a stale signature were
+// somehow attached the facilitator would reject it; this is hygiene to
+// keep the Map from accumulating stranded signatures across long-lived
+// sessions and to avoid attaching a long-stale signature to a same-URL
+// request that happens to fire much later.
+const PENDING_TTL_MS = 60_000;
+
 /**
- * Store a signed payment header to attach on the next request to the
- * same (webContentsId, url) pair. Called by the interstitial after the
- * user approves and the x402Client has produced the payload.
+ * Stash a signed PAYMENT-SIGNATURE / X-PAYMENT header for the dispatcher
+ * to attach on the matching retry. One-shot — consumed by the first
+ * matching request to `(webContentsId, url)` or dropped past `expiresAt`.
+ *
+ * `signed.header` + `signed.value` are validated strictly — a typo there
+ * would silently fail the payment. Receipt-context fields (`origin`,
+ * `chainId`, `asset`, `amount`, `payTo`, `fromAddress`) ride along
+ * untouched; the injector copies them into the receipt context, and the
+ * receipts module validates its own input, so this validator stays
+ * focused on the bytes that actually go on the wire. Callers are trusted
+ * in-process code (only `sign-flow.js`).
  *
  * @param {number} webContentsId
  * @param {string} url
- * @param {{ header: 'PAYMENT-SIGNATURE' | 'X-PAYMENT', value: string }} signed
- */
-/**
- * Stash a signed PAYMENT-SIGNATURE / X-PAYMENT header for the dispatcher
- * to attach on the matching retry.
- *
- * `signed.header` + `signed.value` are validated strictly — a typo there
- * would silently fail the payment. Optional fields (`origin`, `chainId`,
- * `asset`, `amount`) ride along untouched; the injector copies them into
- * the receipt context, and the receipts module validates its own input,
- * so we keep this validator focused on the bytes that actually go on
- * the wire. Callers are trusted in-process code (only `ipc.js`).
+ * @param {{
+ *   header: 'PAYMENT-SIGNATURE' | 'X-PAYMENT',
+ *   value: string,
+ *   origin?: string, chainId?: number, asset?: string, amount?: string,
+ *   payTo?: string, fromAddress?: string,
+ * }} signed
  */
 function setPendingPayment(webContentsId, url, signed) {
   if (!signed || !VALID_SIGNATURE_HEADERS.has(signed.header)) {
@@ -119,7 +133,10 @@ function setPendingPayment(webContentsId, url, signed) {
   if (typeof signed.value !== 'string' || signed.value.length === 0) {
     throw new Error('x402: pending-payment value must be a non-empty string');
   }
-  pendingPayments.set(pendingKey(webContentsId, url), signed);
+  pendingPayments.set(pendingKey(webContentsId, url), {
+    ...signed,
+    expiresAt: Date.now() + PENDING_TTL_MS,
+  });
 }
 
 function getDetectedPayment(webContentsId) {
@@ -309,10 +326,17 @@ function detectPaymentRequiredHandler(details) {
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
     const id = details.webContentsId;
     const url = details.url;
+    // Snapshot the detection at schedule time. Without this, a second
+    // 402 on the same tab firing between this setImmediate and its run
+    // would replace `detectedPayments[id]`, and the auto-pay would sign
+    // the new charge using the (already-passed) cap check for the old
+    // one. The IPC approve path retains its lookup-by-id behaviour;
+    // full request-keyed state for both paths is future work.
+    const detection = { url, requirements, resourceType: details.resourceType };
     setImmediate(() => {
       // Lazy require to dodge the intercept ↔ sign-flow circular dep.
       const { signAndQueueRetry } = require('./sign-flow');
-      signAndQueueRetry(id).catch((err) => {
+      signAndQueueRetry(id, { detection }).catch((err) => {
         // Vault auto-locked between detection and sign: the cap already
         // authorised the charge, so we don't need a fresh approval — just
         // a vault unlock. Fire an event at the sidebar; on unlock it'll
@@ -355,7 +379,14 @@ function paymentResponseLoggingHandler(details) {
 
   const success = isStatus2xx(details.statusLine);
   let txHash = null;
-  const value = getHeaderValue(details.responseHeaders, 'PAYMENT-RESPONSE');
+  // V1 servers ship the settlement header as `X-PAYMENT-RESPONSE`; V2 drops
+  // the `X-` prefix. Prefer the version matching what we signed, fall back
+  // to the other so we don't miss a receipt because of header-name drift.
+  const isV1 = expected.signedHeader === X402_HEADERS.SIGNATURE_V1;
+  const canonical = isV1 ? X402_HEADERS.RESPONSE_V1 : X402_HEADERS.RESPONSE_V2;
+  const fallback = isV1 ? X402_HEADERS.RESPONSE_V2 : X402_HEADERS.RESPONSE_V1;
+  const value = getHeaderValue(details.responseHeaders, canonical)
+    ?? getHeaderValue(details.responseHeaders, fallback);
   if (value) {
     try {
       const decoded = JSON.parse(Buffer.from(value, 'base64').toString('utf-8'));
@@ -400,12 +431,22 @@ function injectPaymentSignatureHandler(details) {
   const signed = pendingPayments.get(key);
   if (!signed) return null;
 
+  // Drop stale entries. The signed EIP-3009 authorisation has its own
+  // validAfter/validBefore window — the facilitator would reject a stale
+  // signature anyway — but we don't even want to attach it.
+  if (signed.expiresAt && Date.now() > signed.expiresAt) {
+    pendingPayments.delete(key);
+    log.warn(`[x402:inject] pending signature expired for ${sanitizeUrlForLog(details.url)}; dropping`);
+    return null;
+  }
+
   pendingPayments.delete(key); // one-shot
   // Arm the receipt logger so it knows to look at THIS response for
   // the PAYMENT-RESPONSE settlement. We also hand off the receipt
   // context (origin / chainId / asset / amount) that the approve
   // handler stashed alongside the signed bytes — without it the
-  // logger couldn't write a complete receipt.
+  // logger couldn't write a complete receipt. `signedHeader` lets the
+  // receipt logger pick the V1 vs V2 settlement header.
   awaitingResponse.set(key, {
     url: details.url,
     origin: signed.origin,
@@ -414,7 +455,25 @@ function injectPaymentSignatureHandler(details) {
     amount: signed.amount,
     payTo: signed.payTo ?? null,
     fromAddress: signed.fromAddress ?? null,
+    signedHeader: signed.header,
   });
+
+  // Burn the cap here, not at sign time — for subresource 402s where
+  // the page might never retry, signing-without-consuming leaves the
+  // cap intact. The cap check already passed at detection; a false
+  // return here (two concurrent detections both passing before either
+  // injected) doesn't block the inject because the signature is already
+  // on the wire conceptually. Reservation/rollback would close that
+  // overshoot window cleanly.
+  if (signed.origin && signed.chainId && signed.asset && signed.amount) {
+    const consumed = tryConsume(signed.origin, signed.chainId, signed.asset, signed.amount);
+    if (!consumed) {
+      log.warn(
+        `[x402:inject] cap consume returned false for ${signed.origin} ${signed.amount} ` +
+        `— charge proceeds (already signed) but cap accounting may be off`
+      );
+    }
+  }
 
   log.info(
     `[x402:inject] attaching ${signed.header} to ${sanitizeUrlForLog(details.url)}`
