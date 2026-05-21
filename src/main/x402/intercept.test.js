@@ -52,12 +52,15 @@ const {
   clearDetectedPayment,
   clearAllPendingPayments,
   clearAllDetectedPayments,
+  consumePendingUnlockResume,
+  clearAllPendingUnlockResume,
   cleanupWebContents,
 } = require('./intercept');
 
 beforeEach(() => {
   clearAllPendingPayments();
   clearAllDetectedPayments();
+  clearAllPendingUnlockResume();
   mockRegister.mockClear();
   mockAppendReceipt.mockReset();
   mockHostSend.mockClear();
@@ -206,7 +209,7 @@ describe('detectPaymentRequiredHandler', () => {
     }));
   });
 
-  test('auto-pay: a locked-vault failure asks the host renderer to unlock instead of logging an error', () => {
+  test('auto-pay: a locked-vault failure asks the host renderer to unlock AND stashes a resume token with the original snapshot', () => {
     mockGetPermission.mockReturnValueOnce({
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
@@ -225,6 +228,53 @@ describe('detectPaymentRequiredHandler', () => {
           webContentsId: 7,
           origin: 'https://api.example',
         });
+        // Resume token captures the original detection + CAP authorization
+        // so a newer 402 replacing detectedPayments[7] while the user
+        // unlocks can't redirect the resume to sign a different charge.
+        const resume = consumePendingUnlockResume(7);
+        expect(resume).not.toBeNull();
+        expect(resume.detection).toEqual(expect.objectContaining({
+          url: 'https://api.example/article',
+          requirements: sampleRequirements,
+        }));
+        expect(resume.authorizedBy).toBe('cap');
+        resolve();
+      }));
+    });
+  });
+
+  test('consumePendingUnlockResume returns null past the TTL', async () => {
+    const realNow = Date.now;
+    const t0 = realNow();
+    Date.now = () => t0;
+    try {
+      mockGetPermission.mockReturnValueOnce({
+        capAmount: '20000', spentAmount: '0',
+        createdAt: 1, expiresAt: 9999999999,
+      });
+      mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+      detectPaymentRequiredHandler(detail());
+      await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+
+      // Jump past the 5-minute TTL.
+      Date.now = () => t0 + 6 * 60 * 1000;
+      expect(consumePendingUnlockResume(7)).toBeNull();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test('cleanupWebContents drops a stashed resume token for the closed tab', () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockSignAndQueueRetry.mockReset().mockRejectedValueOnce(new Error('Vault is locked'));
+    detectPaymentRequiredHandler(detail());
+    return new Promise((resolve) => {
+      setImmediate(() => setImmediate(() => {
+        cleanupWebContents(7);
+        expect(consumePendingUnlockResume(7)).toBeNull();
         resolve();
       }));
     });

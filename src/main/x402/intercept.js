@@ -102,6 +102,22 @@ const pendingPayments = new Map();
 // has everything the Payments tab needs to render.
 const awaitingResponse = new Map();
 
+// "Auto-pay tried to sign but the vault was locked; the user will unlock
+// via the sidebar and the standard x402:approve IPC will fire to resume."
+// Keyed by webContentsId. The value carries a snapshot of the original
+// detection PLUS its authorizedBy marker, so the resume signs the right
+// charge with the right consent — even if a newer 402 has since replaced
+// `detectedPayments[id]` while the unlock dialog was open. Without this
+// token the IPC handler would read whatever is currently in the map and
+// could end up signing a different charge as MANUAL just because the
+// user unlocked their vault.
+const pendingUnlockResume = new Map();
+
+// Vault unlocks should be quick (Touch ID is instant; password is
+// seconds). 5 minutes is generous and matches "user walked away then
+// came back" — beyond that the page would normally have lost state too.
+const UNLOCK_RESUME_TTL_MS = 5 * 60 * 1000;
+
 function pendingKey(webContentsId, url) {
   return `${webContentsId ?? ''}|${url}`;
 }
@@ -183,6 +199,35 @@ function clearAllDetectedPayments() {
 }
 
 /**
+ * Stash a snapshot+authorizedBy for the unlock-resume path. Single slot
+ * per tab — a second locked-vault auto-pay before unlock replaces the
+ * first (consistent with how `detectedPayments` itself is single-slot).
+ */
+function setPendingUnlockResume(webContentsId, { detection, authorizedBy }) {
+  pendingUnlockResume.set(webContentsId, {
+    detection,
+    authorizedBy,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * One-shot read of the unlock-resume token for `webContentsId`. Returns
+ * `null` if absent or past TTL.
+ */
+function consumePendingUnlockResume(webContentsId) {
+  const entry = pendingUnlockResume.get(webContentsId);
+  if (!entry) return null;
+  pendingUnlockResume.delete(webContentsId);
+  if (Date.now() - entry.createdAt > UNLOCK_RESUME_TTL_MS) return null;
+  return entry;
+}
+
+function clearAllPendingUnlockResume() {
+  pendingUnlockResume.clear();
+}
+
+/**
  * Drop any state held for a webContents that is going away. Called from
  * the `'destroyed'` handler in `webcontents-setup.js` — without it, a tab
  * that hits a 402 (or gets an interstitial-approved pending payment) and
@@ -190,6 +235,7 @@ function clearAllDetectedPayments() {
  */
 function cleanupWebContents(webContentsId) {
   detectedPayments.delete(webContentsId);
+  pendingUnlockResume.delete(webContentsId);
   const prefix = `${webContentsId}|`;
   // Snapshot keys before mutating — Map iteration is safe under delete in
   // V8 today but the snapshot keeps the invariant explicit.
@@ -377,11 +423,15 @@ function detectPaymentRequiredHandler(details) {
       signAndQueueRetry(id, { detection, authorizedBy: AUTHORIZED_BY.CAP }).catch((err) => {
         // Vault auto-locked between detection and sign: the cap already
         // authorised the charge, so we don't need a fresh approval — just
-        // a vault unlock. Fire an event at the sidebar; on unlock it'll
-        // call x402:approve which resumes sign-flow against the same
-        // still-detected payment.
+        // a vault unlock. Stash a resume token carrying THIS detection's
+        // snapshot + CAP authorization, then fire an event at the sidebar.
+        // On unlock, the standard x402:approve IPC will pick up the token
+        // and sign the same charge — even if a newer 402 has since
+        // replaced `detectedPayments[id]`. Tag-on-map alone wouldn't be
+        // enough; the newer detection would overwrite the tag.
         if (err?.message === 'Vault is locked') {
           log.info(`[x402:auto-pay] vault locked — requesting unlock for ${sanitizeUrlForLog(url)}`);
+          setPendingUnlockResume(id, { detection, authorizedBy: AUTHORIZED_BY.CAP });
           sendToHost(id, 'x402:unlock-needed', { webContentsId: id, origin: new URL(url).origin });
           return;
         }
@@ -557,5 +607,7 @@ module.exports = {
   clearDetectedPayment,
   clearAllPendingPayments,
   clearAllDetectedPayments,
+  consumePendingUnlockResume,
+  clearAllPendingUnlockResume,
   cleanupWebContents,
 };

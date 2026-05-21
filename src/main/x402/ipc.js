@@ -34,6 +34,7 @@ const { getToken, getTokenKey } = require('../token-registry');
 const {
   getDetectedPayment,
   clearDetectedPayment,
+  consumePendingUnlockResume,
 } = require('./intercept');
 const {
   revoke: revokePermission,
@@ -97,12 +98,24 @@ function registerX402Ipc() {
   ipcMain.handle(IPC.X402_APPROVE, async (event, args = {}) => {
     const id = args.webContentsId ?? event.sender.id;
     try {
-      // Preserve consent provenance through the resume-after-vault-unlock
-      // path: the detector tags cap-covered detections with `authorizedBy`,
-      // and we thread it into sign-flow so the unlock-resume bypasses
-      // neither the inject-time withhold gate nor the cap accounting.
-      // Untagged detections (sidebar approval card path) read as undefined
-      // and sign-flow defaults to MANUAL.
+      // Vault-unlock-resume path: if a locked-vault auto-pay stashed a
+      // resume token, use the captured snapshot so a newer 402 that
+      // replaced `detectedPayments[id]` during the unlock dialog can't
+      // redirect the sign. The token also carries CAP authorization,
+      // which threads into the inject-time withhold gate.
+      const resume = consumePendingUnlockResume(id);
+      if (resume) {
+        await signAndQueueRetry(id, {
+          grant: args.grant,
+          detection: resume.detection,
+          authorizedBy: resume.authorizedBy,
+        });
+        return { success: true };
+      }
+      // Standard approve path — user clicked Pay on the sidebar card.
+      // detectedPayments may carry `authorizedBy` from a prior cap-
+      // covered detection (defence in depth); sign-flow defaults to
+      // MANUAL when undefined.
       const detected = getDetectedPayment(id);
       await signAndQueueRetry(id, {
         grant: args.grant,

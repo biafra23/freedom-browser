@@ -81,6 +81,7 @@ beforeAll(() => {
 beforeEach(() => {
   intercept.clearAllDetectedPayments();
   intercept.clearAllPendingPayments();
+  intercept.clearAllPendingUnlockResume();
   mockClient.createPaymentPayload.mockReset();
   mockCreateClient.mockReset().mockResolvedValue(mockClient);
   mockGetActiveWalletIndex.mockReturnValue(0);
@@ -355,6 +356,74 @@ describe('x402:approve', () => {
       requestHeaders: {},
     });
     expect(injected).toBeNull();
+  });
+
+  test('vault-unlock resume: IPC approve uses the stashed snapshot, even if a NEWER 402 replaced the map detection', async () => {
+    // Full reproduction of the reviewer's bad-interleaving scenario:
+    //   1. Cap-covered A 402s; vault is locked; resume token captured.
+    //   2. Newer B 402s and replaces detectedPayments[id].
+    //   3. User unlocks; renderer calls x402:approve.
+    //   4. Resume must sign A (from token), not B (from map).
+    const urlA = 'https://api.example/article-A';
+    const urlB = 'https://api.example/article-B';
+    const requirementsB64 = Buffer.from(
+      JSON.stringify(v2Detected().requirements)
+    ).toString('base64');
+
+    // (1) A — cap-covered, vault locked at sign time.
+    mockGetPermission.mockReturnValueOnce({
+      origin: 'https://api.example',
+      chainId: 8453,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      capAmount: '20000', spentAmount: '0',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    mockCreateClient.mockRejectedValueOnce(new Error('Vault is locked'));
+
+    intercept.detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: urlA,
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: { 'PAYMENT-REQUIRED': [requirementsB64] },
+    });
+    // Wait for setImmediate + the .catch microtask to settle.
+    await new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+
+    // (2) B — replaces detectedPayments[42].
+    intercept.detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: urlB,
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: { 'PAYMENT-REQUIRED': [requirementsB64] },
+    });
+    expect(intercept.getDetectedPayment(42)?.url).toBe(urlB);
+
+    // (3) User unlocks. x402:approve fires.
+    mockCreateClient.mockResolvedValueOnce(mockClient);
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const result = await ipcHandlers['x402:approve'](senderEvent(42));
+    expect(result.success).toBe(true);
+
+    // (4) Pending payment is for A (the resume token), not B. We let the
+    // cap-consume succeed for this probe so inject attaches the header
+    // — the CAP-withhold behaviour is tested elsewhere; here we're
+    // verifying the right URL was signed.
+    mockTryConsume.mockReturnValueOnce(true);
+    expect(intercept.injectPaymentSignatureHandler({
+      webContentsId: 42, url: urlA, requestHeaders: {},
+    })).not.toBeNull();
+
+    // And NO pending payment for B (the newer map detection was ignored).
+    expect(intercept.injectPaymentSignatureHandler({
+      webContentsId: 42, url: urlB, requestHeaders: {},
+    })).toBeNull();
   });
 
   test('manual approve path stamps authorizedBy=manual so a false consume still attaches the header', async () => {
