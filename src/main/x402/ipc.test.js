@@ -748,6 +748,80 @@ describe('x402:get-all-permissions + x402:revoke-permission', () => {
   });
 });
 
+// === x402:reject =========================================================
+
+describe('x402:reject (subresource approval-card decline)', () => {
+  test('settles a pending approval as not-approved', async () => {
+    // Drive the detector into the approval-card await branch by firing
+    // a subresource 402 with no cap. The detector's promise hangs.
+    const handlerPromise = require('./intercept').detectPaymentRequiredHandler({
+      id: 9001,
+      webContentsId: 42,
+      url: 'https://api.example/segment/0',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'xhr',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    await Promise.resolve();
+
+    const result = await ipcHandlers['x402:reject'](senderEvent(42), { detectionId: 'req-9001' });
+    expect(result).toEqual({ success: true, settled: true });
+
+    // Detector returns null, page sees the 402.
+    expect(await handlerPromise).toBeNull();
+  });
+
+  test('returns settled=false when there is no pending approval for the detectionId', async () => {
+    const result = await ipcHandlers['x402:reject'](senderEvent(42), { detectionId: 'req-nonexistent' });
+    expect(result).toEqual({ success: true, settled: false });
+  });
+
+  test('refuses without a detectionId', async () => {
+    const result = await ipcHandlers['x402:reject'](senderEvent(42), {});
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/detectionId required/i);
+  });
+});
+
+describe('x402:approve with detectionId (subresource approval-card sign-on-click)', () => {
+  test('settles the pending approval; detector signs and returns 307', async () => {
+    const handlerPromise = require('./intercept').detectPaymentRequiredHandler({
+      id: 9002,
+      webContentsId: 42,
+      url: 'https://api.example/segment/0',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'xhr',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    await Promise.resolve();
+
+    webContents.fromId.mockReturnValue({ loadURL: jest.fn().mockResolvedValue() });
+    mockClient.createPaymentPayload.mockResolvedValue({
+      x402Version: 2,
+      payload: { authorization: {}, signature: '0xabc' },
+    });
+
+    const approveResult = await ipcHandlers['x402:approve'](senderEvent(42), {
+      detectionId: 'req-9002',
+    });
+    expect(approveResult.success).toBe(true);
+
+    const handlerResult = await handlerPromise;
+    expect(handlerResult).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: ['https://api.example/segment/0'] },
+    });
+  });
+});
+
 // === x402:cancel =========================================================
 
 describe('x402:cancel', () => {

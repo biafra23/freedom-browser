@@ -35,6 +35,9 @@ const {
   getDetectedPayment,
   clearDetectedPayment,
   consumePendingUnlockResume,
+  hasPendingApproval,
+  getPendingApproval,
+  settlePendingApproval,
 } = require('./intercept');
 const {
   revoke: revokePermission,
@@ -81,15 +84,42 @@ function registerX402Ipc() {
   // webview the 402 came from). For test ergonomics we also fall back
   // to `event.sender.id` — production callers pass it explicitly.
   ipcMain.handle(IPC.X402_GET_DETAILS, async (event, args = {}) => {
+    // When detectionId is provided, the lookup is strict — refusing to
+    // serve a different detection's data avoids "user sees A's details
+    // but actually approves B" if a newer 402 replaced the map slot
+    // between the event and this round-trip. Falls back to the
+    // tab-keyed entry only when the tab-keyed entry's detectionId still
+    // matches the request (mainFrame approval-card path).
+    //
+    // When detectionId is not provided (legacy / mainFrame callers
+    // that haven't been updated), fall back to the tab-keyed entry.
+    const { detectionId } = args;
     const id = args.webContentsId ?? event.sender.id;
-    const detected = getDetectedPayment(id);
-    if (!detected) {
-      return { success: false, error: 'No pending x402 payment for this tab' };
+
+    let detected;
+    if (detectionId) {
+      detected = getPendingApproval(detectionId);
+      if (!detected) {
+        const stored = getDetectedPayment(id);
+        if (stored && stored.detectionId === detectionId) {
+          detected = stored;
+        }
+      }
+      if (!detected) {
+        return { success: false, error: 'No pending x402 payment for this detectionId' };
+      }
+    } else {
+      detected = getDetectedPayment(id);
+      if (!detected) {
+        return { success: false, error: 'No pending x402 payment for this tab' };
+      }
     }
+
     return {
       success: true,
       url: detected.url,
       requirements: detected.requirements,
+      detectionId: detected.detectionId ?? detectionId ?? null,
       asset: lookupAsset(detected.requirements),
       autoPay: autoPayStateFor(detected.url, detected.requirements),
     };
@@ -97,12 +127,23 @@ function registerX402Ipc() {
 
   ipcMain.handle(IPC.X402_APPROVE, async (event, args = {}) => {
     const id = args.webContentsId ?? event.sender.id;
+    const { detectionId, grant } = args;
+
+    // WP7.1 subresource path: detector is awaiting the approval Promise.
+    // Settle it (the detector handler does sign + 307). Distinct from
+    // the mainFrame path which calls signAndQueueRetry + wc.loadURL here.
+    if (detectionId && hasPendingApproval(detectionId)) {
+      const settled = settlePendingApproval(detectionId, { approved: true, grant });
+      return { success: settled };
+    }
+
     try {
-      // Manual approve path — user clicked Pay on the sidebar card.
-      // `pendingUnlockResume` is intentionally NOT consumed here; that
-      // token is dedicated to the locked-vault auto-pay flow and only
-      // X402_RESUME_UNLOCK touches it. Mixing the two would let a click
-      // on B's approval card consume A's resume token and sign A.
+      // Manual approve path (mainFrame) — user clicked Pay on the
+      // sidebar card. `pendingUnlockResume` is intentionally NOT
+      // consumed here; that token is dedicated to the locked-vault
+      // auto-pay flow and only X402_RESUME_UNLOCK touches it. Mixing
+      // the two would let a click on B's approval card consume A's
+      // resume token and sign A.
       //
       // detectedPayments may carry `authorizedBy` if the auto-pay
       // detector tagged the map — pure defence-in-depth here, since the
@@ -110,7 +151,7 @@ function registerX402Ipc() {
       // handler. sign-flow defaults to MANUAL when undefined.
       const detected = getDetectedPayment(id);
       await signAndQueueRetry(id, {
-        grant: args.grant,
+        grant,
         authorizedBy: detected?.authorizedBy,
       });
       return { success: true };
@@ -119,6 +160,18 @@ function registerX402Ipc() {
       // so the sidebar can prompt the right next step.
       return { success: false, error: err.message };
     }
+  });
+
+  ipcMain.handle(IPC.X402_REJECT, async (_event, args = {}) => {
+    // Subresource approval-card reject. Settles the pending Promise with
+    // approved:false; the detector returns null and the page sees the
+    // 402. mainFrame paywall cancel still goes through X402_CANCEL.
+    const { detectionId } = args;
+    if (!detectionId) {
+      return { success: false, error: 'detectionId required' };
+    }
+    const settled = settlePendingApproval(detectionId, { approved: false });
+    return { success: true, settled };
   });
 
   ipcMain.handle(IPC.X402_RESUME_UNLOCK, async (event, args = {}) => {

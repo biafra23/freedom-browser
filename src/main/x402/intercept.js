@@ -27,6 +27,7 @@
  */
 
 const { webContents } = require('electron');
+const crypto = require('crypto');
 
 const log = require('../logger');
 const { parsePaymentRequired } = require('@x402/core/schemas');
@@ -116,6 +117,19 @@ const pendingUnlockResume = new Map();
 // seconds). 5 minutes is generous and matches "user walked away then
 // came back" — beyond that the page would normally have lost state too.
 const UNLOCK_RESUME_TTL_MS = 5 * 60 * 1000;
+
+// "A non-cap-covered subresource 402 is parked here, holding the
+// dispatcher's onHeadersReceived callback open until the sidebar tells
+// us the user approved or rejected." Keyed by detectionId (per-detection
+// identity, distinct from webContentsId so a newer 402 on the same tab
+// can't redirect the user's eventual click to a different charge — the
+// P2b "approved A, paid B" race fix). Single-card UI: a newer detection
+// supersedes any older entries for the same webContents.
+//
+// Each value: { resolve, reject, webContentsId, url, requirements,
+// resourceType, createdAt }. resolve/reject are the Promise handles the
+// detector awaits.
+const pendingApprovals = new Map();
 
 function pendingKey(webContentsId, url) {
   return `${webContentsId ?? ''}|${url}`;
@@ -231,6 +245,75 @@ function clearAllPendingUnlockResume() {
 }
 
 /**
+ * Mint a detectionId. Prefers Electron's stable per-request `details.id`
+ * (a non-negative integer) so the id is greppable in logs.
+ */
+function mintDetectionId(details) {
+  if (typeof details?.id === 'number' && details.id >= 0) {
+    return `req-${details.id}`;
+  }
+  return `gen-${crypto.randomUUID()}`;
+}
+
+/**
+ * Create a pending approval entry and return a Promise the detector
+ * awaits. Resolves with `{ approved: boolean, grant? }` when the user
+ * decides (IPC), or rejects when the entry is aborted (tab destroyed,
+ * superseded by a newer detection).
+ */
+function setPendingApproval(detectionId, ctx) {
+  return new Promise((resolve, reject) => {
+    pendingApprovals.set(detectionId, {
+      resolve,
+      reject,
+      detectionId,
+      webContentsId: ctx.webContentsId,
+      url: ctx.url,
+      requirements: ctx.requirements,
+    });
+  });
+}
+
+function hasPendingApproval(detectionId) {
+  return pendingApprovals.has(detectionId);
+}
+
+function getPendingApproval(detectionId) {
+  return pendingApprovals.get(detectionId) ?? null;
+}
+
+function settlePendingApproval(detectionId, decision) {
+  const entry = pendingApprovals.get(detectionId);
+  if (!entry) return false;
+  pendingApprovals.delete(detectionId);
+  entry.resolve(decision);
+  return true;
+}
+
+function abortPendingApproval(detectionId, reason) {
+  const entry = pendingApprovals.get(detectionId);
+  if (!entry) return false;
+  pendingApprovals.delete(detectionId);
+  entry.reject(reason);
+  return true;
+}
+
+function abortPendingApprovalsForTab(webContentsId, reason) {
+  for (const [id, entry] of pendingApprovals) {
+    if (entry.webContentsId === webContentsId) {
+      abortPendingApproval(id, reason);
+    }
+  }
+}
+
+function clearAllPendingApprovals() {
+  for (const [, entry] of pendingApprovals) {
+    entry.reject(new Error('cleared'));
+  }
+  pendingApprovals.clear();
+}
+
+/**
  * Drop any state held for a webContents that is going away. Called from
  * the `'destroyed'` handler in `webcontents-setup.js` — without it, a tab
  * that hits a 402 (or gets an interstitial-approved pending payment) and
@@ -239,6 +322,10 @@ function clearAllPendingUnlockResume() {
 function cleanupWebContents(webContentsId) {
   detectedPayments.delete(webContentsId);
   pendingUnlockResume.delete(webContentsId);
+  // Abort any in-flight approval awaits for this tab — without this the
+  // detector's `await` would hang forever and the dispatcher's
+  // onHeadersReceived callback would never release.
+  abortPendingApprovalsForTab(webContentsId, new Error('tab destroyed'));
   const prefix = `${webContentsId}|`;
   // Snapshot keys before mutating — Map iteration is safe under delete in
   // V8 today but the snapshot keeps the invariant explicit.
@@ -520,14 +607,93 @@ async function detectPaymentRequiredHandler(details) {
     return null;
   }
 
-  // Otherwise fire the approval event at the host renderer; the
-  // sidebar will pop up an approval card.
+  // Not cap-covered. The sidebar will pop an approval card. Two flows
+  // from here:
+  //
+  // - mainFrame: fire the event and return null. The page renders the
+  //   402 while the user decides; the sidebar's Approve button calls
+  //   x402:approve, which signs + wc.loadURL via signAndQueueRetry.
+  //   Existing behaviour, unchanged.
+  //
+  // - Subresource: hold onHeadersReceived open (await the approval
+  //   Promise). On approve → sign + return 307; Chromium follows the
+  //   redirect and our injector attaches PAYMENT-SIGNATURE on the
+  //   followed request. The page's fetch resolves with paid bytes —
+  //   never sees the 402. On reject → return null; the page sees the
+  //   402. This is WP7.1 Option α (transparent).
+  //
+  // detectionId identifies THIS specific 402 across event payload, IPC
+  // approve/reject, and the pendingApprovals Map. P2b fix: a newer 402
+  // arriving on the same tab while the user is still deciding aborts
+  // the older entry — the sidebar will have replaced the card anyway.
+  const detectionId = mintDetectionId(details);
+  abortPendingApprovalsForTab(details.webContentsId, new Error('superseded by newer 402'));
+  detectedPayments.set(details.webContentsId, {
+    ...detectedPayments.get(details.webContentsId),
+    detectionId,
+  });
+  // Event payload includes `resourceType` so the renderer can pick the
+  // right teardown IPC (subresource → x402:reject; mainFrame → x402:cancel
+  // which also goBacks the webview).
   sendToHost(details.webContentsId, 'x402:approval-needed', {
     webContentsId: details.webContentsId,
+    detectionId,
     url: details.url,
     requirements,
+    resourceType: details.resourceType,
   });
-  return null;
+
+  // Predicate kept inline rather than a shared helper because there are
+  // only two callers (here and dapp-x402.js#reject). If a third appears,
+  // extract.
+  const isSubresource = details.resourceType && details.resourceType !== 'mainFrame';
+  if (!isSubresource) {
+    return null;
+  }
+
+  let decision;
+  try {
+    decision = await setPendingApproval(detectionId, {
+      webContentsId: details.webContentsId,
+      url: details.url,
+      requirements,
+    });
+  } catch (err) {
+    // Abort path: tab destroyed, superseded by newer 402, or Chromium
+    // aborted our held-open response (the last is defensive — not seen
+    // in smoke; if it ever fires, this log is how we find out).
+    if (err?.message && /aborted|cancelled/i.test(err.message)) {
+      log.warn(`[x402:approval] response aborted while waiting for user; webContentsId=${details.webContentsId}: ${err.message}`);
+    } else {
+      log.info(`[x402:approval] subresource approval aborted: ${err?.message ?? err}`);
+    }
+    return null;
+  }
+
+  if (!decision.approved) {
+    log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} rejected; passing 402 through`);
+    return null;
+  }
+
+  try {
+    const { signAndQueueRetry } = require('./sign-flow');
+    await signAndQueueRetry(details.webContentsId, {
+      detection: { url: details.url, requirements, resourceType: details.resourceType },
+      authorizedBy: AUTHORIZED_BY.MANUAL,
+      grant: decision.grant,
+    });
+    log.info(`[x402:approval] subresource ${sanitizeUrlForLog(details.url)} signed; returning 307`);
+    return {
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: [details.url] },
+    };
+  } catch (err) {
+    log.error(
+      `[x402:approval] sign failed AFTER user approved ${sanitizeUrlForLog(details.url)}: ` +
+      `${err.message}\n  stack: ${err.stack}`
+    );
+    return null;
+  }
 }
 
 // onHeadersReceived (chained after detect). On a successful retry the
@@ -689,5 +855,11 @@ module.exports = {
   clearAllAwaitingResponse,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
+  hasPendingApproval,
+  getPendingApproval,
+  settlePendingApproval,
+  abortPendingApproval,
+  abortPendingApprovalsForTab,
+  clearAllPendingApprovals,
   cleanupWebContents,
 };

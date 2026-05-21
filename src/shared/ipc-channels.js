@@ -158,6 +158,12 @@ module.exports = {
   // x402 — payment interstitial (renderer ↔ main)
   X402_GET_DETAILS: 'x402:get-details',
   X402_APPROVE: 'x402:approve',
+  // Subresource approval-card reject (Option α — sign-on-click path).
+  // Settles the detector's awaited approval Promise so it returns null
+  // and the original 402 propagates to the page. Distinct from
+  // X402_CANCEL: cancel navigates the webview away from a mainFrame
+  // paywall page; reject just declines a subresource charge.
+  X402_REJECT: 'x402:reject',
   // Dedicated resume channel for the locked-vault auto-pay flow. The
   // renderer's `handleAutoPayUnlock` is the only caller. Manual approve
   // clicks go through X402_APPROVE and must not consume an unlock-resume

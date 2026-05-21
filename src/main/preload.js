@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // the sidebar is the host webContents, not the paying webview.
   x402GetDetails: (args) => ipcRenderer.invoke('x402:get-details', args),
   x402Approve: (args) => ipcRenderer.invoke('x402:approve', args),
+  // Subresource approval-card reject (sign-on-click flow). For
+  // mainFrame paywall cancel, use x402Cancel (which also navigates the
+  // webview).
+  x402Reject: (args) => ipcRenderer.invoke('x402:reject', args),
   // Dedicated resume channel for the locked-vault auto-pay flow. Manual
   // approve clicks must use x402Approve and not this — the resume token
   // is consent-source-specific.

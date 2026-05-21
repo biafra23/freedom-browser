@@ -55,6 +55,10 @@ const {
   clearAllAwaitingResponse,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
+  hasPendingApproval,
+  settlePendingApproval,
+  abortPendingApproval,
+  clearAllPendingApprovals,
   cleanupWebContents,
 } = require('./intercept');
 
@@ -63,6 +67,7 @@ beforeEach(() => {
   clearAllDetectedPayments();
   clearAllAwaitingResponse();
   clearAllPendingUnlockResume();
+  clearAllPendingApprovals();
   mockRegister.mockClear();
   mockAppendReceipt.mockReset();
   mockHostSend.mockClear();
@@ -451,6 +456,134 @@ describe('detectPaymentRequiredHandler', () => {
     detectPaymentRequiredHandler(detail());
     clearDetectedPayment(7);
     expect(getDetectedPayment(7)).toBeNull();
+  });
+});
+
+// === WP7.1: approval-card subresource path (Option α) ====================
+
+describe('approval-card subresource path (await user decision, then 307)', () => {
+  const detail = (overrides = {}) => ({
+    id: 1001,
+    webContentsId: 7,
+    url: 'https://api.example/segment/0',
+    statusLine: 'HTTP/1.1 402 Payment Required',
+    responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    resourceType: 'xhr',
+    ...overrides,
+  });
+
+  test('mints a detectionId and includes it + resourceType in the approval-needed event payload', async () => {
+    // Cap doesn't cover (default mockGetPermission returns null) → approval card path.
+    // Don't await the detector — it will hang on the approval Promise.
+    detectPaymentRequiredHandler(detail());
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-needed', expect.objectContaining({
+      webContentsId: 7,
+      url: 'https://api.example/segment/0',
+      detectionId: 'req-1001',
+      // resourceType in the payload is what tells the renderer to use
+      // x402:reject (subresource) rather than x402:cancel (mainFrame).
+      resourceType: 'xhr',
+    }));
+    abortPendingApproval('req-1001', new Error('test cleanup'));
+  });
+
+  test('on approve: signs with MANUAL authorization and returns a same-URL 307', async () => {
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    // Yield so the detector reaches the await.
+    await Promise.resolve();
+
+    // Sidebar's Approve → settle the pending Promise.
+    const settled = settlePendingApproval('req-1001', { approved: true });
+    expect(settled).toBe(true);
+
+    const result = await handlerPromise;
+    expect(result).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: ['https://api.example/segment/0'] },
+    });
+    expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, expect.objectContaining({
+      detection: expect.objectContaining({ url: 'https://api.example/segment/0' }),
+      authorizedBy: 'manual',
+    }));
+  });
+
+  test('on reject: returns null so the page sees the 402', async () => {
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    settlePendingApproval('req-1001', { approved: false });
+
+    const result = await handlerPromise;
+    expect(result).toBeNull();
+    expect(mockSignAndQueueRetry).not.toHaveBeenCalled();
+  });
+
+  test('grant payload from approval rides through to signAndQueueRetry', async () => {
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    settlePendingApproval('req-1001', {
+      approved: true,
+      grant: { capAmount: '10000000', windowSeconds: 30 * 24 * 60 * 60 },
+    });
+
+    await handlerPromise;
+    expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, expect.objectContaining({
+      grant: { capAmount: '10000000', windowSeconds: 30 * 24 * 60 * 60 },
+    }));
+  });
+
+  test('a newer 402 on the same tab aborts the older pending approval (single-card UI)', async () => {
+    const firstPromise = detectPaymentRequiredHandler(detail({ id: 1001, url: 'https://api.example/segment/0' }));
+    await Promise.resolve();
+    expect(hasPendingApproval('req-1001')).toBe(true);
+
+    // Newer 402 fires.
+    const secondPromise = detectPaymentRequiredHandler(detail({ id: 1002, url: 'https://api.example/segment/1' }));
+    await Promise.resolve();
+
+    // Older entry gone, newer entry in place.
+    expect(hasPendingApproval('req-1001')).toBe(false);
+    expect(hasPendingApproval('req-1002')).toBe(true);
+
+    // First handler resolved as null (aborted).
+    expect(await firstPromise).toBeNull();
+
+    // Clean up the second.
+    settlePendingApproval('req-1002', { approved: false });
+    expect(await secondPromise).toBeNull();
+  });
+
+  test('tab destruction aborts the pending approval (the dispatcher callback releases instead of hanging)', async () => {
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+    expect(hasPendingApproval('req-1001')).toBe(true);
+
+    cleanupWebContents(7);
+
+    expect(hasPendingApproval('req-1001')).toBe(false);
+    expect(await handlerPromise).toBeNull();
+  });
+
+  test('mainFrame: NOT awaited; existing behaviour — event fires and handler returns null synchronously', async () => {
+    // mainFrame keeps the legacy path: page sees the 402, user clicks
+    // Approve later, x402:approve IPC fires wc.loadURL.
+    const result = await detectPaymentRequiredHandler(detail({ resourceType: 'mainFrame' }));
+    expect(result).toBeNull();
+    expect(hasPendingApproval('req-1001')).toBe(false);
+    expect(mockHostSend).toHaveBeenCalledWith('x402:approval-needed', expect.objectContaining({
+      detectionId: 'req-1001',
+    }));
+  });
+
+  test('falls back to a generated detectionId when details.id is missing', async () => {
+    detectPaymentRequiredHandler(detail({ id: undefined }));
+    // mockHostSend is host.send(channel, payload) → [channel, payload]
+    const call = mockHostSend.mock.calls.find((c) => c[0] === 'x402:approval-needed');
+    const payload = call?.[1];
+    expect(payload?.detectionId).toMatch(/^gen-/);
+    // Clean up.
+    abortPendingApproval(payload.detectionId, new Error('test cleanup'));
   });
 });
 

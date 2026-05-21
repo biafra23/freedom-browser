@@ -181,11 +181,12 @@ function wireButtons() {
   });
 }
 
-async function showApproval({ webContentsId, url, requirements }) {
+async function showApproval({ webContentsId, detectionId, url, requirements, resourceType }) {
   // Re-fetch the canonical details via IPC so the sidebar trusts main's
-  // view (including the asset lookup against our allowlist). We only
-  // use the event's `url` + `webContentsId` as routing context.
-  const details = await window.electronAPI.x402GetDetails({ webContentsId });
+  // view (asset allowlist, autoPay state). detectionId routes to the
+  // specific 402 we got the event for, immune to a newer detection
+  // replacing detectedPayments[webContentsId] in main.
+  const details = await window.electronAPI.x402GetDetails({ webContentsId, detectionId });
   if (!details?.success) {
     console.warn('[x402] approval-needed event for an unknown tab:', details?.error);
     return;
@@ -193,6 +194,8 @@ async function showApproval({ webContentsId, url, requirements }) {
 
   pending = {
     webContentsId,
+    detectionId: details.detectionId ?? detectionId ?? null,
+    resourceType: resourceType ?? null,
     url: details.url ?? url,
     requirements: details.requirements ?? requirements,
     asset: details.asset,
@@ -335,6 +338,7 @@ async function approve() {
   const grant = grantToggle?.checked && pending.grantPayload ? pending.grantPayload : undefined;
   const result = await window.electronAPI.x402Approve({
     webContentsId: pending.webContentsId,
+    detectionId: pending.detectionId,
     grant,
   });
 
@@ -360,11 +364,23 @@ async function reject() {
     return;
   }
   const id = pending.webContentsId;
+  const detectionId = pending.detectionId;
+  const isSubresource = pending.resourceType && pending.resourceType !== 'mainFrame';
   closeAndReset();
   try {
-    await window.electronAPI.x402Cancel({ webContentsId: id });
+    if (isSubresource && detectionId) {
+      // Subresource flow: settle the pending approval Promise so the
+      // detector returns null and the page sees the 402. No webview
+      // navigation — the user is still on whatever page initiated the
+      // subresource fetch.
+      await window.electronAPI.x402Reject({ detectionId });
+    } else {
+      // mainFrame paywall page: existing behaviour — clear detection
+      // and navigate the webview back (or to about:blank if no history).
+      await window.electronAPI.x402Cancel({ webContentsId: id });
+    }
   } catch (err) {
-    console.error('[x402] cancel failed:', err);
+    console.error('[x402] reject/cancel failed:', err);
   }
 }
 
