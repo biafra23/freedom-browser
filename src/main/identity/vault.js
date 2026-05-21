@@ -11,6 +11,7 @@ const { encrypt, decrypt } = require('@metamask/browser-passworder');
 const fs = require('fs');
 const path = require('path');
 const { isValidMnemonic, createMnemonic, deriveUserWallet } = require('./derivation');
+const { VAULT_LOCKED_MESSAGE } = require('../wallet/vault-errors');
 
 // Vault state
 let unlockedMnemonic = null;
@@ -257,7 +258,7 @@ async function verifyPassword(dataDir, password) {
  */
 function exportMnemonic() {
   if (!unlockedMnemonic) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
   return unlockedMnemonic;
 }
@@ -270,7 +271,7 @@ function exportMnemonic() {
  */
 function exportPrivateKey(accountIndex = 0) {
   if (!unlockedMnemonic) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
   const wallet = deriveUserWallet(unlockedMnemonic, accountIndex);
   return wallet.privateKey;

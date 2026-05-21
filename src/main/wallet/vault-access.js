@@ -18,6 +18,7 @@
 
 const { loadIdentityModule } = require('../identity-manager');
 const { resetVaultAutoLockTimer } = require('../vault-timer');
+const { VAULT_LOCKED_MESSAGE } = require('./vault-errors');
 
 /**
  * Check that a wallet index is a non-negative integer. dApp IPC handlers
@@ -34,8 +35,9 @@ function isValidWalletIndex(walletIndex) {
 /**
  * Borrow a private key from the vault for a single operation.
  *
- * Throws `Error('Vault is locked')` if the vault is locked at call time
- * (matches the codebase convention for thrown-vault-locked errors).
+ * Throws `Error(VAULT_LOCKED_MESSAGE)` if the vault is locked at call
+ * time. Recovery code: use `isVaultLockedError(err)` rather than a
+ * literal string compare.
  * Throws `Error('Invalid wallet index')` if the index would not
  * round-trip through vault derivation.
  *
@@ -54,7 +56,7 @@ async function withVaultPrivateKey(walletIndex, callback) {
   }
   const identity = await loadIdentityModule();
   if (!identity.isUnlocked()) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
   const privateKey = identity.exportPrivateKey(walletIndex);
   const result = await callback(privateKey);

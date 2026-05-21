@@ -36,6 +36,7 @@ const paymentHistory = require('../payment-history');
 const { KINDS: PAYMENT_KINDS, STATUSES: PAYMENT_STATUSES } = paymentHistory;
 const { getPermissionCoverage } = require('./payment-utils');
 const { tryConsume } = require('./permissions');
+const { isVaultLockedError } = require('../wallet/vault-errors');
 
 // Header names used on the wire. V2 uses the un-prefixed names; V1 (Coinbase
 // original) ships with the `X-` prefix. Centralised so WP4 callers reference
@@ -573,7 +574,7 @@ async function detectPaymentRequiredHandler(details) {
           responseHeaders: { Location: [url] },
         };
       } catch (err) {
-        if (err?.message === 'Vault is locked') {
+        if (isVaultLockedError(err)) {
           log.info(`[x402:auto-pay] vault locked — letting the 402 through, requesting unlock`);
           requestVaultUnlockForAutoPay(id, detection, url);
           return null;
@@ -596,7 +597,7 @@ async function detectPaymentRequiredHandler(details) {
         // detection's snapshot + CAP authorization so the unlock-resume
         // signs the right charge even if a newer 402 replaced
         // detectedPayments[id] while the unlock dialog was open.
-        if (err?.message === 'Vault is locked') {
+        if (isVaultLockedError(err)) {
           log.info(`[x402:auto-pay] vault locked — requesting unlock for ${sanitizeUrlForLog(url)}`);
           requestVaultUnlockForAutoPay(id, detection, url);
           return;
@@ -702,7 +703,7 @@ async function detectPaymentRequiredHandler(details) {
       // again. Other errors are usually real bugs but the user can still
       // click Reject to exit; no need for the retry loop to special-case
       // unrecoverable errors.
-      if (err?.message === 'Vault is locked') {
+      if (isVaultLockedError(err)) {
         log.warn(`[x402:approval] sign blocked by locked vault for ${sanitizeUrlForLog(details.url)}; waiting for unlock + retry`);
       } else {
         log.error(
