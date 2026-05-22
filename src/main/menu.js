@@ -296,6 +296,7 @@ function buildSharedMenuEntries(ctx) {
 
   return [
     { label: 'File', submenu: buildFileSubmenu(isMac) },
+    buildEditMenuEntry(isMac),
     {
       label: 'View',
       submenu: buildViewSubmenu({
@@ -304,7 +305,6 @@ function buildSharedMenuEntries(ctx) {
       }),
     },
     { label: 'History', submenu: buildHistorySubmenu(isMac) },
-    buildEditMenuEntry(isMac),
   ];
 }
 

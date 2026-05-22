@@ -58,6 +58,20 @@ describe('menu', () => {
     expect(findTopLabel(capturedTemplate, 'Edit')).toBeTruthy();
   });
 
+  test('Windows and Linux place Edit immediately after File', () => {
+    for (const platform of ['win32', 'linux']) {
+      const { capturedTemplate } = loadMenuModule(platform);
+      const labels = capturedTemplate.map((item) => item.label ?? item.role);
+      const fileIndex = labels.indexOf('File');
+      const editIndex = labels.indexOf('Edit');
+      const viewIndex = labels.indexOf('View');
+
+      expect(fileIndex).toBeGreaterThanOrEqual(0);
+      expect(editIndex).toBe(fileIndex + 1);
+      expect(viewIndex).toBeGreaterThan(editIndex);
+    }
+  });
+
   test('Linux template uses explicit Edit roles for clipboard accelerators', () => {
     const { capturedTemplate } = loadMenuModule('linux');
     const edit = findTopLabel(capturedTemplate, 'Edit');
@@ -76,5 +90,17 @@ describe('menu', () => {
     expect(capturedTemplate.some((item) => item.role === 'editMenu')).toBe(true);
     expect(capturedTemplate.some((item) => item.role === 'windowMenu')).toBe(true);
     expect(findTopLabel(capturedTemplate, 'Edit')).toBeFalsy();
+  });
+
+  test('macOS places editMenu immediately after File', () => {
+    const { capturedTemplate } = loadMenuModule('darwin');
+    const labels = capturedTemplate.map((item) => item.label ?? item.role);
+    const fileIndex = labels.indexOf('File');
+    const editIndex = labels.indexOf('editMenu');
+    const viewIndex = labels.indexOf('View');
+
+    expect(fileIndex).toBeGreaterThanOrEqual(0);
+    expect(editIndex).toBe(fileIndex + 1);
+    expect(viewIndex).toBeGreaterThan(editIndex);
   });
 });
