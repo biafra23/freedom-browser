@@ -1010,6 +1010,23 @@ async function resolveSingleSourceUnverified(url, name, callData, anchor, timeou
   throw legResult.error || new Error('Single-provider resolution failed');
 }
 
+function getDirectRpcCandidate(chainId) {
+  const cid = String(chainId);
+  const [url] = registry.getEndpoints(chainId, 'rpc');
+  if (!url) return { url: null, userConfigured: false };
+
+  const source = registry.getEndpointSources(chainId, 'rpc').find(
+    (src) => !src.keyed && src.coverage?.[cid] === url
+  );
+  const sourceMeta = source
+    ? registry.getEndpointSourceList().find((src) => src.id === source.id)
+    : null;
+  return {
+    url,
+    userConfigured: !!sourceMeta && !sourceMeta.builtin && !sourceMeta.removed && !sourceMeta.keyed,
+  };
+}
+
 // Returns one of:
 //   { outcome: 'data',       resolvedData, resolverAddress, trust, block }
 //   { outcome: 'not_found',  reason,                         trust, block }
@@ -1043,13 +1060,10 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   // only then is the answer honestly 'user-configured'; with no custom
   // endpoint added, `direct` is just an unverified builtin public RPC.
   if (strategy === 'direct') {
-    const [directUrl] = registry.getEndpoints(1, 'rpc');
-    if (directUrl) {
-      const userConfigured = registry.getEndpointSourceList().some(
-        (s) => s.role === 'rpc' && !s.builtin && !s.removed && s.coverage && s.coverage['1']
-      );
+    const direct = getDirectRpcCandidate(1);
+    if (direct.url) {
       const directResult = await tryDirectResolve(
-        directUrl, normalizedName, callData, userConfigured
+        direct.url, normalizedName, callData, direct.userConfigured
       );
       if (directResult) return directResult;
     }

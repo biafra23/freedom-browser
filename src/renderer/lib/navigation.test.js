@@ -1456,6 +1456,35 @@ describe('navigation', () => {
 
       expect(ctx.elements.trustShield.hidden).toBe(true);
     });
+
+    test('network config updates clear ENS trust and re-resolve the current name', async () => {
+      const ctx = await loadNavigationModule();
+      ctx.pageUrlsMocks.parseEnsInput.mockImplementation((value) => {
+        const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
+        if (!m) return null;
+        const name = m[1].toLowerCase();
+        return name.endsWith('.eth') ? { name, suffix: m[2] || '', assertedTransport: null } : null;
+      });
+      await ctx.mod.initNavigation();
+
+      ctx.state.ensTrustByName.set('vitalik.eth', {
+        level: 'verified',
+        queried: ['a', 'b'],
+        agreed: ['a', 'b'],
+      });
+      ctx.state.ensUriByName.set('vitalik.eth', 'bzz://old-reference');
+      ctx.elements.addressInput.value = 'ens://vitalik.eth';
+      ctx.elements.addressInput.dispatch('input');
+      expect(ctx.elements.trustShield.hidden).toBe(false);
+
+      ctx.electronAPI.resolveEns.mockReturnValue(new Promise(() => {}));
+      ctx.mod.onSettingsChanged({ networkConfigUpdated: true });
+
+      expect(ctx.state.ensTrustByName.size).toBe(0);
+      expect(ctx.state.ensUriByName.size).toBe(0);
+      expect(ctx.elements.trustShield.hidden).toBe(true);
+      expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+    });
   });
 
   describe('trust popover staleness', () => {

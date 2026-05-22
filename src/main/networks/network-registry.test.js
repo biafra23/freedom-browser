@@ -261,17 +261,34 @@ describe('mutation layer', () => {
 
   test('upsertEndpointSource adds a user source visible to getEndpoints', () => {
     registry.upsertEndpointSource('my-rpc', {
-      role: 'rpc', keyed: false, coverage: { '1': 'http://my-rpc.example' },
+      role: 'rpc', keyed: false, coverage: { '1': 'https://my-rpc.example' },
     });
-    expect(registry.getEndpoints(1, 'rpc')).toContain('http://my-rpc.example');
+    expect(registry.getEndpoints(1, 'rpc')).toContain('https://my-rpc.example');
   });
 
   test('upsertEndpointSource un-hides a previously removed builtin', () => {
     setFiles({ userConfig: { removedSources: ['eth-public'] } });
     registry.upsertEndpointSource('eth-public', {
-      role: 'rpc', keyed: false, coverage: { '1': 'http://override.example' },
+      role: 'rpc', keyed: false, coverage: { '1': 'https://override.example' },
     });
-    expect(registry.getEndpoints(1, 'rpc')).toContain('http://override.example');
+    expect(registry.getEndpoints(1, 'rpc')).toContain('https://override.example');
+  });
+
+  test.each([
+    ['http://rpc.example'],
+    ['file:///tmp/rpc.sock'],
+    ['https://localhost:8545'],
+    ['https://127.0.0.1:8545'],
+    ['https://192.168.1.10'],
+    ['https://rpc.local'],
+    ['https://rpc.example/${API_KEY}'],
+  ])('upsertEndpointSource rejects unsafe RPC URL %s', (url) => {
+    const result = registry.upsertEndpointSource('bad-rpc', {
+      role: 'rpc', keyed: false, coverage: { '1': url },
+    });
+
+    expect(result.success).toBe(false);
+    expect(registry.getEndpointSourceList().find((src) => src.id === 'bad-rpc')).toBeUndefined();
   });
 
   test('removeEndpointSource hides a builtin source', () => {
@@ -361,6 +378,20 @@ describe('addCustomChain', () => {
   test('imports rpcUrls as keyless endpoint sources for the chain', () => {
     registry.addCustomChain({ chainId: 8453, name: 'Base' }, ['https://a.example', 'https://b.example']);
     expect(registry.getEndpoints(8453, 'rpc')).toEqual(['https://a.example', 'https://b.example']);
+  });
+
+  test.each([
+    ['http://base.example'],
+    ['file:///tmp/base.sock'],
+    ['https://localhost:8545'],
+    ['https://10.0.0.5'],
+    ['https://base.local'],
+    ['https://base.example/${API_KEY}'],
+  ])('rejects unsafe imported RPC URL %s', (url) => {
+    const result = registry.addCustomChain({ chainId: 8453, name: 'Base' }, [url]);
+
+    expect(result.success).toBe(false);
+    expect(registry.getNetwork(8453)).toBeNull();
   });
 
   test('imported rpcUrls are public (builtin) endpoints, not hand-added', () => {

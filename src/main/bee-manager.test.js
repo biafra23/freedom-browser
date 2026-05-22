@@ -223,17 +223,19 @@ function loadBeeManagerModule(options = {}) {
   const loadSettings = options.loadSettings || jest.fn(() => ({
     beeNodeMode: options.beeNodeMode || 'ultraLight',
   }));
-  const rpcUrls = options.rpcUrls || ['https://rpc.gnosischain.com'];
+  const gnosisRpcUrls = options.rpcUrls || ['https://rpc.gnosischain.com'];
+  const ethereumRpcUrls = options.ethereumRpcUrls || ['https://ethereum.publicnode.com'];
   const registry = options.registry || {
-    getEndpointSources: jest.fn(() => (
-      options.endpointSources || rpcUrls.map((url, index) => ({
-        id: `gno-test-${index + 1}`,
+    getEndpointSources: jest.fn((chainId) => {
+      const urls = Number(chainId) === 1 ? ethereumRpcUrls : gnosisRpcUrls;
+      return options.endpointSources || urls.map((url, index) => ({
+        id: `${Number(chainId) === 1 ? 'eth' : 'gno'}-test-${index + 1}`,
         role: 'rpc',
         keyed: false,
-        coverage: { 100: url },
-      }))
-    )),
-    getEndpoints: jest.fn(() => rpcUrls),
+        coverage: { [chainId]: url },
+      }));
+    }),
+    getEndpoints: jest.fn((chainId) => (Number(chainId) === 1 ? ethereumRpcUrls : gnosisRpcUrls)),
   };
 
   const platformMap = {
@@ -484,6 +486,7 @@ describe('bee-manager', () => {
     expect(configContent).toContain('api-addr: 127.0.0.1:1634');
     expect(configContent).toContain('swap-enable: false');
     expect(configContent).toContain('blockchain-rpc-endpoint: ""');
+    expect(configContent).toContain('resolver-options: "https://ethereum.publicnode.com"');
     expect(configContent).toContain(`data-dir: ${ctx.dataDir}`);
     expect(configContent).toContain(`password: ${'ab'.repeat(32)}`);
 
@@ -503,6 +506,7 @@ describe('bee-manager', () => {
     const ctx = loadBeeManagerModule({
       beeNodeMode: 'light',
       rpcUrls: ['https://rpc.gnosischain.com', 'https://backup.gnosis.example'],
+      ethereumRpcUrls: ['https://eth.user.example', 'https://ethereum.publicnode.com'],
       portSequence: [false],
       httpResponse: (url) => {
         if (url === 'http://127.0.0.1:1633/health') {
@@ -528,6 +532,7 @@ describe('bee-manager', () => {
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('swap-enable: true');
     expect(configContent).toContain('blockchain-rpc-endpoint: "https://rpc.gnosischain.com"');
+    expect(configContent).toContain('resolver-options: "https://eth.user.example"');
 
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);

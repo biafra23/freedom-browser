@@ -1109,6 +1109,9 @@
                 <input type="text" class="rpc-input" id="man-symbol" placeholder="Currency symbol (e.g. ETH)" spellcheck="false" />
               </div>
               <div class="rpc-row" style="margin-bottom: 8px">
+                <input type="number" class="rpc-input" id="man-decimals" placeholder="Currency decimals (e.g. 18)" value="18" min="0" step="1" />
+              </div>
+              <div class="rpc-row" style="margin-bottom: 8px">
                 <input type="text" class="rpc-input" id="man-rpc" placeholder="RPC URL (https://…)" spellcheck="false" />
               </div>
               <button type="button" class="btn" data-action="submit-manual">Add chain</button>
@@ -1444,6 +1447,7 @@
                 chainId: c.chainId,
                 name: c.name,
                 nativeSymbol: (c.nativeCurrency && c.nativeCurrency.symbol) || '',
+                nativeCurrency: c.nativeCurrency || null,
                 blockExplorer: c.explorerUrl || '',
               },
               c.rpcUrls || []);
@@ -1451,13 +1455,25 @@
             const chainId = ($('man-chainid')?.value || '').trim();
             const name = ($('man-name')?.value || '').trim();
             const symbol = ($('man-symbol')?.value || '').trim();
+            const decimalsRaw = ($('man-decimals')?.value || '').trim();
             const rpc = ($('man-rpc')?.value || '').trim();
-            if (!chainId || !name || !rpc) {
-              setStatus('Chain ID, name and RPC URL are required', 'error');
+            const decimals = decimalsRaw === '' ? 18 : Number(decimalsRaw);
+            if (!chainId || !name || !symbol || !rpc) {
+              setStatus('Chain ID, name, currency symbol and RPC URL are required', 'error');
+              return;
+            }
+            if (!Number.isInteger(decimals) || decimals < 0) {
+              setStatus('Currency decimals must be a non-negative whole number', 'error');
               return;
             }
             await submitAddChain(
-              { chainId: Number(chainId), name, nativeSymbol: symbol, blockExplorer: '' },
+              {
+                chainId: Number(chainId),
+                name,
+                nativeSymbol: symbol,
+                nativeCurrency: { name: symbol, symbol, decimals },
+                blockExplorer: '',
+              },
               [rpc]);
           }
         });

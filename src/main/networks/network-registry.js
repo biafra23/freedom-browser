@@ -1,6 +1,7 @@
 const { app } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const net = require('node:net');
 const log = require('../logger');
 const { migrateLegacyConfig } = require('./migration');
 
@@ -33,6 +34,107 @@ function readJson(filePath, fallback) {
     }
     return fallback;
   }
+}
+
+function normalizeHostname(hostname) {
+  return String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+}
+
+function isInternalIpv4(hostname) {
+  const parts = hostname.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return true;
+  }
+
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+function isInternalIpv6(hostname) {
+  if (hostname === '::' || hostname === '::1') return true;
+  if (hostname.startsWith('fc') || hostname.startsWith('fd')) return true;
+  if (hostname === 'fe80::' || hostname.startsWith('fe80:')) return true;
+  if (hostname.startsWith('::ffff:')) {
+    return isInternalIpv4(hostname.slice('::ffff:'.length));
+  }
+  return false;
+}
+
+function isInternalHostname(hostname) {
+  const host = normalizeHostname(hostname);
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    return true;
+  }
+
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) return isInternalIpv4(host);
+  if (ipVersion === 6) return isInternalIpv6(host);
+  return !host.includes('.');
+}
+
+function validateRpcUrl(url) {
+  const trimmed = typeof url === 'string' ? url.trim() : '';
+  if (!trimmed) return 'RPC URL is required';
+  if (trimmed.includes('{') || trimmed.includes('}')) {
+    return 'RPC URL must not contain API-key placeholders';
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return 'RPC URL must be a valid URL';
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return 'RPC URL must use https://';
+  }
+  if (parsed.username || parsed.password) {
+    return 'RPC URL must not include credentials';
+  }
+  if (isInternalHostname(parsed.hostname)) {
+    return 'RPC URL must use a public hostname';
+  }
+  return null;
+}
+
+function normalizeRpcUrls(rpcUrls = []) {
+  if (!Array.isArray(rpcUrls)) return { error: 'RPC URLs must be an array' };
+
+  const seen = new Set();
+  const urls = [];
+  for (const raw of rpcUrls) {
+    const url = typeof raw === 'string' ? raw.trim() : '';
+    const error = validateRpcUrl(url);
+    if (error) return { error };
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return { urls };
+}
+
+function validateEndpointSourceForPersist(source) {
+  if (source?.role !== 'rpc') return null;
+  if (!source.coverage || typeof source.coverage !== 'object') {
+    return 'RPC source coverage is required';
+  }
+  for (const url of Object.values(source.coverage)) {
+    const error = validateRpcUrl(url);
+    if (error) return error;
+  }
+  return null;
 }
 
 let cache = null;
@@ -327,11 +429,15 @@ function updateNetwork(chainId, patch) {
 // Add or replace a user endpoint source. An explicit re-add also un-hides
 // a builtin of the same id (the prior removal no longer applies).
 function upsertEndpointSource(id, source) {
+  const validationError = validateEndpointSourceForPersist(source);
+  if (validationError) return { success: false, error: validationError };
+
   load();
   const config = readUserConfig();
   const endpointSources = { ...(config.endpointSources || {}), [id]: source };
   const removedSources = (config.removedSources || []).filter((x) => x !== id);
   writeUserConfig({ ...config, endpointSources, removedSources });
+  return { success: true };
 }
 
 // Remove a source: a user-added one is deleted outright; a builtin is
@@ -369,12 +475,16 @@ function addCustomChain(def, rpcUrls = []) {
   if (!Number.isInteger(chainId) || chainId <= 0) {
     return { success: false, error: 'A valid chain ID is required' };
   }
+  const normalizedRpcUrls = normalizeRpcUrls(rpcUrls);
+  if (normalizedRpcUrls.error) {
+    return { success: false, error: normalizedRpcUrls.error };
+  }
   const cid = String(chainId);
   if (networks[cid] && !customChainIds.has(cid)) {
     return { success: false, error: 'That chain ID is built in already' };
   }
   const customChains = readCustomChains();
-  customChains[cid] = { ...def, chainId, rpcUrls: [...rpcUrls] };
+  customChains[cid] = { ...def, chainId, rpcUrls: normalizedRpcUrls.urls };
   writeCustomChains(customChains);
   return { success: true, chainId: cid };
 }
