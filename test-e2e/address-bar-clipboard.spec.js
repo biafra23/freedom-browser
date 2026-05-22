@@ -115,7 +115,7 @@ test.describe('address bar chrome context menu', () => {
     await input.click({ button: 'right' });
     await menu.getByRole('button', { name: 'Paste' }).click();
 
-    await expect(input).toHaveValue(sample);
+    await expect.poll(async () => input.inputValue()).toBe(sample);
   });
 
   test('context menu Select All selects the full address', async ({ window }) => {
@@ -128,14 +128,15 @@ test.describe('address bar chrome context menu', () => {
     await input.click({ button: 'right' });
     await menu.getByRole('button', { name: 'Select All' }).click();
 
-    const selection = await input.evaluate((el) => ({
-      start: el.selectionStart,
-      end: el.selectionEnd,
-      length: el.value.length,
-    }));
-    expect(selection.start).toBe(0);
-    expect(selection.end).toBe(selection.length);
-    expect(selection.length).toBe(sample.length);
+    await expect
+      .poll(async () =>
+        input.evaluate((el) => ({
+          start: el.selectionStart,
+          end: el.selectionEnd,
+          length: el.value.length,
+        }))
+      )
+      .toEqual({ start: 0, end: sample.length, length: sample.length });
   });
 
   test(`${modifier} shortcuts copy, cut, and paste in the address bar`, async ({ window, electronApp }) => {
