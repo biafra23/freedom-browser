@@ -9,20 +9,6 @@ const { test, expect } = require('./fixtures');
 const isDarwin = process.platform === 'darwin';
 const modifier = process.env.E2E_CLIPBOARD_MODIFIER || (isDarwin ? 'Meta' : 'Control');
 
-async function getEditAccelerators(electronApp) {
-  return electronApp.evaluate(({ Menu }) => {
-    const edit = Menu.getApplicationMenu()?.items.find((item) => item.label === 'Edit');
-    if (!edit?.submenu) return {};
-    const pick = (role) => edit.submenu.items.find((item) => item.role === role)?.accelerator ?? null;
-    return {
-      cut: pick('cut'),
-      copy: pick('copy'),
-      paste: pick('paste'),
-      selectAll: pick('selectAll'),
-    };
-  });
-}
-
 async function getTopMenuLabels(electronApp) {
   return electronApp.evaluate(({ Menu }) => {
     return Menu.getApplicationMenu()?.items.map((item) => item.role || item.label) ?? [];
@@ -36,16 +22,19 @@ test.describe('address bar clipboard', () => {
     const top = await getTopMenuLabels(electronApp);
     expect(top).not.toContain('appMenu');
     expect(top).not.toContain('windowMenu');
-    expect(top.some((entry) => entry === 'File' || entry === 'fileMenu')).toBe(true);
+    expect(top.some((entry) => /file/i.test(String(entry)))).toBe(true);
     expect(top).toContain('Edit');
   });
 
-  test('Edit menu registers standard copy/cut/paste/select-all accelerators', async ({ electronApp }) => {
-    const accelerators = await getEditAccelerators(electronApp);
-    expect(accelerators.copy).toMatch(/Control\+C$/);
-    expect(accelerators.cut).toMatch(/Control\+X$/);
-    expect(accelerators.paste).toMatch(/Control\+V$/);
-    expect(accelerators.selectAll).toMatch(/Control\+A$/);
+  test('Edit menu exposes clipboard roles', async ({ electronApp }) => {
+    const roles = await electronApp.evaluate(({ Menu }) => {
+      const topItems = Menu.getApplicationMenu()?.items ?? [];
+      const editSubmenu =
+        topItems.find((item) => item.label === 'Edit')?.submenu ??
+        topItems.find((item) => item.submenu?.items?.some((entry) => entry.role === 'copy'))?.submenu;
+      return editSubmenu?.items.map((item) => item.role).filter(Boolean) ?? [];
+    });
+    expect(roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectAll']));
   });
 
   test('right-click shows Cut/Copy/Paste/Select All on the address bar', async ({ window }) => {

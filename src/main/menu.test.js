@@ -65,6 +65,8 @@ describe('menu', () => {
     expect(edit?.submenu?.map((item) => item.role)).toEqual(
       expect.arrayContaining(['cut', 'copy', 'paste', 'selectAll'])
     );
+    expect(capturedTemplate.some((item) => item.role === 'appMenu')).toBe(false);
+    expect(capturedTemplate.some((item) => item.role === 'windowMenu')).toBe(false);
   });
 
   test('macOS template keeps appMenu and editMenu roles', () => {
