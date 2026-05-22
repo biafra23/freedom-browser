@@ -48,4 +48,18 @@ describe('tokens.json (builtin tokens)', () => {
   test('Base has a native token entry', () => {
     expect(tokens['8453:native']).toMatchObject({ chainId: 8453, symbol: 'ETH', decimals: 18 });
   });
+
+  // Bridged USDC.e on Gnosis is a separate asset (different symbol +
+  // contract from native USDC on Eth/Base). Carried in the allowlist
+  // for x402 multi-accept quotes — merchants commonly offer Base USDC
+  // + Gnosis USDC.e as alternates.
+  test('USDC.e on Gnosis is builtin with 6 decimals', () => {
+    const key = '100:0x2a22f9c3b484c3629090feed35f17ff8f88f76f0';
+    const t = tokens[key];
+    expect(t).toBeTruthy();
+    expect(t.symbol).toBe('USDC.e');
+    expect(t.decimals).toBe(6);
+    expect(t.chainId).toBe(100);
+    expect(t.builtin).toBe(true);
+  });
 });
