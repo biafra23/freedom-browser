@@ -779,9 +779,17 @@ async function detectPaymentRequiredHandler(details) {
 
     try {
       const { signAndQueueRetry } = require('./sign-flow');
+      const { verifyBalanceOrThrow } = require('./balance-check');
+      const { getActiveWalletAddress } = require('../identity-manager');
       const selectedAccept = decision.selectedAcceptIndex != null
         ? requirements.accepts?.[decision.selectedAcceptIndex]
         : requirements.accepts?.[0];
+      // Pre-sign balance verify (locked decision #6); throws
+      // INSUFFICIENT_BALANCE if the active wallet can't fund the
+      // selected entry. Caught below + re-arms pendingApproval so
+      // the user can pick another entry on the next click.
+      const address = await getActiveWalletAddress().catch(() => null);
+      await verifyBalanceOrThrow(selectedAccept, address);
       await signAndQueueRetry(details.webContentsId, {
         detection: { url: details.url, requirements, resourceType: details.resourceType },
         selectedAccept,
@@ -798,13 +806,14 @@ async function detectPaymentRequiredHandler(details) {
         responseHeaders: { Location: [details.url] },
       };
     } catch (err) {
-      // Vault-locked is the expected recoverable case (vault auto-locked
-      // between render and click); user unlocks inline and clicks Pay
-      // again. Other errors are usually real bugs but the user can still
-      // click Reject to exit; no need for the retry loop to special-case
-      // unrecoverable errors.
-      if (isVaultLockedError(err)) {
-        log.warn(`[x402:approval] sign blocked by locked vault for ${sanitizeUrlForLog(details.url)}; waiting for unlock + retry`);
+      // Recoverable user-action errors (vault auto-locked between render
+      // and click; insufficient balance for the selected entry) log at
+      // warn; the retry loop re-arms pendingApproval so the user can
+      // unlock + retry, or pick a different entry. Anything else is
+      // likely a real bug — user can still click Reject to exit.
+      const { isInsufficientBalanceError } = require('./balance-check');
+      if (isVaultLockedError(err) || isInsufficientBalanceError(err)) {
+        log.warn(`[x402:approval] sign blocked (${err.message}) for ${sanitizeUrlForLog(details.url)}; awaiting retry`);
       } else {
         log.error(
           `[x402:approval] sign failed AFTER user approved ${sanitizeUrlForLog(details.url)}: ` +
@@ -976,6 +985,7 @@ function installX402Interception() {
 module.exports = {
   X402_HEADERS,
   AUTHORIZED_BY,
+  sendToHost,
   outgoingHeaderForVersion,
   installX402Interception,
   detectPaymentRequiredHandler,

@@ -107,6 +107,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('x402:cap-consumed', handler);
     return () => ipcRenderer.removeListener('x402:cap-consumed', handler);
   },
+  // Background fresh-balance refresh result for the approval card's
+  // chooser rows. Main kicks the refresh on x402:get-details and
+  // broadcasts here when it lands. Pinned-selection semantics live on
+  // the renderer side: balances + fundability indicators update in
+  // place, but the user's current selection is never changed
+  // implicitly.
+  onX402BalancesUpdated: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:balances-updated', handler);
+    return () => ipcRenderer.removeListener('x402:balances-updated', handler);
+  },
   // Internal
   getWebviewPreloadPath: () => ipcRenderer.invoke('internal:get-webview-preload-path'),
   // Context menu

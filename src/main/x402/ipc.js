@@ -40,6 +40,7 @@ const {
   hasPendingApproval,
   getPendingApproval,
   settlePendingApproval,
+  sendToHost,
 } = require('./intercept');
 const {
   revoke: revokePermission,
@@ -50,6 +51,9 @@ const {
 const paymentHistory = require('../payment-history');
 const { signAndQueueRetry } = require('./sign-flow');
 const { tupleFromAccept, coverageForAccept } = require('./payment-utils');
+const { verifyBalanceOrThrow } = require('./balance-check');
+const { getActiveWalletAddress } = require('../identity-manager');
+const { getBalancesWithCache } = require('../wallet/balance-service');
 
 // Cancel fallback when the webview has no back history. `about:blank` is
 // safe everywhere — the user gets an empty page and the address bar so
@@ -73,9 +77,8 @@ function lookupAsset(accept) {
 // for transparency). Takes the explicit accept entry being displayed —
 // over-cap state belongs to that entry, not whichever entry is at
 // position 0 of the requirements blob.
-function autoPayStateFor(url, accept) {
-  let origin;
-  try { origin = new URL(url).origin; } catch { return { kind: 'none' }; }
+function autoPayStateFor(origin, accept) {
+  if (!origin) return { kind: 'none' };
   const coverage = coverageForAccept(origin, accept);
   if (!coverage) return { kind: 'none' };
   return {
@@ -84,6 +87,63 @@ function autoPayStateFor(url, accept) {
     capAmount: coverage.perm.capAmount,
     expiresAt: coverage.perm.expiresAt,
   };
+}
+
+// Per-entry shape the chooser renders: each accepts[] entry annotated
+// with asset metadata + balance + fundability + per-entry auto-pay
+// state. Caller resolves the origin once and passes it in (URL parse
+// would otherwise repeat per entry). Balance comes from the wallet's
+// balance-service shape: `balances[chainId:asset] = { raw, formatted,
+// symbol, decimals }`. We surface `balance` to the renderer as the
+// raw atomic-unit string so the chooser can render its own formatting.
+function enrichAcceptForDisplay(accept, origin, balances) {
+  const tuple = tupleFromAccept(accept);
+  const balanceKey = tuple ? `${tuple.chainId}:${tuple.asset}` : null;
+  const raw = balanceKey ? balances?.[balanceKey]?.raw : null;
+  const balance = typeof raw === 'string' ? raw : null;
+  let fundable = false;
+  if (tuple && balance) {
+    try { fundable = BigInt(balance) >= BigInt(tuple.amount); } catch { /* leave fundable=false */ }
+  }
+  return {
+    accept,
+    tuple,
+    asset: lookupAsset(accept),
+    balance,
+    fundable,
+    autoPay: autoPayStateFor(origin, accept),
+  };
+}
+
+// Find the first index whose entry is fundable; falls back to 0 so the
+// renderer always has a valid initial selection. The single-fundable
+// rule (locked decision §2) means a chooser is hidden when only one
+// row qualifies — the renderer picks that one even if it's not at 0.
+function initialSelectionIndex(enrichedAccepts) {
+  const idx = enrichedAccepts.findIndex((e) => e.fundable);
+  return idx >= 0 ? idx : 0;
+}
+
+// Background-refresh broadcast: fire a fresh balance fetch after
+// x402:get-details serves the (cached) approval card data; when fresh
+// balances land, push them to the host renderer so the chooser rows
+// can update fundability in place. Pinned-selection semantics live on
+// the renderer side. Failures are logged and ignored — the cached
+// balances stay on screen and pre-sign verify at click is the safety
+// net.
+function refreshAndBroadcastBalances(webContentsId, address) {
+  if (!address) return;
+  getBalancesWithCache(address, true)
+    .then((result) => {
+      sendToHost(webContentsId, 'x402:balances-updated', {
+        webContentsId,
+        address,
+        balances: result?.balances ?? {},
+      });
+    })
+    .catch((err) => {
+      log.warn(`[x402:get-details] background balance refresh failed: ${err.message}`);
+    });
 }
 
 function registerX402Ipc() {
@@ -123,17 +183,52 @@ function registerX402Ipc() {
       }
     }
 
-    // The sidebar's approval card currently renders accepts[0]; WP-MA.2
-    // will plumb a chooser-driven selection through. Until then, the
-    // displayed accept = position 0.
-    const accept = detected.requirements?.accepts?.[0] ?? null;
+    // Resolve origin + active address once for the whole enrichment
+    // pass. Vault-locked / no-active-wallet → null address → balance
+    // fields come back as null and the renderer paints a "balance
+    // unknown" state until the post-paint refresh lands.
+    let origin = null;
+    try { origin = new URL(detected.url).origin; } catch { /* leave null */ }
+    let address = null;
+    try { address = await getActiveWalletAddress(); }
+    catch (err) { log.warn(`[x402:get-details] active address lookup failed: ${err.message}`); }
+
+    let balances = {};
+    if (address) {
+      try {
+        const result = await getBalancesWithCache(address, false);
+        balances = result?.balances ?? {};
+      } catch (err) {
+        log.warn(`[x402:get-details] balance lookup failed: ${err.message}`);
+      }
+    }
+
+    const accepts = (detected.requirements?.accepts ?? []).map((accept) =>
+      enrichAcceptForDisplay(accept, origin, balances)
+    );
+
+    // Kick a fresh balance refresh in the background so the chooser
+    // can update fundability in place once it lands. Awaiting would
+    // delay the approval card open; the cached balances we just used
+    // are good-enough for initial paint, and pre-sign verify at click
+    // is the correctness gate.
+    refreshAndBroadcastBalances(id, address);
+
+    // Legacy single-accept fields kept for the not-yet-migrated
+    // renderer; WP-MA.2 will read everything from `accepts[]`. Once
+    // the renderer migrates these can be dropped. Pull from the
+    // already-enriched accepts[0] to avoid duplicate token-registry
+    // lookups.
+    const head = accepts[0];
     return {
       success: true,
       url: detected.url,
       requirements: detected.requirements,
       detectionId: detected.detectionId ?? detectionId ?? null,
-      asset: lookupAsset(accept),
-      autoPay: autoPayStateFor(detected.url, accept),
+      accepts,
+      initialSelectionIndex: initialSelectionIndex(accepts),
+      asset: head?.asset ?? null,
+      autoPay: head?.autoPay ?? { kind: 'none' },
     };
   });
 
@@ -182,9 +277,23 @@ function registerX402Ipc() {
       // normal cap-covered flow signs without UI and never reaches this
       // handler. sign-flow defaults to MANUAL when undefined.
       const detected = getDetectedPayment(id);
+      // Explicit-index path threads the chooser's pick through;
+      // omitted-index path lets sign-flow's fallback chain run
+      // (preserves `detected.selectedAccept` precedence used by the
+      // unlock-resume path before falling back to accepts[0]).
       const selectedAccept = selectedAcceptIndex != null
         ? detected?.requirements?.accepts?.[selectedAcceptIndex]
         : undefined;
+      // Pre-sign balance verify (locked decision #6): fresh RPC check
+      // at click time catches stale-cache failures loudly instead of
+      // letting them surface as a failed settlement. Resolve the
+      // accept the same way sign-flow will, so the verify and the
+      // sign agree on which entry we're checking.
+      const acceptForVerify = selectedAccept
+        ?? detected?.selectedAccept
+        ?? detected?.requirements?.accepts?.[0];
+      const address = await getActiveWalletAddress().catch(() => null);
+      await verifyBalanceOrThrow(acceptForVerify, address);
       await signAndQueueRetry(id, {
         grant,
         authorizedBy: detected?.authorizedBy,

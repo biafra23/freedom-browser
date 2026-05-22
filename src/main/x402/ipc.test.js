@@ -27,9 +27,33 @@ jest.mock('./client', () => ({
 }));
 
 const mockGetActiveWalletIndex = jest.fn(() => 0);
+const mockGetActiveWalletAddress = jest.fn(async () => '0x70997970C51812dc3A010C7d01b50e0d17dc79C8');
 jest.mock('../identity-manager', () => ({
   getActiveWalletIndex: () => mockGetActiveWalletIndex(),
+  getActiveWalletAddress: () => mockGetActiveWalletAddress(),
 }));
+
+// balance-service is dragged in via balance-check + x402:get-details
+// enrichment. Tests that don't care about balances default to "wallet
+// has plenty of everything" so pre-sign verify passes silently.
+const mockGetBalancesWithCache = jest.fn(async () => ({
+  balances: {},
+  fromCache: true,
+}));
+const mockFetchTokenBalance = jest.fn(async () => ({
+  raw: '999999999', formatted: '999.999999', symbol: 'USDC', decimals: 6,
+}));
+jest.mock('../wallet/balance-service', () => ({
+  getBalancesWithCache: (...args) => mockGetBalancesWithCache(...args),
+  fetchTokenBalance: (...args) => mockFetchTokenBalance(...args),
+}));
+
+// Helper: balance-service entries are `{raw, formatted, symbol, decimals}`.
+// Tests that want to control fundability per token pass these shapes
+// through `mockGetBalancesWithCache.mockResolvedValueOnce(...)`.
+function balanceEntry(raw) {
+  return { raw, formatted: '0', symbol: 'USDC', decimals: 6 };
+}
 
 // Real intercept module (real Maps) — we want to exercise the
 // setPending/clearDetected interactions end-to-end. Stub electron's `app`
@@ -193,6 +217,112 @@ describe('x402:get-details', () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/no pending/i);
   });
+
+  test('returns an enriched accepts[] with per-entry balance + fundable + asset + autoPay', async () => {
+    // Multi-accept detection: Base USDC + Gnosis USDC.e. Wallet holds
+    // enough USDC for Base, not enough USDC.e for Gnosis. Chooser data
+    // must reflect that asymmetry.
+    const GNOSIS_USDCE = '0x2a22f9c3b484c3629090feed35f17ff8f88f76f0';
+    const baseAccept = v2Detected().requirements.accepts[0];
+    const gnosisAccept = {
+      ...baseAccept,
+      network: 'eip155:100',
+      amount: '20000',
+      asset: GNOSIS_USDCE,
+    };
+    const multiAccept = {
+      ...v2Detected().requirements,
+      accepts: [baseAccept, gnosisAccept],
+    };
+    require('./intercept').detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [Buffer.from(JSON.stringify(multiAccept)).toString('base64')],
+      },
+    });
+    mockGetToken.mockImplementation((key) => {
+      if (key.startsWith('8453:')) return { symbol: 'USDC', decimals: 6 };
+      if (key.startsWith('100:')) return { symbol: 'USDC.e', decimals: 6 };
+      return null;
+    });
+    mockGetBalancesWithCache.mockResolvedValueOnce({
+      balances: {
+        '8453:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': balanceEntry('50000'),  // covers 10000
+        [`100:${GNOSIS_USDCE}`]: balanceEntry('1000'),                              // short of 20000
+      },
+      fromCache: true,
+    });
+
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    expect(result.success).toBe(true);
+    expect(result.accepts).toHaveLength(2);
+    expect(result.accepts[0]).toMatchObject({
+      tuple: { chainId: 8453, asset: baseAccept.asset, amount: '10000' },
+      asset: { symbol: 'USDC', decimals: 6 },
+      balance: '50000',
+      fundable: true,
+    });
+    expect(result.accepts[1]).toMatchObject({
+      tuple: { chainId: 100, asset: GNOSIS_USDCE, amount: '20000' },
+      asset: { symbol: 'USDC.e', decimals: 6 },
+      balance: '1000',
+      fundable: false,
+    });
+    // initialSelectionIndex = first fundable = 0 (Base).
+    expect(result.initialSelectionIndex).toBe(0);
+  });
+
+  test('initialSelectionIndex points at the first fundable entry, even if accepts[0] is unfundable', async () => {
+    const GNOSIS_USDCE = '0x2a22f9c3b484c3629090feed35f17ff8f88f76f0';
+    const baseAccept = v2Detected().requirements.accepts[0];
+    const gnosisAccept = {
+      ...baseAccept, network: 'eip155:100', amount: '5000', asset: GNOSIS_USDCE,
+    };
+    require('./intercept').detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [Buffer.from(JSON.stringify({
+          ...v2Detected().requirements,
+          accepts: [baseAccept, gnosisAccept],
+        })).toString('base64')],
+      },
+    });
+    mockGetToken.mockReturnValue({ symbol: 'USDC', decimals: 6 });
+    mockGetBalancesWithCache.mockResolvedValueOnce({
+      balances: { [`100:${GNOSIS_USDCE}`]: balanceEntry('50000') },
+      fromCache: true,
+    });
+
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    expect(result.accepts[0].fundable).toBe(false);
+    expect(result.accepts[1].fundable).toBe(true);
+    expect(result.initialSelectionIndex).toBe(1);
+  });
+
+  test('initialSelectionIndex falls back to 0 when nothing is fundable', async () => {
+    require('./intercept').detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    mockGetBalancesWithCache.mockResolvedValueOnce({ balances: {}, fromCache: true });
+
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    expect(result.accepts[0].fundable).toBe(false);
+    expect(result.initialSelectionIndex).toBe(0);
+  });
 });
 
 // === x402:approve ========================================================
@@ -216,6 +346,26 @@ describe('x402:approve', () => {
       },
     });
   };
+
+  test('refuses sign and returns "Balance changed" when the active wallet is short on the selected entry', async () => {
+    // Pre-sign verify (locked decision #6): main does a fresh
+    // (cache-bypassing) balance check on the selected (chainId, asset)
+    // before signing; if the wallet ran out since the cached chooser
+    // paint, refuse + surface the error inline so the user picks
+    // another entry or tops up.
+    seedDetection(42);
+    mockFetchTokenBalance.mockResolvedValueOnce(balanceEntry('1'));
+
+    const result = await ipcHandlers['x402:approve'](senderEvent(42));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Balance changed/);
+    // Sign never ran — no client constructed, no pending payment.
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(intercept.injectPaymentSignatureHandler({
+      webContentsId: 42, url: 'https://api.example/article', requestHeaders: {},
+    })).toBeNull();
+  });
 
   test('signs, stashes a V2 pending payment, and re-navigates the webview', async () => {
     seedDetection(42);
