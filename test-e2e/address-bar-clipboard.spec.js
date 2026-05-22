@@ -9,32 +9,47 @@ const { test, expect } = require('./fixtures');
 const isDarwin = process.platform === 'darwin';
 const modifier = process.env.E2E_CLIPBOARD_MODIFIER || (isDarwin ? 'Meta' : 'Control');
 
-async function getTopMenuLabels(electronApp) {
-  return electronApp.evaluate(({ Menu }) => {
-    return Menu.getApplicationMenu()?.items.map((item) => item.role || item.label) ?? [];
-  });
+function inspectApplicationMenu() {
+  return ({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    if (!menu) {
+      return { ready: false };
+    }
+
+    const top = menu.items.map((item) => item.role || item.label);
+    const editSubmenu =
+      menu.items.find((item) => item.label === 'Edit')?.submenu ??
+      menu.items.find((item) => item.submenu?.items?.some((entry) => entry.role === 'copy'))
+        ?.submenu;
+    const roles = editSubmenu?.items.map((item) => item.role).filter(Boolean) ?? [];
+
+    return {
+      ready: true,
+      top,
+      hasAppMenu: top.includes('appMenu'),
+      hasWindowMenu: top.includes('windowMenu'),
+      hasFileMenu: top.some((entry) => /file/i.test(String(entry))),
+      hasEditMenu: Boolean(editSubmenu),
+      roles,
+    };
+  };
 }
 
 test.describe('address bar clipboard', () => {
   test.skip(isDarwin, 'issue #69 is Windows/Linux only');
 
   test('application menu excludes macOS-only roles', async ({ electronApp }) => {
-    const top = await getTopMenuLabels(electronApp);
-    expect(top).not.toContain('appMenu');
-    expect(top).not.toContain('windowMenu');
-    expect(top.some((entry) => /file/i.test(String(entry)))).toBe(true);
-    expect(top).toContain('Edit');
+    const menu = await electronApp.evaluate(inspectApplicationMenu());
+    expect(menu.ready).toBe(true);
+    expect(menu.hasAppMenu).toBe(false);
+    expect(menu.hasWindowMenu).toBe(false);
+    expect(menu.hasFileMenu).toBe(true);
+    expect(menu.hasEditMenu).toBe(true);
   });
 
   test('Edit menu exposes clipboard roles', async ({ electronApp }) => {
-    const roles = await electronApp.evaluate(({ Menu }) => {
-      const topItems = Menu.getApplicationMenu()?.items ?? [];
-      const editSubmenu =
-        topItems.find((item) => item.label === 'Edit')?.submenu ??
-        topItems.find((item) => item.submenu?.items?.some((entry) => entry.role === 'copy'))?.submenu;
-      return editSubmenu?.items.map((item) => item.role).filter(Boolean) ?? [];
-    });
-    expect(roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectAll']));
+    const menu = await electronApp.evaluate(inspectApplicationMenu());
+    expect(menu.roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectAll']));
   });
 
   test('right-click shows Cut/Copy/Paste/Select All on the address bar', async ({ window }) => {
