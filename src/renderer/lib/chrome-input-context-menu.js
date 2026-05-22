@@ -76,7 +76,10 @@ async function writeClipboard(text) {
 function selectAllInInput(input) {
   const end = input.value.length;
   input.focus();
-  input.setSelectionRange(0, end);
+  input.select();
+  if (input.selectionStart !== 0 || input.selectionEnd !== end) {
+    input.setSelectionRange(0, end);
+  }
 }
 
 async function readClipboard() {
@@ -121,7 +124,9 @@ async function runEditAction(action, input) {
       return;
   }
 
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  if (action !== 'select-all') {
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
 }
 
 /**

@@ -27,7 +27,10 @@ const createInput = (value = 'hello world') => {
     selectionStart,
     selectionEnd,
     focus: jest.fn(),
-    select: jest.fn(),
+    select: jest.fn(function selectAll() {
+      const end = this.value.length;
+      this.setSelectionRange(0, end);
+    }),
     setSelectionRange: jest.fn((start, end) => {
       selectionStart = start;
       selectionEnd = end;
