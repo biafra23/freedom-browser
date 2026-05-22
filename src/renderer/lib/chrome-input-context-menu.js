@@ -166,29 +166,48 @@ export const initChromeInputContextMenu = (options = {}) => {
     [document.getElementById('address-input')].filter(Boolean);
 
   for (const input of inputs) {
-    let selectionAtPointerDown = null;
+    // The pre-contextmenu selection snapshot is tied to a single mouse
+    // gesture. It must be cleared aggressively so a stale range never
+    // leaks into an unrelated keyboard / Ctrl-click context menu later.
+    let pointerSelection = null;
+    const clearPointerSelection = () => {
+      pointerSelection = null;
+    };
 
     input.addEventListener('mousedown', (event) => {
-      if (event.button === 2) {
-        selectionAtPointerDown = captureSelection(input);
+      if (event.button !== 2) {
+        clearPointerSelection();
+        return;
       }
+      pointerSelection = {
+        ...captureSelection(input),
+        capturedAt: event.timeStamp,
+      };
     });
+
+    input.addEventListener('blur', clearPointerSelection);
 
     input.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       options.onOpening?.();
 
-      // Some platforms collapse a prior range to the caret on right-click.
-      // Only resurrect the pre-contextmenu snapshot if it captured an
-      // actual non-collapsed selection; otherwise honor the live caret so
-      // Paste happens at the right-click position instead of jumping back
-      // to a stale earlier position.
-      const pointerSelection = selectionAtPointerDown;
-      selectionAtPointerDown = null;
       const liveSelection = captureSelection(input);
+      const snapshot = pointerSelection;
+      clearPointerSelection();
+
+      // Only trust the mousedown snapshot when it belongs to this same
+      // gesture. Browsers fire contextmenu within a few ms of the
+      // matching mouseup, so a much older snapshot (the user right-
+      // mousedown on the input but released outside, then later opened
+      // the menu via keyboard or Ctrl-click) must not be reused.
+      const FRESH_GESTURE_WINDOW_MS = 500;
+      const isSameGesture =
+        snapshot && event.timeStamp - snapshot.capturedAt < FRESH_GESTURE_WINDOW_MS;
       const snapshotHasRange =
-        pointerSelection && pointerSelection.start !== pointerSelection.end;
-      const selection = snapshotHasRange ? pointerSelection : liveSelection;
+        isSameGesture && snapshot.start !== snapshot.end;
+      const selection = snapshotHasRange
+        ? { start: snapshot.start, end: snapshot.end }
+        : liveSelection;
 
       showChromeInputContextMenu(input, event.clientX, event.clientY, selection);
     });

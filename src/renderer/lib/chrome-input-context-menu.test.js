@@ -140,9 +140,17 @@ const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
   return { mod, input: addressInput, menu, documentHandlers, windowHandlers };
 };
 
-const openContextMenu = (input, { collapseSelectionOnOpen = false, skipMousedown = false } = {}) => {
+const openContextMenu = (
+  input,
+  {
+    collapseSelectionOnOpen = false,
+    skipMousedown = false,
+    mousedownAt = 100,
+    contextmenuAt = 110,
+  } = {}
+) => {
   if (!skipMousedown) {
-    input.handlers.mousedown?.({ button: 2 });
+    input.handlers.mousedown?.({ button: 2, timeStamp: mousedownAt });
   }
   if (collapseSelectionOnOpen) {
     const caret = input.value.length;
@@ -152,6 +160,7 @@ const openContextMenu = (input, { collapseSelectionOnOpen = false, skipMousedown
     preventDefault: jest.fn(),
     clientX: 10,
     clientY: 10,
+    timeStamp: contextmenuAt,
   });
 };
 
@@ -261,6 +270,58 @@ describe('chrome-input-context-menu', () => {
     openContextMenu(input, { skipMousedown: true });
     await clickMenu(menu, 'paste');
 
+    expect(input.value).toBe('abpastedcdef');
+  });
+
+  test('stale mousedown snapshot does not survive a later keyboard contextmenu', async () => {
+    const input = createInput('abcdef');
+    input.setSelectionRange(0, 3);
+    const { menu } = await loadModule({ input });
+
+    // Right-mousedown captures [0, 3] but no contextmenu follows (e.g.
+    // user released the button outside the input).
+    input.handlers.mousedown({ button: 2, timeStamp: 100 });
+
+    // Much later, the caret moves and the user opens the menu via the
+    // keyboard menu key (no mousedown precedes the contextmenu).
+    input.setSelectionRange(5, 5);
+    input.handlers.contextmenu({
+      preventDefault: jest.fn(),
+      clientX: 10,
+      clientY: 10,
+      timeStamp: 5_000,
+    });
+
+    await clickMenu(menu, 'paste');
+    expect(input.value).toBe('abcdepastedf');
+  });
+
+  test('non-right mousedown clears the captured snapshot', async () => {
+    const input = createInput('abcdef');
+    input.setSelectionRange(0, 3);
+    const { menu } = await loadModule({ input });
+
+    input.handlers.mousedown({ button: 2, timeStamp: 100 });
+    // A subsequent left click invalidates the prior right-mousedown snapshot.
+    input.handlers.mousedown({ button: 0, timeStamp: 110 });
+    input.setSelectionRange(4, 4);
+
+    openContextMenu(input, { skipMousedown: true, contextmenuAt: 120 });
+    await clickMenu(menu, 'paste');
+    expect(input.value).toBe('abcdpastedef');
+  });
+
+  test('input blur clears the captured snapshot', async () => {
+    const input = createInput('abcdef');
+    input.setSelectionRange(0, 3);
+    const { menu } = await loadModule({ input });
+
+    input.handlers.mousedown({ button: 2, timeStamp: 100 });
+    input.handlers.blur?.();
+    input.setSelectionRange(2, 2);
+
+    openContextMenu(input, { skipMousedown: true, contextmenuAt: 200 });
+    await clickMenu(menu, 'paste');
     expect(input.value).toBe('abpastedcdef');
   });
 
