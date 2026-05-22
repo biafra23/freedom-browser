@@ -127,22 +127,30 @@ function initialSelectionIndex(enrichedAccepts) {
   return idx >= 0 ? idx : 0;
 }
 
-// Background-refresh broadcast: fire a fresh balance fetch after
-// x402:get-details serves the (cached) approval card data; when fresh
-// balances land, push them to the host renderer so the chooser rows
-// can update fundability in place. Pinned-selection semantics live on
-// the renderer side. Failures are logged and ignored — the cached
-// balances stay on screen and pre-sign verify at click is the safety
-// net.
+// Single source of truth for the `x402:balances-updated` event shape.
+// Both the card-open background refresh and the user-initiated
+// `x402:refresh-balances` handler dispatch through this, so the two
+// surfaces can't drift on payload structure.
+function broadcastBalances(webContentsId, address, balances) {
+  sendToHost(webContentsId, 'x402:balances-updated', {
+    webContentsId,
+    address,
+    balances: balances ?? {},
+  });
+}
+
+// Background-refresh broadcast: fire a balance refresh after
+// x402:get-details serves the (cached) approval card data; when it
+// lands, push to the host renderer so the chooser rows update
+// fundability in place. Pinned-selection semantics live on the
+// renderer side. Failures are logged and ignored — cached balances
+// stay on screen and the user can hit the Refresh button on the
+// insufficient-funds card if they need explicit re-fetch.
 function refreshAndBroadcastBalances(webContentsId, address) {
   if (!address) return;
   getBalancesWithCache(address, true)
     .then((result) => {
-      sendToHost(webContentsId, 'x402:balances-updated', {
-        webContentsId,
-        address,
-        balances: result?.balances ?? {},
-      });
+      broadcastBalances(webContentsId, address, result?.balances);
     })
     .catch((err) => {
       log.warn(`[x402:get-details] background balance refresh failed: ${err.message}`);
@@ -210,11 +218,15 @@ function registerX402Ipc() {
       enrichAcceptForDisplay(accept, origin, balances)
     );
 
-    // Kick a fresh balance refresh in the background so the chooser
-    // can update fundability in place once it lands. Awaiting would
-    // delay the approval card open; the cached balances we just used
-    // are good-enough for initial paint, and pre-sign verify at click
-    // is the correctness gate.
+    // Kick a balance refresh in the background so the chooser can
+    // update fundability in place once it lands. Awaiting would delay
+    // the approval card open; the cached balances are good-enough for
+    // initial paint. The seller's facilitator is the settlement-time
+    // correctness gate — if our cached balance was stale and signing
+    // succeeds against insufficient funds, the response logger writes
+    // a `failed` payment-history row. Users with reason to believe the
+    // cache is stale (just bridged / received) can force-fetch via the
+    // Refresh button on the insufficient-funds card.
     refreshAndBroadcastBalances(id, address);
 
     // Legacy single-accept fields kept for the not-yet-migrated
@@ -348,9 +360,12 @@ function registerX402Ipc() {
   // cached state is stale (just bridged / received / etc.). Bypass
   // the 30s in-memory cache so the user's deliberate request actually
   // hits the chain, then broadcast `x402:balances-updated` so the
-  // open card reactively re-renders fundability. Returns success only
-  // after the fetch completes so the renderer can re-enable the
-  // button at the right time.
+  // open card reactively re-renders fundability. Awaits the fetch
+  // before resolving so the broadcast is guaranteed to have landed
+  // (Electron IPC is ordered per channel) by the time the renderer
+  // gets `{success: true}` back — the caller's `finally` block that
+  // re-enables the button runs only after the card has already
+  // re-rendered.
   ipcMain.handle(IPC.X402_REFRESH_BALANCES, async (event, args = {}) => {
     const id = args.webContentsId ?? event.sender.id;
     try {
@@ -358,7 +373,7 @@ function registerX402Ipc() {
       if (!address) return { success: false, error: 'No active wallet' };
       clearBalanceCache(address);
       const balances = await getAllBalances(address);
-      sendToHost(id, 'x402:balances-updated', { webContentsId: id, address, balances });
+      broadcastBalances(id, address, balances);
       return { success: true };
     } catch (err) {
       log.warn(`[x402:refresh-balances] failed: ${err.message}`);

@@ -568,7 +568,9 @@ function safeBigInt(s) {
 // a full re-render.
 async function refreshInsufficientBalances() {
   if (!pending || !insufficientRefreshBtn) return;
-  if (insufficientRefreshBtn.disabled) return;  // already in flight
+  // Guard against double-click while the previous IPC is in flight —
+  // re-entering would race two clearBalanceCache + getAllBalances calls.
+  if (insufficientRefreshBtn.disabled) return;
   const label = insufficientRefreshBtn.querySelector('.x402-insufficient-refresh-label');
   const originalLabel = label?.textContent ?? 'Refresh balances';
   insufficientRefreshBtn.disabled = true;
@@ -614,8 +616,13 @@ async function checkUnlockState() {
 
     if (status.isUnlocked) {
       unlockBlock?.classList.add('hidden');
-      // Pay-button gating is renderCard's responsibility (fundability
-      // + asset-recognised); checkUnlockState only owns the unlock UI.
+      // Re-derive Pay-button state from fundability + asset-recognised.
+      // The locked branch below force-disables, so when the user
+      // unlocks via the Touch ID / password handlers this is what
+      // restores the correct disabled state — without it the Pay
+      // button stays stuck until a chooser interaction re-triggers
+      // renderCard (which was the user-visible bug we hit in smoke).
+      if (pending) renderCard();
       return;
     }
 
