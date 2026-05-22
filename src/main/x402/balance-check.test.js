@@ -14,7 +14,9 @@ const {
 } = require('./balance-check');
 
 const ADDRESS = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
-const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+// Lowercase canonical — `tupleFromAccept` lowercases on entry,
+// downstream lookups key on the lowercase form.
+const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 
 const baseAccept = {
   scheme: 'exact', network: 'eip155:8453', amount: '10000',

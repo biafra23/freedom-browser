@@ -43,7 +43,8 @@ jest.mock('./permissions', () => ({
 const intercept = require('./intercept');
 const { signAndQueueRetry } = require('./sign-flow');
 
-const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+// Lowercase canonical — matches what `tupleFromAccept` emits.
+const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const GNOSIS_USDCE = '0x2a22f9c3b484c3629090feed35f17ff8f88f76f0';
 
 const baseAccept = {

@@ -19,6 +19,13 @@ const EIP155_PREFIX = 'eip155:';
  * we don't auto-pay them. V2's `amount` is the canonical field; the
  * zod schema strips unknown keys, so by the time a parsed entry
  * reaches us there's no `maxAmountRequired` to fall back to.
+ *
+ * The asset address is lowercased so downstream lookups (balance
+ * cache, token registry, permissions store) all key consistently.
+ * Ethereum addresses are case-insensitive on the wire (EIP-55
+ * checksum is a hex-only convention); the SDK still sees the
+ * original mixed-case asset on the selected `accept` because the
+ * EIP-712 domain hashes the parsed address bytes, not the string.
  */
 function tupleFromAccept(accept) {
   if (!accept) return null;
@@ -26,7 +33,8 @@ function tupleFromAccept(accept) {
   const chainId = Number(accept.network.slice(EIP155_PREFIX.length));
   if (!Number.isFinite(chainId)) return null;
   if (typeof accept.amount !== 'string') return null;
-  return { chainId, asset: accept.asset, amount: accept.amount };
+  if (typeof accept.asset !== 'string') return null;
+  return { chainId, asset: accept.asset.toLowerCase(), amount: accept.amount };
 }
 
 /**

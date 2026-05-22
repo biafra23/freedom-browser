@@ -9,7 +9,9 @@ const {
   findCoveringPermission,
 } = require('./payment-utils');
 
-const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+// Lowercase canonical form — matches what `tupleFromAccept` emits and
+// what the token-registry / balance-service / permissions store key on.
+const BASE_USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const GNOSIS_USDCE = '0x2a22f9c3b484c3629090feed35f17ff8f88f76f0';
 
 beforeEach(() => {
@@ -51,6 +53,25 @@ describe('tupleFromAccept', () => {
   test('returns null for null/undefined input (defensive)', () => {
     expect(tupleFromAccept(null)).toBeNull();
     expect(tupleFromAccept(undefined)).toBeNull();
+  });
+
+  test('lowercases the asset address so downstream lookups key consistently', () => {
+    // Real-world surface: the test rig sends Gnosis USDC.e with
+    // EIP-55-checksummed casing, while tokens.json + balance-service
+    // store the address lowercase. Without normalization, balance +
+    // token-registry lookups silently miss.
+    const result = tupleFromAccept({
+      network: 'eip155:100',
+      amount: '20000',
+      asset: '0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0',
+    });
+    expect(result?.asset).toBe('0x2a22f9c3b484c3629090feed35f17ff8f88f76f0');
+  });
+
+  test('returns null when asset is missing or non-string', () => {
+    expect(tupleFromAccept({ network: 'eip155:8453', amount: '10000' })).toBeNull();
+    expect(tupleFromAccept({ network: 'eip155:8453', amount: '10000', asset: null })).toBeNull();
+    expect(tupleFromAccept({ network: 'eip155:8453', amount: '10000', asset: 123 })).toBeNull();
   });
 });
 
@@ -161,7 +182,7 @@ describe('findCoveringPermission', () => {
     // Cap exists for chain 8453 but only for USDT, not Base USDC.
     // findCoveringPermission must pass tuple.asset into getPermission;
     // a cap on a different asset of the same chain is not a match.
-    const USDT_BASE = '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2';
+    const USDT_BASE = '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2';
     mockGetPermission.mockImplementation((origin, chainId, asset) => {
       if (chainId === 8453 && asset === USDT_BASE) return permFor('100000');
       return null;

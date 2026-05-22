@@ -134,7 +134,7 @@ const v2Detected = (overrides = {}) => ({
         scheme: 'exact',
         network: 'eip155:8453',
         amount: '10000',
-        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
         payTo: '0x209693Bc6afc0C5328bA36FaF03C514EF312287C',
         maxTimeoutSeconds: 60,
         extra: { name: 'USD Coin', version: '2' },
@@ -191,7 +191,7 @@ describe('x402:get-details', () => {
     expect(result.url).toBe(detected.url);
     expect(result.requirements.x402Version).toBe(2);
     expect(result.asset).toEqual({ symbol: 'USDC', decimals: 6 });
-    expect(mockGetToken).toHaveBeenCalledWith('8453:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+    expect(mockGetToken).toHaveBeenCalledWith('8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
   });
 
   test('returns null asset when the token is not in the allowlist', async () => {
@@ -250,7 +250,7 @@ describe('x402:get-details', () => {
     });
     mockGetBalancesWithCache.mockResolvedValueOnce({
       balances: {
-        '8453:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': balanceEntry('50000'),  // covers 10000
+        '8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': balanceEntry('50000'),  // covers 10000
         [`100:${GNOSIS_USDCE}`]: balanceEntry('1000'),                              // short of 20000
       },
       fromCache: true,
@@ -527,7 +527,7 @@ describe('x402:approve', () => {
     mockGetPermission.mockReturnValueOnce({
       origin: 'https://api.example',
       chainId: 8453,
-      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
@@ -594,7 +594,7 @@ describe('x402:approve', () => {
     mockGetPermission.mockReturnValueOnce({
       origin: 'https://api.example',
       chainId: 8453,
-      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       capAmount: '20000', spentAmount: '0',
       createdAt: 1, expiresAt: 9999999999,
     });
@@ -725,7 +725,7 @@ describe('x402:get-details autoPay', () => {
     mockGetPermission.mockReturnValueOnce({
       origin: 'https://api.example',
       chainId: 8453,
-      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       capAmount: '10000000',
       spentAmount: '0',
       createdAt: 1,
@@ -737,7 +737,7 @@ describe('x402:get-details autoPay', () => {
     expect(mockGetPermission).toHaveBeenCalledWith(
       'https://api.example',
       8453,
-      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+      '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
     );
   });
 
@@ -746,7 +746,7 @@ describe('x402:get-details autoPay', () => {
     mockGetPermission.mockReturnValueOnce({
       origin: 'https://api.example',
       chainId: 8453,
-      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       capAmount: '10000000',
       spentAmount: '9999999', // only 1 atomic unit left; charge is 10000
       createdAt: 1,
@@ -797,7 +797,7 @@ describe('x402:approve permission interactions', () => {
     expect(mockGrant).toHaveBeenCalledWith(
       'https://api.example',
       8453,
-      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       '10000000',
       30 * 24 * 60 * 60
     );
