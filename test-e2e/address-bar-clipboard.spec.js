@@ -9,6 +9,17 @@ const { test, expect } = require('./fixtures');
 const isDarwin = process.platform === 'darwin';
 const modifier = process.env.E2E_CLIPBOARD_MODIFIER || (isDarwin ? 'Meta' : 'Control');
 
+async function readApplicationMenu(electronApp) {
+  let menu;
+  await expect
+    .poll(async () => {
+      menu = await electronApp.evaluate(inspectApplicationMenu());
+      return menu.ready;
+    })
+    .toBe(true);
+  return menu;
+}
+
 function inspectApplicationMenu() {
   return ({ Menu }) => {
     const menu = Menu.getApplicationMenu();
@@ -38,17 +49,18 @@ function inspectApplicationMenu() {
 test.describe('address bar application menu (Windows/Linux)', () => {
   test.skip(isDarwin, 'macOS uses native app/window/edit menu roles');
 
-  test('application menu excludes macOS-only roles', async ({ electronApp }) => {
-    const menu = await electronApp.evaluate(inspectApplicationMenu());
-    expect(menu.ready).toBe(true);
+  test('application menu excludes macOS-only roles', async ({ electronApp, window }) => {
+    await expect(window.locator('[data-test="address-input"]')).toBeVisible();
+    const menu = await readApplicationMenu(electronApp);
     expect(menu.hasAppMenu).toBe(false);
     expect(menu.hasWindowMenu).toBe(false);
     expect(menu.hasFileMenu).toBe(true);
     expect(menu.hasEditMenu).toBe(true);
   });
 
-  test('Edit menu exposes clipboard roles', async ({ electronApp }) => {
-    const menu = await electronApp.evaluate(inspectApplicationMenu());
+  test('Edit menu exposes clipboard roles', async ({ electronApp, window }) => {
+    await expect(window.locator('[data-test="address-input"]')).toBeVisible();
+    const menu = await readApplicationMenu(electronApp);
     const roles = menu.roles.map((role) => role.toLowerCase());
     expect(roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectall']));
   });
