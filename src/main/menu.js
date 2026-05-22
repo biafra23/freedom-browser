@@ -26,48 +26,56 @@ function updateTabMenuItems() {
   if (closeTabMenuItem) closeTabMenuItem.enabled = hasWindows;
 }
 
-function setupApplicationMenu() {
-  const updateReady = isUpdateReady();
+function buildEditMenuTemplate(isMac) {
+  if (isMac) {
+    return { role: 'editMenu' };
+  }
 
-  const updateMenuItems = updateReady
-    ? [
-        {
-          label: 'Install Update and Restart...',
-          click: () => {
-            installUpdate();
-          },
-        },
-        {
-          label: 'Check for Updates...',
-          enabled: false,
-        },
-      ]
-    : [
-        {
-          label: 'Check for Updates...',
-          click: () => {
-            checkForUpdates();
-          },
-        },
-      ];
+  return {
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'delete' },
+      { type: 'separator' },
+      { role: 'selectAll' },
+    ],
+  };
+}
+
+function buildApplicationMenuTemplate({
+  platform = process.platform,
+  updateMenuItems,
+  isFullScreen = false,
+  isPackaged = app.isPackaged,
+} = {}) {
+  const isMac = platform === 'darwin';
 
   const template = [
-    {
-      role: 'appMenu',
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        ...updateMenuItems,
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
+    ...(isMac
+      ? [
+          {
+            role: 'appMenu',
+            submenu: [
+              { role: 'about' },
+              { type: 'separator' },
+              ...updateMenuItems,
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          },
+        ]
+      : []),
     {
       label: 'File',
       submenu: [
@@ -99,7 +107,7 @@ function setupApplicationMenu() {
             // User can close DevTools with the X button or Cmd+Option+I
           },
         },
-        ...(process.platform !== 'darwin'
+        ...(!isMac
           ? [
               {
                 label: 'Close Tab',
@@ -135,6 +143,12 @@ function setupApplicationMenu() {
         },
         { type: 'separator' },
         { role: 'close' },
+        ...(!isMac
+          ? [
+              { type: 'separator' },
+              { role: 'quit' },
+            ]
+          : []),
       ],
     },
     {
@@ -257,7 +271,7 @@ function setupApplicationMenu() {
             }
           },
         },
-        ...(!app.isPackaged
+        ...(!isPackaged
           ? [
               {
                 id: 'toggle-app-devtools',
@@ -279,7 +293,7 @@ function setupApplicationMenu() {
       submenu: [
         {
           label: 'Show All History',
-          accelerator: process.platform === 'darwin' ? 'Cmd+Y' : 'Ctrl+H',
+          accelerator: isMac ? 'Cmd+Y' : 'Ctrl+H',
           click: () => {
             const win = getTargetWindow();
             if (win) {
@@ -289,9 +303,43 @@ function setupApplicationMenu() {
         },
       ],
     },
-    { role: 'editMenu' },
-    { role: 'windowMenu' },
+    buildEditMenuTemplate(isMac),
+    ...(isMac ? [{ role: 'windowMenu' }] : []),
   ];
+
+  return template;
+}
+
+function setupApplicationMenu() {
+  const updateReady = isUpdateReady();
+
+  const updateMenuItems = updateReady
+    ? [
+        {
+          label: 'Install Update and Restart...',
+          click: () => {
+            installUpdate();
+          },
+        },
+        {
+          label: 'Check for Updates...',
+          enabled: false,
+        },
+      ]
+    : [
+        {
+          label: 'Check for Updates...',
+          click: () => {
+            checkForUpdates();
+          },
+        },
+      ];
+
+  const template = buildApplicationMenuTemplate({
+    updateMenuItems,
+    isFullScreen,
+    isPackaged: app.isPackaged,
+  });
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 
@@ -361,6 +409,7 @@ function updateFullscreenMenuItem(newIsFullScreen) {
 }
 
 module.exports = {
+  buildApplicationMenuTemplate,
   setupApplicationMenu,
   updateTabMenuItems,
   updateFullscreenMenuItem,
