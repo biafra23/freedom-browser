@@ -73,6 +73,12 @@ async function writeClipboard(text) {
   }
 }
 
+function selectAllInInput(input) {
+  const end = input.value.length;
+  input.focus();
+  input.setSelectionRange(0, end);
+}
+
 async function readClipboard() {
   try {
     return await navigator.clipboard.readText();
@@ -108,8 +114,7 @@ async function runEditAction(action, input) {
       break;
     }
     case 'select-all': {
-      const end = input.value.length;
-      input.setSelectionRange(0, end);
+      selectAllInInput(input);
       break;
     }
     default:
@@ -148,10 +153,15 @@ export const initChromeInputContextMenu = (options = {}) => {
     if (!item || item.disabled) return;
 
     const action = item.dataset.action;
-    if (!action || !activeInput) return;
+    const input = activeInput;
+    if (!action || !input) return;
 
-    void runEditAction(action, activeInput).finally(() => {
+    void runEditAction(action, input).finally(() => {
       hideChromeInputContextMenu();
+      // Closing the menu can move focus on macOS and collapse the selection.
+      if (action === 'select-all') {
+        selectAllInInput(input);
+      }
     });
   });
 };

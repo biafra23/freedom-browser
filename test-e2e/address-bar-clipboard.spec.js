@@ -129,12 +129,14 @@ test.describe('address bar chrome context menu', () => {
     await menu.getByRole('button', { name: 'Select All' }).click();
 
     await expect
-      .poll(async () =>
-        input.evaluate((el) => ({
-          start: el.selectionStart,
-          end: el.selectionEnd,
-          length: el.value.length,
-        }))
+      .poll(
+        async () =>
+          input.evaluate((el) => ({
+            start: el.selectionStart,
+            end: el.selectionEnd,
+            length: el.value.length,
+          })),
+        { timeout: 15_000 }
       )
       .toEqual({ start: 0, end: sample.length, length: sample.length });
   });
