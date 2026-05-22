@@ -111,6 +111,14 @@ function getConfiguredBeeNodeMode() {
 }
 
 function getPrimaryGnosisRpcUrl() {
+  // Bee needs a single stable Gnosis backend to start. A keyed commercial
+  // provider may have a valid API key for Ethereum but not Gnosis enabled,
+  // so prefer explicit/user/public keyless Gnosis sources when available.
+  const sources = registry.getEndpointSources(GNOSIS_CHAIN_ID, 'rpc');
+  const keyless = sources.find((src) => !src.keyed);
+  const keylessUrl = keyless?.coverage?.[String(GNOSIS_CHAIN_ID)];
+  if (typeof keylessUrl === 'string' && keylessUrl.trim()) return keylessUrl.trim();
+
   const [primaryUrl] = registry.getEndpoints(GNOSIS_CHAIN_ID, 'rpc');
   return typeof primaryUrl === 'string' && primaryUrl.trim() ? primaryUrl.trim() : null;
 }
