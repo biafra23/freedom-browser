@@ -43,11 +43,11 @@ function updateActionStates(input, selection) {
   if (selectAll) selectAll.disabled = !hasText;
 }
 
-function showChromeInputContextMenu(input, clientX, clientY) {
+function showChromeInputContextMenu(input, clientX, clientY, selection) {
   if (!contextMenu || !input) return;
 
   activeInput = input;
-  savedSelection = captureSelection(input);
+  savedSelection = selection ?? captureSelection(input);
   updateActionStates(input, savedSelection);
   showMenuBackdrop();
 
@@ -66,10 +66,15 @@ function showChromeInputContextMenu(input, clientX, clientY) {
 
 async function writeClipboard(text) {
   if (!text) return;
+  const result = await electronAPI?.copyText?.(text);
+  if (result?.success) {
+    return;
+  }
+
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    await electronAPI?.copyText?.(text);
+    // Best-effort; menu actions still update the input when possible.
   }
 }
 
@@ -83,16 +88,19 @@ function selectAllInInput(input) {
 }
 
 async function readClipboard() {
+  const result = await electronAPI?.readClipboardText?.();
+  if (result?.success) {
+    return result.text ?? '';
+  }
+
   try {
     return await navigator.clipboard.readText();
   } catch {
-    const result = await electronAPI?.readClipboardText?.();
-    return result?.text ?? '';
+    return '';
   }
 }
 
-async function runEditAction(action, input) {
-  const selection = savedSelection ?? captureSelection(input);
+async function runEditAction(action, input, selection) {
   applySelection(input, selection);
 
   switch (action) {
@@ -136,20 +144,25 @@ export const initChromeInputContextMenu = (options = {}) => {
   contextMenu = document.getElementById('chrome-input-context-menu');
   if (!contextMenu) return;
 
-  // Keep focus and text selection on the input while the menu is used.
-  contextMenu.addEventListener('mousedown', (event) => {
-    event.preventDefault();
-  });
-
   const inputs =
     options.inputs?.filter(Boolean) ??
     [document.getElementById('address-input')].filter(Boolean);
 
   for (const input of inputs) {
+    let selectionAtPointerDown = null;
+
+    input.addEventListener('mousedown', (event) => {
+      if (event.button === 2) {
+        selectionAtPointerDown = captureSelection(input);
+      }
+    });
+
     input.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       options.onOpening?.();
-      showChromeInputContextMenu(input, event.clientX, event.clientY);
+      const selection = selectionAtPointerDown ?? captureSelection(input);
+      selectionAtPointerDown = null;
+      showChromeInputContextMenu(input, event.clientX, event.clientY, selection);
     });
   }
 
@@ -161,11 +174,13 @@ export const initChromeInputContextMenu = (options = {}) => {
     const input = activeInput;
     if (!action || !input) return;
 
-    void runEditAction(action, input).finally(() => {
+    const selection = savedSelection ?? captureSelection(input);
+    hideChromeInputContextMenu();
+
+    void runEditAction(action, input, selection).then(() => {
       if (action === 'select-all') {
         selectAllInInput(input);
       }
-      hideChromeInputContextMenu();
     });
   });
 };

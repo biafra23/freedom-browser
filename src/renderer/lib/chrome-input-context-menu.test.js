@@ -89,7 +89,7 @@ const createContextMenu = () => {
   };
 };
 
-const loadModule = async ({ input, contextMenu } = {}) => {
+const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
   jest.resetModules();
 
   const addressInput = input ?? createInput();
@@ -106,10 +106,13 @@ const loadModule = async ({ input, contextMenu } = {}) => {
   global.window = {
     innerWidth: 800,
     innerHeight: 600,
-    electronAPI: {
-      copyText: jest.fn().mockResolvedValue({ success: true }),
-      readClipboardText: jest.fn().mockResolvedValue({ success: true, text: 'pasted' }),
-    },
+    electronAPI:
+      electronAPI === null
+        ? undefined
+        : (electronAPI ?? {
+            copyText: jest.fn().mockResolvedValue({ success: true }),
+            readClipboardText: jest.fn().mockResolvedValue({ success: true, text: 'pasted' }),
+          }),
   };
 
   global.navigator = {
@@ -129,7 +132,12 @@ const loadModule = async ({ input, contextMenu } = {}) => {
   return { mod, input: addressInput, menu };
 };
 
-const openContextMenu = (input) => {
+const openContextMenu = (input, { collapseSelectionOnOpen = false } = {}) => {
+  input.handlers.mousedown?.({ button: 2 });
+  if (collapseSelectionOnOpen) {
+    const caret = input.value.length;
+    input.setSelectionRange(caret, caret);
+  }
   input.handlers.contextmenu({
     preventDefault: jest.fn(),
     clientX: 10,
@@ -164,7 +172,7 @@ describe('chrome-input-context-menu', () => {
     openContextMenu(input);
     await clickMenu(menu, 'copy');
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('hello');
+    expect(window.electronAPI.copyText).toHaveBeenCalledWith('hello');
     expect(input.value).toBe('hello world');
   });
 
@@ -173,7 +181,7 @@ describe('chrome-input-context-menu', () => {
     openContextMenu(input);
     await clickMenu(menu, 'cut');
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('hello');
+    expect(window.electronAPI.copyText).toHaveBeenCalledWith('hello');
     expect(input.value).toBe(' world');
   });
 
@@ -185,30 +193,38 @@ describe('chrome-input-context-menu', () => {
     openContextMenu(input);
     await clickMenu(menu, 'paste');
 
-    expect(navigator.clipboard.readText).toHaveBeenCalled();
+    expect(window.electronAPI.readClipboardText).toHaveBeenCalled();
     expect(input.value).toBe('hello pastedworld');
   });
 
-  test('falls back to electron copyText when clipboard write fails', async () => {
-    const { input, menu } = await loadModule();
-    navigator.clipboard.writeText.mockRejectedValueOnce(new Error('denied'));
-
+  test('falls back to navigator clipboard write when electron copy is unavailable', async () => {
+    const { input, menu } = await loadModule({ electronAPI: null });
     openContextMenu(input);
     await clickMenu(menu, 'copy');
 
-    expect(window.electronAPI.copyText).toHaveBeenCalledWith('hello');
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('hello');
   });
 
-  test('falls back to electron readClipboardText when clipboard read fails', async () => {
+  test('copy uses selection captured on right mousedown when contextmenu collapses it', async () => {
+    const input = createInput('copy-via-menu-69');
+    input.setSelectionRange(0, input.value.length);
+    const { menu } = await loadModule({ input });
+
+    openContextMenu(input, { collapseSelectionOnOpen: true });
+    await clickMenu(menu, 'copy');
+
+    expect(window.electronAPI.copyText).toHaveBeenCalledWith('copy-via-menu-69');
+  });
+
+  test('falls back to navigator clipboard read when electron read is unavailable', async () => {
     const input = createInput('hello world');
     input.setSelectionRange(6, 6);
-    const { menu } = await loadModule({ input });
-    navigator.clipboard.readText.mockRejectedValueOnce(new Error('denied'));
+    const { menu } = await loadModule({ input, electronAPI: null });
 
     openContextMenu(input);
     await clickMenu(menu, 'paste');
 
-    expect(window.electronAPI.readClipboardText).toHaveBeenCalled();
+    expect(navigator.clipboard.readText).toHaveBeenCalled();
     expect(input.value).toBe('hello pastedworld');
   });
 });

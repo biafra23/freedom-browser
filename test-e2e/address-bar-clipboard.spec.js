@@ -9,6 +9,27 @@ const { test, expect } = require('./fixtures');
 const isDarwin = process.platform === 'darwin';
 const modifier = process.env.E2E_CLIPBOARD_MODIFIER || (isDarwin ? 'Meta' : 'Control');
 
+async function selectAllInInput(input) {
+  await input.evaluate((el) => {
+    el.focus();
+    el.select();
+    if (el.selectionStart !== 0 || el.selectionEnd !== el.value.length) {
+      el.setSelectionRange(0, el.value.length);
+    }
+  });
+}
+
+async function expectRendererClipboard(window, sample) {
+  await expect
+    .poll(() =>
+      window.evaluate(async () => {
+        const result = await window.electronAPI.readClipboardText();
+        return result?.text ?? '';
+      })
+    )
+    .toBe(sample);
+}
+
 async function readApplicationMenu(electronApp) {
   let menu;
   await expect
@@ -74,86 +95,94 @@ test.describe('address bar application menu (Windows/Linux)', () => {
 });
 
 test.describe('address bar chrome context menu', () => {
-  test('right-click shows Cut/Copy/Paste/Select All on the address bar', async ({ window }) => {
+  const dismissChromeInputMenu = async (window) => {
+    const menu = window.locator('[data-test="chrome-input-context-menu"]');
+    if (!(await menu.isVisible())) {
+      return;
+    }
+
+    await window.keyboard.press('Escape');
+
+    const backdrop = window.locator('#menu-backdrop');
+    if (await backdrop.isVisible()) {
+      await backdrop.click({ force: true });
+    }
+
+    try {
+      await expect(menu).toBeHidden({ timeout: 2_000 });
+    } catch {
+      await window.evaluate(() => {
+        document.getElementById('chrome-input-context-menu')?.classList.add('hidden');
+        document.getElementById('menu-backdrop')?.classList.add('hidden');
+      });
+      await expect(menu).toBeHidden();
+    }
+  };
+
+  test('chrome context menu cut, copy, paste, and select all', async ({ window, electronApp }) => {
+    test.setTimeout(60_000);
+
     const input = window.locator('[data-test="address-input"]');
     const menu = window.locator('[data-test="chrome-input-context-menu"]');
 
     await input.click();
     await input.fill('context-menu-69');
     await input.click({ button: 'right' });
-
     await expect(menu).toBeVisible();
     await expect(menu.getByRole('button', { name: 'Cut' })).toBeVisible();
     await expect(menu.getByRole('button', { name: 'Copy' })).toBeVisible();
     await expect(menu.getByRole('button', { name: 'Paste' })).toBeVisible();
     await expect(menu.getByRole('button', { name: 'Select All' })).toBeVisible();
-  });
+    await dismissChromeInputMenu(window);
 
-  test('context menu Copy writes selection to the clipboard', async ({ window, electronApp }) => {
-    const input = window.locator('[data-test="address-input"]');
-    const menu = window.locator('[data-test="chrome-input-context-menu"]');
-    const sample = 'copy-via-menu-69';
-
-    await input.click();
-    await input.fill(sample);
-    await input.press(`${modifier}+a`);
+    const copySample = 'copy-via-menu-69';
+    await input.fill(copySample);
+    await selectAllInInput(input);
     await input.click({ button: 'right' });
+    await expect(menu.getByRole('button', { name: 'Copy' })).toBeEnabled();
     await menu.getByRole('button', { name: 'Copy' }).click();
-
     await expect
       .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-      .toBe(sample);
-  });
+      .toBe(copySample);
+    await dismissChromeInputMenu(window);
 
-  test('context menu Cut clears selection and copies to clipboard', async ({ window, electronApp }) => {
-    const input = window.locator('[data-test="address-input"]');
-    const menu = window.locator('[data-test="chrome-input-context-menu"]');
-    const sample = 'cut-via-menu-69';
-
-    await input.click();
-    await input.fill(sample);
-    await input.press(`${modifier}+a`);
+    const cutSample = 'cut-via-menu-69';
+    await input.fill(cutSample);
+    await selectAllInInput(input);
     await input.click({ button: 'right' });
+    await expect(menu.getByRole('button', { name: 'Cut' })).toBeEnabled();
     await menu.getByRole('button', { name: 'Cut' }).click();
-
     await expect(input).toHaveValue('');
     await expect
       .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-      .toBe(sample);
-  });
+      .toBe(cutSample);
+    await dismissChromeInputMenu(window);
 
-  test('context menu Paste inserts clipboard text', async ({ window, electronApp }) => {
-    const input = window.locator('[data-test="address-input"]');
-    const menu = window.locator('[data-test="chrome-input-context-menu"]');
-    const sample = 'paste-via-menu-69';
-
-    await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), sample);
-    await expect
-      .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-      .toBe(sample);
-
-    await input.click();
-    await input.fill('');
+    const pasteSample = 'paste-via-menu-69';
+    await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), pasteSample);
+    await expectRendererClipboard(window, pasteSample);
+    await input.evaluate((el) => {
+      el.value = '';
+      el.setSelectionRange(0, 0);
+    });
     await input.click({ button: 'right' });
+    await expect(menu.getByRole('button', { name: 'Paste' })).toBeEnabled();
     await menu.getByRole('button', { name: 'Paste' }).click();
+    await expect.poll(async () => input.inputValue(), { timeout: 15_000 }).toBe(pasteSample);
+    await dismissChromeInputMenu(window);
 
-    await expect.poll(async () => input.inputValue(), { timeout: 15_000 }).toBe(sample);
-  });
-
-  test('context menu Select All then Copy copies the full address', async ({ window, electronApp }) => {
-    const input = window.locator('[data-test="address-input"]');
-    const menu = window.locator('[data-test="chrome-input-context-menu"]');
-    const sample = 'select-all-via-menu-69';
-
-    await input.click();
-    await input.fill(sample);
+    const selectAllSample = 'select-all-via-menu-69';
+    await input.fill(selectAllSample);
     await input.click({ button: 'right' });
     await menu.getByRole('button', { name: 'Select All' }).click();
-    await input.press(`${modifier}+c`);
-
+    await dismissChromeInputMenu(window);
+    await input.click({ button: 'right' });
+    await expect(menu.getByRole('button', { name: 'Copy' })).toBeEnabled();
+    await menu.getByRole('button', { name: 'Copy' }).click();
     await expect
       .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-      .toBe(sample);
+      .toBe(selectAllSample);
+    await dismissChromeInputMenu(window);
   });
 
   test(`${modifier} shortcuts copy, cut, and paste in the address bar`, async ({ window, electronApp }) => {

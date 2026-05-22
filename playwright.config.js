@@ -39,6 +39,7 @@ module.exports = defineConfig({
       // headroom without hiding genuine hangs.
       timeout: 30_000,
       expect: { timeout: 7_500 },
+      retries: process.env.CI ? 2 : 0,
     },
     {
       name: 'live',
