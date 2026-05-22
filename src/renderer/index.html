@@ -1788,7 +1788,17 @@
                   <div class="dapp-tx-action">requests an on-chain payment</div>
                 </div>
 
-                <div class="dapp-tx-details">
+                <!-- Multi-accept chooser. Only rendered when 2+ accepts[]
+                     are fundable from the active wallet; populated by JS
+                     in renderCard(). When the count is 1 or 0 this stays
+                     hidden and the detail rows / insufficient block tell
+                     the user what's going on instead. -->
+                <div class="x402-chooser hidden" id="x402-approval-chooser">
+                  <div class="x402-chooser-label">Pay with</div>
+                  <div class="x402-chooser-options" id="x402-approval-chooser-options"></div>
+                </div>
+
+                <div class="dapp-tx-details" id="x402-approval-details">
                   <div class="dapp-tx-row">
                     <span class="dapp-tx-label">Amount</span>
                     <span class="dapp-tx-value" id="x402-approval-amount">—</span>
@@ -1805,6 +1815,17 @@
                     <span class="dapp-tx-label">Page</span>
                     <span class="dapp-tx-value" id="x402-approval-url">—</span>
                   </div>
+                </div>
+
+                <!-- Insufficient-funds state. Replaces the detail rows
+                     when no `accepts[]` entry is fundable from the
+                     active wallet. Pay button stays disabled in this
+                     state (locked decision #2). -->
+                <div class="x402-insufficient hidden" id="x402-approval-insufficient">
+                  <p class="x402-insufficient-title">Insufficient funds</p>
+                  <p class="x402-insufficient-help">This site accepts:</p>
+                  <ul class="x402-insufficient-list" id="x402-approval-insufficient-list"></ul>
+                  <p class="x402-insufficient-footer">Top up at least one of these to pay.</p>
                 </div>
 
                 <div class="dapp-tx-warning hidden" id="x402-approval-warning">

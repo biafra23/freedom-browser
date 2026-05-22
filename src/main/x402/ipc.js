@@ -98,6 +98,9 @@ function autoPayStateFor(origin, accept) {
 // raw atomic-unit string so the chooser can render its own formatting.
 function enrichAcceptForDisplay(accept, origin, balances) {
   const tuple = tupleFromAccept(accept);
+  // `balanceKey` lets renderer-side reactive refresh look up balances
+  // without re-deriving from the tuple shape — `applyFreshBalances`
+  // treats `tuple` as opaque after we hand off.
   const balanceKey = tuple ? `${tuple.chainId}:${tuple.asset}` : null;
   const raw = balanceKey ? balances?.[balanceKey]?.raw : null;
   const balance = typeof raw === 'string' ? raw : null;
@@ -108,6 +111,7 @@ function enrichAcceptForDisplay(accept, origin, balances) {
   return {
     accept,
     tuple,
+    balanceKey,
     asset: lookupAsset(accept),
     balance,
     fundable,

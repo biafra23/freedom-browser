@@ -21,7 +21,7 @@
 
 import { walletState, registerScreenHider, hideAllSubscreens } from './wallet-state.js';
 import { open as openSidebarPanel, isVisible as isSidebarVisible } from '../sidebar.js';
-import { formatRawTokenBalance, truncateAddress, toAtomicUnits } from './wallet-utils.js';
+import { escapeHtml, formatRawTokenBalance, truncateAddress, toAtomicUnits } from './wallet-utils.js';
 import { getPermissionKey } from '../origin-utils.js';
 import { showX402Permissions } from './permission-manage.js';
 import { showVaultUnlock } from './vault-unlock.js';
@@ -40,6 +40,11 @@ let amountEl;
 let toEl;
 let networkEl;
 let urlEl;
+let detailsEl;
+let chooserEl;
+let chooserOptionsEl;
+let insufficientEl;
+let insufficientListEl;
 let warningEl;
 let warningTextEl;
 let unlockBlock;
@@ -76,6 +81,11 @@ export function initDappX402() {
   toEl = document.getElementById('x402-approval-to');
   networkEl = document.getElementById('x402-approval-network');
   urlEl = document.getElementById('x402-approval-url');
+  detailsEl = document.getElementById('x402-approval-details');
+  chooserEl = document.getElementById('x402-approval-chooser');
+  chooserOptionsEl = document.getElementById('x402-approval-chooser-options');
+  insufficientEl = document.getElementById('x402-approval-insufficient');
+  insufficientListEl = document.getElementById('x402-approval-insufficient-list');
   warningEl = document.getElementById('x402-approval-warning');
   warningTextEl = document.getElementById('x402-approval-warning-text');
   unlockBlock = document.getElementById('x402-approval-unlock');
@@ -101,6 +111,7 @@ export function initDappX402() {
   registerScreenHider(() => screen?.classList.add('hidden'));
   wireButtons();
   wireBanner();
+  wireChooser();
 
   // Subscribe to main's "approval needed" events. Returned disposer is
   // discarded — the renderer lives for the window's lifetime.
@@ -138,6 +149,17 @@ export function initDappX402() {
       console.error('[x402] banner refresh after cap-consumed failed:', err);
     });
   });
+
+  // Background balance refresh landed on a card that's currently open.
+  // Recompute fundability per displayed entry and update the chooser
+  // rows in place. Selection-pinning rule: never silently change the
+  // user's pick. If their selected row flips from fundable to
+  // unfundable mid-flow, the inline "Balance changed" error at Pay
+  // click is the safety net; we don't auto-flip.
+  window.electronAPI?.onX402BalancesUpdated?.(({ balances, webContentsId } = {}) => {
+    if (!pending || pending.webContentsId !== webContentsId) return;
+    applyFreshBalances(balances || {});
+  });
 }
 
 async function handleAutoPayUnlock(webContentsId, origin) {
@@ -156,6 +178,22 @@ async function handleAutoPayUnlock(webContentsId, origin) {
   if (!result?.success) {
     console.error('[x402] resume-after-unlock failed:', result?.error);
   }
+}
+
+function wireChooser() {
+  // One delegated `change` listener for all dynamically-rendered radio
+  // rows. Survives across renderCard rebuilds; rebuilt rows just
+  // re-target the same handler.
+  chooserOptionsEl?.addEventListener('change', (event) => {
+    if (!pending) return;
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.name !== 'x402-chooser') return;
+    const index = Number(target.value);
+    if (!Number.isInteger(index) || index < 0) return;
+    if (pending.selectedAcceptIndex === index) return;
+    pending.selectedAcceptIndex = index;
+    renderCard();
+  });
 }
 
 function wireBanner() {
@@ -201,11 +239,12 @@ function wireButtons() {
   });
 }
 
-async function showApproval({ webContentsId, detectionId, url, requirements, resourceType }) {
+async function showApproval({ webContentsId, detectionId, url, resourceType }) {
   // Re-fetch the canonical details via IPC so the sidebar trusts main's
-  // view (asset allowlist, autoPay state). detectionId routes to the
-  // specific 402 we got the event for, immune to a newer detection
-  // replacing detectedPayments[webContentsId] in main.
+  // view (asset allowlist, autoPay state, per-accept balances).
+  // detectionId routes to the specific 402 we got the event for, immune
+  // to a newer detection replacing detectedPayments[webContentsId] in
+  // main.
   const details = await window.electronAPI.x402GetDetails({ webContentsId, detectionId });
   if (!details?.success) {
     console.warn('[x402] approval-needed event for an unknown tab:', details?.error);
@@ -217,9 +256,12 @@ async function showApproval({ webContentsId, detectionId, url, requirements, res
     detectionId: details.detectionId ?? detectionId ?? null,
     resourceType: resourceType ?? null,
     url: details.url ?? url,
-    requirements: details.requirements ?? requirements,
-    asset: details.asset,
-    autoPay: details.autoPay,
+    // Enriched per-accept rows from main: {accept, tuple, balanceKey,
+    // asset, balance, fundable, autoPay}. Renderer treats `tuple` as
+    // opaque — fundability recomputation uses balanceKey directly.
+    accepts: details.accepts ?? [],
+    selectedAcceptIndex: details.initialSelectionIndex ?? 0,
+    signing: false,
   };
 
   renderCard();
@@ -231,48 +273,253 @@ async function showApproval({ webContentsId, detectionId, url, requirements, res
   openSidebarPanel();
 }
 
+// Render the card from `pending.accepts` + `pending.selectedAcceptIndex`.
+// Branches on the count of fundable entries (locked decisions §2 + §3):
+// 0 → insufficient-funds state, Pay disabled
+// 1 → single-entry detail rows (no chooser)
+// 2+ → chooser dropdown + the selected entry's detail rows
+//
+// Pinned-selection rule: the user's `selectedAcceptIndex` is never
+// silently moved by reactive balance updates. If their pick becomes
+// unfundable mid-flow, the row stays selected, the chooser marks it as
+// such, Pay is disabled, and an inline notice prompts a re-pick.
 function renderCard() {
-  const accept = pending.requirements?.accepts?.[0] || {};
-  const asset = pending.asset;
-  const rawAmount = accept.amount ?? accept.maxAmountRequired ?? '';
+  const accepts = pending.accepts || [];
+  const fundableCount = accepts.filter((e) => e.fundable).length;
 
   let origin;
   try { origin = new URL(pending.url).origin; } catch { origin = pending.url; }
   siteEl.textContent = origin;
   urlEl.textContent = pending.url;
   urlEl.title = pending.url;
-  toEl.textContent = truncateAddress(accept.payTo || '');
-  toEl.title = accept.payTo || '';
-  networkEl.textContent = String(accept.network || '—');
 
-  if (asset && typeof asset.decimals === 'number') {
-    const pretty = formatRawTokenBalance(rawAmount, asset.decimals);
-    amountEl.textContent = `${pretty} ${asset.symbol}`;
-    grantCapEl.textContent = `${DEFAULT_GRANT_CAP_USDC} ${asset.symbol}`;
-    grantRow.classList.remove('hidden');
-    pending.grantPayload = {
-      capAmount: toAtomicUnits(DEFAULT_GRANT_CAP_USDC, asset.decimals),
-      windowSeconds: DEFAULT_GRANT_WINDOW_SECONDS,
-    };
-    approveBtn.disabled = false;
-    hideError();
-  } else {
-    amountEl.textContent = `${rawAmount} of ${truncateAddress(accept.asset || '')}`;
+  if (accepts.length === 0) {
+    // Unreachable per the zod schema (`accepts: …min(1)`); defensive.
+    showInsufficientState([]);
+    approveBtn.disabled = true;
     grantRow.classList.add('hidden');
     pending.grantPayload = null;
-    approveBtn.disabled = true;
-    showError('This site asks for payment in an asset we don’t recognise.');
+    showError('This site requested payment but offered no payable assets.');
+    return;
   }
 
-  // Surface an over-cap warning so the user knows their existing
-  // allowance won't quietly auto-cover this charge.
-  if (pending.autoPay?.kind === 'over-cap') {
+  if (fundableCount === 0) {
+    // Locked decision §3: disable Pay, list every requested asset
+    // alongside the active wallet's current balance, no "Pay anyway"
+    // escape hatch. Single-accept paywalls with insufficient balance
+    // surface here too.
+    showInsufficientState(accepts);
+    approveBtn.disabled = true;
+    grantRow.classList.add('hidden');
+    pending.grantPayload = null;
+    hideError();
+    return;
+  }
+
+  // 1+ fundable: render the selected entry's detail rows. Chooser
+  // appears only when ≥2 fundable so single-fundable multi-accept
+  // collapses to the same UX as a regular single-accept quote.
+  pending.selectedAcceptIndex = clampSelectionIndex(accepts, pending.selectedAcceptIndex);
+  const selectedIndex = pending.selectedAcceptIndex;
+  const entry = accepts[selectedIndex];
+  const selectedFundable = !!entry?.fundable;
+
+  if (fundableCount >= 2) {
+    showChooser(accepts, selectedIndex);
+  } else {
+    hideChooser();
+  }
+  showDetailRows(entry);
+
+  // Grant toggle pins to the SELECTED entry's asset. Switching the
+  // selection re-renders this row so the user always sees the
+  // currency they're about to authorize for future auto-pays.
+  if (entry?.asset && typeof entry.asset.decimals === 'number') {
+    grantCapEl.textContent = `${DEFAULT_GRANT_CAP_USDC} ${entry.asset.symbol}`;
+    grantRow.classList.remove('hidden');
+    pending.grantPayload = {
+      capAmount: toAtomicUnits(DEFAULT_GRANT_CAP_USDC, entry.asset.decimals),
+      windowSeconds: DEFAULT_GRANT_WINDOW_SECONDS,
+    };
+  } else {
+    grantRow.classList.add('hidden');
+    pending.grantPayload = null;
+  }
+
+  // Selection state vs Pay button: only enable Pay when the selected
+  // entry is fundable AND its asset is recognised. The user's pick is
+  // pinned even if it becomes unfundable — we show the row as-selected
+  // and surface the reason inline so they re-pick deliberately.
+  if (!selectedFundable) {
+    approveBtn.disabled = true;
+    showError('Your selected option is no longer fundable — pick another or top up.');
+  } else if (!entry.asset || typeof entry.asset.decimals !== 'number') {
+    approveBtn.disabled = true;
+    showError('This site asks for payment in an asset we don’t recognise.');
+  } else {
+    approveBtn.disabled = false;
+    hideError();
+  }
+
+  // Over-cap warning for the SELECTED entry's autoPay state.
+  if (entry?.autoPay?.kind === 'over-cap') {
     warningTextEl.textContent =
       'This charge exceeds your remaining allowance for this site; approving will reset the allowance for the next 30 days.';
     warningEl.classList.remove('hidden');
   } else {
     warningEl.classList.add('hidden');
   }
+}
+
+function showDetailRows(entry) {
+  detailsEl.classList.remove('hidden');
+  insufficientEl.classList.add('hidden');
+
+  const accept = entry.accept || {};
+  const rawAmount = accept.amount ?? accept.maxAmountRequired ?? '';
+  toEl.textContent = truncateAddress(accept.payTo || '');
+  toEl.title = accept.payTo || '';
+  networkEl.textContent = String(accept.network || '—');
+
+  if (entry.asset && typeof entry.asset.decimals === 'number') {
+    const pretty = formatRawTokenBalance(rawAmount, entry.asset.decimals);
+    amountEl.textContent = `${pretty} ${entry.asset.symbol}`;
+  } else {
+    amountEl.textContent = `${rawAmount} of ${truncateAddress(accept.asset || '')}`;
+  }
+}
+
+// Render the chooser dropdown for multi-fundable cases. Each row is a
+// radio control over the SAME named group so the browser handles the
+// "exactly one selected" semantics. A single delegated `change`
+// listener on the container catches selection updates — listening on
+// label `click` would double-fire because the browser also synthesizes
+// a click on the wrapped <input> that bubbles back to the label.
+//
+// The selected row keeps its visual treatment even when it becomes
+// unfundable (pinned-selection rule); the inline error below the card
+// surfaces the reason.
+function showChooser(accepts, selectedIndex) {
+  chooserEl.classList.remove('hidden');
+  chooserOptionsEl.innerHTML = '';
+
+  accepts.forEach((entry, index) => {
+    const row = document.createElement('label');
+    const classes = ['x402-chooser-row'];
+    if (!entry.fundable) classes.push('is-unfundable');
+    if (index === selectedIndex) classes.push('is-selected');
+    row.className = classes.join(' ');
+    row.innerHTML = `
+      <input type="radio" name="x402-chooser" value="${index}"${index === selectedIndex ? ' checked' : ''}${entry.fundable ? '' : ' disabled'}>
+      <span class="x402-chooser-row-main">
+        <span class="x402-chooser-row-amount">${escapeHtml(formatAmountLabel(entry))}</span>
+        <span class="x402-chooser-row-network">on ${escapeHtml(networkLabel(entry))}</span>
+      </span>
+      <span class="x402-chooser-row-balance${entry.fundable ? '' : ' is-low'}">${escapeHtml(balanceLabel(entry))}</span>
+    `;
+    chooserOptionsEl.appendChild(row);
+  });
+}
+
+function hideChooser() {
+  chooserEl.classList.add('hidden');
+  chooserOptionsEl.innerHTML = '';
+}
+
+// Render the "no fundable accepts" state. Replaces the detail rows;
+// lists every accepted asset + the wallet's current balance.
+function showInsufficientState(accepts) {
+  detailsEl.classList.add('hidden');
+  hideChooser();
+  insufficientEl.classList.remove('hidden');
+  insufficientListEl.innerHTML = '';
+
+  accepts.forEach((entry) => {
+    const li = document.createElement('li');
+    li.className = 'x402-insufficient-item';
+    li.innerHTML = `
+      <span class="x402-insufficient-need">${escapeHtml(formatAmountLabel(entry))} on ${escapeHtml(networkLabel(entry))}</span>
+      <span class="x402-insufficient-have">you have: ${escapeHtml(balanceLabel(entry))}</span>
+    `;
+    insufficientListEl.appendChild(li);
+  });
+}
+
+// Recompute fundability for every displayed entry from a fresh-broadcast
+// balances map. Selection is pinned (never silently moved); a flip to
+// unfundable surfaces as a row treatment + inline notice instead.
+// Skipped while a sign is in flight — repainting the button while it's
+// stuck in "Signing…" would flicker the UI for no gain.
+function applyFreshBalances(balances) {
+  if (!pending?.accepts?.length || pending.signing) return;
+  const prevMode = computeMode(pending.accepts);
+  let changed = false;
+  pending.accepts = pending.accepts.map((entry) => {
+    if (!entry.tuple || !entry.balanceKey) return entry;
+    const raw = balances?.[entry.balanceKey]?.raw ?? null;
+    const fundable = !!(raw && safeBigInt(raw) >= safeBigInt(entry.tuple.amount));
+    if (raw !== entry.balance || fundable !== entry.fundable) changed = true;
+    return { ...entry, balance: raw, fundable };
+  });
+  if (!changed) return;
+  if (computeMode(pending.accepts) !== prevMode) {
+    renderCard();
+  } else if (!chooserEl.classList.contains('hidden')) {
+    showChooser(pending.accepts, pending.selectedAcceptIndex ?? 0);
+  } else if (!insufficientEl.classList.contains('hidden')) {
+    showInsufficientState(pending.accepts);
+  }
+}
+
+function computeMode(accepts) {
+  if (!accepts?.length) return 'empty';
+  const f = accepts.filter((e) => e.fundable).length;
+  if (f === 0) return 'insufficient';
+  if (f === 1) return 'single';
+  return 'chooser';
+}
+
+function clampSelectionIndex(accepts, currentIndex) {
+  // Pinned-selection rule: never silently move the user's pick. Only
+  // clamp out-of-bounds — if a stale initialSelectionIndex from main
+  // pointed past the array, fall back to position 0 (any saner
+  // recovery would override the user's intent on a reactive refresh).
+  if (Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < accepts.length) {
+    return currentIndex;
+  }
+  return 0;
+}
+
+function formatAmountLabel(entry) {
+  const accept = entry.accept || {};
+  const raw = accept.amount ?? accept.maxAmountRequired ?? '';
+  if (entry.asset && typeof entry.asset.decimals === 'number') {
+    return `${formatRawTokenBalance(raw, entry.asset.decimals)} ${entry.asset.symbol}`;
+  }
+  return `${raw} of ${truncateAddress(accept.asset || '')}`;
+}
+
+function networkLabel(entry) {
+  // Prefer the registered chain name (e.g. "Base") when we recognise
+  // the chainId; otherwise fall back to the raw CAIP-2 / V1 string.
+  const chainId = entry.tuple?.chainId;
+  if (chainId && walletState.registeredChains) {
+    const chain = walletState.registeredChains[String(chainId)];
+    if (chain?.name) return chain.name;
+  }
+  return String(entry.accept?.network || '—');
+}
+
+function balanceLabel(entry) {
+  if (entry.balance == null) return '—';
+  if (entry.asset && typeof entry.asset.decimals === 'number') {
+    return `${formatRawTokenBalance(entry.balance, entry.asset.decimals)} ${entry.asset.symbol}`;
+  }
+  return entry.balance;
+}
+
+function safeBigInt(s) {
+  try { return BigInt(s); } catch { return 0n; }
 }
 
 async function checkUnlockState() {
@@ -350,6 +597,7 @@ async function handlePasswordUnlock() {
 
 async function approve() {
   if (!pending) return;
+  pending.signing = true;
   approveBtn.disabled = true;
   rejectBtn.disabled = true;
   approveBtn.textContent = 'Signing…';
@@ -360,6 +608,7 @@ async function approve() {
     webContentsId: pending.webContentsId,
     detectionId: pending.detectionId,
     grant,
+    selectedAcceptIndex: pending.selectedAcceptIndex,
   });
 
   if (result?.success) {
@@ -382,6 +631,7 @@ async function approve() {
 // behaviour worth centralising — without it the unlock UI won't re-
 // appear when the vault auto-locked between render and click.
 function restoreCardWithError(error) {
+  if (pending) pending.signing = false;
   approveBtn.textContent = 'Pay';
   approveBtn.disabled = false;
   rejectBtn.disabled = false;
