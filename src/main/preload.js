@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // approve clicks must use x402Approve and not this — the resume token
   // is consent-source-specific.
   x402ResumeUnlock: (args) => ipcRenderer.invoke('x402:resume-unlock', args),
+  // User-initiated balance refresh from the insufficient-funds card.
+  x402RefreshBalances: (args) => ipcRenderer.invoke('x402:refresh-balances', args),
   x402Cancel: (args) => ipcRenderer.invoke('x402:cancel', args),
   x402GetReceipts: (options) => ipcRenderer.invoke('x402:get-receipts', options),
   x402GetAllPermissions: () => ipcRenderer.invoke('x402:get-all-permissions'),

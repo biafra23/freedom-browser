@@ -5564,6 +5564,37 @@
   flex-shrink: 0;
 }
 
+.x402-insufficient-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.x402-insufficient-refresh:hover:not(:disabled) {
+  background: var(--toolbar);
+}
+
+.x402-insufficient-refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.x402-insufficient-refresh svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 .dapp-tx-warning {
   display: flex;
   align-items: flex-start;

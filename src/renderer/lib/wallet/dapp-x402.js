@@ -46,6 +46,7 @@ let chooserOptionsEl;
 let insufficientEl;
 let insufficientListEl;
 let insufficientFooterEl;
+let insufficientRefreshBtn;
 let warningEl;
 let warningTextEl;
 let unlockBlock;
@@ -90,6 +91,7 @@ export function initDappX402() {
   insufficientEl = document.getElementById('x402-approval-insufficient');
   insufficientListEl = document.getElementById('x402-approval-insufficient-list');
   insufficientFooterEl = document.getElementById('x402-approval-insufficient-footer');
+  insufficientRefreshBtn = document.getElementById('x402-approval-insufficient-refresh');
   warningEl = document.getElementById('x402-approval-warning');
   warningTextEl = document.getElementById('x402-approval-warning-text');
   unlockBlock = document.getElementById('x402-approval-unlock');
@@ -260,6 +262,7 @@ function wireButtons() {
   backBtn?.addEventListener('click', reject);
   rejectBtn?.addEventListener('click', reject);
   approveBtn?.addEventListener('click', approve);
+  insufficientRefreshBtn?.addEventListener('click', refreshInsufficientBalances);
 
   touchIdBtn?.addEventListener('click', handleTouchIdUnlock);
   passwordSubmit?.addEventListener('click', handlePasswordUnlock);
@@ -554,6 +557,35 @@ function balanceLabel(entry) {
 
 function safeBigInt(s) {
   try { return BigInt(s); } catch { return 0n; }
+}
+
+// Manual refresh on the insufficient-funds card. Disables the button +
+// shows a "Refreshing…" label until main fetches fresh balances and
+// broadcasts them via `x402:balances-updated`; the existing
+// `onX402BalancesUpdated` handler then re-renders the card. If the
+// fresh balances now make any entry fundable, `applyFreshBalances`
+// detects the mode flip (insufficient → chooser/single) and triggers
+// a full re-render.
+async function refreshInsufficientBalances() {
+  if (!pending || !insufficientRefreshBtn) return;
+  if (insufficientRefreshBtn.disabled) return;  // already in flight
+  const label = insufficientRefreshBtn.querySelector('.x402-insufficient-refresh-label');
+  const originalLabel = label?.textContent ?? 'Refresh balances';
+  insufficientRefreshBtn.disabled = true;
+  if (label) label.textContent = 'Refreshing…';
+  try {
+    const result = await window.electronAPI.x402RefreshBalances({
+      webContentsId: pending.webContentsId,
+    });
+    if (!result?.success) {
+      console.warn('[x402] refresh-balances failed:', result?.error);
+    }
+  } catch (err) {
+    console.error('[x402] refresh-balances threw:', err);
+  } finally {
+    if (insufficientRefreshBtn) insufficientRefreshBtn.disabled = false;
+    if (label) label.textContent = originalLabel;
+  }
 }
 
 // Read the live cap-amount + window inputs at Pay-click time. Returns

@@ -33,19 +33,19 @@ jest.mock('../identity-manager', () => ({
   getActiveWalletAddress: () => mockGetActiveWalletAddress(),
 }));
 
-// balance-service is dragged in via balance-check + x402:get-details
-// enrichment. Tests that don't care about balances default to "wallet
-// has plenty of everything" so pre-sign verify passes silently.
+// balance-service is dragged in via x402:get-details enrichment +
+// x402:refresh-balances. Tests that don't care about balances default
+// to empty.
 const mockGetBalancesWithCache = jest.fn(async () => ({
   balances: {},
   fromCache: true,
 }));
-const mockFetchTokenBalance = jest.fn(async () => ({
-  raw: '999999999', formatted: '999.999999', symbol: 'USDC', decimals: 6,
-}));
+const mockGetAllBalances = jest.fn(async () => ({}));
+const mockClearBalanceCache = jest.fn();
 jest.mock('../wallet/balance-service', () => ({
   getBalancesWithCache: (...args) => mockGetBalancesWithCache(...args),
-  fetchTokenBalance: (...args) => mockFetchTokenBalance(...args),
+  getAllBalances: (...args) => mockGetAllBalances(...args),
+  clearBalanceCache: (...args) => mockClearBalanceCache(...args),
 }));
 
 // Helper: balance-service entries are `{raw, formatted, symbol, decimals}`.
@@ -346,26 +346,6 @@ describe('x402:approve', () => {
       },
     });
   };
-
-  test('refuses sign and returns "Balance changed" when the active wallet is short on the selected entry', async () => {
-    // Pre-sign verify (locked decision #6): main does a fresh
-    // (cache-bypassing) balance check on the selected (chainId, asset)
-    // before signing; if the wallet ran out since the cached chooser
-    // paint, refuse + surface the error inline so the user picks
-    // another entry or tops up.
-    seedDetection(42);
-    mockFetchTokenBalance.mockResolvedValueOnce(balanceEntry('1'));
-
-    const result = await ipcHandlers['x402:approve'](senderEvent(42));
-
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/Balance changed/);
-    // Sign never ran — no client constructed, no pending payment.
-    expect(mockCreateClient).not.toHaveBeenCalled();
-    expect(intercept.injectPaymentSignatureHandler({
-      webContentsId: 42, url: 'https://api.example/article', requestHeaders: {},
-    })).toBeNull();
-  });
 
   test('signs, stashes a V2 pending payment, and re-navigates the webview', async () => {
     seedDetection(42);
@@ -1116,5 +1096,50 @@ describe('x402:cancel', () => {
     webContents.fromId.mockReturnValue(null);
     const result = await ipcHandlers['x402:cancel'](senderEvent(42));
     expect(result.success).toBe(true);
+  });
+});
+
+describe('x402:refresh-balances', () => {
+  test('clears the address cache, fetches fresh, and broadcasts x402:balances-updated', async () => {
+    const fresh = {
+      '8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': {
+        raw: '20000', formatted: '0.020000', symbol: 'USDC', decimals: 6,
+      },
+    };
+    mockGetAllBalances.mockReset().mockResolvedValueOnce(fresh);
+
+    const sidebarSend = jest.fn();
+    webContents.fromId.mockReturnValue({ hostWebContents: { send: sidebarSend } });
+
+    const result = await ipcHandlers['x402:refresh-balances'](senderEvent(42));
+
+    expect(result).toEqual({ success: true });
+    expect(mockClearBalanceCache).toHaveBeenCalledWith(expect.any(String));
+    expect(mockGetAllBalances).toHaveBeenCalledTimes(1);
+    expect(sidebarSend).toHaveBeenCalledWith('x402:balances-updated', expect.objectContaining({
+      webContentsId: 42,
+      balances: fresh,
+    }));
+  });
+
+  test('returns an error when the active wallet address can\'t be resolved (vault locked / no wallet)', async () => {
+    // `mockResolvedValueOnce` queues a one-shot override; the default
+    // (set at jest.mock time) stays intact for later tests.
+    mockGetActiveWalletAddress.mockResolvedValueOnce(null);
+    const result = await ipcHandlers['x402:refresh-balances'](senderEvent(42));
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no active wallet/i);
+  });
+
+  test('surfaces fetch errors instead of broadcasting stale state', async () => {
+    mockGetAllBalances.mockReset().mockRejectedValueOnce(new Error('RPC down'));
+    const sidebarSend = jest.fn();
+    webContents.fromId.mockReturnValue({ hostWebContents: { send: sidebarSend } });
+
+    const result = await ipcHandlers['x402:refresh-balances'](senderEvent(42));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/RPC down/);
+    expect(sidebarSend).not.toHaveBeenCalled();
   });
 });

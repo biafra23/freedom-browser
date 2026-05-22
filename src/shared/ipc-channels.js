@@ -170,6 +170,10 @@ module.exports = {
   // token meant for a different charge.
   X402_RESUME_UNLOCK: 'x402:resume-unlock',
   X402_CANCEL: 'x402:cancel',
+  // User-initiated balance refresh from the insufficient-funds card.
+  // No automatic RPC at Pay click — this is the explicit escape hatch
+  // when the user knows the cached balance is stale.
+  X402_REFRESH_BALANCES: 'x402:refresh-balances',
   X402_GET_ALL_PERMISSIONS: 'x402:get-all-permissions',
   X402_REVOKE_PERMISSION: 'x402:revoke-permission',
   X402_REVOKE_ALL_FOR_ORIGIN: 'x402:revoke-all-for-origin',

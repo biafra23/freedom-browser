@@ -779,17 +779,14 @@ async function detectPaymentRequiredHandler(details) {
 
     try {
       const { signAndQueueRetry } = require('./sign-flow');
-      const { verifyBalanceOrThrow } = require('./balance-check');
-      const { getActiveWalletAddress } = require('../identity-manager');
       const selectedAccept = decision.selectedAcceptIndex != null
         ? requirements.accepts?.[decision.selectedAcceptIndex]
         : requirements.accepts?.[0];
-      // Pre-sign balance verify (locked decision #6); throws
-      // INSUFFICIENT_BALANCE if the active wallet can't fund the
-      // selected entry. Caught below + re-arms pendingApproval so
-      // the user can pick another entry on the next click.
-      const address = await getActiveWalletAddress().catch(() => null);
-      await verifyBalanceOrThrow(selectedAccept, address);
+      // Pay click never blocks on a balance RPC — fundability gating
+      // is the chooser's job (off cached balances), and the seller's
+      // facilitator is the real settlement-time gate. If the cache
+      // was stale and signing succeeds against insufficient funds,
+      // the response logger writes a `failed` payment-history row.
       await signAndQueueRetry(details.webContentsId, {
         detection: { url: details.url, requirements, resourceType: details.resourceType },
         selectedAccept,
@@ -806,13 +803,11 @@ async function detectPaymentRequiredHandler(details) {
         responseHeaders: { Location: [details.url] },
       };
     } catch (err) {
-      // Recoverable user-action errors (vault auto-locked between render
-      // and click; insufficient balance for the selected entry) log at
-      // warn; the retry loop re-arms pendingApproval so the user can
-      // unlock + retry, or pick a different entry. Anything else is
-      // likely a real bug — user can still click Reject to exit.
-      const { isInsufficientBalanceError } = require('./balance-check');
-      if (isVaultLockedError(err) || isInsufficientBalanceError(err)) {
+      // Vault auto-locked between render and click is the expected
+      // recoverable case — the retry loop re-arms pendingApproval so
+      // the user can unlock + retry. Anything else is likely a real
+      // bug; user can still click Reject to exit.
+      if (isVaultLockedError(err)) {
         log.warn(`[x402:approval] sign blocked (${err.message}) for ${sanitizeUrlForLog(details.url)}; awaiting retry`);
       } else {
         log.error(

@@ -51,9 +51,8 @@ const {
 const paymentHistory = require('../payment-history');
 const { signAndQueueRetry } = require('./sign-flow');
 const { tupleFromAccept, coverageForAccept } = require('./payment-utils');
-const { verifyBalanceOrThrow } = require('./balance-check');
 const { getActiveWalletAddress } = require('../identity-manager');
-const { getBalancesWithCache } = require('../wallet/balance-service');
+const { getBalancesWithCache, getAllBalances, clearBalanceCache } = require('../wallet/balance-service');
 
 // Cancel fallback when the webview has no back history. `about:blank` is
 // safe everywhere — the user gets an empty page and the address bar so
@@ -284,20 +283,13 @@ function registerX402Ipc() {
       // Explicit-index path threads the chooser's pick through;
       // omitted-index path lets sign-flow's fallback chain run
       // (preserves `detected.selectedAccept` precedence used by the
-      // unlock-resume path before falling back to accepts[0]).
+      // unlock-resume path before falling back to accepts[0]). Pay
+      // click never blocks on a balance RPC — fundability gating is
+      // the chooser's job (cached balances) and the seller's
+      // facilitator is the real settlement-time gate.
       const selectedAccept = selectedAcceptIndex != null
         ? detected?.requirements?.accepts?.[selectedAcceptIndex]
         : undefined;
-      // Pre-sign balance verify (locked decision #6): fresh RPC check
-      // at click time catches stale-cache failures loudly instead of
-      // letting them surface as a failed settlement. Resolve the
-      // accept the same way sign-flow will, so the verify and the
-      // sign agree on which entry we're checking.
-      const acceptForVerify = selectedAccept
-        ?? detected?.selectedAccept
-        ?? detected?.requirements?.accepts?.[0];
-      const address = await getActiveWalletAddress().catch(() => null);
-      await verifyBalanceOrThrow(acceptForVerify, address);
       await signAndQueueRetry(id, {
         grant,
         authorizedBy: detected?.authorizedBy,
@@ -347,6 +339,29 @@ function registerX402Ipc() {
       });
       return { success: true };
     } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Renderer-initiated balance refresh — user clicked "Refresh
+  // balances" on the insufficient-funds card because they think the
+  // cached state is stale (just bridged / received / etc.). Bypass
+  // the 30s in-memory cache so the user's deliberate request actually
+  // hits the chain, then broadcast `x402:balances-updated` so the
+  // open card reactively re-renders fundability. Returns success only
+  // after the fetch completes so the renderer can re-enable the
+  // button at the right time.
+  ipcMain.handle(IPC.X402_REFRESH_BALANCES, async (event, args = {}) => {
+    const id = args.webContentsId ?? event.sender.id;
+    try {
+      const address = await getActiveWalletAddress();
+      if (!address) return { success: false, error: 'No active wallet' };
+      clearBalanceCache(address);
+      const balances = await getAllBalances(address);
+      sendToHost(id, 'x402:balances-updated', { webContentsId: id, address, balances });
+      return { success: true };
+    } catch (err) {
+      log.warn(`[x402:refresh-balances] failed: ${err.message}`);
       return { success: false, error: err.message };
     }
   });

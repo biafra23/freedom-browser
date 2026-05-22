@@ -201,29 +201,6 @@ async function getBalancesWithCache(address, fetchFresh = true) {
 }
 
 /**
- * Always-fresh balance fetch for a single (chainId, tokenAddress).
- * Bypasses both caches — callers (x402's pre-sign verify) want a
- * point-in-time correct answer and accept the RPC roundtrip latency.
- * For multi-token / cached / wallet-UI reads use getAllBalances or
- * getBalancesWithCache instead.
- *
- * @param {string} address Holder address.
- * @param {number} chainId
- * @param {string | null} tokenAddress null = native token on the chain.
- * @returns {Promise<{raw: string, formatted: string, symbol: string, decimals: number}>}
- */
-async function fetchTokenBalance(address, chainId, tokenAddress) {
-  const { getToken, getTokenKey } = require('../token-registry');
-  const key = tokenAddress === null ? `${chainId}:native` : getTokenKey(chainId, tokenAddress);
-  const tokenInfo = getToken(key);
-  if (!tokenInfo) throw new Error(`fetchTokenBalance: unknown token ${key}`);
-  if (tokenAddress === null || tokenInfo.address === null) {
-    return getNativeBalance(address, chainId, tokenInfo);
-  }
-  return getTokenBalance(address, tokenAddress, chainId, tokenInfo);
-}
-
-/**
  * Clear balance cache for an address (both in-memory and persistent)
  */
 function clearBalanceCache(address) {
@@ -264,7 +241,6 @@ function formatBalanceForDisplay(formatted, maxDecimals = 4) {
 module.exports = {
   getNativeBalance,
   getTokenBalance,
-  fetchTokenBalance,
   getAllBalances,
   getBalancesWithCache,
   clearBalanceCache,

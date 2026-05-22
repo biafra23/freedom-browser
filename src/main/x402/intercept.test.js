@@ -33,27 +33,6 @@ jest.mock('./sign-flow', () => ({
   signAndQueueRetry: (...args) => mockSignAndQueueRetry(...args),
 }));
 
-// The subresource approval-card retry loop lazy-requires balance-check
-// + identity-manager. Mock balance-service first so a downstream
-// requireActual on balance-check (which needs the constant + predicate
-// from the real module) doesn't pull in the RPC stack. The mock uses
-// the REAL predicate + constant so a production-side message drift
-// surfaces here instead of getting masked by a permissive matcher.
-jest.mock('../wallet/balance-service', () => ({
-  fetchTokenBalance: jest.fn(),
-}));
-const mockVerifyBalanceOrThrow = jest.fn(async () => undefined);
-jest.mock('./balance-check', () => {
-  const actual = jest.requireActual('./balance-check');
-  return {
-    verifyBalanceOrThrow: (...args) => mockVerifyBalanceOrThrow(...args),
-    isInsufficientBalanceError: actual.isInsufficientBalanceError,
-    INSUFFICIENT_BALANCE_MESSAGE: actual.INSUFFICIENT_BALANCE_MESSAGE,
-  };
-});
-jest.mock('../identity-manager', () => ({
-  getActiveWalletAddress: async () => '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
-}));
 
 const mockGetPermission = jest.fn(() => null);
 const mockTryConsume = jest.fn(() => true);
@@ -110,7 +89,6 @@ beforeEach(() => {
   mockSignAndQueueRetry.mockReset().mockResolvedValue(undefined);
   mockGetPermission.mockReset().mockReturnValue(null);
   mockTryConsume.mockReset().mockReturnValue(true);
-  mockVerifyBalanceOrThrow.mockReset().mockResolvedValue(undefined);
 });
 
 // Canonical Base USDC PaymentRequired (V2). `resource` is an object per
