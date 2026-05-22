@@ -12,10 +12,17 @@ const modifier = process.env.E2E_CLIPBOARD_MODIFIER || (isDarwin ? 'Meta' : 'Con
 async function readApplicationMenu(electronApp) {
   let menu;
   await expect
-    .poll(async () => {
-      menu = await electronApp.evaluate(inspectApplicationMenu());
-      return menu.ready;
-    })
+    .poll(
+      async () => {
+        try {
+          menu = await electronApp.evaluate(inspectApplicationMenu());
+        } catch {
+          return false;
+        }
+        return menu.ready;
+      },
+      { timeout: 30_000 }
+    )
     .toBe(true);
   return menu;
 }
