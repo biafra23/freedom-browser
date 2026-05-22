@@ -1876,19 +1876,19 @@
                     <div class="x402-grant-field">
                       <label class="x402-grant-field-label" for="x402-approval-grant-cap-input">Spend cap</label>
                       <div class="x402-grant-input-wrap">
-                        <input type="number" id="x402-approval-grant-cap-input" min="1" step="1" value="10" inputmode="numeric" />
-                        <span class="x402-grant-input-suffix" id="x402-approval-grant-cap-symbol">USDC</span>
+                        <!-- value + symbol populated by initDappX402 from
+                             DEFAULT_GRANT_CAP_USDC + the selected entry's
+                             asset; keeps the JS as the only source of
+                             truth for default copy. -->
+                        <input type="number" id="x402-approval-grant-cap-input" min="1" step="1" inputmode="numeric" />
+                        <span class="x402-grant-input-suffix" id="x402-approval-grant-cap-symbol"></span>
                       </div>
                     </div>
                     <div class="x402-grant-field">
                       <label class="x402-grant-field-label" for="x402-approval-grant-window-select">Resets every</label>
-                      <select class="x402-grant-select" id="x402-approval-grant-window-select">
-                        <option value="86400">1 day</option>
-                        <option value="604800">7 days</option>
-                        <option value="2592000" selected>30 days</option>
-                        <option value="7776000">90 days</option>
-                        <option value="31536000">1 year</option>
-                      </select>
+                      <!-- options + default populated by initDappX402 from
+                           X402_WINDOW_OPTIONS + DEFAULT_GRANT_WINDOW_SECONDS. -->
+                      <select class="x402-grant-select" id="x402-approval-grant-window-select"></select>
                     </div>
                   </div>
                 </div>

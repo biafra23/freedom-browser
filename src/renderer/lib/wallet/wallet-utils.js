@@ -51,6 +51,18 @@ export function formatBalance(formatted, maxDecimals = 4) {
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
+// Window options for the x402 cap-resets-every selector. Used by the
+// grant editor on the approval card (dapp-x402.js) and the
+// permission-manage subscreen (permission-manage.js) — single source
+// of truth so a new entry / label change can't drift between surfaces.
+export const X402_WINDOW_OPTIONS = [
+  { label: '1 day',    seconds: 24 * 60 * 60 },
+  { label: '7 days',   seconds: 7 * 24 * 60 * 60 },
+  { label: '30 days',  seconds: 30 * 24 * 60 * 60 },
+  { label: '90 days',  seconds: 90 * 24 * 60 * 60 },
+  { label: '1 year',   seconds: 365 * 24 * 60 * 60 },
+];
+
 export function isChequebookDeployed(address) {
   return typeof address === 'string' && address !== ZERO_ADDRESS && address.length > 2;
 }

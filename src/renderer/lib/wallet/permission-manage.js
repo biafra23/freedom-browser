@@ -10,7 +10,7 @@ import { open as openSidebarPanel } from '../sidebar.js';
 import { updateConnectionBanner, disconnectDapp } from './dapp-connect.js';
 import { updateSwarmConnectionBanner, disconnectSwarmApp } from './swarm-connect.js';
 import { updateX402ConnectionBanner, disconnectX402 } from './dapp-x402.js';
-import { formatRawTokenBalance, toAtomicUnits } from './wallet-utils.js';
+import { formatRawTokenBalance, toAtomicUnits, X402_WINDOW_OPTIONS } from './wallet-utils.js';
 
 // Wallet permission management
 let dappPermsScreen;
@@ -38,14 +38,9 @@ let x402PermsList;
 let x402PermsRevokeAll;
 let x402PermsKey = null;
 
-// Window-selector options. Values in seconds; labels stay user-friendly.
-const X402_WINDOW_OPTIONS = [
-  { label: '1 day',    seconds: 24 * 60 * 60 },
-  { label: '7 days',   seconds: 7 * 24 * 60 * 60 },
-  { label: '30 days',  seconds: 30 * 24 * 60 * 60 },
-  { label: '90 days',  seconds: 90 * 24 * 60 * 60 },
-  { label: '1 year',   seconds: 365 * 24 * 60 * 60 },
-];
+// Window selector options now live in wallet-utils.js as
+// `X402_WINDOW_OPTIONS` so the grant editor on the approval card uses
+// the same list.
 
 export function initPermissionManage() {
   // Wallet permission screen

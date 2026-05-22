@@ -21,7 +21,7 @@
 
 import { walletState, registerScreenHider, hideAllSubscreens } from './wallet-state.js';
 import { open as openSidebarPanel, isVisible as isSidebarVisible } from '../sidebar.js';
-import { escapeHtml, formatRawTokenBalance, truncateAddress, toAtomicUnits } from './wallet-utils.js';
+import { escapeHtml, formatRawTokenBalance, truncateAddress, toAtomicUnits, X402_WINDOW_OPTIONS } from './wallet-utils.js';
 import { getPermissionKey } from '../origin-utils.js';
 import { showX402Permissions } from './permission-manage.js';
 import { showVaultUnlock } from './vault-unlock.js';
@@ -118,6 +118,7 @@ export function initDappX402() {
   wireButtons();
   wireBanner();
   wireChooser();
+  wireGrantEditor();
 
   // Subscribe to main's "approval needed" events. Returned disposer is
   // discarded — the renderer lives for the window's lifetime.
@@ -184,6 +185,33 @@ async function handleAutoPayUnlock(webContentsId, origin) {
   if (!result?.success) {
     console.error('[x402] resume-after-unlock failed:', result?.error);
   }
+}
+
+// Populate cap input default + window options at init; snap invalid
+// cap input back to the prior valid value on `change` so the live
+// state is always meaningful. Avoids the "silent fallback at Pay
+// click" anti-pattern.
+function wireGrantEditor() {
+  if (grantCapInput) grantCapInput.value = String(DEFAULT_GRANT_CAP_USDC);
+  if (grantWindowSelect) {
+    grantWindowSelect.innerHTML = '';
+    for (const opt of X402_WINDOW_OPTIONS) {
+      const o = document.createElement('option');
+      o.value = String(opt.seconds);
+      o.textContent = opt.label;
+      if (opt.seconds === DEFAULT_GRANT_WINDOW_SECONDS) o.selected = true;
+      grantWindowSelect.appendChild(o);
+    }
+  }
+  let lastValidCap = String(DEFAULT_GRANT_CAP_USDC);
+  grantCapInput?.addEventListener('change', () => {
+    const whole = grantCapInput.value.trim();
+    if (/^\d+$/.test(whole) && whole !== '0') {
+      lastValidCap = whole;
+    } else {
+      grantCapInput.value = lastValidCap;
+    }
+  });
 }
 
 function wireChooser() {
@@ -304,7 +332,6 @@ function renderCard() {
     showInsufficientState([]);
     approveBtn.disabled = true;
     grantRow.classList.add('hidden');
-    pending.grantPayload = null;
     showError('This site requested payment but offered no payable assets.');
     return;
   }
@@ -317,7 +344,6 @@ function renderCard() {
     showInsufficientState(accepts);
     approveBtn.disabled = true;
     grantRow.classList.add('hidden');
-    pending.grantPayload = null;
     hideError();
     return;
   }
@@ -337,19 +363,13 @@ function renderCard() {
   }
   showDetailRows(entry);
 
-  // Grant fields pin to the SELECTED entry's asset. Switching the
-  // selection re-renders this row so the symbol suffix tracks the
-  // currency the user is about to authorize for future auto-pays.
-  // The cap amount + window stay at whatever the user last set
-  // (defaults `DEFAULT_GRANT_CAP_USDC` / `DEFAULT_GRANT_WINDOW_SECONDS`),
-  // so flipping between accepts doesn't reset their edits.
+  // Symbol suffix tracks the selected entry; cap + window inputs
+  // keep whatever the user last typed across selection flips.
   if (entry?.asset && typeof entry.asset.decimals === 'number') {
     if (grantCapSymbol) grantCapSymbol.textContent = entry.asset.symbol;
     grantRow.classList.remove('hidden');
-    pending.grantDecimals = entry.asset.decimals;
   } else {
     grantRow.classList.add('hidden');
-    pending.grantDecimals = null;
   }
 
   // Selection state vs Pay button: only enable Pay when the selected
@@ -537,20 +557,21 @@ function safeBigInt(s) {
 }
 
 // Read the live cap-amount + window inputs at Pay-click time. Returns
-// undefined when the user hasn't ticked the grant checkbox, when the
-// selected accept has no recognised asset (no decimals to convert with),
-// or when the cap input is empty / non-positive (fall back to default
-// rather than reject the click). Window select values are seconds.
+// undefined when the user hasn't ticked the grant checkbox or when the
+// selected accept has no recognised asset (no decimals to convert
+// with). Cap input is snap-back-validated on `change` (see
+// wireGrantEditor) so the live value is always a positive whole, no
+// silent fallback needed here.
 function buildGrantPayloadFromInputs() {
   if (!grantToggle?.checked) return undefined;
-  if (!pending?.grantDecimals && pending?.grantDecimals !== 0) return undefined;
+  const accept = pending?.accepts?.[pending.selectedAcceptIndex];
+  const decimals = accept?.asset?.decimals;
+  if (typeof decimals !== 'number') return undefined;
 
-  const whole = (grantCapInput?.value ?? '').trim();
-  const capWhole = /^\d+$/.test(whole) && whole !== '0' ? whole : String(DEFAULT_GRANT_CAP_USDC);
+  const capWhole = grantCapInput?.value?.trim() || String(DEFAULT_GRANT_CAP_USDC);
   const windowSeconds = Number(grantWindowSelect?.value) || DEFAULT_GRANT_WINDOW_SECONDS;
-
   return {
-    capAmount: toAtomicUnits(capWhole, pending.grantDecimals),
+    capAmount: toAtomicUnits(capWhole, decimals),
     windowSeconds,
   };
 }
@@ -561,7 +582,8 @@ async function checkUnlockState() {
 
     if (status.isUnlocked) {
       unlockBlock?.classList.add('hidden');
-      if (approveBtn) approveBtn.disabled = !pending?.grantPayload;
+      // Pay-button gating is renderCard's responsibility (fundability
+      // + asset-recognised); checkUnlockState only owns the unlock UI.
       return;
     }
 
