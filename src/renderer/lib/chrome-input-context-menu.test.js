@@ -103,7 +103,13 @@ const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
       return null;
     }),
     addEventListener: jest.fn((event, handler) => {
-      documentHandlers[event] = handler;
+      const existing = documentHandlers[event];
+      documentHandlers[event] = existing
+        ? (...args) => {
+            existing(...args);
+            handler(...args);
+          }
+        : handler;
     }),
   };
 
@@ -142,15 +148,10 @@ const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
 
 const openContextMenu = (
   input,
-  {
-    collapseSelectionOnOpen = false,
-    skipMousedown = false,
-    mousedownAt = 100,
-    contextmenuAt = 110,
-  } = {}
+  { collapseSelectionOnOpen = false, skipMousedown = false } = {}
 ) => {
   if (!skipMousedown) {
-    input.handlers.mousedown?.({ button: 2, timeStamp: mousedownAt });
+    input.handlers.mousedown?.({ button: 2 });
   }
   if (collapseSelectionOnOpen) {
     const caret = input.value.length;
@@ -160,7 +161,6 @@ const openContextMenu = (
     preventDefault: jest.fn(),
     clientX: 10,
     clientY: 10,
-    timeStamp: contextmenuAt,
   });
 };
 
@@ -273,27 +273,56 @@ describe('chrome-input-context-menu', () => {
     expect(input.value).toBe('abpastedcdef');
   });
 
-  test('stale mousedown snapshot does not survive a later keyboard contextmenu', async () => {
-    const input = createInput('abcdef');
-    input.setSelectionRange(0, 3);
-    const { menu } = await loadModule({ input });
+  test('orphaned right-mousedown is cleared by the post-gesture document mouseup', async () => {
+    jest.useFakeTimers();
+    try {
+      const input = createInput('abcdef');
+      input.setSelectionRange(0, 3);
+      const { menu, documentHandlers } = await loadModule({ input });
 
-    // Right-mousedown captures [0, 3] but no contextmenu follows (e.g.
-    // user released the button outside the input).
-    input.handlers.mousedown({ button: 2, timeStamp: 100 });
+      // User right-mousedown inside the input captures [0, 3].
+      input.handlers.mousedown({ button: 2 });
 
-    // Much later, the caret moves and the user opens the menu via the
-    // keyboard menu key (no mousedown precedes the contextmenu).
-    input.setSelectionRange(5, 5);
-    input.handlers.contextmenu({
-      preventDefault: jest.fn(),
-      clientX: 10,
-      clientY: 10,
-      timeStamp: 5_000,
-    });
+      // User released the right button outside the input: no contextmenu
+      // on our input, but the document still sees the mouseup, which
+      // schedules a deferred clear of the orphaned snapshot.
+      documentHandlers.mouseup();
+      jest.runAllTimers();
 
-    await clickMenu(menu, 'paste');
-    expect(input.value).toBe('abcdepastedf');
+      // Later, the caret moves and the menu opens via the keyboard menu
+      // key (no mousedown precedes the contextmenu).
+      input.setSelectionRange(5, 5);
+      openContextMenu(input, { skipMousedown: true });
+
+      await clickMenu(menu, 'paste');
+      expect(input.value).toBe('abcdepastedf');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('document mouseup defer does not pre-empt a same-gesture contextmenu', async () => {
+    jest.useFakeTimers();
+    try {
+      const input = createInput('abcdef');
+      input.setSelectionRange(0, 3);
+      const { menu, documentHandlers } = await loadModule({ input });
+
+      // Real-world gesture: right-mousedown, then mouseup, then contextmenu
+      // are dispatched in separate event tasks. The mouseup-scheduled
+      // clear must not run before the contextmenu consumes the snapshot.
+      input.handlers.mousedown({ button: 2 });
+      documentHandlers.mouseup();
+      // Browser collapses the selection before contextmenu fires.
+      input.setSelectionRange(input.value.length, input.value.length);
+      openContextMenu(input, { skipMousedown: true });
+      jest.runAllTimers();
+
+      await clickMenu(menu, 'copy');
+      expect(window.electronAPI.copyText).toHaveBeenCalledWith('abc');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('non-right mousedown clears the captured snapshot', async () => {
@@ -301,12 +330,12 @@ describe('chrome-input-context-menu', () => {
     input.setSelectionRange(0, 3);
     const { menu } = await loadModule({ input });
 
-    input.handlers.mousedown({ button: 2, timeStamp: 100 });
+    input.handlers.mousedown({ button: 2 });
     // A subsequent left click invalidates the prior right-mousedown snapshot.
-    input.handlers.mousedown({ button: 0, timeStamp: 110 });
+    input.handlers.mousedown({ button: 0 });
     input.setSelectionRange(4, 4);
 
-    openContextMenu(input, { skipMousedown: true, contextmenuAt: 120 });
+    openContextMenu(input, { skipMousedown: true });
     await clickMenu(menu, 'paste');
     expect(input.value).toBe('abcdpastedef');
   });
@@ -316,13 +345,32 @@ describe('chrome-input-context-menu', () => {
     input.setSelectionRange(0, 3);
     const { menu } = await loadModule({ input });
 
-    input.handlers.mousedown({ button: 2, timeStamp: 100 });
+    input.handlers.mousedown({ button: 2 });
     input.handlers.blur?.();
     input.setSelectionRange(2, 2);
 
-    openContextMenu(input, { skipMousedown: true, contextmenuAt: 200 });
+    openContextMenu(input, { skipMousedown: true });
     await clickMenu(menu, 'paste');
     expect(input.value).toBe('abpastedcdef');
+  });
+
+  test('long right-button hold still uses the captured selection', async () => {
+    // Reviewer regression: the previous 500ms freshness heuristic
+    // discarded valid right-click selections if the user held the
+    // button for more than half a second.
+    const input = createInput('abcdef');
+    input.setSelectionRange(0, 3);
+    const { menu } = await loadModule({ input });
+
+    input.handlers.mousedown({ button: 2 });
+    // Browser collapses the selection between mousedown and contextmenu
+    // on a slow gesture (held button or system pause); no document
+    // mouseup fires until the user releases the button.
+    input.setSelectionRange(input.value.length, input.value.length);
+    openContextMenu(input, { skipMousedown: true });
+
+    await clickMenu(menu, 'copy');
+    expect(window.electronAPI.copyText).toHaveBeenCalledWith('abc');
   });
 
   test('disabled menu items are ignored', async () => {

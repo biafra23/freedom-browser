@@ -10,11 +10,25 @@ let savedSelection = null;
 // follow-up Cut/Copy/Paste against a stale selection range.
 let actionInFlight = false;
 
+// One-shot snapshot of the selection at right-mousedown, scoped to a
+// single mouse gesture. The snapshot is consumed by the next
+// contextmenu event on the same input and is otherwise cleared on
+// non-right mousedown, blur, Escape/menu hide, and on the post-gesture
+// document mouseup if no contextmenu followed.
+let pointerSelection = null;
+let pointerSelectionInput = null;
+
+const clearPointerSelection = () => {
+  pointerSelection = null;
+  pointerSelectionInput = null;
+};
+
 export const hideChromeInputContextMenu = () => {
   if (!contextMenu || contextMenu.classList.contains('hidden')) return;
   contextMenu.classList.add('hidden');
   activeInput = null;
   savedSelection = null;
+  clearPointerSelection();
   hideMenuBackdrop();
 };
 
@@ -166,23 +180,13 @@ export const initChromeInputContextMenu = (options = {}) => {
     [document.getElementById('address-input')].filter(Boolean);
 
   for (const input of inputs) {
-    // The pre-contextmenu selection snapshot is tied to a single mouse
-    // gesture. It must be cleared aggressively so a stale range never
-    // leaks into an unrelated keyboard / Ctrl-click context menu later.
-    let pointerSelection = null;
-    const clearPointerSelection = () => {
-      pointerSelection = null;
-    };
-
     input.addEventListener('mousedown', (event) => {
       if (event.button !== 2) {
         clearPointerSelection();
         return;
       }
-      pointerSelection = {
-        ...captureSelection(input),
-        capturedAt: event.timeStamp,
-      };
+      pointerSelection = captureSelection(input);
+      pointerSelectionInput = input;
     });
 
     input.addEventListener('blur', clearPointerSelection);
@@ -192,19 +196,12 @@ export const initChromeInputContextMenu = (options = {}) => {
       options.onOpening?.();
 
       const liveSelection = captureSelection(input);
-      const snapshot = pointerSelection;
+      // Only trust the snapshot when it belongs to this same input;
+      // it is one-shot and cleared regardless of which branch wins.
+      const snapshot = pointerSelectionInput === input ? pointerSelection : null;
       clearPointerSelection();
 
-      // Only trust the mousedown snapshot when it belongs to this same
-      // gesture. Browsers fire contextmenu within a few ms of the
-      // matching mouseup, so a much older snapshot (the user right-
-      // mousedown on the input but released outside, then later opened
-      // the menu via keyboard or Ctrl-click) must not be reused.
-      const FRESH_GESTURE_WINDOW_MS = 500;
-      const isSameGesture =
-        snapshot && event.timeStamp - snapshot.capturedAt < FRESH_GESTURE_WINDOW_MS;
-      const snapshotHasRange =
-        isSameGesture && snapshot.start !== snapshot.end;
+      const snapshotHasRange = snapshot && snapshot.start !== snapshot.end;
       const selection = snapshotHasRange
         ? { start: snapshot.start, end: snapshot.end }
         : liveSelection;
@@ -212,6 +209,16 @@ export const initChromeInputContextMenu = (options = {}) => {
       showChromeInputContextMenu(input, event.clientX, event.clientY, selection);
     });
   }
+
+  // Browsers fire contextmenu in the same input-handling cycle as the
+  // mouseup (Win/Linux) or after the mousedown (macOS). Deferring the
+  // clear past the current task lets a same-gesture contextmenu consume
+  // the snapshot first; an orphaned right-mousedown (mouseup outside
+  // the input, no contextmenu) gets cleared here so a later keyboard
+  // or Ctrl-click contextmenu cannot reuse it.
+  document.addEventListener('mouseup', () => {
+    setTimeout(clearPointerSelection, 0);
+  });
 
   contextMenu.addEventListener('click', (event) => {
     const item = event.target.closest?.('.context-menu-item');
