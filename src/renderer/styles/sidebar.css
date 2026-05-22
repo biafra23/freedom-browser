@@ -5421,15 +5421,17 @@
 }
 
 /* --- x402 approval card locked state ----------------------------- */
-/* When the vault is locked, collapse the card to the essentials:
-   site header, payment-detail rows (so the user knows WHAT they're
-   about to biometric-auth for), warnings (over-cap, etc.), unlock
-   block, and Reject. Hide the controls the user can't act on until
-   unlocked — the multi-accept chooser (network/asset choice belongs
-   to post-unlock), the auto-pay grant editor (opt-in for future
-   caps), and the Pay button itself. Toggled from `checkUnlockState`
-   in dapp-x402.js. */
+/* When the vault is locked, collapse the card to: site origin +
+   unlock block + Reject. Hide payment details, chooser, warnings,
+   grant editor, Pay button — none of it is actionable yet, and
+   biometric-unlock isn't the authorisation moment (the Pay click
+   post-unlock is). The user reviews + decides AFTER unlock; the
+   locked screen just gets them past the gate. Toggled from
+   `checkUnlockState` in dapp-x402.js. */
 #sidebar-x402-approval.is-locked .x402-chooser,
+#sidebar-x402-approval.is-locked .dapp-tx-details,
+#sidebar-x402-approval.is-locked .x402-insufficient,
+#sidebar-x402-approval.is-locked .dapp-tx-warning,
 #sidebar-x402-approval.is-locked .x402-grant,
 #sidebar-x402-approval.is-locked #x402-approval-approve {
   display: none;
