@@ -1851,6 +1851,7 @@ describe('ens-resolver', () => {
         level: 'verified',
         method: 'colibri',
         prover: 'test-prover.example',
+        proof: 'ZK sync-committee proof',
         quorum: { k: 1, m: 1, achieved: true },
       });
       // No public-RPC quorum legs fired.

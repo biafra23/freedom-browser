@@ -18,9 +18,15 @@ jest.mock('node:fs', () => ({
 // in the factory (the factory runs before top-level `const` initializers).
 const mockColibriCtor = jest.fn();
 const mockRegisterStorage = jest.fn(() => Promise.resolve());
+const mockClientInstances = [];
 jest.mock('@corpus-core/colibri-stateless', () => {
   class FakeColibri {
-    constructor(config) { mockColibriCtor(config); this.config = config; }
+    constructor(config) {
+      mockColibriCtor(config);
+      this.config = config;
+      this.destroy = jest.fn();
+      mockClientInstances.push(this);
+    }
     static register_storage(storage) { return mockRegisterStorage(storage); }
   }
   return {
@@ -71,8 +77,9 @@ const DEFAULTS = {
 };
 
 beforeEach(() => {
-  jest.clearAllMocks();
   clearColibriClientForTest();
+  jest.clearAllMocks();
+  mockClientInstances.length = 0;
   mockGetPath.mockReturnValue('/tmp/freedom-test-userdata');
   mockLoadSettings.mockReturnValue({ ...DEFAULTS });
   mockUniversalResolverCall.mockResolvedValue({
@@ -135,6 +142,7 @@ describe('resolveViaColibri', () => {
 
   test('rebuilds the client when the prover URL changes', async () => {
     await resolveViaColibri('one.eth', '0x');
+    const firstClient = mockClientInstances[0];
     mockLoadSettings.mockReturnValue({
       ...DEFAULTS,
       ensColibriProverUrl: 'https://other-prover.example',
@@ -143,6 +151,8 @@ describe('resolveViaColibri', () => {
     expect(mockColibriCtor).toHaveBeenCalledTimes(2);
     expect(mockColibriCtor.mock.calls[1][0].prover).toEqual(['https://other-prover.example']);
     expect(mockBrowserProvider).toHaveBeenCalledTimes(2);
+    expect(firstClient.destroy).toHaveBeenCalledTimes(1);
+    expect(mockClientInstances[1].destroy).not.toHaveBeenCalled();
   });
 
   test('rebuilds the client when zk_proof toggles', async () => {
@@ -151,6 +161,37 @@ describe('resolveViaColibri', () => {
     await resolveViaColibri('two.eth', '0x');
     expect(mockColibriCtor).toHaveBeenCalledTimes(2);
     expect(mockColibriCtor.mock.calls[1][0].zk_proof).toBe(false);
+  });
+
+  test('does not let an obsolete in-flight build replace newer settings', async () => {
+    let releaseStorage;
+    mockRegisterStorage.mockImplementationOnce(() => new Promise((resolve) => { releaseStorage = resolve; }));
+
+    const first = resolveViaColibri('old.eth', '0x');
+    mockLoadSettings.mockReturnValue({
+      ...DEFAULTS,
+      ensColibriProverUrl: 'https://new-prover.example',
+    });
+    const second = resolveViaColibri('new.eth', '0x');
+
+    releaseStorage();
+    await Promise.all([first, second]);
+
+    expect(mockColibriCtor).toHaveBeenCalledTimes(2);
+    expect(mockClientInstances[0].config.prover).toEqual(['https://test-prover.example']);
+    expect(mockClientInstances[1].config.prover).toEqual(['https://new-prover.example']);
+    expect(mockClientInstances[0].destroy).toHaveBeenCalledTimes(1);
+    expect(mockClientInstances[1].destroy).not.toHaveBeenCalled();
+    expect(mockUniversalResolverCall).toHaveBeenCalledWith(
+      expect.objectContaining({ client: mockClientInstances[1] }),
+      'old.eth',
+      '0x',
+    );
+    expect(mockUniversalResolverCall).toHaveBeenCalledWith(
+      expect.objectContaining({ client: mockClientInstances[1] }),
+      'new.eth',
+      '0x',
+    );
   });
 
   test('respects a custom prover URL from settings', async () => {
