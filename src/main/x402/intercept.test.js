@@ -236,7 +236,7 @@ describe('detectPaymentRequiredHandler', () => {
 
   test('loop guard fires even when the cap no longer covers (rejected retry exhausted the cap; do not fall into approval-card flow)', async () => {
     // Bad interleaving: the rejected signed attempt consumed the last
-    // headroom; getPermissionCoverage now reports no cover. Without the
+    // headroom; findCoveringPermission now returns null. Without the
     // guard sitting ABOVE the coverage check, this falls into the
     // approval-card path and prompts the user to re-authorise a charge
     // the server is refusing.

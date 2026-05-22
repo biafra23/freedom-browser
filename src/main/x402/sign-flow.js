@@ -29,7 +29,7 @@ const {
   setPendingPayment,
 } = require('./intercept');
 const { grant: grantPermission } = require('./permissions');
-const { paymentTuple } = require('./payment-utils');
+const { tupleFromAccept } = require('./payment-utils');
 
 /**
  * Sign the currently-detected payment for `webContentsId` and queue a
@@ -47,10 +47,20 @@ const { paymentTuple } = require('./payment-utils');
  * over the cap. Defaults to MANUAL — callers that aren't auto-pay should
  * omit it. The auto-pay path must pass CAP explicitly.
  *
+ * `opts.selectedAccept` is the specific `accepts[]` entry to sign.
+ * Multi-accept callers (detector's findCoveringPermission result, or
+ * the IPC's selectedAcceptIndex resolution) pass it explicitly.
+ * Detection records can also carry a `selectedAccept` field (set by
+ * the auto-pay branch so its snapshot survives across the cap-locked
+ * unlock-resume). Legacy callers that omit both default to
+ * `accepts[0]` — preserves single-accept behavior during the WP-MA
+ * migration.
+ *
  * @param {number} webContentsId
  * @param {{
  *   grant?: { capAmount: string, windowSeconds: number },
- *   detection?: { url: string, requirements: object, resourceType?: string },
+ *   detection?: { url: string, requirements: object, resourceType?: string, selectedAccept?: object },
+ *   selectedAccept?: object,
  *   authorizedBy?: 'cap' | 'manual',
  * }} [opts]
  */
@@ -63,17 +73,29 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   const detected = opts.detection ?? getDetectedPayment(webContentsId);
   if (!detected) throw new Error('No pending x402 payment for this tab');
 
+  const selectedAccept = opts.selectedAccept
+    ?? detected.selectedAccept
+    ?? detected.requirements?.accepts?.[0];
+  if (!selectedAccept) throw new Error('No accepts[] entry to sign');
+
   let origin;
   try { origin = new URL(detected.url).origin; }
   catch { throw new Error('Refusing to pay: unparseable URL'); }
 
   const client = await createVaultBackedX402Client(getActiveWalletIndex());
-  const payload = await client.createPaymentPayload(detected.requirements);
+  // Pre-filter `accepts[]` down to the chosen entry so the SDK's default
+  // first-of-filtered selector signs the right one. Avoids registering a
+  // custom paymentRequirementsSelector for what is effectively a one-
+  // entry choice at this point in the flow.
+  const payload = await client.createPaymentPayload({
+    ...detected.requirements,
+    accepts: [selectedAccept],
+  });
 
   const headerValue = Buffer.from(JSON.stringify(payload)).toString('base64');
   const headerName = outgoingHeaderForVersion(detected.requirements.x402Version);
-  const tuple = paymentTuple(detected.requirements);
-  const payTo = detected.requirements?.accepts?.[0]?.payTo ?? null;
+  const tuple = tupleFromAccept(selectedAccept);
+  const payTo = selectedAccept.payTo ?? null;
 
   setPendingPayment(webContentsId, detected.url, {
     header: headerName,
@@ -134,6 +156,5 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
 
 module.exports = {
   signAndQueueRetry,
-  paymentTuple,
   X402_HEADERS,
 };

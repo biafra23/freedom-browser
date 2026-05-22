@@ -34,7 +34,7 @@ const { parsePaymentRequired } = require('@x402/core/schemas');
 const { registerWebRequestHandler } = require('../webrequest-dispatcher');
 const paymentHistory = require('../payment-history');
 const { KINDS: PAYMENT_KINDS, STATUSES: PAYMENT_STATUSES } = paymentHistory;
-const { getPermissionCoverage } = require('./payment-utils');
+const { findCoveringPermission } = require('./payment-utils');
 const { tryConsume } = require('./permissions');
 const { isVaultLockedError } = require('../wallet/vault-errors');
 
@@ -605,16 +605,24 @@ async function detectPaymentRequiredHandler(details) {
   // fragmented MP4 video with Range headers); Chromium preserves
   // request headers, cookies, and credentials across the same-origin
   // redirect, so no custom protocol or paid-cache is needed.
-  if (getPermissionCoverage(details.url, requirements)?.covers) {
+  // Multi-accept-aware cap coverage: iterate accepts[] in server order
+  // and pay against the first entry whose (chainId, asset) matches an
+  // active cap with enough headroom. With single-accept requirements
+  // this reduces to the legacy `accepts[0]` behavior; with multi-accept
+  // it picks the auto-pay-covered entry even if it's not first in the
+  // array. See `research/x402-multi-accept-ux.md` §3 for the policy.
+  let origin;
+  try { origin = new URL(details.url).origin; } catch { origin = null; }
+  const covering = origin ? findCoveringPermission(origin, requirements.accepts) : null;
+  if (covering) {
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
     const id = details.webContentsId;
     const url = details.url;
-    // Tag the stored detection with the consent provenance. The direct
-    // auto-pay path passes authorizedBy explicitly to signAndQueueRetry.
-    // The unlock-resume path uses the dedicated x402:resume-unlock IPC,
-    // which prefers the resume token's CAP marker but also reads this
-    // map-tag as defence-in-depth — without either, an unlock-resume
-    // would default to MANUAL and bypass the inject-time withhold gate.
+    // Tag the stored detection with the consent provenance. The
+    // selected accept survives via the `detection` snapshot below —
+    // sign-flow consumes it from the snapshot (auto-pay path) or from
+    // the pendingUnlockResume token (cap-locked unlock-resume path),
+    // not from the map slot, so we don't duplicate it here.
     detectedPayments.set(id, {
       ...detectedPayments.get(id),
       authorizedBy: AUTHORIZED_BY.CAP,
@@ -626,7 +634,12 @@ async function detectPaymentRequiredHandler(details) {
     // charge). The subresource path uses it inline. The IPC approve path
     // has a parallel latent gap tracked separately; full request-keyed
     // state for both is future work.
-    const detection = { url, requirements, resourceType: details.resourceType };
+    const detection = {
+      url,
+      requirements,
+      resourceType: details.resourceType,
+      selectedAccept: covering.accept,
+    };
 
     if (details.resourceType !== 'mainFrame') {
       // SUBRESOURCE PATH: sign + return a same-URL 307; Chromium follows
@@ -766,8 +779,12 @@ async function detectPaymentRequiredHandler(details) {
 
     try {
       const { signAndQueueRetry } = require('./sign-flow');
+      const selectedAccept = decision.selectedAcceptIndex != null
+        ? requirements.accepts?.[decision.selectedAcceptIndex]
+        : requirements.accepts?.[0];
       await signAndQueueRetry(details.webContentsId, {
         detection: { url: details.url, requirements, resourceType: details.resourceType },
+        selectedAccept,
         authorizedBy: AUTHORIZED_BY.MANUAL,
         grant: decision.grant,
       });

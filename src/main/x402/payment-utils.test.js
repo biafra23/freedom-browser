@@ -5,9 +5,8 @@ jest.mock('./permissions', () => ({
 
 const {
   tupleFromAccept,
+  coverageForAccept,
   findCoveringPermission,
-  paymentTuple,
-  getPermissionCoverage,
 } = require('./payment-utils');
 
 const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -52,6 +51,54 @@ describe('tupleFromAccept', () => {
   test('returns null for null/undefined input (defensive)', () => {
     expect(tupleFromAccept(null)).toBeNull();
     expect(tupleFromAccept(undefined)).toBeNull();
+  });
+});
+
+// === coverageForAccept ===================================================
+
+describe('coverageForAccept', () => {
+  const ORIGIN = 'https://api.example';
+  const accept = {
+    scheme: 'exact', network: 'eip155:8453', amount: '10000', asset: BASE_USDC,
+  };
+
+  test('returns the full coverage shape with covers:true when the cap covers', () => {
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '5000', createdAt: 1, expiresAt: 9999999999,
+    });
+    const result = coverageForAccept(ORIGIN, accept);
+    expect(result).toMatchObject({
+      accept,
+      tuple: { chainId: 8453, asset: BASE_USDC, amount: '10000' },
+      remaining: 15000n,
+      covers: true,
+    });
+    expect(result?.perm?.capAmount).toBe('20000');
+  });
+
+  test('reports covers:false WITHOUT collapsing to null when the cap is over-budget', () => {
+    // This is the divergence from `findCoveringPermission`: the sidebar
+    // needs to surface the existing-but-insufficient cap, so this helper
+    // must keep the perm visible.
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '10000', spentAmount: '5000', createdAt: 1, expiresAt: 9999999999,
+    });
+    const result = coverageForAccept(ORIGIN, accept);
+    expect(result?.covers).toBe(false);
+    expect(result?.remaining).toBe(5000n);
+    expect(result?.perm?.capAmount).toBe('10000');
+  });
+
+  test('returns null when no permission exists', () => {
+    mockGetPermission.mockReturnValueOnce(null);
+    expect(coverageForAccept(ORIGIN, accept)).toBeNull();
+  });
+
+  test('returns null for non-EIP-155 entries (V1 string networks)', () => {
+    expect(coverageForAccept(ORIGIN, {
+      network: 'base', maxAmountRequired: '10000', asset: BASE_USDC,
+    })).toBeNull();
+    expect(mockGetPermission).not.toHaveBeenCalled();
   });
 });
 
@@ -157,56 +204,3 @@ describe('findCoveringPermission', () => {
   });
 });
 
-// === paymentTuple compat shim ============================================
-
-describe('paymentTuple (compat shim)', () => {
-  test('returns the tuple of accepts[0] when present', () => {
-    expect(paymentTuple({
-      accepts: [
-        { network: 'eip155:8453', amount: '10000', asset: BASE_USDC },
-        { network: 'eip155:100', amount: '20000', asset: GNOSIS_USDCE },
-      ],
-    })).toEqual({ chainId: 8453, asset: BASE_USDC, amount: '10000' });
-  });
-
-  test('returns null for empty / missing accepts', () => {
-    expect(paymentTuple({ accepts: [] })).toBeNull();
-    expect(paymentTuple({})).toBeNull();
-    expect(paymentTuple(null)).toBeNull();
-    expect(paymentTuple(undefined)).toBeNull();
-  });
-});
-
-// === getPermissionCoverage compat shim ===================================
-
-describe('getPermissionCoverage (compat shim)', () => {
-  const requirements = {
-    accepts: [{ network: 'eip155:8453', amount: '10000', asset: BASE_USDC }],
-  };
-
-  test('reports covers:true when accepts[0] cap covers', () => {
-    mockGetPermission.mockReturnValueOnce({
-      capAmount: '20000', spentAmount: '0', createdAt: 1, expiresAt: 9999999999,
-    });
-    const result = getPermissionCoverage('https://api.example/article', requirements);
-    expect(result?.covers).toBe(true);
-    expect(result?.remaining).toBe(20000n);
-  });
-
-  test('reports covers:false when remaining is less than amount', () => {
-    mockGetPermission.mockReturnValueOnce({
-      capAmount: '10000', spentAmount: '5000', createdAt: 1, expiresAt: 9999999999,
-    });
-    const result = getPermissionCoverage('https://api.example/article', requirements);
-    expect(result?.covers).toBe(false);
-    expect(result?.remaining).toBe(5000n);
-  });
-
-  test('returns null on a non-parsable URL', () => {
-    expect(getPermissionCoverage('not a url', requirements)).toBeNull();
-  });
-
-  test('returns null when no permission exists (default mock)', () => {
-    expect(getPermissionCoverage('https://api.example/article', requirements)).toBeNull();
-  });
-});

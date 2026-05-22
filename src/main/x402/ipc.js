@@ -49,7 +49,7 @@ const {
 } = require('./permissions');
 const paymentHistory = require('../payment-history');
 const { signAndQueueRetry } = require('./sign-flow');
-const { paymentTuple, getPermissionCoverage } = require('./payment-utils');
+const { tupleFromAccept, coverageForAccept } = require('./payment-utils');
 
 // Cancel fallback when the webview has no back history. `about:blank` is
 // safe everywhere — the user gets an empty page and the address bar so
@@ -58,9 +58,11 @@ const CANCEL_FALLBACK_URL = 'about:blank';
 
 // Resolve the asset entry the sidebar uses to format the amount as
 // e.g. "0.01 USDC" instead of "10000 of 0x8335…". Returns null when
-// the asset isn't in the (strict) tokens allowlist.
-function lookupAsset(requirements) {
-  const tuple = paymentTuple(requirements);
+// the asset isn't in the (strict) tokens allowlist. Caller passes the
+// specific `accepts[]` entry being displayed (today: always position 0
+// pre-chooser; WP-MA.2 plumbs the selected index through).
+function lookupAsset(accept) {
+  const tuple = tupleFromAccept(accept);
   if (!tuple) return null;
   return getToken(getTokenKey(tuple.chainId, tuple.asset)) ?? null;
 }
@@ -68,9 +70,13 @@ function lookupAsset(requirements) {
 // Sidebar consumes this to decide between "render Approve UI" vs
 // "render Allow-extra UI" (over-cap branch is the same UX as 'none'
 // today, but the sidebar surfaces the existing-but-insufficient cap
-// for transparency).
-function autoPayStateFor(url, requirements) {
-  const coverage = getPermissionCoverage(url, requirements);
+// for transparency). Takes the explicit accept entry being displayed —
+// over-cap state belongs to that entry, not whichever entry is at
+// position 0 of the requirements blob.
+function autoPayStateFor(url, accept) {
+  let origin;
+  try { origin = new URL(url).origin; } catch { return { kind: 'none' }; }
+  const coverage = coverageForAccept(origin, accept);
   if (!coverage) return { kind: 'none' };
   return {
     kind: coverage.covers ? 'cover' : 'over-cap',
@@ -117,28 +123,34 @@ function registerX402Ipc() {
       }
     }
 
+    // The sidebar's approval card currently renders accepts[0]; WP-MA.2
+    // will plumb a chooser-driven selection through. Until then, the
+    // displayed accept = position 0.
+    const accept = detected.requirements?.accepts?.[0] ?? null;
     return {
       success: true,
       url: detected.url,
       requirements: detected.requirements,
       detectionId: detected.detectionId ?? detectionId ?? null,
-      asset: lookupAsset(detected.requirements),
-      autoPay: autoPayStateFor(detected.url, detected.requirements),
+      asset: lookupAsset(accept),
+      autoPay: autoPayStateFor(detected.url, accept),
     };
   });
 
   ipcMain.handle(IPC.X402_APPROVE, async (event, args = {}) => {
     const id = args.webContentsId ?? event.sender.id;
-    const { detectionId, grant } = args;
+    const { detectionId, grant, selectedAcceptIndex } = args;
 
     // WP7.1 subresource path: detector is awaiting the approval Promise.
     // Settle it (the detector handler does sign + 307). Returns
     // `pending: true` so the renderer keeps the card in "Signing..."
     // state and waits for the x402:approval-result event — the actual
     // sign happens inside the detector after this IPC returns, and we
-    // need to surface its success/failure back to the UI.
+    // need to surface its success/failure back to the UI. The selected
+    // accept rides through on the decision so the detector signs the
+    // entry the chooser highlighted, not whichever is at position 0.
     if (detectionId && hasPendingApproval(detectionId)) {
-      settlePendingApproval(detectionId, { approved: true, grant });
+      settlePendingApproval(detectionId, { approved: true, grant, selectedAcceptIndex });
       return { success: true, pending: true };
     }
 
@@ -170,9 +182,13 @@ function registerX402Ipc() {
       // normal cap-covered flow signs without UI and never reaches this
       // handler. sign-flow defaults to MANUAL when undefined.
       const detected = getDetectedPayment(id);
+      const selectedAccept = selectedAcceptIndex != null
+        ? detected?.requirements?.accepts?.[selectedAcceptIndex]
+        : undefined;
       await signAndQueueRetry(id, {
         grant,
         authorizedBy: detected?.authorizedBy,
+        selectedAccept,
       });
       return { success: true };
     } catch (err) {
