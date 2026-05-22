@@ -409,6 +409,14 @@ const TTL_BY_LEVEL = {
 const DEFAULT_CACHE_TTL_MS = 15 * 60 * 1000;
 
 function ttlForResult(result) {
+  // UNVERIFIED outcomes describe a transient on-chain state (e.g. a
+  // reverse record that doesn't forward-verify) even when the underlying
+  // proof was cryptographically sound. Trust.level reads `verified` in
+  // that case — short-cache anyway so the user sees a fresh outcome
+  // when the on-chain state changes. Without this override the level
+  // table would pin the result for 15min.
+  if (result?.reason === 'UNVERIFIED') return TTL_BY_LEVEL.unverified;
+
   const level = result?.trust?.level;
   if (level && Object.prototype.hasOwnProperty.call(TTL_BY_LEVEL, level)) {
     return TTL_BY_LEVEL[level];
@@ -565,10 +573,17 @@ const UR_NOT_FOUND_SELECTORS = new Set([
 ]);
 const REVERSE_MISMATCH_SELECTOR = '0xef9c03ce'; // ReverseAddressMismatch(string,bytes)
 
-function urErrorSelector(err) {
+// ethers v6 stashes contract-revert data at either `.data` (newer wrappers)
+// or `.info.error.data` (the JSON-RPC error envelope). One reader, used by
+// every callsite that wants to inspect the revert payload.
+function getRevertData(err) {
   const data = err?.data || err?.info?.error?.data || '';
-  if (typeof data !== 'string' || data.length < 10) return null;
-  return data.slice(0, 10).toLowerCase();
+  return typeof data === 'string' && data.length >= 10 ? data : null;
+}
+
+function urErrorSelector(err) {
+  const data = getRevertData(err);
+  return data ? data.slice(0, 10).toLowerCase() : null;
 }
 
 function isResolverNotFoundError(err) {
@@ -585,6 +600,25 @@ function isReverseAddressMismatchError(err) {
   const msg = err?.message || '';
   if (/ReverseAddressMismatch/i.test(msg)) return true;
   return urErrorSelector(err) === REVERSE_MISMATCH_SELECTOR;
+}
+
+// Decode the claimed primary name out of a ReverseAddressMismatch revert.
+// The UR's custom error is `ReverseAddressMismatch(string,bytes)`, so the
+// first ABI arg after the 4-byte selector is the claimed name string.
+// Returns null if the data is missing or malformed — the warning UI then
+// falls back to a name-less "unverified reverse" message.
+function decodeReverseMismatchClaimedName(err) {
+  const data = getRevertData(err);
+  if (!data || data.slice(0, 10).toLowerCase() !== REVERSE_MISMATCH_SELECTOR) return null;
+  try {
+    const [name] = ethers.AbiCoder.defaultAbiCoder().decode(
+      ['string', 'bytes'],
+      '0x' + data.slice(10),
+    );
+    return name || null;
+  } catch {
+    return null;
+  }
 }
 
 // Call the Universal Resolver's resolve(name, data). `callData` is the raw
@@ -609,6 +643,21 @@ async function universalResolverCall(provider, name, callData, overrides = {}) {
     ...overrides,
   });
   return { resolvedData, resolverAddress };
+}
+
+// Reverse counterpart: call the UR's reverse(bytes, uint256). The UR
+// verifies the claimed primary name forward-resolves back to the input
+// address inside the contract — a successful return is already
+// trust-checked at the contract level. A spoofed reverse record surfaces
+// as `ReverseAddressMismatch` (selector 0xef9c03ce) on the err.data.
+// `addressBytes` is the 20-byte representation produced by `ethers.getBytes`.
+async function universalResolverReverse(provider, addressBytes, overrides = {}) {
+  const ur = new ethers.Contract(UNIVERSAL_RESOLVER_ADDRESS, UR_ABI, provider);
+  const [name] = await ur.reverse(addressBytes, ETH_COIN_TYPE, {
+    enableCcipRead: true,
+    ...overrides,
+  });
+  return { name };
 }
 
 // ---------------------------------------------------------------------------
@@ -821,6 +870,80 @@ function classifyNoAgreement({ results }) {
   return { kind: 'conflict' };
 }
 
+// Colibri primary path: a single cryptographically-verified eth_call against
+// the Universal Resolver via @corpus-core/colibri-stateless. The verifier
+// runs the EVM locally against proven storage, so a successful return is
+// already cross-checked against the Ethereum sync committee (or, with
+// zk_proof, a recursive zk sync proof). No anchor corroboration is needed —
+// Colibri pins to head − 1 by construction (sync committee signature for
+// block N lives in block N+1).
+//
+// Throws on proof-verification failure / network error / prover outage so
+// the orchestrator can fall through to the legacy quorum path when
+// ensFallbackToQuorum is enabled.
+async function tryColibriPath(name, callData, settings) {
+  // Lazy require avoids a load-time cycle: colibri-resolver imports
+  // universalResolverCall + hostOf from this module.
+  const { resolveViaColibri } = require('./ens/colibri-resolver');
+  const proverHost = colibriProverHost(settings);
+
+  let result;
+  try {
+    result = await resolveViaColibri(name, callData);
+  } catch (err) {
+    if (isResolverNotFoundError(err)) {
+      return {
+        outcome: 'not_found',
+        reason: 'NO_RESOLVER',
+        trust: buildColibriTrust(proverHost),
+        block: null,
+      };
+    }
+    if (err.code === 'CALL_EXCEPTION') {
+      // Verified revert with an unknown selector — same semantics as the
+      // quorum path's NO_CONTENTHASH bucket. Upstream maps that to
+      // RESOLUTION_ERROR for addr lookups and "no contenthash" for content.
+      return {
+        outcome: 'not_found',
+        reason: 'NO_CONTENTHASH',
+        error: err.message,
+        trust: buildColibriTrust(proverHost),
+        block: null,
+      };
+    }
+    throw err;
+  }
+
+  return {
+    outcome: 'data',
+    resolvedData: result.resolvedData,
+    resolverAddress: result.resolverAddress,
+    trust: buildColibriTrust(proverHost),
+    block: null,
+  };
+}
+
+// Read the effective prover URL from settings and return its host.
+// Lazy-requires DEFAULT_PROVER_URL to dodge the load-time cycle between
+// this module and ./ens/colibri-resolver.
+function colibriProverHost(settings) {
+  const { DEFAULT_PROVER_URL } = require('./ens/colibri-resolver');
+  return hostOf((settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim());
+}
+
+function buildColibriTrust(proverHost) {
+  return {
+    level: 'verified',
+    method: 'colibri',
+    prover: proverHost,
+    block: null,
+    agreed: [proverHost],
+    dissented: [],
+    queried: [proverHost],
+    quorum: { k: 1, m: 1, achieved: true },
+  };
+}
+
 // Custom-RPC fast path: single leg against the user's own node, labelled
 // trust='user-configured'. On any failure, return null so the caller falls
 // back to the public quorum path (preserving existing graceful-degrade
@@ -907,6 +1030,24 @@ async function resolveSingleSourceUnverified(url, name, callData, anchor, timeou
 // Throws when there are no providers or both waves all-errored.
 async function consensusResolve(normalizedName, callData, kind = 'content', options = {}) {
   const settings = loadSettings();
+
+  // Colibri primary: cryptographic verification via the sync committee
+  // (or zk sync proof). On verification failure or network/prover error
+  // we log loudly and fall through to the legacy quorum path below
+  // unless ensFallbackToQuorum is explicitly disabled. Loud-fallback is
+  // load-bearing: a silent fall-through would hide both prover health
+  // regressions and the (rare) "active attack" signal.
+  if (settings.ensResolutionMethod === 'colibri') {
+    try {
+      return await tryColibriPath(normalizedName, callData, settings);
+    } catch (err) {
+      if (settings.ensFallbackToQuorum === false) throw err;
+      log.warn(
+        `[ens] colibri-fallback name=${normalizedName} kind=${kind} ` +
+        `error=${err.message}`
+      );
+    }
+  }
 
   // Custom RPC: try first, fall back to public quorum on any failure so
   // users with a misbehaving own-node still resolve.
@@ -1440,7 +1581,57 @@ async function resolveEnsReverse(address) {
   return resolveWithCache(address, ensReverseCache, doResolveEnsReverse, 'reverse');
 }
 
+// Colibri reverse path: cryptographically-verified `ur.reverse`. Returns
+// the same result shape as the legacy path, plus a `trust` object so the
+// renderer can surface a "verified" indicator. ReverseAddressMismatch
+// surfaces as UNVERIFIED — the proof was valid but the contract reverted,
+// which is the spoofed-reverse-record signal.
+async function tryColibriReverse(normalizedAddress, settings) {
+  const { resolveReverseViaColibri } = require('./ens/colibri-resolver');
+  const trust = buildColibriTrust(colibriProverHost(settings));
+  const addrBytes = ethers.getBytes(normalizedAddress);
+
+  let name;
+  try {
+    ({ name } = await resolveReverseViaColibri(addrBytes));
+  } catch (err) {
+    if (isResolverNotFoundError(err)) {
+      return { ...noReverseResult(normalizedAddress), trust };
+    }
+    if (isReverseAddressMismatchError(err)) {
+      return {
+        success: false,
+        address: normalizedAddress,
+        reason: 'UNVERIFIED',
+        claimedName: decodeReverseMismatchClaimedName(err),
+        error: `Reverse record for ${normalizedAddress} does not forward-verify`,
+        trust,
+      };
+    }
+    throw err;
+  }
+
+  if (!name) return { ...noReverseResult(normalizedAddress), trust };
+  return { success: true, address: normalizedAddress, name, trust };
+}
+
 async function doResolveEnsReverse(normalizedAddress) {
+  const settings = loadSettings();
+
+  if (settings.ensResolutionMethod === 'colibri') {
+    try {
+      return cacheReverseResult(
+        normalizedAddress,
+        await tryColibriReverse(normalizedAddress, settings)
+      );
+    } catch (err) {
+      if (settings.ensFallbackToQuorum === false) throw err;
+      log.warn(
+        `[ens] colibri-fallback reverse address=${normalizedAddress} error=${err.message}`
+      );
+    }
+  }
+
   const provider = await getWorkingProvider();
   const ur = new ethers.Contract(UNIVERSAL_RESOLVER_ADDRESS, UR_ABI, provider);
   const addrBytes = ethers.getBytes(normalizedAddress);
@@ -1459,6 +1650,7 @@ async function doResolveEnsReverse(normalizedAddress) {
         success: false,
         address: normalizedAddress,
         reason: 'UNVERIFIED',
+        claimedName: decodeReverseMismatchClaimedName(err),
         error: `Reverse record for ${normalizedAddress} does not forward-verify`,
       });
     }
@@ -1632,6 +1824,8 @@ module.exports = {
   invalidateCachedProvider,
   invalidateEnsContent,
   universalResolverCall,
+  universalResolverReverse,
   isResolverNotFoundError,
   clearEnsCachesForTest,
+  hostOf,
 };

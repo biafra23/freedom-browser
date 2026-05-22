@@ -101,7 +101,7 @@
   color: #000;
 }
 .autocomplete-protocol-badge.protocol-https {
-  background: #6b9e7a;
+  background: var(--secure-fg);
   color: #000;
 }
 .autocomplete-protocol-badge.protocol-http {

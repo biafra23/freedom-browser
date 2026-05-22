@@ -7,6 +7,7 @@
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
 import { refreshBalances, getTokensWithBalance, getChainsWithBalance, sortTokens } from './balance-display.js';
+import { TRUST_STATUS_SENTENCE, describeUnverifiedReverse } from '../navigation-utils.js';
 import { createTab } from '../tabs.js';
 
 // DOM references
@@ -18,7 +19,6 @@ let sendPendingView;
 let sendSuccessView;
 let sendErrorView;
 let sendRecipientInput;
-let sendResolvedAddress;
 let sendRecipientError;
 // Send chain selector
 let sendChainSelector;
@@ -64,8 +64,10 @@ let sendRetryBtn;
 let sendTxState = {
   selectedToken: null,
   recipient: '',
-  // Set only when `recipient` was resolved from ENS; review view shows both.
-  recipientName: null,
+  // { name, trust } when `recipient` was resolved from ENS (or a reverse
+  // lookup of a raw address succeeded), null otherwise. Bundled so that
+  // clearing one half can't leak a stale other half.
+  recipientResolution: null,
   amount: '',
   gasLimit: null,
   maxFeePerGas: null,
@@ -84,7 +86,6 @@ export function initSend() {
   sendSuccessView = document.getElementById('send-success-view');
   sendErrorView = document.getElementById('send-error-view');
   sendRecipientInput = document.getElementById('send-recipient');
-  sendResolvedAddress = document.getElementById('send-resolved-address');
   sendRecipientError = document.getElementById('send-recipient-error');
   sendChainSelector = document.getElementById('send-chain-selector');
   sendChainBtn = document.getElementById('send-chain-btn');
@@ -162,8 +163,7 @@ function setupSendScreen() {
     sendRecipientInput.addEventListener('input', () => {
       clearSendError('recipient');
       // Edits invalidate any previously-resolved ENS address.
-      hideResolvedAddress();
-      sendTxState.recipientName = null;
+      sendTxState.recipientResolution = null;
     });
   }
 
@@ -258,7 +258,7 @@ function resetSendState() {
   sendTxState = {
     selectedToken: null,
     recipient: '',
-    recipientName: null,
+    recipientResolution: null,
     amount: '',
     gasLimit: null,
     maxFeePerGas: null,
@@ -271,8 +271,6 @@ function resetSendState() {
   if (sendRecipientInput) sendRecipientInput.value = '';
   if (sendAmountInput) sendAmountInput.value = '';
   if (sendPasswordInput) sendPasswordInput.value = '';
-
-  if (sendResolvedAddress) sendResolvedAddress.textContent = '';
 
   closeSendChainDropdown();
   closeSendAssetDropdown();
@@ -287,8 +285,6 @@ function resetSendState() {
   clearSendError('general');
   clearSendError('review');
   clearSendError('unlock');
-
-  sendResolvedAddress?.classList.add('hidden');
 
   if (sendContinueBtn) {
     sendContinueBtn.disabled = false;
@@ -801,11 +797,9 @@ async function handleSendContinue() {
       const resolved = await resolveRecipientEns(recipientClass.value);
       if (!resolved) return; // error already surfaced on the recipient field
       sendTxState.recipient = resolved.address;
-      sendTxState.recipientName = resolved.name;
-      showResolvedAddress(resolved.address);
+      sendTxState.recipientResolution = { name: resolved.name, trust: resolved.trust };
     } else {
       sendTxState.recipient = recipientClass.value;
-      hideResolvedAddress();
       // Best-effort reverse lookup so the review screen can show the
       // recipient's primary ENS name alongside the address when one is
       // verifiably set. Fire in parallel with gas estimation so it
@@ -815,9 +809,9 @@ async function handleSendContinue() {
     }
 
     if (sendContinueBtn) sendContinueBtn.textContent = 'Loading...';
-    const [, reverseName] = await Promise.all([estimateTransactionGas(), reverseLookup]);
-    if (reverseName && !sendTxState.recipientName) {
-      sendTxState.recipientName = reverseName;
+    const [, reverseResult] = await Promise.all([estimateTransactionGas(), reverseLookup]);
+    if (reverseResult && !sendTxState.recipientResolution) {
+      sendTxState.recipientResolution = reverseResult;
     }
     populateSendReview();
     await configureSendUnlockUI();
@@ -833,15 +827,23 @@ async function handleSendContinue() {
   }
 }
 
-// Ask main for the primary ENS name set for an address and return it
-// only if it forward-verifies. Never throws — returns null on any
-// failure or unavailability so the send flow isn't blocked.
+// Ask main for the primary ENS name set for an address. Returns one of:
+//   { name, trust }                          forward-verified primary name
+//   { warning: 'unverified', claimedName }   primary claim doesn't forward-verify
+//   null                                     no reverse record / hard error
+// Never throws — the review flow isn't blocked by a reverse-lookup failure.
 async function lookupPrimaryNameForAddress(address) {
   const api = window.electronAPI;
   if (!api?.resolveEnsReverse) return null;
   try {
     const result = await api.resolveEnsReverse(address);
-    return result?.success && result.name ? result.name : null;
+    if (result?.success && result.name) {
+      return { name: result.name, trust: result.trust || null };
+    }
+    if (result?.reason === 'UNVERIFIED') {
+      return { warning: 'unverified', claimedName: result.claimedName || null };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -871,20 +873,13 @@ async function resolveRecipientEns(name) {
     return null;
   }
 
-  return { name: result.name || name, address: result.address };
+  return {
+    name: result.name || name,
+    address: result.address,
+    trust: result.trust || null,
+  };
 }
 
-function showResolvedAddress(address) {
-  if (!sendResolvedAddress) return;
-  sendResolvedAddress.textContent = address;
-  sendResolvedAddress.classList.remove('hidden');
-}
-
-function hideResolvedAddress() {
-  if (!sendResolvedAddress) return;
-  sendResolvedAddress.textContent = '';
-  sendResolvedAddress.classList.add('hidden');
-}
 
 async function estimateTransactionGas() {
   const token = sendTxState.selectedToken;
@@ -947,8 +942,8 @@ function populateSendReview() {
   const chain = walletState.registeredChains[sendTxState.chainId];
 
   if (sendReviewTo) {
-    if (sendTxState.recipientName) {
-      sendReviewTo.textContent = `${sendTxState.recipientName} (${sendTxState.recipient})`;
+    if (sendTxState.recipientResolution) {
+      renderRecipientReview(sendReviewTo, sendTxState.recipient, sendTxState.recipientResolution);
     } else {
       sendReviewTo.textContent = sendTxState.recipient;
     }
@@ -977,6 +972,69 @@ function populateSendReview() {
       sendReviewTotal.textContent = `${sendTxState.amount} ${token?.symbol || ''}`;
     }
   }
+}
+
+function renderRecipientReview(container, address, resolution) {
+  if (resolution.warning === 'unverified') {
+    renderRecipientUnverified(container, address, resolution.claimedName);
+    return;
+  }
+
+  const { name, trust } = resolution;
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'send-review-name';
+  nameSpan.textContent = name;
+  const children = [nameSpan];
+
+  const badge = buildRecipientVerifiedBadge(trust);
+  if (badge) children.push(badge);
+
+  const addressSpan = document.createElement('span');
+  addressSpan.className = 'send-review-recipient-address';
+  addressSpan.textContent = ` (${address})`;
+  children.push(addressSpan);
+
+  container.replaceChildren(...children);
+}
+
+// Render path for the rare case where the recipient address has a primary
+// ENS name set, but that name doesn't forward-resolve back to the address.
+// The claim is untrusted, so we don't display it as text — only as a
+// tooltip on the warning glyph, so a phisher can't slip a misleading
+// name onto the review screen.
+function renderRecipientUnverified(container, address, claimedName) {
+  const warn = document.createElement('span');
+  warn.className = 'send-review-warning';
+  warn.textContent = '⚠';
+  const detail = describeUnverifiedReverse(claimedName);
+  warn.title = detail;
+  warn.setAttribute('aria-label', detail);
+
+  // Address inherits monospace + 11px from the parent .send-review-address
+  // class on #send-review-to — no per-span styling needed for the bare case.
+  container.replaceChildren(document.createTextNode(address), warn);
+}
+
+// Verified checkmark for the recipient cell when trust is verifiable.
+// Tooltip copy is sourced from the address-bar popover's status table
+// (TRUST_STATUS_SENTENCE) so the two surfaces can't drift; for Colibri
+// the prover host is appended as the one inline detail this surface adds.
+function buildRecipientVerifiedBadge(trust) {
+  if (!trust) return null;
+  if (trust.level !== 'verified' && trust.level !== 'user-configured') return null;
+
+  const isColibri = trust.level === 'verified' && trust.method === 'colibri';
+  const key = isColibri ? 'verified-colibri' : trust.level;
+  let title = TRUST_STATUS_SENTENCE[key];
+  if (!title) return null;
+  if (isColibri && trust.prover) title += ` (${trust.prover})`;
+
+  const badge = document.createElement('span');
+  badge.className = 'send-review-verified';
+  badge.textContent = '✓';
+  badge.title = title;
+  badge.setAttribute('aria-label', title);
+  return badge;
 }
 
 async function configureSendUnlockUI() {
