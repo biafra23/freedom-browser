@@ -7,6 +7,11 @@ import { setupWebviewContextMenu } from './page-context-menu.js';
 import { homeUrl } from './page-urls.js';
 import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
+import {
+  clearLinkStatus,
+  showLinkStatus,
+  setLinkStatusSide,
+} from './link-status.js';
 
 const electronAPI = window.electronAPI;
 
@@ -481,12 +486,47 @@ const createWebview = (tabId, initialUrl) => {
       }
     },
     'ipc-message': (event) => {
+      // Link-hover preview cursor-zone updates from webview-preload — flip
+      // the bar to the opposite corner so it never covers the hovered link.
+      // Handled directly here (not via navigation.js) because it doesn't
+      // touch tab/navigation state.
+      if (event.channel === 'link-status:zone') {
+        if (tabId === tabState.activeTabId) {
+          const tab = tabState.tabs.find((t) => t.id === tabId);
+          const inLeftZone = event.args?.[0]?.inLeftZone === true;
+          // Remember per-tab so switchTab can restore without waiting for
+          // the preload to re-emit. The preload only emits on zone
+          // transitions, and a hidden webview's `linkStatusInZone` freezes
+          // at whatever value it held when the tab was backgrounded — so
+          // without per-tab state, returning to a tab whose pointer is
+          // still in the bottom-left band would leave the bar on the
+          // default `left` side and paint it over the hovered link until
+          // the pointer leaves and re-enters the zone.
+          if (tab) {
+            tab.linkStatusInLeftZone = inLeftZone;
+          }
+          setLinkStatusSide(inLeftZone ? 'right' : 'left');
+        }
+        return;
+      }
       // Messages from internal pages (e.g. ens-unverified interstitial
       // bubbling a "Continue once" signal). Route through the registered
       // onWebviewEvent handler so navigation.js can stay the sole owner
       // of tab-state mutations.
       if (tabId === tabState.activeTabId && onWebviewEvent) {
         onWebviewEvent('ipc-message', { tabId, channel: event.channel, args: event.args });
+      }
+    },
+    'update-target-url': (event) => {
+      // Gate at the tab edge (same shape as `link-status:zone`) so the
+      // link-status module never sees background-tab hover events. Empty
+      // url → fade out; non-empty → start the show pipeline.
+      if (tabId !== tabState.activeTabId) return;
+      const url = typeof event.url === 'string' ? event.url : '';
+      if (url) {
+        showLinkStatus(url);
+      } else {
+        clearLinkStatus();
       }
     },
   };
@@ -1102,6 +1142,18 @@ export const switchTab = (tabId, options = {}) => {
   const tab = tabState.tabs.find((t) => t.id === tabId);
   if (!tab) return;
 
+  // Reset the link-hover preview before swapping active tabs:
+  // - immediate clear so the previous tab's URL never trails into the new tab
+  // - restore side from the incoming tab's last-known cursor-zone state
+  //   rather than blindly resetting to `left`. The preload's zone tracker
+  //   only emits on transitions, and a hidden webview's `linkStatusInZone`
+  //   freezes at whatever value it held when the tab was backgrounded —
+  //   so the next zone IPC may never arrive until the pointer leaves and
+  //   re-enters the band. Without restoring per-tab state, returning to
+  //   a tab whose pointer is in the bottom-left band would leave the bar
+  //   on `left` and paint it over the hovered link.
+  clearLinkStatus({ immediate: true });
+  setLinkStatusSide(tab.linkStatusInLeftZone ? 'right' : 'left');
   tabState.activeTabId = tabId;
 
   // Hide all webviews, show active one

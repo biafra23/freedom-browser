@@ -48,6 +48,7 @@ import {
 } from './lib/autocomplete.js';
 import { initGithubBridgeUi, setOnOpenRadicleUrl } from './lib/github-bridge-ui.js';
 import { initMenuBackdrop } from './lib/menu-backdrop.js';
+import { initLinkStatus } from './lib/link-status.js';
 import { initPageContextMenu, hidePageContextMenu } from './lib/page-context-menu.js';
 import { pushDebug } from './lib/debug.js';
 import { initOnboarding } from './lib/onboarding.js';
@@ -217,6 +218,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
   initBookmarks();
   initNavigation(); // Sets up event handler with tabs module
+  initLinkStatus();
   initTabs(); // Creates first tab and starts loading home page
   initAutocomplete(); // Address bar autocomplete
   initPageContextMenu(); // Page context menu for webviews

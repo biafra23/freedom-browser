@@ -684,8 +684,13 @@
     <nav class="bookmarks" aria-label="Bookmarks" id="bookmarks-bar" data-test="bookmarks-bar"></nav>
     <section class="app-body">
       <main class="content">
-        <div id="webview-container" class="webview-container">
-          <!-- Webviews inserted dynamically by tabs.js -->
+        <div class="content-page">
+          <div id="webview-container" class="webview-container">
+            <!-- Webviews inserted dynamically by tabs.js -->
+          </div>
+          <div id="link-status" class="link-status" hidden aria-hidden="true">
+            <span id="link-status-url" class="link-status-url"></span>
+          </div>
         </div>
       </main>
       <aside id="sidebar" class="sidebar collapsed">

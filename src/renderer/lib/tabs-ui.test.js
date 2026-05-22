@@ -137,6 +137,11 @@ const loadTabsModule = async (options = {}) => {
   const pageContextMenuMocks = {
     setupWebviewContextMenu: jest.fn(),
   };
+  const linkStatusMocks = {
+    clearLinkStatus: jest.fn(),
+    showLinkStatus: jest.fn(),
+    setLinkStatusSide: jest.fn(),
+  };
 
   addressInput.focus = jest.fn();
   addressInput.select = jest.fn();
@@ -162,6 +167,7 @@ const loadTabsModule = async (options = {}) => {
   jest.doMock('./bookmarks-ui.js', () => bookmarksMocks);
   jest.doMock('./menu-backdrop.js', () => backdropMocks);
   jest.doMock('./page-context-menu.js', () => pageContextMenuMocks);
+  jest.doMock('./link-status.js', () => linkStatusMocks);
   jest.doMock('./page-urls.js', () => ({
     homeUrl: options.homeUrl || HOME_URL,
   }));
@@ -192,6 +198,7 @@ const loadTabsModule = async (options = {}) => {
     bookmarksMocks,
     backdropMocks,
     pageContextMenuMocks,
+    linkStatusMocks,
   };
 };
 
@@ -1012,5 +1019,125 @@ describe('tabs ui behavior', () => {
     expect(firstTab.webview.closeDevTools.mock.calls.length).toBe(devtoolsCloseBefore + 1);
     expect(debugMocks.pushDebug).toHaveBeenCalledWith('DevTools opened');
     expect(debugMocks.pushDebug).toHaveBeenCalledWith('DevTools closed');
+  });
+
+  test('forwards update-target-url and link-status:zone for the active tab only', async () => {
+    const { mod, linkStatusMocks } = await loadTabsModule();
+    await mod.initTabs();
+
+    const firstTab = mod.getActiveTab();
+    const secondTab = mod.createTab('https://second.example');
+    mod.switchTab(secondTab.id);
+
+    linkStatusMocks.showLinkStatus.mockClear();
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    // Active tab: non-empty url goes to showLinkStatus, empty triggers a
+    // (faded) clearLinkStatus.
+    secondTab.webview.dispatch('update-target-url', { url: 'https://hovered.example/' });
+    expect(linkStatusMocks.showLinkStatus).toHaveBeenCalledWith('https://hovered.example/');
+
+    secondTab.webview.dispatch('update-target-url', { url: '' });
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenLastCalledWith();
+
+    secondTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: true }],
+    });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('right');
+
+    secondTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: false }],
+    });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('left');
+
+    // Background-tab events for both channels are dropped entirely so
+    // hovering links in a hidden tab can never move the active tab's bar.
+    linkStatusMocks.showLinkStatus.mockClear();
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    firstTab.webview.dispatch('update-target-url', { url: 'https://background.example/' });
+    expect(linkStatusMocks.showLinkStatus).not.toHaveBeenCalled();
+    expect(linkStatusMocks.clearLinkStatus).not.toHaveBeenCalled();
+
+    firstTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: true }],
+    });
+    expect(linkStatusMocks.setLinkStatusSide).not.toHaveBeenCalled();
+  });
+
+  test('switchTab clears the link status immediately and restores per-tab side', async () => {
+    // Per-tab side is restored from the tab's last-known cursor-zone
+    // state instead of being blindly reset to 'left'. With no prior
+    // zone events on either tab, the restored side is 'left' for both.
+    const { mod, linkStatusMocks } = await loadTabsModule();
+    await mod.initTabs();
+
+    const firstTab = mod.getActiveTab();
+    const secondTab = mod.createTab('https://second.example');
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    mod.switchTab(firstTab.id);
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenCalledWith('left');
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    mod.switchTab(secondTab.id);
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenCalledWith('left');
+  });
+
+  test('switchTab restores the active tab side from the per-tab zone state', async () => {
+    // Regression: the preload only emits link-status:zone events on
+    // transitions, and a hidden webview's `linkStatusInZone` freezes at
+    // whatever value it held when the tab was backgrounded. If the
+    // renderer reset `currentSide` to 'left' on every switch (the
+    // previous behavior), returning to a tab whose pointer is still in
+    // the bottom-left band would leave the bar on `left` until the
+    // pointer leaves and re-enters the zone — painting it over the
+    // link the user is hovering.
+    //
+    // The fix tracks per-tab zone state in tabs.js and restores it on
+    // activation so the bar's side matches the destination tab's
+    // current pointer position immediately.
+    const { mod, linkStatusMocks } = await loadTabsModule();
+    await mod.initTabs();
+
+    const firstTab = mod.getActiveTab();
+    const secondTab = mod.createTab('https://second.example');
+    mod.switchTab(firstTab.id);
+
+    // Pointer enters the bottom-left band on the first tab → bar flips
+    // to the right side and per-tab state remembers the zone hit.
+    firstTab.webview.dispatch('ipc-message', {
+      channel: 'link-status:zone',
+      args: [{ inLeftZone: true }],
+    });
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    // Switch to a tab whose preload has never emitted — side restores to
+    // its default 'left'.
+    mod.switchTab(secondTab.id);
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('left');
+
+    linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.setLinkStatusSide.mockClear();
+
+    // Switch back to the first tab — the per-tab state is replayed so
+    // the bar sits on the correct side without waiting for a new
+    // pointer transition inside the (still-in-zone) preload.
+    mod.switchTab(firstTab.id);
+    expect(linkStatusMocks.clearLinkStatus).toHaveBeenCalledWith({ immediate: true });
+    expect(linkStatusMocks.setLinkStatusSide).toHaveBeenLastCalledWith('right');
   });
 });
