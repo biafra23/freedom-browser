@@ -411,7 +411,7 @@ contextBridge.exposeInMainWorld('networks', {
   getChain: (chainId) => ipcRenderer.invoke('networks:get-chain', chainId),
   getAvailableChains: () => ipcRenderer.invoke('networks:get-available-chains'),
   isChainAvailable: (chainId) => ipcRenderer.invoke('networks:is-chain-available', chainId),
-  addChain: (chain) => ipcRenderer.invoke('networks:add-chain', chain),
+  addChain: (chain, rpcUrls) => ipcRenderer.invoke('networks:add-chain', chain, rpcUrls),
   removeChain: (chainId) => ipcRenderer.invoke('networks:remove-chain', chainId),
 });
 

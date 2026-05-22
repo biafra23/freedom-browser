@@ -8,11 +8,25 @@
  * without a restart.
  */
 
-const { ipcMain } = require('electron');
+const { ipcMain, webContents } = require('electron');
+const IPC = require('../../shared/ipc-channels');
 const registry = require('./network-registry');
 const chainCatalog = require('./chain-catalog');
 const tokenRegistry = require('../token-registry');
 const rpcManager = require('../wallet/rpc-manager');
+const { loadSettings } = require('../settings-store');
+
+function broadcastNetworkConfigUpdated() {
+  if (!webContents?.getAllWebContents) return;
+  const payload = { ...loadSettings(), networkConfigUpdated: true };
+  for (const wc of webContents.getAllWebContents()) {
+    try {
+      wc.send(IPC.SETTINGS_UPDATED, payload);
+    } catch {
+      // webContents may be destroyed
+    }
+  }
+}
 
 // registry.invalidate() already ran inside the mutation; this also drops
 // the caches that sit downstream of the registry — the wallet provider
@@ -20,6 +34,7 @@ const rpcManager = require('../wallet/rpc-manager');
 function refreshDownstream() {
   require('../wallet/provider-manager').clearProviderCache();
   require('../ens-resolver').invalidateCachedProvider();
+  broadcastNetworkConfigUpdated();
 }
 
 function refreshAfterRpcManagerMutation(result) {
@@ -36,6 +51,28 @@ function getConfig() {
   return { networks: registry.getAllNetworks(), sources };
 }
 
+function normalizeChainForStorage(chain) {
+  const nativeSymbol = chain?.nativeCurrency?.symbol || chain?.nativeSymbol;
+  return nativeSymbol && !chain?.nativeSymbol
+    ? { ...chain, nativeSymbol }
+    : chain;
+}
+
+function nativeTokenForChain(chain, chainId) {
+  const nativeCurrency = chain?.nativeCurrency || {};
+  const symbol = String(nativeCurrency.symbol || chain?.nativeSymbol || '').trim();
+  if (!symbol) return null;
+
+  const decimals = Number(nativeCurrency.decimals);
+  return {
+    chainId: Number(chainId),
+    address: null,
+    symbol,
+    name: String(nativeCurrency.name || symbol).trim() || symbol,
+    decimals: Number.isInteger(decimals) && decimals >= 0 ? decimals : 18,
+  };
+}
+
 function registerNetworkConfigIpc() {
   ipcMain.handle('networks:get-config', () => {
     return { success: true, ...getConfig() };
@@ -48,7 +85,8 @@ function registerNetworkConfigIpc() {
   });
 
   ipcMain.handle('networks:upsert-source', (_event, id, source) => {
-    registry.upsertEndpointSource(id, source);
+    const result = registry.upsertEndpointSource(id, source);
+    if (result?.success === false) return result;
     refreshDownstream();
     return { success: true };
   });
@@ -121,19 +159,15 @@ function registerNetworkConfigIpc() {
   });
 
   ipcMain.handle('networks:add-chain', (_event, chain, rpcUrls) => {
-    const result = registry.addCustomChain(chain, rpcUrls || []);
+    const normalizedChain = normalizeChainForStorage(chain);
+    const result = registry.addCustomChain(normalizedChain, rpcUrls || []);
     if (result.success) {
       // Register the chain's native asset so the wallet fetches its
       // balance — balances iterate token entries, and a custom chain
       // has none otherwise. Best-effort: a chain with no currency
       // symbol simply gets no native token.
-      tokenRegistry.addCustomToken({
-        chainId: Number(result.chainId),
-        address: null,
-        symbol: chain.nativeSymbol || '',
-        name: chain.nativeSymbol || '',
-        decimals: 18,
-      });
+      const nativeToken = nativeTokenForChain(normalizedChain, result.chainId);
+      if (nativeToken) tokenRegistry.addCustomToken(nativeToken);
       refreshDownstream();
     }
     return result;

@@ -39,7 +39,9 @@ const BEE_NODE_MODE = {
   ULTRA_LIGHT: 'ultraLight',
   LIGHT: 'light',
 };
+const ETHEREUM_CHAIN_ID = 1;
 const GNOSIS_CHAIN_ID = 100;
+const DEFAULT_BEE_RESOLVER_RPC_URL = 'https://ethereum.publicnode.com';
 
 // Identity injection flag - when true, skip bee init and use pre-injected keys
 let useInjectedIdentity = false;
@@ -110,20 +112,30 @@ function getConfiguredBeeNodeMode() {
     : BEE_NODE_MODE.ULTRA_LIGHT;
 }
 
-function getPrimaryGnosisRpcUrl() {
-  // Bee needs a single stable Gnosis backend to start. A keyed commercial
-  // provider may have a valid API key for Ethereum but not Gnosis enabled,
-  // so prefer explicit/user/public keyless Gnosis sources when available.
-  const sources = registry.getEndpointSources(GNOSIS_CHAIN_ID, 'rpc');
+function getPrimaryKeylessRpcUrl(chainId) {
+  // Bee config accepts one RPC URL per setting. A keyed commercial provider
+  // can have a valid key while a specific chain is disabled for that app, so
+  // prefer explicit/user/public keyless sources when available.
+  const sources = registry.getEndpointSources(chainId, 'rpc');
   const keyless = sources.find((src) => !src.keyed);
-  const keylessUrl = keyless?.coverage?.[String(GNOSIS_CHAIN_ID)];
+  const keylessUrl = keyless?.coverage?.[String(chainId)];
   if (typeof keylessUrl === 'string' && keylessUrl.trim()) return keylessUrl.trim();
 
-  const [primaryUrl] = registry.getEndpoints(GNOSIS_CHAIN_ID, 'rpc');
+  const [primaryUrl] = registry.getEndpoints(chainId, 'rpc');
   return typeof primaryUrl === 'string' && primaryUrl.trim() ? primaryUrl.trim() : null;
 }
 
-function buildBeeConfigContent({ dataDir, apiPort, password, nodeMode, blockchainRpcEndpoint }) {
+function getPrimaryGnosisRpcUrl() {
+  return getPrimaryKeylessRpcUrl(GNOSIS_CHAIN_ID);
+}
+
+function getPrimaryEthereumRpcUrl() {
+  return getPrimaryKeylessRpcUrl(ETHEREUM_CHAIN_ID) || DEFAULT_BEE_RESOLVER_RPC_URL;
+}
+
+function buildBeeConfigContent({
+  dataDir, apiPort, password, nodeMode, blockchainRpcEndpoint, resolverRpcEndpoint,
+}) {
   const isLightNode = nodeMode === BEE_NODE_MODE.LIGHT;
 
   return `# Bee Configuration
@@ -134,7 +146,7 @@ full-node: false
 blockchain-rpc-endpoint: ${isLightNode ? `"${blockchainRpcEndpoint}"` : '""'}
 cors-allowed-origins: "null"
 skip-postage-snapshot: true
-resolver-options: https://ethereum.publicnode.com
+resolver-options: "${resolverRpcEndpoint}"
 storage-incentives-enable: false
 data-dir: ${dataDir}
 password: ${password}
@@ -165,6 +177,7 @@ function ensureConfig(dataDir, apiPort, nodeMode = BEE_NODE_MODE.ULTRA_LIGHT) {
   }
 
   const blockchainRpcEndpoint = nodeMode === BEE_NODE_MODE.LIGHT ? getPrimaryGnosisRpcUrl() : null;
+  const resolverRpcEndpoint = getPrimaryEthereumRpcUrl();
   if (nodeMode === BEE_NODE_MODE.LIGHT && !blockchainRpcEndpoint) {
     throw new Error('No primary Gnosis RPC endpoint configured for Bee light mode');
   }
@@ -177,6 +190,7 @@ function ensureConfig(dataDir, apiPort, nodeMode = BEE_NODE_MODE.ULTRA_LIGHT) {
     password,
     nodeMode,
     blockchainRpcEndpoint,
+    resolverRpcEndpoint,
   });
 
   fs.writeFileSync(configPath, configContent);
@@ -665,5 +679,6 @@ module.exports = {
   BEE_NODE_MODE,
   getConfiguredBeeNodeMode,
   getPrimaryGnosisRpcUrl,
+  getPrimaryEthereumRpcUrl,
   STATUS,
 };

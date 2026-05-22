@@ -48,6 +48,24 @@ jest.mock('./networks/network-registry', () => {
     if (s.enableEnsCustomRpc === true || s.ensResolutionMethod === 'custom-rpc') return 'direct';
     return s.ensResolutionMethod || 'quorum';
   };
+  const endpointSourceList = () => {
+    const s = mockLoadSettings() || {};
+    const list = [];
+    if (s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim()) {
+      list.push({
+        id: 'user-eth-custom', role: 'rpc', keyed: false,
+        builtin: false, removed: false, coverage: { '1': s.ensRpcUrl.trim() },
+      });
+    }
+    const pool = Array.isArray(s.ensPublicRpcProviders) && s.ensPublicRpcProviders.length > 0
+      ? s.ensPublicRpcProviders
+      : DEFAULT_RPC;
+    pool.forEach((url, i) => list.push({
+      id: 'eth-builtin-' + i, role: 'rpc', keyed: false,
+      builtin: true, removed: false, coverage: { '1': url },
+    }));
+    return list;
+  };
   return {
     getNetwork: () => {
       const s = mockLoadSettings() || {};
@@ -78,27 +96,16 @@ jest.mock('./networks/network-registry', () => {
       const custom = s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim();
       return custom ? [custom, ...pool] : [...pool];
     },
+    getEndpointSources: (chainId, role) => {
+      const cid = String(chainId);
+      return endpointSourceList()
+        .filter((src) => src.role === role && !src.removed && src.coverage?.[cid])
+        .map(({ builtin: _builtin, removed: _removed, ...src }) => src);
+    },
     // The config view: a user-added rpc source when a custom RPC is set,
     // plus the builtin pool. Drives the `direct` user-configured-vs-builtin
     // trust decision in consensusResolve.
-    getEndpointSourceList: () => {
-      const s = mockLoadSettings() || {};
-      const list = [];
-      if (s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim()) {
-        list.push({
-          id: 'user-eth-custom', role: 'rpc', keyed: false,
-          builtin: false, removed: false, coverage: { '1': s.ensRpcUrl.trim() },
-        });
-      }
-      const pool = Array.isArray(s.ensPublicRpcProviders) && s.ensPublicRpcProviders.length > 0
-        ? s.ensPublicRpcProviders
-        : DEFAULT_RPC;
-      pool.forEach((url, i) => list.push({
-        id: 'eth-builtin-' + i, role: 'rpc', keyed: false,
-        builtin: true, removed: false, coverage: { '1': url },
-      }));
-      return list;
-    },
+    getEndpointSourceList: endpointSourceList,
     invalidate: () => {},
   };
 });
