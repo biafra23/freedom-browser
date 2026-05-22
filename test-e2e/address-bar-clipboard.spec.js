@@ -121,13 +121,16 @@ test.describe('address bar chrome context menu', () => {
     const sample = 'paste-via-menu-69';
 
     await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), sample);
+    await expect
+      .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(sample);
 
     await input.click();
     await input.fill('');
     await input.click({ button: 'right' });
     await menu.getByRole('button', { name: 'Paste' }).click();
 
-    await expect.poll(async () => input.inputValue()).toBe(sample);
+    await expect.poll(async () => input.inputValue(), { timeout: 15_000 }).toBe(sample);
   });
 
   test('context menu Select All selects the full address', async ({ window }) => {
