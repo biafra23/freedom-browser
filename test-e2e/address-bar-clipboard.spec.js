@@ -49,7 +49,8 @@ test.describe('address bar clipboard', () => {
 
   test('Edit menu exposes clipboard roles', async ({ electronApp }) => {
     const menu = await electronApp.evaluate(inspectApplicationMenu());
-    expect(menu.roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectAll']));
+    const roles = menu.roles.map((role) => role.toLowerCase());
+    expect(roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectall']));
   });
 
   test('right-click shows Cut/Copy/Paste/Select All on the address bar', async ({ window }) => {
