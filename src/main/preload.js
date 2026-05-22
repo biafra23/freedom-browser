@@ -51,7 +51,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resolveEnsAddress: (name) => ipcRenderer.invoke('ens:resolve-address', { name }),
   resolveEnsReverse: (address) => ipcRenderer.invoke('ens:resolve-reverse', { address }),
   invalidateEnsContent: (name) => ipcRenderer.invoke('ens:invalidate-content', { name }),
-  testEnsRpc: (url) => ipcRenderer.invoke('ens:test-rpc', { url }),
   // History
   getHistory: (options) => ipcRenderer.invoke('history:get', options),
   addHistory: (entry) => ipcRenderer.invoke('history:add', entry),
@@ -339,35 +338,26 @@ contextBridge.exposeInMainWorld('swarmNode', {
   getUploadStatus: (tagUid) => ipcRenderer.invoke('swarm:get-upload-status', tagUid),
 });
 
-contextBridge.exposeInMainWorld('chainRegistry', {
-  getChains: () => ipcRenderer.invoke('chain-registry:get-chains'),
-  getTokens: (chainId) => ipcRenderer.invoke('chain-registry:get-tokens', chainId),
-  getChain: (chainId) => ipcRenderer.invoke('chain-registry:get-chain', chainId),
-  getToken: (key) => ipcRenderer.invoke('chain-registry:get-token', key),
-  addChain: (chain) => ipcRenderer.invoke('chain-registry:add-chain', chain),
-  addToken: (token) => ipcRenderer.invoke('chain-registry:add-token', token),
-  removeChain: (chainId) => ipcRenderer.invoke('chain-registry:remove-chain', chainId),
-  removeToken: (key) => ipcRenderer.invoke('chain-registry:remove-token', key),
-  getAvailableChains: () => ipcRenderer.invoke('chain-registry:get-available-chains'),
-  isChainAvailable: (chainId) => ipcRenderer.invoke('chain-registry:is-chain-available', chainId),
+contextBridge.exposeInMainWorld('networks', {
+  getChains: () => ipcRenderer.invoke('networks:get-chains'),
+  getChain: (chainId) => ipcRenderer.invoke('networks:get-chain', chainId),
+  getAvailableChains: () => ipcRenderer.invoke('networks:get-available-chains'),
+  isChainAvailable: (chainId) => ipcRenderer.invoke('networks:is-chain-available', chainId),
+  addChain: (chain, rpcUrls) => ipcRenderer.invoke('networks:add-chain', chain, rpcUrls),
+  removeChain: (chainId) => ipcRenderer.invoke('networks:remove-chain', chainId),
+});
+
+contextBridge.exposeInMainWorld('tokens', {
+  getTokens: (chainId) => ipcRenderer.invoke('tokens:get-tokens', chainId),
+  getToken: (key) => ipcRenderer.invoke('tokens:get-token', key),
+  addToken: (token) => ipcRenderer.invoke('tokens:add-token', token),
+  removeToken: (key) => ipcRenderer.invoke('tokens:remove-token', key),
 });
 
 contextBridge.exposeInMainWorld('rpcManager', {
-  // Get all available RPC providers (Alchemy, Infura, DRPC, etc.)
-  getProviders: () => ipcRenderer.invoke('rpc:get-providers'),
-  // Get list of provider IDs that have API keys configured
-  getConfiguredProviders: () => ipcRenderer.invoke('rpc:get-configured-providers'),
-  // Check if a specific provider has an API key
-  hasApiKey: (providerId) => ipcRenderer.invoke('rpc:has-api-key', providerId),
-  // Set API key for a provider
-  setApiKey: (providerId, apiKey) => ipcRenderer.invoke('rpc:set-api-key', providerId, apiKey),
-  // Remove API key for a provider
-  removeApiKey: (providerId) => ipcRenderer.invoke('rpc:remove-api-key', providerId),
-  // Test an API key before saving
-  testApiKey: (providerId, apiKey) => ipcRenderer.invoke('rpc:test-api-key', providerId, apiKey),
-  // Get chains supported by configured providers
-  getProviderSupportedChains: () => ipcRenderer.invoke('rpc:get-provider-supported-chains'),
-  // Get effective RPC URLs for a chain (includes provider URLs)
+  // Effective RPC URLs for a chain — the registry's resolved rpc pool.
+  // Used by the injected dApp provider; provider/API-key management now
+  // lives on the Networks settings page.
   getEffectiveUrls: (chainId) => ipcRenderer.invoke('rpc:get-effective-urls', chainId),
 });
 

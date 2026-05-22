@@ -5,7 +5,7 @@ const { ethers } = require('ethers');
 const Colibri = require('@corpus-core/colibri-stateless').default;
 const { Strategy } = require('@corpus-core/colibri-stateless');
 const log = require('../logger');
-const { loadSettings } = require('../settings-store');
+const registry = require('../networks/network-registry');
 const { universalResolverCall, universalResolverReverse, hostOf } = require('../ens-resolver');
 
 // privacy_mode 'basic' is a strict improvement (call params never sent
@@ -13,12 +13,14 @@ const { universalResolverCall, universalResolverReverse, hostOf } = require('../
 // threat model legible.
 const PRIVACY_MODE = 'basic';
 const CHAIN_ID = 1;
-const DEFAULT_PROVER_URL = 'https://mainnet1.colibri-proof.tech';
 
 let cachedClient = null;
 let cachedClientKey = null;
 let cachedProvider = null;
 let inFlightBuild = null;
+let storageRegistration = null;
+let storageRegistered = false;
+let buildGeneration = 0;
 
 // Disk-backed storage adapter for Colibri's verifier state (sync committee
 // pubkeys, current head witness, etc — keys like "states_1" / "sync_1_<slot>").
@@ -41,41 +43,79 @@ function createDiskStorage() {
   };
 }
 
+async function ensureStorageRegistered() {
+  if (storageRegistered) return;
+  if (!storageRegistration) {
+    storageRegistration = Colibri.register_storage(createDiskStorage())
+      .then(() => { storageRegistered = true; })
+      .catch((err) => {
+        storageRegistration = null;
+        throw err;
+      });
+  }
+  await storageRegistration;
+}
+
+function destroyClient(client) {
+  if (!client || typeof client.destroy !== 'function') return;
+  try {
+    client.destroy();
+  } catch (err) {
+    log.warn(`[ens-colibri] failed to destroy old client: ${err.message}`);
+  }
+}
+
+async function buildClient({ key, proverUrl, zkProof, generation }) {
+  // Storage adapter is registered exactly once per process: on the very
+  // first construction. Later settings-change rebuilds reuse it — the
+  // adapter is keyless and the Colibri runtime expects a single global.
+  await ensureStorageRegistered();
+
+  const client = new Colibri({
+    chainId: CHAIN_ID,
+    prover: [proverUrl],
+    zk_proof: zkProof,
+    privacy_mode: PRIVACY_MODE,
+    proofStrategy: Strategy.VerifiedOnly,
+  });
+
+  if (generation !== buildGeneration) {
+    destroyClient(client);
+    return getClient();
+  }
+
+  const previousClient = cachedClient;
+  cachedClient = client;
+  cachedClientKey = key;
+  cachedProvider = new ethers.BrowserProvider(client);
+  destroyClient(previousClient);
+  log.info(`[ens-colibri] client ready (prover=${hostOf(proverUrl)}, zk=${zkProof})`);
+  return client;
+}
+
 // Lazy singleton. Cache key is the tuple of settings that materially
 // affect proof state (prover URL + zk_proof flag); a runtime change to
 // either tears down the cached instance and rebuilds. WASM init is paid
 // on first use, not module load. `inFlightBuild` collapses concurrent
-// first-call lookups onto a single construction — without it, two cold
-// requests would both pass the cache check and double-init the WASM.
+// first-call lookups onto a single construction. The generation counter
+// prevents a slower old-settings build from replacing a newer client.
 async function getClient() {
-  const settings = loadSettings();
-  const proverUrl = (settings.ensColibriProverUrl || DEFAULT_PROVER_URL).trim();
-  const zkProof = settings.ensColibriZkProof !== false;
+  const [proverUrl] = registry.getEndpoints(CHAIN_ID, 'prover');
+  if (!proverUrl) {
+    throw new Error(`No Colibri prover configured for chain ${CHAIN_ID}`);
+  }
+  const zkProof = registry.getNetwork(CHAIN_ID).zkProof !== false;
   const key = `${proverUrl}|${zkProof}`;
-  if (cachedClient && cachedClientKey === key) return cachedClient;
+  if (cachedClient && cachedClientKey === key) {
+    if (inFlightBuild && inFlightBuild.key !== key) buildGeneration += 1;
+    return cachedClient;
+  }
   if (inFlightBuild && inFlightBuild.key === key) return inFlightBuild.promise;
 
-  const promise = (async () => {
-    // Storage adapter is registered exactly once per process: on the very
-    // first construction. Later settings-change rebuilds reuse it — the
-    // adapter is keyless and the Colibri runtime expects a single global.
-    if (!cachedClient) {
-      await Colibri.register_storage(createDiskStorage());
-    }
-    const client = new Colibri({
-      chainId: CHAIN_ID,
-      prover: [proverUrl],
-      zk_proof: zkProof,
-      privacy_mode: PRIVACY_MODE,
-      proofStrategy: Strategy.VerifiedOnly,
-    });
-    cachedClient = client;
-    cachedClientKey = key;
-    cachedProvider = new ethers.BrowserProvider(client);
-    log.info(`[ens-colibri] client ready (prover=${hostOf(proverUrl)}, zk=${zkProof})`);
-    return client;
-  })();
-  inFlightBuild = { key, promise };
+  const generation = buildGeneration + 1;
+  buildGeneration = generation;
+  const promise = buildClient({ key, proverUrl, zkProof, generation });
+  inFlightBuild = { key, promise, generation };
   try { return await promise; }
   finally { if (inFlightBuild && inFlightBuild.promise === promise) inFlightBuild = null; }
 }
@@ -100,15 +140,18 @@ async function resolveReverseViaColibri(addressBytes) {
 }
 
 function clearColibriClientForTest() {
+  destroyClient(cachedClient);
   cachedClient = null;
   cachedClientKey = null;
   cachedProvider = null;
   inFlightBuild = null;
+  storageRegistration = null;
+  storageRegistered = false;
+  buildGeneration += 1;
 }
 
 module.exports = {
   resolveViaColibri,
   resolveReverseViaColibri,
   clearColibriClientForTest,
-  DEFAULT_PROVER_URL,
 };

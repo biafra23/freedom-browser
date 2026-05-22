@@ -1,11 +1,14 @@
 /**
  * Chain Configuration
  *
- * Provides chain utilities and metadata, sourcing base data from the chain registry.
+ * Provides chain utilities and metadata, sourcing base data from the network registry.
  * Also provides additional metadata not stored in the registry (contracts, nativeCurrency structure).
  */
 
-const { getChains: getRegistryChains, getChain: getRegistryChain } = require('../chain-registry');
+const {
+  getAllNetworks: getRegistryChains,
+  getNetwork: getRegistryChain,
+} = require('../networks/network-registry');
 
 // Additional chain metadata not in the registry
 // (contracts, supportsHelios, etc.)
@@ -57,8 +60,6 @@ function getChain(chainId) {
     ...registryChain,
     ...metadata,
     nativeCurrency,
-    // Ensure rpcUrls is present (registry uses rpcUrls)
-    rpcUrls: registryChain.rpcUrls || [],
   };
 }
 

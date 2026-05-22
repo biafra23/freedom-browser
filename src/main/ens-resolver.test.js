@@ -12,9 +12,11 @@ jest.mock('./ens-prefetch', () => ({
   PREFETCH_TIMEOUT_MS: 10_000,
 }));
 
-// Mock settings-store. Test provider list is small (3 URLs) so the quorum
-// wave is bounded regardless of test input. Individual tests override
-// mockLoadSettings when they need different values.
+// Mock the network registry. Tests still pump a legacy-shaped settings
+// object via mockLoadSettings; the registry mock translates it into the
+// { getNetwork, getEndpoints } shape ens-resolver now reads, so existing
+// test bodies keep working unchanged. Test provider list is small (3 URLs)
+// so the quorum wave is bounded regardless of test input.
 const TEST_PROVIDERS = [
   'https://test-a.example.com',
   'https://test-b.example.com',
@@ -24,10 +26,8 @@ const mockLoadSettings = jest.fn(() => ({
   enableEnsCustomRpc: false,
   ensRpcUrl: '',
   ensResolutionMethod: 'quorum',
-  ensFallbackToQuorum: true,
   ensColibriProverUrl: '',
   ensColibriZkProof: true,
-  enableEnsQuorum: true,
   ensQuorumK: 3,
   ensQuorumM: 2,
   ensQuorumTimeoutMs: 5000,
@@ -35,14 +35,80 @@ const mockLoadSettings = jest.fn(() => ({
   ensBlockAnchorTtlMs: 30000,
   ensPublicRpcProviders: TEST_PROVIDERS,
 }));
-jest.mock('./settings-store', () => ({
-  loadSettings: (...args) => mockLoadSettings(...args),
-  DEFAULT_ENS_PUBLIC_RPC_PROVIDERS: [
+jest.mock('./networks/network-registry', () => {
+  // Stand-in builtin RPC pool — what the registry yields when no list was
+  // customized (mirrors the old DEFAULT_ENS_PUBLIC_RPC_PROVIDERS fallback).
+  const DEFAULT_RPC = [
     'https://default-a.example.com',
     'https://default-b.example.com',
     'https://default-c.example.com',
-  ],
-}));
+  ];
+  // The verification strategy the migration would derive from legacy keys.
+  const legacyPrimary = (s) => {
+    if (s.enableEnsCustomRpc === true || s.ensResolutionMethod === 'custom-rpc') return 'direct';
+    return s.ensResolutionMethod || 'quorum';
+  };
+  const endpointSourceList = () => {
+    const s = mockLoadSettings() || {};
+    const list = [];
+    if (s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim()) {
+      list.push({
+        id: 'user-eth-custom', role: 'rpc', keyed: false,
+        builtin: false, removed: false, coverage: { '1': s.ensRpcUrl.trim() },
+      });
+    }
+    const pool = Array.isArray(s.ensPublicRpcProviders) && s.ensPublicRpcProviders.length > 0
+      ? s.ensPublicRpcProviders
+      : DEFAULT_RPC;
+    pool.forEach((url, i) => list.push({
+      id: 'eth-builtin-' + i, role: 'rpc', keyed: false,
+      builtin: true, removed: false, coverage: { '1': url },
+    }));
+    return list;
+  };
+  return {
+    getNetwork: () => {
+      const s = mockLoadSettings() || {};
+      const primary = legacyPrimary(s);
+      return {
+        chainId: 1,
+        name: 'Ethereum',
+        verification: { primary },
+        quorum: {
+          k: s.ensQuorumK ?? 3,
+          m: s.ensQuorumM ?? 2,
+          timeoutMs: s.ensQuorumTimeoutMs ?? 5000,
+          anchor: s.ensBlockAnchor ?? 'latest',
+          anchorTtlMs: s.ensBlockAnchorTtlMs ?? 30000,
+        },
+        zkProof: s.ensColibriZkProof !== false,
+      };
+    },
+    getEndpoints: (_chainId, role) => {
+      const s = mockLoadSettings() || {};
+      if (role === 'prover') {
+        // Empty setting → the builtin prover (stand-in for colibri-corpus).
+        return [(s.ensColibriProverUrl || 'https://test-prover.example').trim()];
+      }
+      const pool = Array.isArray(s.ensPublicRpcProviders) && s.ensPublicRpcProviders.length > 0
+        ? s.ensPublicRpcProviders
+        : DEFAULT_RPC;
+      const custom = s.enableEnsCustomRpc === true && (s.ensRpcUrl || '').trim();
+      return custom ? [custom, ...pool] : [...pool];
+    },
+    getEndpointSources: (chainId, role) => {
+      const cid = String(chainId);
+      return endpointSourceList()
+        .filter((src) => src.role === role && !src.removed && src.coverage?.[cid])
+        .map(({ builtin: _builtin, removed: _removed, ...src }) => src);
+    },
+    // The config view: a user-added rpc source when a custom RPC is set,
+    // plus the builtin pool. Drives the `direct` user-configured-vs-builtin
+    // trust decision in consensusResolve.
+    getEndpointSourceList: endpointSourceList,
+    invalidate: () => {},
+  };
+});
 
 // Mocked Colibri resolver. The orchestrator branch in consensusResolve
 // lazy-requires this; the lazy require sees the mocked module. Tests
@@ -52,7 +118,6 @@ const mockResolveReverseViaColibri = jest.fn();
 jest.mock('./ens/colibri-resolver', () => ({
   resolveViaColibri: (...args) => mockResolveViaColibri(...args),
   resolveReverseViaColibri: (...args) => mockResolveReverseViaColibri(...args),
-  DEFAULT_PROVER_URL: 'https://test-prover.example',
 }));
 
 // Mock ethers with controllable provider and resolver behavior.
@@ -149,11 +214,9 @@ const {
   resolveEnsContent,
   resolveEnsAddress,
   resolveEnsReverse,
-  testRpcUrl,
   invalidateCachedProvider,
   universalResolverCall,
   isResolverNotFoundError,
-  clearEnsCachesForTest,
 } = require('./ens-resolver');
 
 // Fake block anchor — stable hash so consensus legs querying the same
@@ -163,7 +226,6 @@ const FAKE_BLOCK = { number: 12345678, hash: '0xabcdef00000000000000000000000000
 beforeEach(() => {
   jest.clearAllMocks();
   invalidateCachedProvider();
-  clearEnsCachesForTest();
   lastProviderUrl = null;
   mockProviderRouteMap = null;
   mockProviderAnchorMap = null;
@@ -176,10 +238,8 @@ beforeEach(() => {
     enableEnsCustomRpc: false,
     ensRpcUrl: '',
     ensResolutionMethod: 'quorum',
-    ensFallbackToQuorum: true,
     ensColibriProverUrl: '',
     ensColibriZkProof: true,
-    enableEnsQuorum: true,
     ensQuorumK: 3,
     ensQuorumM: 2,
     ensQuorumTimeoutMs: 5000,
@@ -723,52 +783,6 @@ describe('ens-resolver', () => {
     });
   });
 
-  describe('testRpcUrl', () => {
-    test('returns success for working RPC endpoint', async () => {
-      const result = await testRpcUrl('http://localhost:8545');
-      expect(result.success).toBe(true);
-      expect(result.blockNumber).toBe(12345678);
-    });
-
-    test('returns failure for empty URL', async () => {
-      const result = await testRpcUrl('');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('INVALID_URL');
-    });
-
-    test('returns failure for invalid URL format', async () => {
-      const result = await testRpcUrl('not-a-url');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('INVALID_URL');
-    });
-
-    test('returns failure for non-http URL', async () => {
-      const result = await testRpcUrl('ftp://localhost:8545');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('INVALID_URL');
-      expect(result.error.message).toContain('http');
-    });
-
-    test('returns failure when connection fails', async () => {
-      mockGetBlockNumber.mockRejectedValue(new Error('ECONNREFUSED'));
-
-      const result = await testRpcUrl('http://localhost:9999');
-      expect(result.success).toBe(false);
-      expect(result.error.code).toBe('CONNECTION_FAILED');
-    });
-
-    test('destroys provider after test', async () => {
-      await testRpcUrl('http://localhost:8545');
-      expect(mockDestroy).toHaveBeenCalled();
-    });
-
-    test('destroys provider even on failure', async () => {
-      mockGetBlockNumber.mockRejectedValue(new Error('fail'));
-      await testRpcUrl('http://localhost:8545');
-      expect(mockDestroy).toHaveBeenCalled();
-    });
-  });
-
   describe('universalResolverCall', () => {
     test('encodes name, opts into CCIP-Read, returns raw resolvedData', async () => {
       const rawResponse = actualEthers.AbiCoder.defaultAbiCoder().encode(
@@ -1022,28 +1036,6 @@ describe('ens-resolver', () => {
       expect(result.trust.queried.length).toBe(1);
     });
 
-    test('quorum disabled: outcome=unverified even with K providers available', async () => {
-      mockLoadSettings.mockReturnValue({
-        enableEnsCustomRpc: false,
-        ensRpcUrl: '',
-        enableEnsQuorum: false, // explicit opt-out
-        ensQuorumK: 3,
-        ensQuorumM: 2,
-        ensQuorumTimeoutMs: 5000,
-        ensBlockAnchor: 'latest',
-        ensBlockAnchorTtlMs: 30000,
-        ensPublicRpcProviders: TEST_PROVIDERS,
-      });
-      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_HASH)));
-
-      const result = await resolveEnsContent('no-quorum.eth');
-
-      expect(result.type).toBe('ok');
-      expect(result.trust.level).toBe('unverified');
-      // Only one leg fired despite 3 available providers.
-      expect(mockUrResolve).toHaveBeenCalledTimes(1);
-    });
-
     test('custom RPC fast-path: trust=user-configured, skips public quorum', async () => {
       mockLoadSettings.mockReturnValue({
         enableEnsCustomRpc: true,
@@ -1065,6 +1057,24 @@ describe('ens-resolver', () => {
       expect(result.trust.queried).toEqual(['my-node.local:8545']);
       // Only one leg fired against the custom RPC; public quorum untouched.
       expect(mockUrResolve).toHaveBeenCalledTimes(1);
+    });
+
+    test('direct method with no custom RPC resolves unverified, not user-configured', async () => {
+      // `direct` strategy but no user-added endpoint — it falls to a builtin
+      // public RPC, which is an unverified single source, not something the
+      // user configured.
+      mockLoadSettings.mockReturnValue({
+        ensResolutionMethod: 'custom-rpc',
+        enableEnsCustomRpc: false,
+        ensRpcUrl: '',
+        ensPublicRpcProviders: TEST_PROVIDERS,
+      });
+      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_HASH)));
+
+      const result = await resolveEnsContent('no-custom.eth');
+
+      expect(result.type).toBe('ok');
+      expect(result.trust.level).toBe('unverified');
     });
 
     test('custom RPC failure falls back to public quorum', async () => {
@@ -1848,6 +1858,7 @@ describe('ens-resolver', () => {
         level: 'verified',
         method: 'colibri',
         prover: 'test-prover.example',
+        proof: 'ZK sync-committee proof',
         quorum: { k: 1, m: 1, achieved: true },
       });
       // No public-RPC quorum legs fired.
@@ -1904,14 +1915,6 @@ describe('ens-resolver', () => {
       expect(mockUrResolve).toHaveBeenCalled();
       expect(result.trust.method).not.toBe('colibri');
       expect(result.trust.quorum).toEqual({ k: 3, m: 2, achieved: true });
-    });
-
-    test('non-revert error rethrows when ensFallbackToQuorum is disabled', async () => {
-      withColibri({ ensFallbackToQuorum: false });
-      mockResolveViaColibri.mockRejectedValue(new Error('prover unreachable'));
-
-      await expect(resolveEnsContent('hard-fail.eth')).rejects.toThrow('prover unreachable');
-      expect(mockUrResolve).not.toHaveBeenCalled();
     });
 
     test('default ensResolutionMethod=quorum leaves the legacy path untouched (regression)', async () => {
@@ -2032,14 +2035,6 @@ describe('ens-resolver', () => {
       // No trust field on the legacy path — additive design.
       expect(result.trust).toBeUndefined();
       expect(mockUrReverse).toHaveBeenCalled();
-    });
-
-    test('non-revert error rethrows when ensFallbackToQuorum is disabled', async () => {
-      withColibri({ ensFallbackToQuorum: false });
-      mockResolveReverseViaColibri.mockRejectedValue(new Error('prover unreachable'));
-
-      await expect(resolveEnsReverse(ADDR)).rejects.toThrow('prover unreachable');
-      expect(mockUrReverse).not.toHaveBeenCalled();
     });
 
     test('default ensResolutionMethod=quorum leaves the legacy reverse path untouched', async () => {

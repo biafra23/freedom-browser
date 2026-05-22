@@ -146,7 +146,6 @@ describe('webview-preload', () => {
       ['getSettings', [], IPC.SETTINGS_GET, []],
       ['saveSettings', [{ theme: 'light' }], IPC.SETTINGS_SAVE, [{ theme: 'light' }]],
       ['getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
-      ['testEnsRpc', ['http://localhost:8545'], IPC.ENS_TEST_RPC, [{ url: 'http://localhost:8545' }]],
       ['getServiceRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
       ['openPublishSetup', [], IPC.SIDEBAR_OPEN_PUBLISH_SETUP, []],
       ['getBookmarks', [], IPC.BOOKMARKS_GET, []],

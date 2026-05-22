@@ -85,8 +85,9 @@ const { registerRadicleIpc, stopRadicle, startRadicle, setUseInjectedIdentity: s
 const { registerIdentityIpc, hasVault } = require('./identity-manager');
 const { registerQuickUnlockIpc } = require('./quick-unlock');
 const { registerWalletIpc } = require('./wallet/wallet-ipc');
-const { registerChainRegistryIpc } = require('./chain-registry');
+const { registerTokenRegistryIpc } = require('./token-registry');
 const { registerRpcManagerIpc } = require('./wallet/rpc-manager');
+const { registerNetworkConfigIpc } = require('./networks/network-ipc');
 const { registerDappPermissionsIpc } = require('./wallet/dapp-permissions');
 const { registerSwarmIpc } = require('./swarm/stamp-service');
 const { registerPublishIpc } = require('./swarm/publish-service');
@@ -146,8 +147,9 @@ async function bootstrap() {
   registerIdentityIpc();
   registerQuickUnlockIpc();
   registerWalletIpc();
-  registerChainRegistryIpc();
+  registerTokenRegistryIpc();
   registerRpcManagerIpc();
+  registerNetworkConfigIpc();
   registerDappPermissionsIpc();
   registerSwarmIpc();
   registerPublishIpc();

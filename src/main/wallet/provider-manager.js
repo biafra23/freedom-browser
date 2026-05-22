@@ -8,7 +8,7 @@
 
 const { FallbackProvider, JsonRpcProvider } = require('ethers');
 const { getChain, getAllChains } = require('./chains');
-const { getEffectiveRpcUrls } = require('./rpc-manager');
+const registry = require('../networks/network-registry');
 
 // Cache providers by chain ID
 const providerCache = new Map();
@@ -22,25 +22,6 @@ const PROVIDER_CONFIG = {
 };
 
 /**
- * Get RPC URLs for a chain
- * Uses public RPCs if available, otherwise uses configured provider URLs
- */
-function getRpcUrlsForChain(chainId) {
-  const chain = getChain(chainId);
-  if (!chain) {
-    return [];
-  }
-
-  // If chain has public RPCs, use those
-  if (chain.hasPublicRpc && chain.rpcUrls && chain.rpcUrls.length > 0) {
-    return chain.rpcUrls;
-  }
-
-  // Otherwise, get URLs from configured RPC providers
-  return getEffectiveRpcUrls(chainId);
-}
-
-/**
  * Create a FallbackProvider for a given chain
  */
 function createFallbackProvider(chainId) {
@@ -49,7 +30,9 @@ function createFallbackProvider(chainId) {
     throw new Error(`Unsupported chain ID: ${chainId}`);
   }
 
-  const rpcUrls = getRpcUrlsForChain(chainId);
+  // The registry resolves the chain's rpc-role endpoint pool: keyless
+  // builtin RPCs plus any keyed provider whose API key is configured.
+  const rpcUrls = registry.getEndpoints(chainId, 'rpc');
 
   if (rpcUrls.length === 0) {
     throw new Error(
@@ -164,6 +147,7 @@ function clearProviderCache(chainId) {
 function onApiKeysChanged() {
   console.log('[ProviderManager] API keys changed, clearing provider cache');
   providerCache.clear();
+  registry.invalidate();
 }
 
 /**

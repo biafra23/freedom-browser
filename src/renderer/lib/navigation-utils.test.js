@@ -384,13 +384,14 @@ describe('navigation-utils', () => {
       ]);
     });
 
-    test('colibri-verified: shows method-specific status and a single Verified-by row', async () => {
+    test('colibri-verified: shows neutral status with method/proof/server rows', async () => {
       const { buildTrustRows } = await loadNavigationUtils();
 
       const result = buildTrustRows({
         level: 'verified',
         trust: {
           method: 'colibri',
+          proof: 'ZK sync-committee proof',
           prover: 'mainnet1.colibri-proof.tech',
           agreed: ['mainnet1.colibri-proof.tech'],
           queried: ['mainnet1.colibri-proof.tech'],
@@ -398,11 +399,13 @@ describe('navigation-utils', () => {
         uri: 'ipfs://QmPSYsfe8CVrBMrbh3q8qjzQYnAmDX8H4xkERzvFBaYkMS',
       });
 
-      expect(result.status).toBe('Cryptographically verified via Colibri');
+      expect(result.status).toBe('ENS resolution verified');
       // No RPC Quorum / per-RPC rows — the prover is not a quorum member.
       expect(result.trustRows).toEqual([
+        { label: 'Method', display: 'Colibri', copy: '' },
+        { label: 'Proof', display: 'ZK sync-committee proof', copy: '' },
         {
-          label: 'Verified by',
+          label: 'Server',
           display: 'mainnet1.colibri-proof.tech',
           copy: 'mainnet1.colibri-proof.tech',
           autoFit: 'mainnet1.colibri-proof.tech',
@@ -420,7 +423,7 @@ describe('navigation-utils', () => {
       ]);
     });
 
-    test('colibri-verified without prover field: still uses Colibri status, omits the row', async () => {
+    test('colibri-verified without prover field: still uses neutral status and method row', async () => {
       const { buildTrustRows } = await loadNavigationUtils();
 
       const result = buildTrustRows({
@@ -429,8 +432,8 @@ describe('navigation-utils', () => {
         uri: 'bzz://abc123',
       });
 
-      expect(result.status).toBe('Cryptographically verified via Colibri');
-      expect(result.trustRows).toEqual([]);
+      expect(result.status).toBe('ENS resolution verified');
+      expect(result.trustRows).toEqual([{ label: 'Method', display: 'Colibri', copy: '' }]);
     });
 
     test('returns null status for an unknown trust level', async () => {

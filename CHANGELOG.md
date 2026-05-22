@@ -8,13 +8,23 @@ All notable changes to Freedom will be documented in this file.
 
 - Cryptographic ENS verification via Colibri (`@corpus-core/colibri-stateless`) as the new default resolution path:
   - Every `.eth` / `.box` lookup is verified locally against the Ethereum sync committee (or, with ZK consensus proof enabled, a recursive zk sync proof), rather than relying on M-of-K agreement between public RPCs
-  - Address-bar shield popover shows "Cryptographically verified via Colibri" and the prover host instead of the RPC quorum row
+  - Address-bar shield popover shows neutral verified status with Colibri method, proof, and server details instead of the RPC quorum row
   - CCIP-Read names (`.box` via 3DNS and offchain ENS resolvers in general) keep working — the partner prover proves the initial call, ethers fetches the gateway response, and the final `resolveCallback` is independently proven
-- `freedom://settings` → ENS Resolution: choose between Colibri (recommended), the public-RPC quorum, or a custom Ethereum RPC; "Fall back to public-RPC quorum if primary fails" controls whether prover errors silently retry via the legacy path
+- `freedom://settings` → ENS Resolution: choose between Colibri (recommended), the public-RPC quorum, or Direct RPC first; Colibri and Direct RPC first fall back to the public-RPC quorum if their primary path fails
+- Unified network registry for chains, RPC endpoints, prover endpoints, and keyed RPC providers
+- `freedom://settings` → Chains and RPC Providers pages for custom EVM chains, per-chain RPC endpoints, and Alchemy / Infura / DRPC API keys
 
 ### Changed
 
-- Default ENS resolution changed from public-RPC quorum to Colibri. Users running a custom RPC are migrated to the "Custom RPC" path (preserves the intent of keeping queries off public infrastructure); everyone else upgrades to Colibri. The migration is one-shot and idempotent
+- Default ENS resolution changed from public-RPC quorum to Colibri. Users running a custom RPC are migrated to the Direct RPC-first path (preserves the intent of keeping queries off public infrastructure); everyone else upgrades to Colibri. The migration is one-shot and idempotent
+- Wallet chains now come from the network registry, and token metadata moved from the old chain registry into `token-registry`
+- Bee light-mode config reads its Gnosis backend and Ethereum resolver RPC from the network registry, preferring keyless public/user endpoints for stable startup
+
+### Fixed
+
+- Custom chains register their native asset with the chain's declared symbol and decimals so wallet balances use the right unit metadata
+- Manual custom-chain and custom-RPC saves are rejected before persistence unless they use public `https://` RPC URLs without placeholders
+- ENS trust shields refresh immediately when network or ENS verification settings change, instead of reusing stale renderer trust metadata
 
 ## [0.7.1] - 2026-05-07
 

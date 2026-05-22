@@ -1637,8 +1637,20 @@ export const toggleBookmarkBar = async () => {
 };
 
 // Called when settings change to refresh current page if needed
-export const onSettingsChanged = () => {
+export const onSettingsChanged = (settings = null) => {
   const navState = getNavState();
+  if (settings?.networkConfigUpdated === true) {
+    state.ensTrustByName.clear();
+    state.ensUriByName.clear();
+    updateProtocolIcon();
+
+    const currentAddress = (addressInput?.value || '').trim();
+    if (parseEnsInput(currentAddress)) {
+      loadTarget(currentAddress);
+      return;
+    }
+  }
+
   updateProtocolIcon();
   if (!state.enableRadicleIntegration && addressInput?.value?.trim().toLowerCase().startsWith('rad:')) {
     loadTarget(addressInput.value);

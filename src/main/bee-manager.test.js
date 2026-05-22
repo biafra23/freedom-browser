@@ -223,9 +223,20 @@ function loadBeeManagerModule(options = {}) {
   const loadSettings = options.loadSettings || jest.fn(() => ({
     beeNodeMode: options.beeNodeMode || 'ultraLight',
   }));
-  const getChain = options.getChain || jest.fn(() => ({
-    rpcUrls: options.rpcUrls || ['https://rpc.gnosischain.com'],
-  }));
+  const gnosisRpcUrls = options.rpcUrls || ['https://rpc.gnosischain.com'];
+  const ethereumRpcUrls = options.ethereumRpcUrls || ['https://ethereum.publicnode.com'];
+  const registry = options.registry || {
+    getEndpointSources: jest.fn((chainId) => {
+      const urls = Number(chainId) === 1 ? ethereumRpcUrls : gnosisRpcUrls;
+      return options.endpointSources || urls.map((url, index) => ({
+        id: `${Number(chainId) === 1 ? 'eth' : 'gno'}-test-${index + 1}`,
+        role: 'rpc',
+        keyed: false,
+        coverage: { [chainId]: url },
+      }));
+    }),
+    getEndpoints: jest.fn((chainId) => (Number(chainId) === 1 ? ethereumRpcUrls : gnosisRpcUrls)),
+  };
 
   const platformMap = {
     darwin: 'mac',
@@ -284,9 +295,7 @@ function loadBeeManagerModule(options = {}) {
       [require.resolve('./settings-store')]: () => ({
         loadSettings,
       }),
-      [require.resolve('./wallet/chains')]: () => ({
-        getChain,
-      }),
+      [require.resolve('./networks/network-registry')]: () => registry,
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
@@ -318,7 +327,7 @@ function loadBeeManagerModule(options = {}) {
     dataDir,
     execSync,
     fsMock,
-    getChain,
+    registry,
     httpGet,
     ipcMain,
     keysPath,
@@ -477,6 +486,7 @@ describe('bee-manager', () => {
     expect(configContent).toContain('api-addr: 127.0.0.1:1634');
     expect(configContent).toContain('swap-enable: false');
     expect(configContent).toContain('blockchain-rpc-endpoint: ""');
+    expect(configContent).toContain('resolver-options: "https://ethereum.publicnode.com"');
     expect(configContent).toContain(`data-dir: ${ctx.dataDir}`);
     expect(configContent).toContain(`password: ${'ab'.repeat(32)}`);
 
@@ -496,6 +506,7 @@ describe('bee-manager', () => {
     const ctx = loadBeeManagerModule({
       beeNodeMode: 'light',
       rpcUrls: ['https://rpc.gnosischain.com', 'https://backup.gnosis.example'],
+      ethereumRpcUrls: ['https://eth.user.example', 'https://ethereum.publicnode.com'],
       portSequence: [false],
       httpResponse: (url) => {
         if (url === 'http://127.0.0.1:1633/health') {
@@ -516,15 +527,45 @@ describe('bee-manager', () => {
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
 
-    expect(ctx.getChain).toHaveBeenCalledWith(100);
+    expect(ctx.registry.getEndpointSources).toHaveBeenCalledWith(100, 'rpc');
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('swap-enable: true');
     expect(configContent).toContain('blockchain-rpc-endpoint: "https://rpc.gnosischain.com"');
+    expect(configContent).toContain('resolver-options: "https://eth.user.example"');
 
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
+  });
+
+  test('prefers keyless Gnosis RPC for Bee over keyed commercial providers', () => {
+    const ctx = loadBeeManagerModule({
+      registry: {
+        getEndpointSources: jest.fn(() => [
+          {
+            id: 'alchemy',
+            role: 'rpc',
+            keyed: true,
+            coverage: { 100: 'https://gnosis-mainnet.g.alchemy.com/v2/{API_KEY}' },
+          },
+          {
+            id: 'gno-gnosischain',
+            role: 'rpc',
+            keyed: false,
+            coverage: { 100: 'https://rpc.gnosischain.com' },
+          },
+        ]),
+        getEndpoints: jest.fn(() => [
+          'https://gnosis-mainnet.g.alchemy.com/v2/redacted',
+          'https://rpc.gnosischain.com',
+        ]),
+      },
+    });
+
+    expect(ctx.mod.getPrimaryGnosisRpcUrl()).toBe('https://rpc.gnosischain.com');
+    expect(ctx.registry.getEndpointSources).toHaveBeenCalledWith(100, 'rpc');
+    expect(ctx.registry.getEndpoints).not.toHaveBeenCalled();
   });
 
   test('preserves an existing Bee password when rewriting config', async () => {
@@ -566,7 +607,7 @@ describe('bee-manager', () => {
   test('fails startup when Bee light mode has no configured primary Gnosis RPC', async () => {
     const ctx = loadBeeManagerModule({
       beeNodeMode: 'light',
-      getChain: jest.fn(() => ({ rpcUrls: [] })),
+      rpcUrls: [],
       portSequence: [false],
       httpResponse: () => ({
         statusCode: 500,

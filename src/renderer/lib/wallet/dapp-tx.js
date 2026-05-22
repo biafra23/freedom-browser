@@ -144,7 +144,7 @@ export async function showDappTxApproval(webview, permissionKey, txParams) {
 }
 
 async function populateDappTxDetails(txParams, chainId) {
-  const chainsResult = await window.chainRegistry.getChains();
+  const chainsResult = await window.networks.getChains();
   const chains = chainsResult.success ? chainsResult.chains : {};
   const chain = chains[chainId];
 

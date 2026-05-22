@@ -86,7 +86,7 @@ export const initSettingsEffects = (onSettingsChanged) => {
     }
 
     pushDebug('Settings updated');
-    onSettingsChanged?.();
+    onSettingsChanged?.(next, prev);
 
     if (prev.beeNodeMode !== previous.beeNodeMode) {
       await applyBeeModeChange(previous.beeNodeMode);

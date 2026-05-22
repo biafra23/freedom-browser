@@ -1,9 +1,87 @@
 {
+  "colibri-corpus": {
+    "role": "prover",
+    "keyed": false,
+    "name": "Colibri (corpus.core)",
+    "coverage": {
+      "1": "https://mainnet1.colibri-proof.tech"
+    }
+  },
+
+  "eth-publicnode": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://ethereum.publicnode.com" }
+  },
+  "eth-1rpc": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://1rpc.io/eth" }
+  },
+  "eth-drpc-public": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://eth.drpc.org" }
+  },
+  "eth-blastapi": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://eth-mainnet.public.blastapi.io" }
+  },
+  "eth-merkle": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://eth.merkle.io" }
+  },
+  "eth-cloudflare": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://cloudflare-eth.com" }
+  },
+  "eth-ankr": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://rpc.ankr.com/eth" }
+  },
+  "eth-flashbots": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://rpc.flashbots.net" }
+  },
+  "eth-llamarpc": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "1": "https://eth.llamarpc.com" }
+  },
+
+  "gno-gnosischain": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "100": "https://rpc.gnosischain.com" }
+  },
+  "gno-ankr": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "100": "https://rpc.ankr.com/gnosis" }
+  },
+  "gno-publicnode": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "100": "https://gnosis-rpc.publicnode.com" }
+  },
+  "gno-drpc-public": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "100": "https://gnosis.drpc.org" }
+  },
+
   "alchemy": {
+    "role": "rpc",
+    "keyed": true,
     "name": "Alchemy",
     "website": "https://alchemy.com",
     "docsUrl": "https://www.alchemy.com/rpc",
-    "chains": {
+    "coverage": {
       "1": "https://eth-mainnet.g.alchemy.com/v2/{API_KEY}",
       "42161": "https://arb-mainnet.g.alchemy.com/v2/{API_KEY}",
       "10": "https://opt-mainnet.g.alchemy.com/v2/{API_KEY}",
@@ -22,10 +100,12 @@
     }
   },
   "infura": {
+    "role": "rpc",
+    "keyed": true,
     "name": "Infura",
     "website": "https://infura.io",
     "docsUrl": "https://docs.metamask.io/services/get-started/endpoints/",
-    "chains": {
+    "coverage": {
       "1": "https://mainnet.infura.io/v3/{API_KEY}",
       "42161": "https://arbitrum-mainnet.infura.io/v3/{API_KEY}",
       "10": "https://optimism-mainnet.infura.io/v3/{API_KEY}",
@@ -42,10 +122,12 @@
     }
   },
   "drpc": {
+    "role": "rpc",
+    "keyed": true,
     "name": "DRPC",
     "website": "https://drpc.org",
     "docsUrl": "https://drpc.org/docs",
-    "chains": {
+    "coverage": {
       "1": "https://lb.drpc.live/ethereum/{API_KEY}",
       "42161": "https://lb.drpc.live/arbitrum/{API_KEY}",
       "10": "https://lb.drpc.live/optimism/{API_KEY}",

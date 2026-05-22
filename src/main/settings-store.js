@@ -17,22 +17,6 @@ function applyNativeTheme(theme) {
 
 const SETTINGS_FILE = 'settings.json';
 
-// Default public Ethereum RPC endpoints used for ENS quorum resolution when no
-// custom RPC is configured. Users can edit this list in settings (add/remove).
-// Operator diversity note: URL count != operator count — several of these may
-// proxy to the same backend (Alchemy, Infura). Documented in threat model.
-const DEFAULT_ENS_PUBLIC_RPC_PROVIDERS = [
-  'https://ethereum.publicnode.com',
-  'https://1rpc.io/eth',
-  'https://eth.drpc.org',
-  'https://eth-mainnet.public.blastapi.io',
-  'https://eth.merkle.io',
-  'https://cloudflare-eth.com',
-  'https://rpc.ankr.com/eth',
-  'https://rpc.flashbots.net',
-  'https://eth.llamarpc.com',
-];
-
 const DEFAULT_SETTINGS = {
   theme: 'system',
   enableRadicleIntegration: false,
@@ -43,49 +27,15 @@ const DEFAULT_SETTINGS = {
   startRadicleAtLaunch: false,
   autoUpdate: true,
   showBookmarkBar: false,
-  enableEnsCustomRpc: false,
-  ensRpcUrl: '',
-  // ENS resolution method selector. 'colibri' routes through the
-  // @corpus-core/colibri-stateless verifier for cryptographic proof;
-  // 'quorum' is the legacy public-RPC cross-checking path (see below);
-  // 'custom-rpc' uses ensRpcUrl as a single trusted source. Default is
-  // 'colibri' on fresh installs. Existing installs without this key are
-  // migrated in loadSettings (custom-RPC users preserved, everyone else
-  // upgraded to colibri).
-  ensResolutionMethod: 'colibri',
-  // When 'colibri' is the primary and the prover errors / fails to
-  // verify, fall through to the quorum path instead of surfacing the
-  // failure. Loud-fallback is enforced via a structured log line.
-  ensFallbackToQuorum: true,
-  // Empty → ens/colibri-resolver falls back to its bundled DEFAULT_PROVER_URL.
-  ensColibriProverUrl: '',
-  // ZK consensus proof on the Colibri bootstrap; partner-recommended on.
-  ensColibriZkProof: true,
-  // ENS public-RPC quorum resolution (active when enableEnsCustomRpc=false).
-  // Detects RPC lying by requiring ensQuorumM of K parallel providers to
-  // return byte-identical data at a pinned block. See docs/ens-resolution.md.
-  enableEnsQuorum: true,
-  ensQuorumK: 3,
-  ensQuorumM: 2,
-  ensQuorumTimeoutMs: 5000,
-  // Block tag all quorum legs query at, so honest-but-unsynced providers
-  // don't produce false conflicts. 'latest' is near-real-time; 'finalized'
-  // is ~12min behind head but strongest; 'latest-32' is ~3min behind.
-  ensBlockAnchor: 'latest',
-  ensBlockAnchorTtlMs: 30000,
-  ensPublicRpcProviders: DEFAULT_ENS_PUBLIC_RPC_PROVIDERS,
-  // When true, navigation to an ENS name that resolved with trust.level =
+  // When true, navigating to an ENS name that resolved with trust.level =
   // 'unverified' is gated behind an interstitial with a single-use
-  // "Continue once" option. Turn off to navigate straight through with
-  // only the amber shield for signal.
+  // "Continue once" option. ENS network config (resolution strategy, RPC
+  // endpoints, prover, quorum params) lives in the network registry —
+  // this is the one ENS-navigation setting kept here.
   blockUnverifiedEns: true,
   sidebarOpen: false,
   sidebarWidth: 320,
 };
-
-// Settings keys whose value is an array rather than a primitive. The
-// saveSettings validator uses JSON-equality for these instead of ===.
-const ARRAY_SETTINGS_KEYS = new Set(['ensPublicRpcProviders']);
 
 let cachedSettings = null;
 
@@ -103,18 +53,6 @@ function loadSettings() {
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(data);
-      // One-shot migration for installs that predate the ensResolutionMethod
-      // key. Custom-RPC users explicitly pointed at their own node, almost
-      // certainly to keep queries off public infrastructure — preserve that
-      // intent. Everyone else (the vast majority, who never picked quorum
-      // explicitly) auto-upgrades to the cryptographically-verified Colibri
-      // path. Idempotent: subsequent loads see the key on disk (after the
-      // next save) or recompute the same answer if the file is unchanged.
-      if (!Object.prototype.hasOwnProperty.call(parsed, 'ensResolutionMethod')) {
-        parsed.ensResolutionMethod = parsed.enableEnsCustomRpc === true
-          ? 'custom-rpc'
-          : 'colibri';
-      }
       cachedSettings = { ...DEFAULT_SETTINGS, ...parsed };
     } else {
       cachedSettings = { ...DEFAULT_SETTINGS };
@@ -143,9 +81,8 @@ function broadcastSettingsUpdated(merged) {
 
 // Walks DEFAULT_SETTINGS keys in one pass: drops unknown input keys (defense
 // against a buggy or compromised internal page persisting junk to disk) and
-// detects no-op saves at the same time. Array-valued keys (see
-// ARRAY_SETTINGS_KEYS) compare by JSON-equality; all other keys must be
-// primitive and compare by === .
+// detects no-op saves at the same time. All settings are primitive-valued
+// and compared by === .
 function saveSettings(newSettings) {
   try {
     const previous = loadSettings();
@@ -156,20 +93,8 @@ function saveSettings(newSettings) {
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (!Object.prototype.hasOwnProperty.call(newSettings, key)) continue;
 
-        const nextValue = newSettings[key];
-        const prevValue = previous[key];
-
-        let differs;
-        if (ARRAY_SETTINGS_KEYS.has(key)) {
-          // Reject non-arrays for array-typed keys to keep disk state sane.
-          if (!Array.isArray(nextValue)) continue;
-          differs = JSON.stringify(prevValue) !== JSON.stringify(nextValue);
-        } else {
-          differs = prevValue !== nextValue;
-        }
-
-        if (differs) {
-          merged[key] = nextValue;
+        if (previous[key] !== newSettings[key]) {
+          merged[key] = newSettings[key];
           changed = true;
         }
       }
@@ -208,5 +133,4 @@ module.exports = {
   loadSettings,
   saveSettings,
   registerSettingsIpc,
-  DEFAULT_ENS_PUBLIC_RPC_PROVIDERS,
 };

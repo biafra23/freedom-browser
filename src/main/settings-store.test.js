@@ -47,8 +47,7 @@ describe('settings-store', () => {
         showBookmarkBar: false,
         sidebarOpen: false,
         sidebarWidth: 320,
-        enableEnsCustomRpc: false,
-        ensRpcUrl: '',
+        blockUnverifiedEns: true,
       })
     );
     expect(nativeTheme.themeSource).toBe('system');
@@ -73,43 +72,6 @@ describe('settings-store', () => {
       })
     );
     expect(nativeTheme.themeSource).toBe('dark');
-  });
-
-  test('migration: pre-Colibri installs without ensResolutionMethod default to colibri', () => {
-    fs.writeFileSync(
-      path.join(userDataDir, 'settings.json'),
-      // Realistic pre-Colibri file: no resolution method, no custom RPC.
-      JSON.stringify({ theme: 'dark', enableEnsCustomRpc: false, ensQuorumK: 3 }),
-      'utf-8'
-    );
-
-    const { mod } = loadSettingsStore({ userDataDir });
-    expect(mod.loadSettings().ensResolutionMethod).toBe('colibri');
-  });
-
-  test('migration: existing custom-RPC users are preserved as custom-rpc', () => {
-    fs.writeFileSync(
-      path.join(userDataDir, 'settings.json'),
-      JSON.stringify({ enableEnsCustomRpc: true, ensRpcUrl: 'http://localhost:8545' }),
-      'utf-8'
-    );
-
-    const { mod } = loadSettingsStore({ userDataDir });
-    const loaded = mod.loadSettings();
-    expect(loaded.ensResolutionMethod).toBe('custom-rpc');
-    expect(loaded.ensRpcUrl).toBe('http://localhost:8545');
-  });
-
-  test('migration: an explicit ensResolutionMethod on disk is respected', () => {
-    fs.writeFileSync(
-      path.join(userDataDir, 'settings.json'),
-      // Already-migrated file: ensResolutionMethod is present. Don't recompute.
-      JSON.stringify({ ensResolutionMethod: 'quorum', enableEnsCustomRpc: false }),
-      'utf-8'
-    );
-
-    const { mod } = loadSettingsStore({ userDataDir });
-    expect(mod.loadSettings().ensResolutionMethod).toBe('quorum');
   });
 
   test('falls back to defaults when the settings file is invalid', () => {

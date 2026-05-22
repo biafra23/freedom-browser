@@ -38,16 +38,9 @@ function isAllowedRpcUrl(rpcUrl) {
     return false;
   }
 
-  // Build allowlist from all known chains
+  // Allowlist = the registry's resolved rpc pool for every known chain.
   const chains = getAllChains();
   for (const chain of Object.values(chains)) {
-    // Check builtin public RPCs
-    if (chain.rpcUrls) {
-      for (const url of chain.rpcUrls) {
-        if (url === rpcUrl) return true;
-      }
-    }
-    // Check configured provider URLs for this chain
     const providerUrls = getEffectiveRpcUrls(chain.chainId);
     for (const url of providerUrls) {
       if (url === rpcUrl) return true;
