@@ -58,7 +58,9 @@ let unlockError;
 let errorEl;
 let grantRow;
 let grantToggle;
-let grantCapEl;
+let grantCapInput;
+let grantCapSymbol;
+let grantWindowSelect;
 let rejectBtn;
 let approveBtn;
 
@@ -100,7 +102,9 @@ export function initDappX402() {
   errorEl = document.getElementById('x402-approval-error');
   grantRow = document.getElementById('x402-approval-grant-row');
   grantToggle = document.getElementById('x402-approval-grant-toggle');
-  grantCapEl = document.getElementById('x402-approval-grant-cap');
+  grantCapInput = document.getElementById('x402-approval-grant-cap-input');
+  grantCapSymbol = document.getElementById('x402-approval-grant-cap-symbol');
+  grantWindowSelect = document.getElementById('x402-approval-grant-window-select');
   rejectBtn = document.getElementById('x402-approval-reject');
   approveBtn = document.getElementById('x402-approval-approve');
 
@@ -333,19 +337,19 @@ function renderCard() {
   }
   showDetailRows(entry);
 
-  // Grant toggle pins to the SELECTED entry's asset. Switching the
-  // selection re-renders this row so the user always sees the
-  // currency they're about to authorize for future auto-pays.
+  // Grant fields pin to the SELECTED entry's asset. Switching the
+  // selection re-renders this row so the symbol suffix tracks the
+  // currency the user is about to authorize for future auto-pays.
+  // The cap amount + window stay at whatever the user last set
+  // (defaults `DEFAULT_GRANT_CAP_USDC` / `DEFAULT_GRANT_WINDOW_SECONDS`),
+  // so flipping between accepts doesn't reset their edits.
   if (entry?.asset && typeof entry.asset.decimals === 'number') {
-    grantCapEl.textContent = `${DEFAULT_GRANT_CAP_USDC} ${entry.asset.symbol}`;
+    if (grantCapSymbol) grantCapSymbol.textContent = entry.asset.symbol;
     grantRow.classList.remove('hidden');
-    pending.grantPayload = {
-      capAmount: toAtomicUnits(DEFAULT_GRANT_CAP_USDC, entry.asset.decimals),
-      windowSeconds: DEFAULT_GRANT_WINDOW_SECONDS,
-    };
+    pending.grantDecimals = entry.asset.decimals;
   } else {
     grantRow.classList.add('hidden');
-    pending.grantPayload = null;
+    pending.grantDecimals = null;
   }
 
   // Selection state vs Pay button: only enable Pay when the selected
@@ -532,6 +536,25 @@ function safeBigInt(s) {
   try { return BigInt(s); } catch { return 0n; }
 }
 
+// Read the live cap-amount + window inputs at Pay-click time. Returns
+// undefined when the user hasn't ticked the grant checkbox, when the
+// selected accept has no recognised asset (no decimals to convert with),
+// or when the cap input is empty / non-positive (fall back to default
+// rather than reject the click). Window select values are seconds.
+function buildGrantPayloadFromInputs() {
+  if (!grantToggle?.checked) return undefined;
+  if (!pending?.grantDecimals && pending?.grantDecimals !== 0) return undefined;
+
+  const whole = (grantCapInput?.value ?? '').trim();
+  const capWhole = /^\d+$/.test(whole) && whole !== '0' ? whole : String(DEFAULT_GRANT_CAP_USDC);
+  const windowSeconds = Number(grantWindowSelect?.value) || DEFAULT_GRANT_WINDOW_SECONDS;
+
+  return {
+    capAmount: toAtomicUnits(capWhole, pending.grantDecimals),
+    windowSeconds,
+  };
+}
+
 async function checkUnlockState() {
   try {
     const status = await window.identity.getStatus();
@@ -613,7 +636,7 @@ async function approve() {
   approveBtn.textContent = 'Signing…';
   hideError();
 
-  const grant = grantToggle?.checked && pending.grantPayload ? pending.grantPayload : undefined;
+  const grant = buildGrantPayloadFromInputs();
   const result = await window.electronAPI.x402Approve({
     webContentsId: pending.webContentsId,
     detectionId: pending.detectionId,

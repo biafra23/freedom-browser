@@ -1862,14 +1862,36 @@
 
                 <div class="dapp-tx-error hidden" id="x402-approval-error"></div>
 
-                <label class="auto-approve-checkbox" id="x402-approval-grant-row">
-                  <input type="checkbox" id="x402-approval-grant-toggle" />
-                  <span>
-                    Allow up to <strong id="x402-approval-grant-cap">10 USDC</strong> of
-                    payments to this site over the next <strong>30 days</strong>, without
-                    asking again.
-                  </span>
-                </label>
+                <!-- x402 auto-pay grant. Checkbox opts in; two inline
+                     editors set the cap amount + reset window. Defaults
+                     match what the user can tweak post-grant in the
+                     permission-manage sub-screen — but pre-set here so
+                     the user doesn't have to grant-then-edit. -->
+                <div class="x402-grant" id="x402-approval-grant-row">
+                  <label class="x402-grant-toggle">
+                    <input type="checkbox" id="x402-approval-grant-toggle" />
+                    <span class="x402-grant-toggle-label">Auto-pay future payments to this site</span>
+                  </label>
+                  <div class="x402-grant-fields">
+                    <div class="x402-grant-field">
+                      <label class="x402-grant-field-label" for="x402-approval-grant-cap-input">Spend cap</label>
+                      <div class="x402-grant-input-wrap">
+                        <input type="number" id="x402-approval-grant-cap-input" min="1" step="1" value="10" inputmode="numeric" />
+                        <span class="x402-grant-input-suffix" id="x402-approval-grant-cap-symbol">USDC</span>
+                      </div>
+                    </div>
+                    <div class="x402-grant-field">
+                      <label class="x402-grant-field-label" for="x402-approval-grant-window-select">Resets every</label>
+                      <select class="x402-grant-select" id="x402-approval-grant-window-select">
+                        <option value="86400">1 day</option>
+                        <option value="604800">7 days</option>
+                        <option value="2592000" selected>30 days</option>
+                        <option value="7776000">90 days</option>
+                        <option value="31536000">1 year</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
 
                 <div class="dapp-tx-actions">
                   <button type="button" class="dapp-tx-reject-btn" id="x402-approval-reject">Reject</button>

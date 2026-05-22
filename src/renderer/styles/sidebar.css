@@ -2755,6 +2755,113 @@
   border-color: #2775ca;
 }
 
+/* --- x402 grant editor on the approval card ----------------------- */
+/* Checkbox + inline editors for cap amount + reset window. Shares
+   visual language with the perm-manage subscreen so users see the
+   same controls in both surfaces. Inputs stay enabled when the
+   toggle is off — the user can pre-tune before opting in. */
+.x402-grant {
+  background: var(--toolbar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 16px;
+}
+
+.x402-grant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.x402-grant-toggle input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.x402-grant-toggle-label {
+  font-weight: 500;
+}
+
+.x402-grant-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.x402-grant-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.x402-grant-field-label {
+  font-size: 12px;
+  color: var(--foreground-muted);
+  flex: 1;
+}
+
+.x402-grant-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.x402-grant input[type="number"],
+.x402-grant-select {
+  background: var(--input-background, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+  color: var(--foreground);
+  font-family: inherit;
+}
+
+.x402-grant input[type="number"] {
+  width: 100px;
+  padding-right: 56px;
+  text-align: right;
+}
+
+.x402-grant-select {
+  width: 130px;
+}
+
+.x402-grant input[type="number"]::-webkit-outer-spin-button,
+.x402-grant input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.x402-grant-input-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+  pointer-events: none;
+}
+
+.x402-grant input[type="number"]:focus,
+.x402-grant-select:focus {
+  outline: none;
+  border-color: #2775ca;
+}
+
+/* Visual hint that the inputs are inert when the toggle is off —
+   keep them clickable (`:has` works fine on Electron Chromium) so
+   the user can pre-tune values before deciding to opt in. */
+.x402-grant:not(:has(input[type="checkbox"]:checked)) .x402-grant-fields {
+  opacity: 0.6;
+}
+
 .x402-perm-meta {
   font-size: 12px;
   color: var(--muted);
