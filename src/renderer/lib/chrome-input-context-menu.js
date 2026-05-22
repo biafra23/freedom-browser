@@ -157,11 +157,10 @@ export const initChromeInputContextMenu = (options = {}) => {
     if (!action || !input) return;
 
     void runEditAction(action, input).finally(() => {
-      hideChromeInputContextMenu();
-      // Closing the menu can move focus on macOS and collapse the selection.
       if (action === 'select-all') {
         selectAllInInput(input);
       }
+      hideChromeInputContextMenu();
     });
   });
 };

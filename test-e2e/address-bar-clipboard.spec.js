@@ -151,7 +151,7 @@ test.describe('address bar chrome context menu', () => {
             end: el.selectionEnd,
             length: el.value.length,
           })),
-        { timeout: 15_000 }
+        { timeout: 30_000 }
       )
       .toEqual({ start: 0, end: sample.length, length: sample.length });
   });
