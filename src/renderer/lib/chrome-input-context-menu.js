@@ -1,19 +1,39 @@
 // Right-click edit menu for chrome <input> elements (address bar, etc.).
 import { showMenuBackdrop, hideMenuBackdrop } from './menu-backdrop.js';
 
+const electronAPI = window.electronAPI;
+
 let contextMenu = null;
 let activeInput = null;
+let savedSelection = null;
 
 export const hideChromeInputContextMenu = () => {
   if (!contextMenu || contextMenu.classList.contains('hidden')) return;
   contextMenu.classList.add('hidden');
   activeInput = null;
+  savedSelection = null;
   hideMenuBackdrop();
 };
 
-function updateActionStates(input) {
+function captureSelection(input) {
+  const start = input.selectionStart ?? 0;
+  const end = input.selectionEnd ?? 0;
+  return { start, end };
+}
+
+function getSelectedText(input, selection) {
+  const { start, end } = selection;
+  return input.value.slice(start, end);
+}
+
+function applySelection(input, selection) {
+  input.focus();
+  input.setSelectionRange(selection.start, selection.end);
+}
+
+function updateActionStates(input, selection) {
   if (!contextMenu || !input) return;
-  const hasSelection = input.selectionStart !== input.selectionEnd;
+  const hasSelection = selection.start !== selection.end;
   const hasText = input.value.length > 0;
   const cut = contextMenu.querySelector('[data-action="cut"]');
   const copy = contextMenu.querySelector('[data-action="copy"]');
@@ -27,7 +47,8 @@ function showChromeInputContextMenu(input, clientX, clientY) {
   if (!contextMenu || !input) return;
 
   activeInput = input;
-  updateActionStates(input);
+  savedSelection = captureSelection(input);
+  updateActionStates(input, savedSelection);
   showMenuBackdrop();
 
   contextMenu.style.left = `${clientX}px`;
@@ -43,24 +64,58 @@ function showChromeInputContextMenu(input, clientX, clientY) {
   }
 }
 
-function runEditAction(action, input) {
-  input.focus();
+async function writeClipboard(text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    await electronAPI?.copyText?.(text);
+  }
+}
+
+async function readClipboard() {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    const result = await electronAPI?.readClipboardText?.();
+    return result?.text ?? '';
+  }
+}
+
+async function runEditAction(action, input) {
+  const selection = savedSelection ?? captureSelection(input);
+  applySelection(input, selection);
+
   switch (action) {
-    case 'cut':
-      document.execCommand('cut');
+    case 'copy': {
+      await writeClipboard(getSelectedText(input, selection));
       break;
-    case 'copy':
-      document.execCommand('copy');
+    }
+    case 'cut': {
+      const text = getSelectedText(input, selection);
+      await writeClipboard(text);
+      input.value = input.value.slice(0, selection.start) + input.value.slice(selection.end);
+      const caret = selection.start;
+      input.setSelectionRange(caret, caret);
       break;
-    case 'paste':
-      document.execCommand('paste');
+    }
+    case 'paste': {
+      const clipText = await readClipboard();
+      input.value =
+        input.value.slice(0, selection.start) + clipText + input.value.slice(selection.end);
+      const caret = selection.start + clipText.length;
+      input.setSelectionRange(caret, caret);
       break;
-    case 'select-all':
-      input.select();
+    }
+    case 'select-all': {
+      const end = input.value.length;
+      input.setSelectionRange(0, end);
       break;
+    }
     default:
       return;
   }
+
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
@@ -70,6 +125,11 @@ function runEditAction(action, input) {
 export const initChromeInputContextMenu = (options = {}) => {
   contextMenu = document.getElementById('chrome-input-context-menu');
   if (!contextMenu) return;
+
+  // Keep focus and text selection on the input while the menu is used.
+  contextMenu.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+  });
 
   const inputs =
     options.inputs?.filter(Boolean) ??
@@ -84,9 +144,14 @@ export const initChromeInputContextMenu = (options = {}) => {
   }
 
   contextMenu.addEventListener('click', (event) => {
-    const action = event.target.closest?.('[data-action]')?.dataset?.action;
+    const item = event.target.closest?.('.context-menu-item');
+    if (!item || item.disabled) return;
+
+    const action = item.dataset.action;
     if (!action || !activeInput) return;
-    runEditAction(action, activeInput);
-    hideChromeInputContextMenu();
+
+    void runEditAction(action, activeInput).finally(() => {
+      hideChromeInputContextMenu();
+    });
   });
 };

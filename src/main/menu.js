@@ -26,7 +26,251 @@ function updateTabMenuItems() {
   if (closeTabMenuItem) closeTabMenuItem.enabled = hasWindows;
 }
 
-function buildEditMenuTemplate(isMac) {
+function buildAppMenuSubmenu(updateMenuItems) {
+  return [
+    { role: 'about' },
+    { type: 'separator' },
+    ...updateMenuItems,
+    { type: 'separator' },
+    { role: 'services' },
+    { type: 'separator' },
+    { role: 'hide' },
+    { role: 'hideOthers' },
+    { role: 'unhide' },
+    { type: 'separator' },
+    { role: 'quit' },
+  ];
+}
+
+function buildFileSubmenu(isMac) {
+  const submenu = [
+    {
+      id: 'new-tab',
+      label: 'New Tab',
+      accelerator: 'CmdOrCtrl+T',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:new');
+        }
+      },
+    },
+    {
+      id: 'close-tab',
+      label: 'Close Tab',
+      accelerator: 'CmdOrCtrl+W',
+      click: () => {
+        const mainWindows = getMainWindows();
+        const focusedMainWindow = mainWindows.find((win) => win.isFocused());
+
+        if (focusedMainWindow) {
+          focusedMainWindow.webContents.send('tab:close');
+        }
+        // If no main window is focused (DevTools has focus), do nothing.
+        // User can close DevTools with the X button or Cmd+Option+I
+      },
+    },
+  ];
+
+  if (!isMac) {
+    submenu.push({
+      label: 'Close Tab',
+      accelerator: 'Ctrl+F4',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:close');
+        }
+      },
+    });
+  }
+
+  submenu.push(
+    {
+      id: 'reopen-closed-tab',
+      label: 'Reopen Closed Tab',
+      accelerator: 'CmdOrCtrl+Shift+T',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:reopen-closed');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'New Window',
+      accelerator: 'CmdOrCtrl+N',
+      click: () => {
+        log.info('[menu] New Window clicked');
+        createMainWindow();
+      },
+    },
+    { type: 'separator' },
+    { role: 'close' }
+  );
+
+  if (!isMac) {
+    submenu.push({ type: 'separator' }, { role: 'quit' });
+  }
+
+  return submenu;
+}
+
+function buildViewSubmenu({ isFullScreen: fullScreen, showAppDevtools }) {
+  const submenu = [
+    {
+      id: 'reload',
+      label: 'Reload This Page',
+      accelerator: 'CmdOrCtrl+R',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('page:reload');
+        }
+      },
+    },
+    {
+      label: 'Force Reload This Page',
+      accelerator: 'CmdOrCtrl+Shift+R',
+      visible: false,
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('page:hard-reload');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Focus Address Bar',
+      accelerator: 'CmdOrCtrl+L',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('menus:close');
+          win.webContents.send('focus:address-bar');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      id: 'fullscreen',
+      label: fullScreen ? 'Exit Full Screen' : 'Enter Full Screen',
+      accelerator: 'F11',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.setFullScreen(!win.isFullScreen());
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      id: 'next-tab',
+      label: 'Next Tab',
+      accelerator: 'Ctrl+PageDown',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:next');
+        }
+      },
+    },
+    {
+      id: 'prev-tab',
+      label: 'Previous Tab',
+      accelerator: 'Ctrl+PageUp',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:prev');
+        }
+      },
+    },
+    {
+      id: 'move-tab-right',
+      label: 'Move Tab Right',
+      accelerator: 'Ctrl+Shift+PageDown',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:move-right');
+        }
+      },
+    },
+    {
+      id: 'move-tab-left',
+      label: 'Move Tab Left',
+      accelerator: 'Ctrl+Shift+PageUp',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:move-left');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      id: 'toggle-bookmark-bar',
+      label: 'Always Show Bookmarks Bar',
+      type: 'checkbox',
+      checked: false,
+      accelerator: 'CmdOrCtrl+Shift+B',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('bookmarks:toggle-bar');
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      id: 'toggle-devtools',
+      label: 'Developer Tools',
+      accelerator: 'CmdOrCtrl+Alt+I',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('devtools:toggle');
+        }
+      },
+    },
+  ];
+
+  if (showAppDevtools) {
+    submenu.push({
+      id: 'toggle-app-devtools',
+      label: 'App Developer Tools',
+      accelerator: 'CmdOrCtrl+Shift+Alt+I',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.toggleDevTools();
+        }
+      },
+    });
+  }
+
+  return submenu;
+}
+
+function buildHistorySubmenu(isMac) {
+  return [
+    {
+      label: 'Show All History',
+      accelerator: isMac ? 'Cmd+Y' : 'Ctrl+H',
+      click: () => {
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send('tab:new-with-url', 'freedom://history');
+        }
+      },
+    },
+  ];
+}
+
+function buildEditMenuEntry(isMac) {
   if (isMac) {
     return { role: 'editMenu' };
   }
@@ -47,267 +291,50 @@ function buildEditMenuTemplate(isMac) {
   };
 }
 
+function buildSharedMenuEntries(ctx) {
+  const { isMac, isFullScreen: fullScreen, isPackaged } = ctx;
+
+  return [
+    { label: 'File', submenu: buildFileSubmenu(isMac) },
+    {
+      label: 'View',
+      submenu: buildViewSubmenu({
+        isFullScreen: fullScreen,
+        showAppDevtools: !isPackaged,
+      }),
+    },
+    { label: 'History', submenu: buildHistorySubmenu(isMac) },
+    buildEditMenuEntry(isMac),
+  ];
+}
+
+function buildDarwinMenuTemplate(ctx) {
+  return [
+    { role: 'appMenu', submenu: buildAppMenuSubmenu(ctx.updateMenuItems) },
+    ...buildSharedMenuEntries(ctx),
+    { role: 'windowMenu' },
+  ];
+}
+
+function buildWinLinuxMenuTemplate(ctx) {
+  return buildSharedMenuEntries(ctx);
+}
+
 function buildApplicationMenuTemplate({
   platform = process.platform,
   updateMenuItems,
-  isFullScreen = false,
+  isFullScreen: fullScreen = false,
   isPackaged = app.isPackaged,
 } = {}) {
-  const isMac = platform === 'darwin';
+  const ctx = {
+    platform,
+    updateMenuItems,
+    isMac: platform === 'darwin',
+    isFullScreen: fullScreen,
+    isPackaged,
+  };
 
-  const template = [
-    ...(isMac
-      ? [
-          {
-            role: 'appMenu',
-            submenu: [
-              { role: 'about' },
-              { type: 'separator' },
-              ...updateMenuItems,
-              { type: 'separator' },
-              { role: 'services' },
-              { type: 'separator' },
-              { role: 'hide' },
-              { role: 'hideOthers' },
-              { role: 'unhide' },
-              { type: 'separator' },
-              { role: 'quit' },
-            ],
-          },
-        ]
-      : []),
-    {
-      label: 'File',
-      submenu: [
-        {
-          id: 'new-tab',
-          label: 'New Tab',
-          accelerator: 'CmdOrCtrl+T',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:new');
-            }
-          },
-        },
-        {
-          id: 'close-tab',
-          label: 'Close Tab',
-          accelerator: 'CmdOrCtrl+W',
-          click: () => {
-            const mainWindows = getMainWindows();
-
-            // Find a main browser window that is focused
-            const focusedMainWindow = mainWindows.find((win) => win.isFocused());
-
-            if (focusedMainWindow) {
-              focusedMainWindow.webContents.send('tab:close');
-            }
-            // If no main window is focused (DevTools has focus), do nothing.
-            // User can close DevTools with the X button or Cmd+Option+I
-          },
-        },
-        ...(!isMac
-          ? [
-              {
-                label: 'Close Tab',
-                accelerator: 'Ctrl+F4',
-                click: () => {
-                  const win = getTargetWindow();
-                  if (win) {
-                    win.webContents.send('tab:close');
-                  }
-                },
-              },
-            ]
-          : []),
-        {
-          id: 'reopen-closed-tab',
-          label: 'Reopen Closed Tab',
-          accelerator: 'CmdOrCtrl+Shift+T',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:reopen-closed');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'New Window',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => {
-            log.info('[menu] New Window clicked');
-            createMainWindow();
-          },
-        },
-        { type: 'separator' },
-        { role: 'close' },
-        ...(!isMac
-          ? [
-              { type: 'separator' },
-              { role: 'quit' },
-            ]
-          : []),
-      ],
-    },
-    {
-      label: 'View',
-      submenu: [
-        {
-          id: 'reload',
-          label: 'Reload This Page',
-          accelerator: 'CmdOrCtrl+R',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('page:reload');
-            }
-          },
-        },
-        {
-          label: 'Force Reload This Page',
-          accelerator: 'CmdOrCtrl+Shift+R',
-          visible: false,
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('page:hard-reload');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          label: 'Focus Address Bar',
-          accelerator: 'CmdOrCtrl+L',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('menus:close');
-              win.webContents.send('focus:address-bar');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          id: 'fullscreen',
-          label: isFullScreen ? 'Exit Full Screen' : 'Enter Full Screen',
-          accelerator: 'F11',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.setFullScreen(!win.isFullScreen());
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          id: 'next-tab',
-          label: 'Next Tab',
-          accelerator: 'Ctrl+PageDown',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:next');
-            }
-          },
-        },
-        {
-          id: 'prev-tab',
-          label: 'Previous Tab',
-          accelerator: 'Ctrl+PageUp',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:prev');
-            }
-          },
-        },
-        {
-          id: 'move-tab-right',
-          label: 'Move Tab Right',
-          accelerator: 'Ctrl+Shift+PageDown',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:move-right');
-            }
-          },
-        },
-        {
-          id: 'move-tab-left',
-          label: 'Move Tab Left',
-          accelerator: 'Ctrl+Shift+PageUp',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:move-left');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          id: 'toggle-bookmark-bar',
-          label: 'Always Show Bookmarks Bar',
-          type: 'checkbox',
-          checked: false,
-          accelerator: 'CmdOrCtrl+Shift+B',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('bookmarks:toggle-bar');
-            }
-          },
-        },
-        { type: 'separator' },
-        {
-          id: 'toggle-devtools',
-          label: 'Developer Tools',
-          accelerator: 'CmdOrCtrl+Alt+I',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('devtools:toggle');
-            }
-          },
-        },
-        ...(!isPackaged
-          ? [
-              {
-                id: 'toggle-app-devtools',
-                label: 'App Developer Tools',
-                accelerator: 'CmdOrCtrl+Shift+Alt+I',
-                click: () => {
-                  const win = getTargetWindow();
-                  if (win) {
-                    win.webContents.toggleDevTools();
-                  }
-                },
-              },
-            ]
-          : []),
-      ],
-    },
-    {
-      label: 'History',
-      submenu: [
-        {
-          label: 'Show All History',
-          accelerator: isMac ? 'Cmd+Y' : 'Ctrl+H',
-          click: () => {
-            const win = getTargetWindow();
-            if (win) {
-              win.webContents.send('tab:new-with-url', 'freedom://history');
-            }
-          },
-        },
-      ],
-    },
-    buildEditMenuTemplate(isMac),
-    ...(isMac ? [{ role: 'windowMenu' }] : []),
-  ];
-
-  return template;
+  return ctx.isMac ? buildDarwinMenuTemplate(ctx) : buildWinLinuxMenuTemplate(ctx);
 }
 
 function setupApplicationMenu() {

@@ -342,6 +342,10 @@ function registerBaseIpcHandlers(callbacks = {}) {
     return { success: false, error: 'No text provided' };
   });
 
+  ipcMain.handle('clipboard:read-text', () => {
+    return { success: true, text: clipboard.readText() };
+  });
+
   // Copy image to clipboard
   ipcMain.handle('clipboard:copy-image', async (_event, imageUrl) => {
     if (!imageUrl) {

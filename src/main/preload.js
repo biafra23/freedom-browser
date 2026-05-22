@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveImage: (imageUrl) => ipcRenderer.invoke('context-menu:save-image', imageUrl),
   // Clipboard
   copyText: (text) => ipcRenderer.invoke('clipboard:copy-text', text),
+  readClipboardText: () => ipcRenderer.invoke('clipboard:read-text'),
   copyImageFromUrl: (imageUrl) => ipcRenderer.invoke('clipboard:copy-image', imageUrl),
   // Favicons
   getFavicon: (url) => ipcRenderer.invoke('favicon:get', url),

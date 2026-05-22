@@ -333,6 +333,13 @@ describe('ipc-handlers', () => {
       error: 'No text provided',
     });
 
+    ctx.clipboard.readText = jest.fn(() => 'from-main');
+    await expect(ctx.ipcMain.invoke('clipboard:read-text')).resolves.toEqual({
+      success: true,
+      text: 'from-main',
+    });
+    expect(ctx.clipboard.readText).toHaveBeenCalled();
+
     await expect(ctx.ipcMain.handlers.get('clipboard:copy-image')({}, undefined)).resolves.toEqual({
       success: false,
       error: 'No image URL provided',

@@ -1,8 +1,8 @@
-// Address-bar clipboard on Windows/Linux (issue #69).
+// Address-bar clipboard (issue #69).
 //
-// Playwright keyboard events can satisfy native <input> editing without the
-// application Edit menu, so these specs assert menu wiring and the chrome
-// right-click menu that users rely on when accelerators are missing.
+// Win/Linux: application Edit menu must expose clipboard roles when the menu
+// bar is hidden. All platforms: chrome right-click menu must edit the address
+// bar (execCommand loses selection when the menu steals focus).
 
 const { test, expect } = require('./fixtures');
 
@@ -35,8 +35,8 @@ function inspectApplicationMenu() {
   };
 }
 
-test.describe('address bar clipboard', () => {
-  test.skip(isDarwin, 'issue #69 is Windows/Linux only');
+test.describe('address bar application menu (Windows/Linux)', () => {
+  test.skip(isDarwin, 'macOS uses native app/window/edit menu roles');
 
   test('application menu excludes macOS-only roles', async ({ electronApp }) => {
     const menu = await electronApp.evaluate(inspectApplicationMenu());
@@ -52,7 +52,9 @@ test.describe('address bar clipboard', () => {
     const roles = menu.roles.map((role) => role.toLowerCase());
     expect(roles).toEqual(expect.arrayContaining(['cut', 'copy', 'paste', 'selectall']));
   });
+});
 
+test.describe('address bar chrome context menu', () => {
   test('right-click shows Cut/Copy/Paste/Select All on the address bar', async ({ window }) => {
     const input = window.locator('[data-test="address-input"]');
     const menu = window.locator('[data-test="chrome-input-context-menu"]');
@@ -84,7 +86,59 @@ test.describe('address bar clipboard', () => {
       .toBe(sample);
   });
 
-  test('Ctrl shortcuts copy, cut, and paste in the address bar', async ({ window, electronApp }) => {
+  test('context menu Cut clears selection and copies to clipboard', async ({ window, electronApp }) => {
+    const input = window.locator('[data-test="address-input"]');
+    const menu = window.locator('[data-test="chrome-input-context-menu"]');
+    const sample = 'cut-via-menu-69';
+
+    await input.click();
+    await input.fill(sample);
+    await input.press(`${modifier}+a`);
+    await input.click({ button: 'right' });
+    await menu.getByRole('button', { name: 'Cut' }).click();
+
+    await expect(input).toHaveValue('');
+    await expect
+      .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(sample);
+  });
+
+  test('context menu Paste inserts clipboard text', async ({ window, electronApp }) => {
+    const input = window.locator('[data-test="address-input"]');
+    const menu = window.locator('[data-test="chrome-input-context-menu"]');
+    const sample = 'paste-via-menu-69';
+
+    await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), sample);
+
+    await input.click();
+    await input.fill('');
+    await input.click({ button: 'right' });
+    await menu.getByRole('button', { name: 'Paste' }).click();
+
+    await expect(input).toHaveValue(sample);
+  });
+
+  test('context menu Select All selects the full address', async ({ window }) => {
+    const input = window.locator('[data-test="address-input"]');
+    const menu = window.locator('[data-test="chrome-input-context-menu"]');
+    const sample = 'select-all-via-menu-69';
+
+    await input.click();
+    await input.fill(sample);
+    await input.click({ button: 'right' });
+    await menu.getByRole('button', { name: 'Select All' }).click();
+
+    const selection = await input.evaluate((el) => ({
+      start: el.selectionStart,
+      end: el.selectionEnd,
+      length: el.value.length,
+    }));
+    expect(selection.start).toBe(0);
+    expect(selection.end).toBe(selection.length);
+    expect(selection.length).toBe(sample.length);
+  });
+
+  test(`${modifier} shortcuts copy, cut, and paste in the address bar`, async ({ window, electronApp }) => {
     const input = window.locator('[data-test="address-input"]');
     const sample = 'freedom-clipboard-69';
 
