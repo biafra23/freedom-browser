@@ -10,8 +10,7 @@ const isDarwin = process.platform === 'darwin';
 const modifier = process.env.E2E_CLIPBOARD_MODIFIER || (isDarwin ? 'Meta' : 'Control');
 
 async function getEditAccelerators(electronApp) {
-  return electronApp.evaluate(() => {
-    const { Menu } = require('electron');
+  return electronApp.evaluate(({ Menu }) => {
     const edit = Menu.getApplicationMenu()?.items.find((item) => item.label === 'Edit');
     if (!edit?.submenu) return {};
     const pick = (role) => edit.submenu.items.find((item) => item.role === role)?.accelerator ?? null;
@@ -25,8 +24,7 @@ async function getEditAccelerators(electronApp) {
 }
 
 async function getTopMenuLabels(electronApp) {
-  return electronApp.evaluate(() => {
-    const { Menu } = require('electron');
+  return electronApp.evaluate(({ Menu }) => {
     return Menu.getApplicationMenu()?.items.map((item) => item.role || item.label) ?? [];
   });
 }
@@ -64,18 +62,20 @@ test.describe('address bar clipboard', () => {
     await expect(menu.getByRole('button', { name: 'Select All' })).toBeVisible();
   });
 
-  test('context menu Paste inserts clipboard text', async ({ window, electronApp }) => {
+  test('context menu Copy writes selection to the clipboard', async ({ window, electronApp }) => {
     const input = window.locator('[data-test="address-input"]');
     const menu = window.locator('[data-test="chrome-input-context-menu"]');
-    const sample = 'paste-via-menu-69';
+    const sample = 'copy-via-menu-69';
 
-    await electronApp.evaluate(async ({ clipboard }, text) => clipboard.writeText(text), sample);
     await input.click();
-    await input.fill('');
+    await input.fill(sample);
+    await input.press(`${modifier}+a`);
     await input.click({ button: 'right' });
-    await menu.getByRole('button', { name: 'Paste' }).click();
+    await menu.getByRole('button', { name: 'Copy' }).click();
 
-    await expect(input).toHaveValue(sample);
+    await expect
+      .poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(sample);
   });
 
   test('Ctrl shortcuts copy, cut, and paste in the address bar', async ({ window, electronApp }) => {
