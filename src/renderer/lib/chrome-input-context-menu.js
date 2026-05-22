@@ -6,6 +6,9 @@ const electronAPI = window.electronAPI;
 let contextMenu = null;
 let activeInput = null;
 let savedSelection = null;
+// Serializes async edit actions so a slow Paste cannot overlap a
+// follow-up Cut/Copy/Paste against a stale selection range.
+let actionInFlight = false;
 
 export const hideChromeInputContextMenu = () => {
   if (!contextMenu || contextMenu.classList.contains('hidden')) return;
@@ -65,16 +68,22 @@ function showChromeInputContextMenu(input, clientX, clientY, selection) {
 }
 
 async function writeClipboard(text) {
-  if (!text) return;
-  const result = await electronAPI?.copyText?.(text);
-  if (result?.success) {
-    return;
+  if (!text) return { success: false };
+
+  try {
+    const result = await electronAPI?.copyText?.(text);
+    if (result?.success) {
+      return { success: true };
+    }
+  } catch {
+    // Fall through to navigator clipboard.
   }
 
   try {
     await navigator.clipboard.writeText(text);
+    return { success: true };
   } catch {
-    // Best-effort; menu actions still update the input when possible.
+    return { success: false };
   }
 }
 
@@ -102,6 +111,7 @@ async function readClipboard() {
 
 async function runEditAction(action, input, selection) {
   applySelection(input, selection);
+  let mutated = false;
 
   switch (action) {
     case 'copy': {
@@ -110,10 +120,16 @@ async function runEditAction(action, input, selection) {
     }
     case 'cut': {
       const text = getSelectedText(input, selection);
-      await writeClipboard(text);
+      const { success } = await writeClipboard(text);
+      if (!success) {
+        // Restore the selection so the user can retry without data loss.
+        applySelection(input, selection);
+        break;
+      }
       input.value = input.value.slice(0, selection.start) + input.value.slice(selection.end);
       const caret = selection.start;
       input.setSelectionRange(caret, caret);
+      mutated = true;
       break;
     }
     case 'paste': {
@@ -122,6 +138,7 @@ async function runEditAction(action, input, selection) {
         input.value.slice(0, selection.start) + clipText + input.value.slice(selection.end);
       const caret = selection.start + clipText.length;
       input.setSelectionRange(caret, caret);
+      mutated = true;
       break;
     }
     case 'select-all': {
@@ -132,7 +149,7 @@ async function runEditAction(action, input, selection) {
       return;
   }
 
-  if (action !== 'select-all') {
+  if (mutated) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 }
@@ -160,8 +177,19 @@ export const initChromeInputContextMenu = (options = {}) => {
     input.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       options.onOpening?.();
-      const selection = selectionAtPointerDown ?? captureSelection(input);
+
+      // Some platforms collapse a prior range to the caret on right-click.
+      // Only resurrect the pre-contextmenu snapshot if it captured an
+      // actual non-collapsed selection; otherwise honor the live caret so
+      // Paste happens at the right-click position instead of jumping back
+      // to a stale earlier position.
+      const pointerSelection = selectionAtPointerDown;
       selectionAtPointerDown = null;
+      const liveSelection = captureSelection(input);
+      const snapshotHasRange =
+        pointerSelection && pointerSelection.start !== pointerSelection.end;
+      const selection = snapshotHasRange ? pointerSelection : liveSelection;
+
       showChromeInputContextMenu(input, event.clientX, event.clientY, selection);
     });
   }
@@ -169,6 +197,7 @@ export const initChromeInputContextMenu = (options = {}) => {
   contextMenu.addEventListener('click', (event) => {
     const item = event.target.closest?.('.context-menu-item');
     if (!item || item.disabled) return;
+    if (actionInFlight) return;
 
     const action = item.dataset.action;
     const input = activeInput;
@@ -177,10 +206,22 @@ export const initChromeInputContextMenu = (options = {}) => {
     const selection = savedSelection ?? captureSelection(input);
     hideChromeInputContextMenu();
 
-    void runEditAction(action, input, selection).then(() => {
-      if (action === 'select-all') {
-        selectAllInInput(input);
-      }
-    });
+    actionInFlight = true;
+    void runEditAction(action, input, selection)
+      .then(() => {
+        if (action === 'select-all') {
+          selectAllInInput(input);
+        }
+      })
+      .finally(() => {
+        actionInFlight = false;
+      });
   });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      hideChromeInputContextMenu();
+    }
+  });
+  window.addEventListener('blur', hideChromeInputContextMenu);
 };

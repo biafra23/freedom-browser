@@ -342,7 +342,15 @@ function registerBaseIpcHandlers(callbacks = {}) {
     return { success: false, error: 'No text provided' };
   });
 
-  ipcMain.handle('clipboard:read-text', () => {
+  // Address-bar chrome context menu Paste fallback. Restricted to the
+  // trusted main renderer: webviews (which expose `hostWebContents`)
+  // could otherwise exfiltrate the user's clipboard without a paste
+  // gesture by invoking this IPC directly through the exposed
+  // electronAPI on a hostile page.
+  ipcMain.handle('clipboard:read-text', (event) => {
+    if (event?.sender?.hostWebContents) {
+      return { success: false, error: 'Untrusted sender' };
+    }
     return { success: true, text: clipboard.readText() };
   });
 

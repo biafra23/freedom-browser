@@ -78,3 +78,14 @@ jobs:
           else
             npm run test:e2e -- test-e2e/address-bar-clipboard.spec.js
           fi
+
+      - name: Upload Playwright traces and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-address-bar-clipboard-${{ matrix.os }}-traces
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14

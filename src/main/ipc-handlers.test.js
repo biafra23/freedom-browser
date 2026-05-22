@@ -340,6 +340,14 @@ describe('ipc-handlers', () => {
     });
     expect(ctx.clipboard.readText).toHaveBeenCalled();
 
+    // Webview senders (hostWebContents !== null) must not be able to
+    // siphon the user's clipboard without a paste gesture.
+    const webviewEvent = { sender: { hostWebContents: { id: 99 } } };
+    expect(ctx.ipcMain.handlers.get('clipboard:read-text')(webviewEvent)).toEqual({
+      success: false,
+      error: 'Untrusted sender',
+    });
+
     await expect(ctx.ipcMain.handlers.get('clipboard:copy-image')({}, undefined)).resolves.toEqual({
       success: false,
       error: 'No image URL provided',

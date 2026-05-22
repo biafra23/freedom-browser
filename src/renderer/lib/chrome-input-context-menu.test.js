@@ -95,14 +95,19 @@ const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
   const addressInput = input ?? createInput();
   const menu = contextMenu ?? createContextMenu();
 
+  const documentHandlers = {};
   global.document = {
     getElementById: jest.fn((id) => {
       if (id === 'address-input') return addressInput;
       if (id === 'chrome-input-context-menu') return menu;
       return null;
     }),
+    addEventListener: jest.fn((event, handler) => {
+      documentHandlers[event] = handler;
+    }),
   };
 
+  const windowHandlers = {};
   global.window = {
     innerWidth: 800,
     innerHeight: 600,
@@ -113,6 +118,9 @@ const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
             copyText: jest.fn().mockResolvedValue({ success: true }),
             readClipboardText: jest.fn().mockResolvedValue({ success: true, text: 'pasted' }),
           }),
+    addEventListener: jest.fn((event, handler) => {
+      windowHandlers[event] = handler;
+    }),
   };
 
   global.navigator = {
@@ -129,11 +137,13 @@ const loadModule = async ({ input, contextMenu, electronAPI } = {}) => {
 
   const mod = await import('./chrome-input-context-menu.js');
   mod.initChromeInputContextMenu();
-  return { mod, input: addressInput, menu };
+  return { mod, input: addressInput, menu, documentHandlers, windowHandlers };
 };
 
-const openContextMenu = (input, { collapseSelectionOnOpen = false } = {}) => {
-  input.handlers.mousedown?.({ button: 2 });
+const openContextMenu = (input, { collapseSelectionOnOpen = false, skipMousedown = false } = {}) => {
+  if (!skipMousedown) {
+    input.handlers.mousedown?.({ button: 2 });
+  }
   if (collapseSelectionOnOpen) {
     const caret = input.value.length;
     input.setSelectionRange(caret, caret);
@@ -226,5 +236,133 @@ describe('chrome-input-context-menu', () => {
 
     expect(navigator.clipboard.readText).toHaveBeenCalled();
     expect(input.value).toBe('hello pastedworld');
+  });
+
+  test('paste uses live caret when right-click did not capture a range', async () => {
+    const input = createInput('abcdef');
+    // User clicks at caret position 3 with no selection; the right-click
+    // mousedown captures the live caret rather than a stale earlier range.
+    input.setSelectionRange(3, 3);
+    const { menu } = await loadModule({ input });
+
+    openContextMenu(input);
+    await clickMenu(menu, 'paste');
+
+    expect(input.value).toBe('abcpasteddef');
+    expect(input.selectionStart).toBe(3 + 'pasted'.length);
+    expect(input.selectionEnd).toBe(3 + 'pasted'.length);
+  });
+
+  test('paste honors live caret when contextmenu fires without prior mousedown', async () => {
+    const input = createInput('abcdef');
+    input.setSelectionRange(2, 2);
+    const { menu } = await loadModule({ input });
+
+    openContextMenu(input, { skipMousedown: true });
+    await clickMenu(menu, 'paste');
+
+    expect(input.value).toBe('abpastedcdef');
+  });
+
+  test('disabled menu items are ignored', async () => {
+    const input = createInput('');
+    input.setSelectionRange(0, 0);
+    const { menu } = await loadModule({ input });
+    openContextMenu(input);
+
+    expect(menu.items.cut.disabled).toBe(true);
+    expect(menu.items.copy.disabled).toBe(true);
+    expect(menu.items['select-all'].disabled).toBe(true);
+    expect(menu.items.paste.disabled).toBe(false);
+
+    await clickMenu(menu, 'copy');
+    expect(window.electronAPI.copyText).not.toHaveBeenCalled();
+  });
+
+  test('cut leaves text untouched when clipboard write fails', async () => {
+    const input = createInput('hello world');
+    const { menu } = await loadModule({
+      input,
+      electronAPI: {
+        copyText: jest.fn().mockResolvedValue({ success: false }),
+        readClipboardText: jest.fn().mockResolvedValue({ success: true, text: '' }),
+      },
+    });
+    navigator.clipboard.writeText.mockRejectedValueOnce(new Error('denied'));
+
+    openContextMenu(input);
+    await clickMenu(menu, 'cut');
+
+    expect(input.value).toBe('hello world');
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(5);
+    expect(input.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  test('select-all preserves the full selection without dispatching input', async () => {
+    const input = createInput('select-me');
+    input.setSelectionRange(0, 0);
+    const { menu } = await loadModule({ input });
+
+    openContextMenu(input);
+    await clickMenu(menu, 'select-all');
+
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe('select-me'.length);
+    // No synthetic input event - listeners must not reset the range.
+    expect(input.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  test('Escape hides the menu', async () => {
+    const { input, menu, documentHandlers } = await loadModule();
+    openContextMenu(input);
+    expect(menu.classList.contains('hidden')).toBe(false);
+
+    documentHandlers.keydown({ key: 'Escape' });
+    expect(menu.classList.contains('hidden')).toBe(true);
+  });
+
+  test('Window blur hides the menu', async () => {
+    const { input, menu, windowHandlers } = await loadModule();
+    openContextMenu(input);
+    expect(menu.classList.contains('hidden')).toBe(false);
+
+    windowHandlers.blur();
+    expect(menu.classList.contains('hidden')).toBe(true);
+  });
+
+  test('serializes overlapping actions so paste cannot race a follow-up cut', async () => {
+    const input = createInput('hello world');
+    let resolveRead;
+    const readClipboardText = jest.fn(
+      () => new Promise((resolve) => { resolveRead = resolve; })
+    );
+    const { menu } = await loadModule({
+      input,
+      electronAPI: {
+        copyText: jest.fn().mockResolvedValue({ success: true }),
+        readClipboardText,
+      },
+    });
+
+    input.setSelectionRange(5, 5);
+    openContextMenu(input);
+    // Start a slow paste; do not await yet.
+    menu.handlers.click({ target: menu.items.paste });
+
+    // Reopen and try to cut while paste is still pending.
+    openContextMenu(input);
+    menu.handlers.click({ target: menu.items.cut });
+    await flushMicrotasks();
+
+    // Cut must not have run against the stale range.
+    expect(window.electronAPI.copyText).not.toHaveBeenCalled();
+
+    // Let paste complete.
+    resolveRead({ success: true, text: 'X' });
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(input.value).toBe('helloX world');
   });
 });
