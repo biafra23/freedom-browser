@@ -482,7 +482,7 @@ The suite covers most of `src/main/` and `src/renderer/lib/` — see `src/**/*.t
 
 #### End-to-end tests (Playwright + Electron)
 
-Two Playwright projects live under `test-e2e/`. The harness suite is run manually via `npm run test:e2e`; **issue #69 regression** (`test-e2e/address-bar-clipboard.spec.js`) runs on GitHub Actions for `ubuntu-latest` and `windows-latest`. Configuration is in `playwright.config.js`.
+Two Playwright projects live under `test-e2e/`. The harness suite is run manually via `npm run test:e2e`; **issue #69 regression** (`test-e2e/address-bar-clipboard.spec.js`) runs on GitHub Actions for `ubuntu-latest`, `windows-latest`, and `macos-latest` (macOS runs the chrome context-menu specs only; Win/Linux menu wiring is skipped on Darwin). Configuration is in `playwright.config.js`.
 
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
