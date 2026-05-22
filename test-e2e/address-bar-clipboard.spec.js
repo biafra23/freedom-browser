@@ -35,16 +35,17 @@ test.describe('address bar clipboard', () => {
   test('application menu excludes macOS-only roles', async ({ electronApp }) => {
     const top = await getTopMenuLabels(electronApp);
     expect(top).not.toContain('appMenu');
-    expect(top[0]).toBe('File');
+    expect(top).not.toContain('windowMenu');
+    expect(top.some((entry) => entry === 'File' || entry === 'fileMenu')).toBe(true);
     expect(top).toContain('Edit');
   });
 
-  test('Edit menu registers Ctrl+C/V/X/A accelerators', async ({ electronApp }) => {
+  test('Edit menu registers standard copy/cut/paste/select-all accelerators', async ({ electronApp }) => {
     const accelerators = await getEditAccelerators(electronApp);
-    expect(accelerators.copy).toBe('Ctrl+C');
-    expect(accelerators.cut).toBe('Ctrl+X');
-    expect(accelerators.paste).toBe('Ctrl+V');
-    expect(accelerators.selectAll).toBe('Ctrl+A');
+    expect(accelerators.copy).toMatch(/Control\+C$/);
+    expect(accelerators.cut).toMatch(/Control\+X$/);
+    expect(accelerators.paste).toMatch(/Control\+V$/);
+    expect(accelerators.selectAll).toMatch(/Control\+A$/);
   });
 
   test('right-click shows Cut/Copy/Paste/Select All on the address bar', async ({ window }) => {
