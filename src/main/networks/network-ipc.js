@@ -22,6 +22,11 @@ function refreshDownstream() {
   require('../ens-resolver').invalidateCachedProvider();
 }
 
+function refreshAfterRpcManagerMutation(result) {
+  if (result?.success) refreshDownstream();
+  return result;
+}
+
 // The full config view: every network plus every endpoint source, with
 // keyed providers tagged by whether an API key is configured.
 function getConfig() {
@@ -60,14 +65,15 @@ function registerNetworkConfigIpc() {
     return { success: true };
   });
 
-  // API keys for keyed providers. setApiKey/removeApiKey already refresh
-  // the downstream caches via rpc-manager's onApiKeysChanged hook.
+  // API keys for keyed providers. rpc-manager clears wallet providers;
+  // refreshDownstream also drops ENS caches so trust state follows the
+  // effective endpoint list immediately.
   ipcMain.handle('networks:set-api-key', (_event, providerId, apiKey) => {
-    return rpcManager.setApiKey(providerId, apiKey);
+    return refreshAfterRpcManagerMutation(rpcManager.setApiKey(providerId, apiKey));
   });
 
   ipcMain.handle('networks:remove-api-key', (_event, providerId) => {
-    return rpcManager.removeApiKey(providerId);
+    return refreshAfterRpcManagerMutation(rpcManager.removeApiKey(providerId));
   });
 
   ipcMain.handle('networks:test-api-key', (_event, providerId, apiKey) => {

@@ -908,11 +908,18 @@ function colibriProverHost() {
   return proverUrl ? hostOf(proverUrl) : '';
 }
 
+function colibriProofLabel() {
+  return registry.getNetwork(1).zkProof === false
+    ? 'Sync-committee proof'
+    : 'ZK sync-committee proof';
+}
+
 function buildColibriTrust(proverHost) {
   return {
     level: 'verified',
     method: 'colibri',
     prover: proverHost,
+    proof: colibriProofLabel(),
     block: null,
     agreed: [proverHost],
     dissented: [],

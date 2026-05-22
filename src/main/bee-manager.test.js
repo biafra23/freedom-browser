@@ -223,8 +223,17 @@ function loadBeeManagerModule(options = {}) {
   const loadSettings = options.loadSettings || jest.fn(() => ({
     beeNodeMode: options.beeNodeMode || 'ultraLight',
   }));
+  const rpcUrls = options.rpcUrls || ['https://rpc.gnosischain.com'];
   const registry = options.registry || {
-    getEndpoints: jest.fn(() => options.rpcUrls || ['https://rpc.gnosischain.com']),
+    getEndpointSources: jest.fn(() => (
+      options.endpointSources || rpcUrls.map((url, index) => ({
+        id: `gno-test-${index + 1}`,
+        role: 'rpc',
+        keyed: false,
+        coverage: { 100: url },
+      }))
+    )),
+    getEndpoints: jest.fn(() => rpcUrls),
   };
 
   const platformMap = {
@@ -514,7 +523,7 @@ describe('bee-manager', () => {
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
 
-    expect(ctx.registry.getEndpoints).toHaveBeenCalledWith(100, 'rpc');
+    expect(ctx.registry.getEndpointSources).toHaveBeenCalledWith(100, 'rpc');
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('swap-enable: true');
@@ -523,6 +532,35 @@ describe('bee-manager', () => {
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
+  });
+
+  test('prefers keyless Gnosis RPC for Bee over keyed commercial providers', () => {
+    const ctx = loadBeeManagerModule({
+      registry: {
+        getEndpointSources: jest.fn(() => [
+          {
+            id: 'alchemy',
+            role: 'rpc',
+            keyed: true,
+            coverage: { 100: 'https://gnosis-mainnet.g.alchemy.com/v2/{API_KEY}' },
+          },
+          {
+            id: 'gno-gnosischain',
+            role: 'rpc',
+            keyed: false,
+            coverage: { 100: 'https://rpc.gnosischain.com' },
+          },
+        ]),
+        getEndpoints: jest.fn(() => [
+          'https://gnosis-mainnet.g.alchemy.com/v2/redacted',
+          'https://rpc.gnosischain.com',
+        ]),
+      },
+    });
+
+    expect(ctx.mod.getPrimaryGnosisRpcUrl()).toBe('https://rpc.gnosischain.com');
+    expect(ctx.registry.getEndpointSources).toHaveBeenCalledWith(100, 'rpc');
+    expect(ctx.registry.getEndpoints).not.toHaveBeenCalled();
   });
 
   test('preserves an existing Bee password when rewriting config', async () => {

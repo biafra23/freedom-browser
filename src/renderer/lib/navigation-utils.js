@@ -28,11 +28,19 @@ export const resolveTrustBadge = ({ value = '', ensTrustByName = new Map() } = {
 // surface reuses these as tooltip copy — keep the vocabulary in one place.
 export const TRUST_STATUS_SENTENCE = {
   verified: 'ENS resolution verified',
-  'verified-colibri': 'Cryptographically verified via Colibri',
+  'verified-colibri': 'ENS resolution verified',
   'user-configured': 'Resolved with your configured RPC',
   unverified: 'ENS resolution not verified',
   conflict: 'Verification failed: RPCs disagree',
 };
+
+// Long-form warning for a recipient name whose forward lookup completed
+// without cryptographic proof or public-RPC quorum. The send flow still
+// shows the resolved address, but the name should not look verified.
+export const describeUnverifiedForward = (name) =>
+  name
+    ? `The address for "${name}" resolved without cryptographic or RPC quorum verification. Treat the name as untrusted unless you trust the source.`
+    : `This ENS address resolved without cryptographic or RPC quorum verification. Treat it as untrusted unless you trust the source.`;
 
 // Long-form warning for a recipient whose reverse record exists but
 // doesn't forward-verify back to the address. The claimed name is NOT
@@ -124,12 +132,16 @@ export const buildTrustRows = ({
 
   // Colibri results carry single-source agreed/queried (the prover host) by
   // design — the cryptographic verification *replaces* the M-of-K heuristic,
-  // it doesn't run alongside it. Surface the prover + method instead of the
-  // degenerate quorum row.
+  // it doesn't run alongside it. Surface method/proof/server details instead
+  // of the degenerate quorum row.
   if (isColibri) {
+    trustRows.push({ label: 'Method', display: 'Colibri', copy: '' });
+    if (trust.proof) {
+      trustRows.push({ label: 'Proof', display: trust.proof, copy: '' });
+    }
     if (trust.prover) {
       trustRows.push({
-        label: 'Verified by',
+        label: 'Server',
         display: trust.prover,
         copy: trust.prover,
         autoFit: trust.prover,

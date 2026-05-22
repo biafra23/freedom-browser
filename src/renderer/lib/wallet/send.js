@@ -7,7 +7,11 @@
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
 import { refreshBalances, getTokensWithBalance, getChainsWithBalance, sortTokens } from './balance-display.js';
-import { TRUST_STATUS_SENTENCE, describeUnverifiedReverse } from '../navigation-utils.js';
+import {
+  TRUST_STATUS_SENTENCE,
+  describeUnverifiedForward,
+  describeUnverifiedReverse,
+} from '../navigation-utils.js';
 import { createTab } from '../tabs.js';
 
 // DOM references
@@ -988,6 +992,9 @@ function renderRecipientReview(container, address, resolution) {
 
   const badge = buildRecipientVerifiedBadge(trust);
   if (badge) children.push(badge);
+  if (trust?.level === 'unverified') {
+    children.push(buildRecipientWarning(describeUnverifiedForward(name)));
+  }
 
   const addressSpan = document.createElement('span');
   addressSpan.className = 'send-review-recipient-address';
@@ -1003,16 +1010,21 @@ function renderRecipientReview(container, address, resolution) {
 // tooltip on the warning glyph, so a phisher can't slip a misleading
 // name onto the review screen.
 function renderRecipientUnverified(container, address, claimedName) {
+  // Address inherits monospace + 11px from the parent .send-review-address
+  // class on #send-review-to — no per-span styling needed for the bare case.
+  container.replaceChildren(
+    document.createTextNode(address),
+    buildRecipientWarning(describeUnverifiedReverse(claimedName)),
+  );
+}
+
+function buildRecipientWarning(detail) {
   const warn = document.createElement('span');
   warn.className = 'send-review-warning';
   warn.textContent = '⚠';
-  const detail = describeUnverifiedReverse(claimedName);
   warn.title = detail;
   warn.setAttribute('aria-label', detail);
-
-  // Address inherits monospace + 11px from the parent .send-review-address
-  // class on #send-review-to — no per-span styling needed for the bare case.
-  container.replaceChildren(document.createTextNode(address), warn);
+  return warn;
 }
 
 // Verified checkmark for the recipient cell when trust is verifiable.

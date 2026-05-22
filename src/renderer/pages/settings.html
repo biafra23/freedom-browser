@@ -622,7 +622,7 @@
                 <select id="ens-lens-method">
                   <option value="colibri">Colibri (cryptographic verification)</option>
                   <option value="quorum">Public-RPC quorum</option>
-                  <option value="direct">Direct (single trusted endpoint)</option>
+                  <option value="direct">Direct RPC first (public-quorum fallback)</option>
                 </select>
               </div>
             </div>
@@ -1489,9 +1489,9 @@
         if (!methodSelect || !helpEl) return;
 
         const HELP = {
-          colibri: 'Each answer is cryptographically verified against the Ethereum sync committee via the Colibri prover.',
+          colibri: 'Each answer is cryptographically verified against the Ethereum sync committee via the Colibri prover. If the prover fails, Freedom falls back to the public-RPC quorum.',
           quorum: 'Several public RPCs are queried in parallel; only answers they agree on are trusted.',
-          direct: 'Resolved via a single trusted endpoint — no cross-checking or proof.',
+          direct: 'Uses the first trusted endpoint, then falls back to the public-RPC quorum if that endpoint fails.',
         };
 
         let proverId = 'colibri-corpus';  // prover endpoint-source id for chain 1
