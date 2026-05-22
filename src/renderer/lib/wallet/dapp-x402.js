@@ -45,6 +45,7 @@ let chooserEl;
 let chooserOptionsEl;
 let insufficientEl;
 let insufficientListEl;
+let insufficientFooterEl;
 let warningEl;
 let warningTextEl;
 let unlockBlock;
@@ -86,6 +87,7 @@ export function initDappX402() {
   chooserOptionsEl = document.getElementById('x402-approval-chooser-options');
   insufficientEl = document.getElementById('x402-approval-insufficient');
   insufficientListEl = document.getElementById('x402-approval-insufficient-list');
+  insufficientFooterEl = document.getElementById('x402-approval-insufficient-footer');
   warningEl = document.getElementById('x402-approval-warning');
   warningTextEl = document.getElementById('x402-approval-warning-text');
   unlockBlock = document.getElementById('x402-approval-unlock');
@@ -427,7 +429,9 @@ function hideChooser() {
 }
 
 // Render the "no fundable accepts" state. Replaces the detail rows;
-// lists every accepted asset + the wallet's current balance.
+// lists every accepted asset + the wallet's current balance. Footer
+// copy differs by accept count — "at least one of these" reads wrong
+// when there's only one option.
 function showInsufficientState(accepts) {
   detailsEl.classList.add('hidden');
   hideChooser();
@@ -443,6 +447,12 @@ function showInsufficientState(accepts) {
     `;
     insufficientListEl.appendChild(li);
   });
+
+  if (insufficientFooterEl) {
+    insufficientFooterEl.textContent = accepts.length > 1
+      ? 'Top up at least one of these to pay.'
+      : 'Top up to pay.';
+  }
 }
 
 // Recompute fundability for every displayed entry from a fresh-broadcast
@@ -757,10 +767,12 @@ export async function updateX402ConnectionBanner(originKey = null) {
   }
 }
 
-// Render the per-origin remaining-cap summary. When every active cap is
-// the same asset we can sum them and show "X SYMBOL left"; mixed assets
-// or missing token-registry metadata fall back to a generic count (the
-// detail subscreen breaks down per cap anyway).
+// Render the per-origin remaining-cap summary. Single asset → sum and
+// show "X SYMBOL left". Multi-asset → list each per-symbol remaining
+// joined with " + " (typical multi-accept case is 2 caps, fits the
+// banner width easily). Caps missing token-registry metadata
+// (unrecognised asset) get a generic per-cap entry so the count is
+// still surfaced even if we can't name the asset.
 async function formatRemainingSummary(perms) {
   // tokens:get-token returns an `{success, token}` envelope — unwrap it.
   const enriched = await Promise.all(
@@ -770,17 +782,28 @@ async function formatRemainingSummary(perms) {
     })
   );
 
-  const symbols = new Set(enriched.map((e) => e.asset?.symbol).filter(Boolean));
-  if (symbols.size === 1 && enriched[0].asset) {
-    const { asset } = enriched[0];
-    let remaining = 0n;
-    for (const { perm } of enriched) {
-      remaining += BigInt(perm.capAmount) - BigInt(perm.spentAmount);
-    }
+  // Aggregate remaining per symbol so two caps on the same asset
+  // (different chains, same symbol — e.g. USDC on Base + USDC on
+  // Ethereum) sum into one display entry rather than appearing twice.
+  const bySymbol = new Map();
+  for (const { perm, asset } of enriched) {
+    let remaining = BigInt(perm.capAmount) - BigInt(perm.spentAmount);
     if (remaining < 0n) remaining = 0n;
-    return `${formatRawTokenBalance(remaining.toString(), asset.decimals)} ${asset.symbol} left`;
+    const symbol = asset?.symbol ?? `chain ${perm.chainId}`;
+    const decimals = typeof asset?.decimals === 'number' ? asset.decimals : 0;
+    const existing = bySymbol.get(symbol);
+    if (existing) {
+      existing.remaining += remaining;
+    } else {
+      bySymbol.set(symbol, { remaining, decimals });
+    }
   }
-  return `${perms.length} cap${perms.length > 1 ? 's' : ''} active`;
+
+  const parts = [];
+  for (const [symbol, { remaining, decimals }] of bySymbol) {
+    parts.push(`${formatRawTokenBalance(remaining.toString(), decimals)} ${symbol}`);
+  }
+  return `${parts.join(' + ')} left`;
 }
 
 export async function disconnectX402(originKey) {
