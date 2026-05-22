@@ -15,6 +15,8 @@ const makeSessionMock = () => ({
     onBeforeRequest: jest.fn(),
     onBeforeSendHeaders: jest.fn(),
     onHeadersReceived: jest.fn(),
+    onCompleted: jest.fn(),
+    onErrorOccurred: jest.fn(),
   },
 });
 
@@ -29,18 +31,24 @@ describe('attachWebRequestDispatcher', () => {
     expect(session.webRequest.onBeforeRequest).not.toHaveBeenCalled();
     expect(session.webRequest.onBeforeSendHeaders).not.toHaveBeenCalled();
     expect(session.webRequest.onHeadersReceived).not.toHaveBeenCalled();
+    expect(session.webRequest.onCompleted).not.toHaveBeenCalled();
+    expect(session.webRequest.onErrorOccurred).not.toHaveBeenCalled();
   });
 
   test('attaches exactly one listener per event that has handlers', () => {
     registerWebRequestHandler('onBeforeRequest', 'a', () => null);
     registerWebRequestHandler('onBeforeRequest', 'b', () => null);
     registerWebRequestHandler('onHeadersReceived', 'c', () => null);
+    registerWebRequestHandler('onCompleted', 'd', () => null);
+    registerWebRequestHandler('onErrorOccurred', 'e', () => null);
 
     const session = makeSessionMock();
     attachWebRequestDispatcher(session);
 
     expect(session.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
     expect(session.webRequest.onHeadersReceived).toHaveBeenCalledTimes(1);
+    expect(session.webRequest.onCompleted).toHaveBeenCalledTimes(1);
+    expect(session.webRequest.onErrorOccurred).toHaveBeenCalledTimes(1);
     expect(session.webRequest.onBeforeSendHeaders).not.toHaveBeenCalled();
   });
 });
@@ -218,5 +226,67 @@ describe('onHeadersReceived dispatch', () => {
     });
     expect(result).toEqual({ redirectURL: 'freedom://x402-pay' });
     expect(after).not.toHaveBeenCalled();
+  });
+});
+
+// === Notification-only dispatch (onCompleted, onErrorOccurred) ===========
+
+describe.each([
+  ['onCompleted', 'onCompleted'],
+  ['onErrorOccurred', 'onErrorOccurred'],
+])('%s dispatch', (event, sessionMethod) => {
+  const drive = async (details) => {
+    const session = makeSessionMock();
+    attachWebRequestDispatcher(session);
+    const listener = session.webRequest[sessionMethod].mock.calls[0][0];
+    await listener(details);
+  };
+
+  test('invokes every registered handler in registration order (sync)', async () => {
+    const order = [];
+    registerWebRequestHandler(event, 'first', (details) => {
+      order.push(['first', details.id]);
+    });
+    registerWebRequestHandler(event, 'second', (details) => {
+      order.push(['second', details.id]);
+    });
+
+    await drive({ id: 42, url: 'https://example.com/' });
+    expect(order).toEqual([['first', 42], ['second', 42]]);
+  });
+
+  test('async handler does not gate the next handler (no await)', async () => {
+    // Notification-only: ordering between independent observers is
+    // meaningless. The second handler must run synchronously after
+    // the first, even if the first is async.
+    let secondRan = false;
+    registerWebRequestHandler(event, 'slow', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    registerWebRequestHandler(event, 'fast', () => {
+      secondRan = true;
+    });
+
+    await drive({ id: 1, url: 'https://example.com/' });
+    expect(secondRan).toBe(true);
+  });
+
+  test('ignores handler return values (no callback to chain into)', async () => {
+    registerWebRequestHandler(event, 'rogue', () => ({ cancel: true }));
+    const after = jest.fn();
+    registerWebRequestHandler(event, 'after', after);
+    await drive({ id: 1, url: 'https://example.com/' });
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  test('a throwing handler is logged; subsequent handlers still run', async () => {
+    registerWebRequestHandler(event, 'broken', () => {
+      throw new Error('boom');
+    });
+    const after = jest.fn();
+    registerWebRequestHandler(event, 'after', after);
+
+    await drive({ id: 1, url: 'https://example.com/' });
+    expect(after).toHaveBeenCalledTimes(1);
   });
 });

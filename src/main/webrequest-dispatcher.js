@@ -23,6 +23,11 @@
  *   for response headers + status line. A `cancel:true` or `redirectURL`
  *   short-circuits.
  *
+ * - `onCompleted` / `onErrorOccurred`: notification-only fan-out. Handlers
+ *   run in registration order; return values are ignored (Electron's
+ *   listener signature for these events has no callback). Useful for
+ *   per-request lifecycle cleanup (e.g. x402's request-context map).
+ *
  * Handlers may be async; the dispatcher awaits each before calling the
  * next, preserving the "first match wins" semantics across handler I/O.
  * Filtering is the handler's responsibility — the dispatcher attaches
@@ -35,18 +40,26 @@
 
 const log = require('./logger');
 
-const EVENTS = ['onBeforeRequest', 'onBeforeSendHeaders', 'onHeadersReceived'];
+const EVENTS = [
+  'onBeforeRequest',
+  'onBeforeSendHeaders',
+  'onHeadersReceived',
+  'onCompleted',
+  'onErrorOccurred',
+];
 
 const handlers = {
   onBeforeRequest: [],
   onBeforeSendHeaders: [],
   onHeadersReceived: [],
+  onCompleted: [],
+  onErrorOccurred: [],
 };
 
 /**
  * Register a handler for a webRequest event.
  *
- * @param {'onBeforeRequest'|'onBeforeSendHeaders'|'onHeadersReceived'} event
+ * @param {'onBeforeRequest'|'onBeforeSendHeaders'|'onHeadersReceived'|'onCompleted'|'onErrorOccurred'} event
  * @param {string} name - Identifier used for error logging; must be unique
  *   per event so re-registration is loud, not silent.
  * @param {(details: object) => null | undefined | object | Promise<null | undefined | object>} handler
@@ -110,6 +123,28 @@ function makeHeaderChainListener(eventHandlers, eventName, headersKey) {
   };
 }
 
+// Fan-out factory for notification-only events; see file header for
+// semantics. Synchronous on purpose: Electron's listener signature has
+// no callback, observers can't observe each other's results, and these
+// events fire on every request — awaiting each handler would allocate
+// a Promise per handler per request for no observable benefit. Sync
+// handlers stay on the synchronous stack; thenables get a fire-and-
+// forget `.catch` so async errors still surface.
+function makeNotificationListener(eventHandlers, eventName) {
+  return (details) => {
+    for (const { name, handler } of eventHandlers) {
+      try {
+        const result = handler(details);
+        if (result && typeof result.then === 'function') {
+          result.catch((err) => log.error(`[dispatcher:${name}] ${eventName} threw: ${err.message}`));
+        }
+      } catch (err) {
+        log.error(`[dispatcher:${name}] ${eventName} threw: ${err.message}`);
+      }
+    }
+  };
+}
+
 /**
  * Attach one Electron listener per registered event to the given session.
  *
@@ -130,6 +165,14 @@ function attachWebRequestDispatcher(session) {
   if (handlers.onHeadersReceived.length > 0) {
     session.webRequest.onHeadersReceived(
       makeHeaderChainListener(handlers.onHeadersReceived, 'onHeadersReceived', 'responseHeaders')
+    );
+  }
+  if (handlers.onCompleted.length > 0) {
+    session.webRequest.onCompleted(makeNotificationListener(handlers.onCompleted, 'onCompleted'));
+  }
+  if (handlers.onErrorOccurred.length > 0) {
+    session.webRequest.onErrorOccurred(
+      makeNotificationListener(handlers.onErrorOccurred, 'onErrorOccurred')
     );
   }
 }
