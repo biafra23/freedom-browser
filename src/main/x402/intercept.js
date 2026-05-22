@@ -1,29 +1,35 @@
 /**
  * x402 navigation interception — main-process plumbing.
  *
- * Two dispatcher handlers plus two state stores. No UI; the interstitial
- * + signing wiring lives in WP4.
+ * Dispatcher handlers + state stores. No UI; the interstitial + signing
+ * wiring lives in WP4.
  *
- *   `onHeadersReceived` (x402-detect)
- *     Detect `402` responses carrying a `PAYMENT-REQUIRED` header (V2)
- *     or `X-PAYMENT-REQUIRED` (V1-with-header). The base64-encoded JSON
- *     payload lands in `detectedPayments` keyed by `webContentsId` so a
- *     later interstitial wakeup can ask "what did the server want?"
+ *   `x402-capture` (onBeforeSendHeaders): records `{method, range}` per
+ *     `details.id` so the detector (which only sees response headers)
+ *     can derive a retry key for shape-keyed bucketing. Skipped for
+ *     non-x402 resource types (images/stylesheets/fonts/scripts).
  *
- *     V1 servers that ship payment requirements in the response *body*
- *     are not supported by this path — webRequest cannot read response
- *     bodies. Those servers fall through and the 402 page renders as-is;
- *     a `window.x402` capability in a later WP can serve in-page fetches
- *     where the body is visible.
+ *   `x402-cleanup` (onCompleted, onErrorOccurred): drops the captured
+ *     entry; a TTL backstop on `requestContext.set` covers lifecycle
+ *     events Electron silently drops.
  *
- *   `onBeforeSendHeaders` (x402-inject)
- *     When the interstitial has signed a `PaymentPayload` and the user is
- *     about to re-issue the original request, the signed header is
- *     stashed in `pendingPayments` keyed by `webContentsId|url`. The
- *     injector consumes the entry (one-shot) on the first matching
- *     request and attaches the right header for the protocol version.
+ *   `x402-detect` (onHeadersReceived): parses `PAYMENT-REQUIRED` /
+ *     `X-PAYMENT-REQUIRED` on 402 responses. V1 servers that ship the
+ *     payment requirements in the response *body* are not supported by
+ *     this path — webRequest cannot read response bodies.
  *
- * Both stores expose `clear*` helpers so tests can isolate state.
+ *   `x402-inject` (onBeforeSendHeaders): attaches the signed PAYMENT-
+ *     SIGNATURE / X-PAYMENT header to the followed retry. Re-derives
+ *     the retry key from the request's own headers (Chromium preserves
+ *     them across the 307); FIFO-shifts the matching bucket so
+ *     concurrent same-URL Range retries can't cross-feed.
+ *
+ *   `x402-receipt` (onHeadersReceived): logs settlement responses.
+ *     Keyed by `details.id` (stable inject → response), so receipt
+ *     attribution stays exact across concurrent retries; same id
+ *     serves the detector's loop guard (server-rejected retry).
+ *
+ * All stores expose `clear*` helpers for test isolation.
  */
 
 const { webContents } = require('electron');
@@ -85,24 +91,47 @@ function outgoingHeaderForVersion(version) {
 // typical Chromium navigation: one 402 → one interstitial → one approval.
 const detectedPayments = new Map();
 
-// "User approved; here's the signed header ready to inject." Keyed by
-// `webContentsId|url` so re-issuing the *exact* original URL on the
-// *same* tab triggers the one-shot injection. Cross-tab key separation
-// prevents two tabs pointed at the same paywalled URL from cross-feeding.
+// Signed headers waiting to attach to a followed retry. Keyed by request
+// shape: `${webContentsId}|${method}|${url}|${range ?? ''}`. FIFO buckets
+// so two concurrent same-URL requests with different Range headers each
+// pick up their own signature. Value: signed[].
 const pendingPayments = new Map();
 
-// "We just injected a payment for this (tab, url) and expect a settlement
-// response on the matching response." The receipt logger short-circuits
-// to a Map.has check for the 99.99% of responses that aren't settlement
-// responses, instead of iterating headers looking for the PAYMENT-RESPONSE
-// name on every subresource fetch. Also tightens security: we only treat
-// PAYMENT-RESPONSE headers from our own injected requests, never arbitrary
-// server-side headers.
-//
-// The value is the receipt context — origin / chainId / asset / amount —
-// that flows from approve through inject so the receipt the logger writes
-// has everything the Payments tab needs to render.
+// Receipt context for a specific in-flight signed request. Keyed by the
+// followed request's `details.id` — stable through to the response, so
+// receipt attribution is exact even when multiple same-URL retries are
+// in flight. The `awaitingResponse.has(details.id)` check on every
+// response is the fast-path miss for the 99.99% of responses that aren't
+// settlement responses (no header iteration needed). It also tightens
+// security: PAYMENT-RESPONSE headers are only honoured for requests we
+// armed ourselves, never arbitrary server-side headers.
 const awaitingResponse = new Map();
+
+// Captured outgoing request shape, keyed by `details.id`. The detector
+// on `onHeadersReceived` reads this to derive a retry key — the response
+// event doesn't carry request headers. Cleared on lifecycle end; TTL on
+// `set()` backstops lifecycle events Electron drops (SW shims, proxy
+// chains). Capture is skipped for non-x402 resource types to keep the
+// map's working set small. Value: { webContentsId, method, range,
+// capturedAt }.
+const requestContext = new Map();
+const REQUEST_CONTEXT_TTL_MS = 60_000;
+// Amortize the lazy TTL sweep so a busy session doesn't pay an O(n)
+// scan on every captured request. One sweep per second is plenty given
+// the TTL is 60s.
+const REQUEST_CONTEXT_SWEEP_INTERVAL_MS = 1000;
+let requestContextLastSweepAt = 0;
+
+// Resource types where the browser issues high-volume requests that
+// will never be x402-paywalled (image galleries, CSS, web fonts). The
+// capture handler runs on every request, so skipping these cuts the
+// per-request cost and bounds `requestContext`'s working set.
+const X402_IRRELEVANT_RESOURCE_TYPES = new Set([
+  'image',
+  'stylesheet',
+  'font',
+  'script',
+]);
 
 // "Auto-pay tried to sign but the vault was locked; the user will unlock
 // via the sidebar and the dedicated x402:resume-unlock IPC will fire to
@@ -144,8 +173,13 @@ const pendingApprovals = new Map();
 // user unlocks.
 const pendingUnlockWaits = new Map();
 
-function pendingKey(webContentsId, url) {
-  return `${webContentsId ?? ''}|${url}`;
+// Retry key bridges the original 402-bearing request and the followed
+// retry: same (tab, method, URL, range) → same FIFO bucket. Empty-string
+// fallbacks keep the key shape stable so identical requests collapse
+// rather than spraying across `undefined`-laden keys. Assumes `url` does
+// not contain a literal `|`; Chromium percent-encodes pipes in URLs.
+function computeRetryKey({ webContentsId, method, url, range }) {
+  return `${webContentsId ?? ''}|${method ?? 'GET'}|${url}|${range ?? ''}`;
 }
 
 // Pending signatures expire after `PENDING_TTL_MS`. EIP-3009 carries its
@@ -158,23 +192,24 @@ function pendingKey(webContentsId, url) {
 const PENDING_TTL_MS = 60_000;
 
 /**
- * Stash a signed PAYMENT-SIGNATURE / X-PAYMENT header for the dispatcher
- * to attach on the matching retry. One-shot — consumed by the first
- * matching request to `(webContentsId, url)` or dropped past `expiresAt`.
+ * Stash a signed header for the dispatcher to attach on the matching
+ * retry. Pushed to a FIFO bucket keyed by request shape; the injector
+ * shifts the bucket on the first matching request.
  *
- * `signed.header` + `signed.value` are validated strictly — a typo there
- * would silently fail the payment. Receipt-context fields (`origin`,
- * `chainId`, `asset`, `amount`, `payTo`, `fromAddress`) ride along
- * untouched; the injector copies them into the receipt context, and the
- * receipts module validates its own input, so this validator stays
- * focused on the bytes that actually go on the wire. Callers are trusted
- * in-process code (only `sign-flow.js`).
+ * Validates `header` + `value` strictly — typos would silently fail the
+ * payment. Receipt-context fields (`origin`, `chainId`, `asset`,
+ * `amount`, `payTo`, `fromAddress`) ride along to the injector and from
+ * there into the receipt; the receipts module validates its own input.
  *
  * `authorizedBy` distinguishes the consent source for the inject-time
- * cap-consume gate; see `AUTHORIZED_BY`. Cap-authorized signatures
- * MUST NOT be attached if `tryConsume` fails at inject (race-over);
- * manual ones proceed regardless. Undefined is treated as MANUAL for
- * backward-compat with callers that predate the field.
+ * cap-consume gate; see `AUTHORIZED_BY`. Cap signatures MUST NOT attach
+ * if `tryConsume` fails at inject (race-over); manual ones proceed
+ * regardless. Undefined → MANUAL for backward-compat.
+ *
+ * `requestShape` defaults to `{ method: 'GET', range: null }` —
+ * preserves no-Range behaviour for callers that predate request-shape
+ * keying. Sign-flow passes the captured shape so concurrent Range
+ * requests bucket correctly.
  *
  * @param {number} webContentsId
  * @param {string} url
@@ -185,8 +220,9 @@ const PENDING_TTL_MS = 60_000;
  *   origin?: string, chainId?: number, asset?: string, amount?: string,
  *   payTo?: string, fromAddress?: string,
  * }} signed
+ * @param {{ method?: string, range?: string | null }} [requestShape]
  */
-function setPendingPayment(webContentsId, url, signed) {
+function setPendingPayment(webContentsId, url, signed, requestShape) {
   if (!signed || !VALID_SIGNATURE_HEADERS.has(signed.header)) {
     throw new Error(`x402: invalid pending-payment header: ${signed?.header}`);
   }
@@ -194,18 +230,24 @@ function setPendingPayment(webContentsId, url, signed) {
     throw new Error('x402: pending-payment value must be a non-empty string');
   }
   const now = Date.now();
-  // Lazy sweep — naive pages that never retry would otherwise leave
-  // entries stranded until tab destruction. Fires only when we're
-  // already touching the Map, so no timer lifecycle to manage.
-  for (const [k, entry] of pendingPayments) {
-    if (entry.expiresAt && now > entry.expiresAt) {
-      pendingPayments.delete(k);
+  // Lazy sweep: pages that never retry would otherwise leave entries
+  // stranded. Fires only when this Map is already being touched, so no
+  // timer to manage.
+  for (const [k, bucket] of pendingPayments) {
+    while (bucket.length > 0 && bucket[0].expiresAt && now > bucket[0].expiresAt) {
+      bucket.shift();
     }
+    if (bucket.length === 0) pendingPayments.delete(k);
   }
-  pendingPayments.set(pendingKey(webContentsId, url), {
-    ...signed,
-    expiresAt: now + PENDING_TTL_MS,
+  const key = computeRetryKey({
+    webContentsId,
+    method: requestShape?.method,
+    url,
+    range: requestShape?.range,
   });
+  const bucket = pendingPayments.get(key) ?? [];
+  bucket.push({ ...signed, expiresAt: now + PENDING_TTL_MS });
+  pendingPayments.set(key, bucket);
 }
 
 function getDetectedPayment(webContentsId) {
@@ -226,6 +268,50 @@ function clearAllDetectedPayments() {
 
 function clearAllAwaitingResponse() {
   awaitingResponse.clear();
+}
+
+function clearAllRequestContext() {
+  requestContext.clear();
+  requestContextLastSweepAt = 0;
+}
+
+// Capture outgoing request shape so the detector (which gets only
+// response headers) can derive the same retry key the injector will
+// compute on the followed retry. Runs on every request — must stay
+// cheap. Range is the only discriminator we track today; add others
+// (Accept, Origin, custom headers) when a real endpoint demands it.
+function captureRequestContextHandler(details) {
+  if (typeof details?.id !== 'number') return null;
+  // Skip resource types that never receive x402 paywalls. Galleries,
+  // CSS-heavy SPAs, and font-laden sites would otherwise flood the
+  // map for no benefit.
+  if (X402_IRRELEVANT_RESOURCE_TYPES.has(details.resourceType)) return null;
+  const now = Date.now();
+  // Amortized lazy TTL sweep. The lifecycle handlers do the bulk of
+  // the cleanup; this scan is a backstop for events Electron drops
+  // (SW shims, proxy chains).
+  if (now - requestContextLastSweepAt > REQUEST_CONTEXT_SWEEP_INTERVAL_MS) {
+    requestContextLastSweepAt = now;
+    for (const [id, entry] of requestContext) {
+      if (now - entry.capturedAt > REQUEST_CONTEXT_TTL_MS) {
+        requestContext.delete(id);
+      }
+    }
+  }
+  requestContext.set(details.id, {
+    webContentsId: details.webContentsId,
+    method: details.method ?? 'GET',
+    range: getHeaderValue(details.requestHeaders, 'Range'),
+    capturedAt: now,
+  });
+  return null;
+}
+
+function clearRequestContextHandler(details) {
+  if (typeof details?.id === 'number') {
+    requestContext.delete(details.id);
+  }
+  return null;
 }
 
 /**
@@ -381,35 +467,38 @@ function clearAllPendingApprovals() {
  * that hits a 402 (or gets an interstitial-approved pending payment) and
  * then closes leaks one Map entry per such tab over the session.
  */
+// For Maps whose VALUES carry `webContentsId` (awaitingResponse,
+// requestContext — keys are numeric details.id). Snapshot before mutating;
+// V8's Map iteration is safe under delete but the snapshot keeps the
+// invariant explicit.
+function deleteByWebContents(map, webContentsId) {
+  for (const [k, entry] of [...map]) {
+    if (entry?.webContentsId === webContentsId) map.delete(k);
+  }
+}
+
 function cleanupWebContents(webContentsId) {
   detectedPayments.delete(webContentsId);
   pendingUnlockResume.delete(webContentsId);
-  // Abort any in-flight approval awaits for this tab — without this the
-  // detector's `await` would hang forever and the dispatcher's
-  // onHeadersReceived callback would never release.
+  // Abort any in-flight awaits for this tab — without this the detector
+  // would hang forever and dispatcher callbacks would never release.
   abortPendingApprovalsForTab(webContentsId, new Error('tab destroyed'));
   abortPendingUnlockWait(webContentsId, new Error('tab destroyed'));
+  // `pendingPayments` keys start with `${webContentsId}|` (the retry-key
+  // format), so prefix match drops them in one pass.
   const prefix = `${webContentsId}|`;
-  // Snapshot keys before mutating — Map iteration is safe under delete in
-  // V8 today but the snapshot keeps the invariant explicit.
   for (const key of [...pendingPayments.keys()]) {
-    if (key.startsWith(prefix)) {
-      pendingPayments.delete(key);
-    }
+    if (key.startsWith(prefix)) pendingPayments.delete(key);
   }
-  for (const key of [...awaitingResponse.keys()]) {
-    if (key.startsWith(prefix)) {
-      awaitingResponse.delete(key);
-    }
-  }
+  deleteByWebContents(awaitingResponse, webContentsId);
+  deleteByWebContents(requestContext, webContentsId);
 }
 
 // === Header parsing ======================================================
 
-// Electron's responseHeaders dict is `{ HeaderName: ['value', ...] }`
-// with arbitrary casing — the same server can return `Payment-Required`
-// or `PAYMENT-REQUIRED`. Match case-insensitively, return the first
-// value.
+// Electron's response headers come as `{ Name: ['value', ...] }` and
+// request headers as `{ Name: 'value' }`, both with arbitrary casing.
+// Match case-insensitively, return the first value, handle either shape.
 function getHeaderValue(headers, name) {
   if (!headers) return null;
   const target = name.toLowerCase();
@@ -560,6 +649,15 @@ async function detectPaymentRequiredHandler(details) {
     return null;
   }
 
+  // Retry-key shape used by sign-flow → setPendingPayment. Missing
+  // capture falls back to a synthetic shape — covers SW-originated
+  // requests, proxy chains, and tests driving the detector directly.
+  const captured = requestContext.get(details.id);
+  const requestShape = {
+    method: captured?.method ?? details.method ?? 'GET',
+    range: captured?.range ?? null,
+  };
+
   // The data's own x402Version field is the canonical protocol version
   // (zod's discriminated union routed parsing through V1 or V2 already).
   // The header name we found it under is correlated but redundant.
@@ -572,23 +670,18 @@ async function detectPaymentRequiredHandler(details) {
     url: details.url,
     requirements,
     resourceType: details.resourceType,
+    requestShape,
     detectedAt: Date.now(),
   });
   log.info(
     `[x402:detect] v${requirements.x402Version} payment required for ${sanitizeUrlForLog(details.url)}`
   );
 
-  // Loop guard: if `awaitingResponse` is armed for this (id, url), a
-  // request we already signed is the one that just 402'd — the server
-  // rejected our signature (broken facilitator, wrong wallet, expired
-  // authorization, ...). This sits ABOVE the cap-coverage check on
-  // purpose: if the rejected attempt consumed the last of the cap,
-  // re-evaluating coverage would say "no cap" and fall into the
-  // approval-card flow, prompting the user to re-authorise a charge we
-  // already know the server is refusing. Pass through; the receipt
-  // handler runs next, sees the failed signed attempt, and writes a
-  // `failed` row the user can see.
-  if (awaitingResponse.has(pendingKey(details.webContentsId, details.url))) {
+  // Loop guard: 402 on a `details.id` we already armed means the server
+  // rejected our signed retry — pass through, let the receipt handler
+  // log a `failed` row. Sits ABOVE the cap-coverage check so a depleted
+  // cap doesn't push a known-rejected charge into the approval flow.
+  if (awaitingResponse.has(details.id)) {
     log.warn(
       `[x402:detect] 402 on a request we already signed (server rejected); ` +
       `not re-signing ${sanitizeUrlForLog(details.url)}`
@@ -639,6 +732,7 @@ async function detectPaymentRequiredHandler(details) {
       requirements,
       resourceType: details.resourceType,
       selectedAccept: covering.accept,
+      requestShape,
     };
 
     if (details.resourceType !== 'mainFrame') {
@@ -834,10 +928,11 @@ async function detectPaymentRequiredHandler(details) {
 // subresource fetch — the Map.has check is the fast-path miss for
 // 99.99% of responses.
 function paymentResponseLoggingHandler(details) {
-  const key = pendingKey(details.webContentsId, details.url);
-  const expected = awaitingResponse.get(key);
+  // Keyed by `details.id` — armed by the injector; matches on the
+  // response side without ambiguity across concurrent retries.
+  const expected = awaitingResponse.get(details.id);
   if (!expected) return null;
-  awaitingResponse.delete(key);
+  awaitingResponse.delete(details.id);
 
   const success = isStatus2xx(details.statusLine);
   let txHash = null;
@@ -917,37 +1012,41 @@ function consumeOrWithhold(signed, urlForLog) {
 }
 
 function injectPaymentSignatureHandler(details) {
-  const key = pendingKey(details.webContentsId, details.url);
-  const signed = pendingPayments.get(key);
-  if (!signed) return null;
+  // Re-derive the retry key from THIS request's headers. Chromium
+  // preserves them across the same-origin 307, so method + URL + Range
+  // match what the detector computed and stashed.
+  const key = computeRetryKey({
+    webContentsId: details.webContentsId,
+    method: details.method,
+    url: details.url,
+    range: getHeaderValue(details.requestHeaders, 'Range'),
+  });
+  const bucket = pendingPayments.get(key);
+  if (!bucket || bucket.length === 0) return null;
 
-  // Drop stale entries. The signed EIP-3009 authorisation has its own
-  // validAfter/validBefore window — the facilitator would reject a stale
-  // signature anyway — but we don't even want to attach it.
+  const signed = bucket.shift();
+  if (bucket.length === 0) pendingPayments.delete(key);
+
+  // EIP-3009 carries its own validAfter/validBefore; facilitator would
+  // reject a stale signature, but don't even attach it.
   if (signed.expiresAt && Date.now() > signed.expiresAt) {
-    pendingPayments.delete(key);
     log.warn(`[x402:inject] pending signature expired for ${sanitizeUrlForLog(details.url)}; dropping`);
     return null;
   }
 
   const { withhold, consumed } = consumeOrWithhold(signed, sanitizeUrlForLog(details.url));
-  if (withhold) {
-    pendingPayments.delete(key); // one-shot even on withhold
-    return null;
-  }
+  if (withhold) return null; // one-shot drop already happened via shift()
 
-  pendingPayments.delete(key); // one-shot on the happy path
-  // Silent auto-pay doesn't round-trip through the renderer, so the
-  // sidebar banner's spend counter would stay stale until the next
-  // navigation. Origin lets the renderer skip the IPC when the event
-  // belongs to a different tab from the one whose banner is showing.
+  // Silent auto-pay doesn't round-trip through the renderer; without
+  // this event the sidebar banner's spend counter stays stale until the
+  // next navigation. Origin lets the renderer filter by tab.
   if (consumed) {
     sendToHost(details.webContentsId, 'x402:cap-consumed', { origin: signed.origin });
   }
-  // Arm the receipt logger so it knows to look at THIS response for the
-  // PAYMENT-RESPONSE settlement. `signedHeader` lets the receipt logger
-  // pick the V1 vs V2 settlement header.
-  awaitingResponse.set(key, {
+  // Arm the receipt logger by `details.id` — stable through to the
+  // matching response. `webContentsId` rides along for cleanup-by-tab.
+  awaitingResponse.set(details.id, {
+    webContentsId: details.webContentsId,
     url: details.url,
     origin: signed.origin,
     chainId: signed.chainId,
@@ -972,9 +1071,17 @@ function injectPaymentSignatureHandler(details) {
 // === Installation ========================================================
 
 function installX402Interception() {
+  // Capture runs alongside inject on onBeforeSendHeaders; the consumer
+  // (the detector on onHeadersReceived) doesn't read until the response
+  // round-trips, so their relative order on the chain is irrelevant.
+  // Capture is read-only and returns null — it does not interfere with
+  // the inject handler that runs next.
+  registerWebRequestHandler('onBeforeSendHeaders', 'x402-capture', captureRequestContextHandler);
+  registerWebRequestHandler('onBeforeSendHeaders', 'x402-inject', injectPaymentSignatureHandler);
   registerWebRequestHandler('onHeadersReceived', 'x402-detect', detectPaymentRequiredHandler);
   registerWebRequestHandler('onHeadersReceived', 'x402-receipt', paymentResponseLoggingHandler);
-  registerWebRequestHandler('onBeforeSendHeaders', 'x402-inject', injectPaymentSignatureHandler);
+  registerWebRequestHandler('onCompleted', 'x402-cleanup', clearRequestContextHandler);
+  registerWebRequestHandler('onErrorOccurred', 'x402-cleanup', clearRequestContextHandler);
 }
 
 module.exports = {
@@ -983,6 +1090,8 @@ module.exports = {
   sendToHost,
   outgoingHeaderForVersion,
   installX402Interception,
+  captureRequestContextHandler,
+  clearRequestContextHandler,
   detectPaymentRequiredHandler,
   injectPaymentSignatureHandler,
   paymentResponseLoggingHandler,
@@ -993,6 +1102,7 @@ module.exports = {
   clearAllPendingPayments,
   clearAllDetectedPayments,
   clearAllAwaitingResponse,
+  clearAllRequestContext,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
   setPendingUnlockWait,

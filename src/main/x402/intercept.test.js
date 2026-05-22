@@ -45,6 +45,8 @@ const { VAULT_LOCKED_MESSAGE } = require('../wallet/vault-errors');
 const {
   X402_HEADERS,
   installX402Interception,
+  captureRequestContextHandler,
+  clearRequestContextHandler,
   detectPaymentRequiredHandler,
   injectPaymentSignatureHandler,
   paymentResponseLoggingHandler,
@@ -55,6 +57,7 @@ const {
   clearAllPendingPayments,
   clearAllDetectedPayments,
   clearAllAwaitingResponse,
+  clearAllRequestContext,
   consumePendingUnlockResume,
   clearAllPendingUnlockResume,
   hasPendingUnlockWait,
@@ -80,6 +83,7 @@ beforeEach(() => {
   clearAllPendingPayments();
   clearAllDetectedPayments();
   clearAllAwaitingResponse();
+  clearAllRequestContext();
   clearAllPendingUnlockResume();
   clearAllPendingUnlockWaits();
   clearAllPendingApprovals();
@@ -1106,6 +1110,446 @@ describe('injectPaymentSignatureHandler', () => {
   });
 });
 
+// === Request-shape keying (concurrent Range, FIFO buckets, loop guard) ===
+//
+// Tests bridging-state behaviour added in WP-Range.2: pendingPayments
+// keyed by request shape, awaitingResponse keyed by followed-request id.
+
+describe('request-shape retry keying', () => {
+  test('two concurrent Range requests on the same URL each get their own signature (no swap)', () => {
+    // Detector saw two 402s for the same URL with different Range
+    // headers — sign-flow stashes each under the matching retry key.
+    setPendingPayment(7, 'https://x.example/media', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-bytes-0-99',
+      origin: 'https://x.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+    }, { method: 'GET', range: 'bytes=0-99' });
+    setPendingPayment(7, 'https://x.example/media', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-bytes-100-199',
+      origin: 'https://x.example',
+      chainId: 8453,
+      asset: '0xabc',
+      amount: '10000',
+    }, { method: 'GET', range: 'bytes=100-199' });
+
+    // Followed request for bytes=100-199 gets the bytes=100-199 sig —
+    // not the bytes=0-99 one that was queued first.
+    const r1 = injectPaymentSignatureHandler({
+      id: 101,
+      webContentsId: 7,
+      url: 'https://x.example/media',
+      requestHeaders: { Range: 'bytes=100-199' },
+    });
+    expect(r1.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig-bytes-100-199');
+
+    // And the other followed request gets the other sig.
+    const r2 = injectPaymentSignatureHandler({
+      id: 102,
+      webContentsId: 7,
+      url: 'https://x.example/media',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    expect(r2.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig-bytes-0-99');
+  });
+
+  test('identical-shape requests share a FIFO bucket — first in, first out', () => {
+    // Two truly indistinguishable requests (same URL, same Range). Each
+    // gets a signature in the order it was queued.
+    setPendingPayment(7, 'https://x.example/dup', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-first',
+    });
+    setPendingPayment(7, 'https://x.example/dup', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-second',
+    });
+
+    const r1 = injectPaymentSignatureHandler({
+      id: 201,
+      webContentsId: 7,
+      url: 'https://x.example/dup',
+      requestHeaders: {},
+    });
+    const r2 = injectPaymentSignatureHandler({
+      id: 202,
+      webContentsId: 7,
+      url: 'https://x.example/dup',
+      requestHeaders: {},
+    });
+    const r3 = injectPaymentSignatureHandler({
+      id: 203,
+      webContentsId: 7,
+      url: 'https://x.example/dup',
+      requestHeaders: {},
+    });
+
+    expect(r1.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig-first');
+    expect(r2.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig-second');
+    // Bucket empty — third request passes through unsigned.
+    expect(r3).toBeNull();
+  });
+
+  test('different webContents IDs never share a bucket even with identical URL+Range', () => {
+    setPendingPayment(7, 'https://x.example/v', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-tab-7',
+    }, { range: 'bytes=0-99' });
+    setPendingPayment(9, 'https://x.example/v', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-tab-9',
+    }, { range: 'bytes=0-99' });
+
+    const r7 = injectPaymentSignatureHandler({
+      id: 301, webContentsId: 7, url: 'https://x.example/v',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    const r9 = injectPaymentSignatureHandler({
+      id: 302, webContentsId: 9, url: 'https://x.example/v',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    expect(r7.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig-tab-7');
+    expect(r9.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig-tab-9');
+  });
+
+  test('Range header lookup is case-insensitive (matches getHeaderValue)', () => {
+    // Servers and clients can spell Range with arbitrary casing; the
+    // bridging key has to normalize.
+    setPendingPayment(7, 'https://x.example/m', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+    }, { range: 'bytes=0-99' });
+    // Chromium might emit `range` lowercase; either casing must match.
+    const result = injectPaymentSignatureHandler({
+      id: 400,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      requestHeaders: { range: 'bytes=0-99' },
+    });
+    expect(result?.requestHeaders['PAYMENT-SIGNATURE']).toBe('sig');
+  });
+
+  test('a request with no Range never shares a bucket with a Range-tagged signature', () => {
+    // Defensive: queue a Range-tagged sig; a non-Range request for the
+    // same URL must not pick it up.
+    setPendingPayment(7, 'https://x.example/m', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'range-sig',
+    }, { range: 'bytes=0-99' });
+
+    const r = injectPaymentSignatureHandler({
+      id: 500, webContentsId: 7, url: 'https://x.example/m',
+      requestHeaders: {},
+    });
+    expect(r).toBeNull();
+  });
+
+  test('awaitingResponse is keyed by followed-request id (not url) so concurrent retries attribute correctly', () => {
+    // Arm two awaitingResponse entries from two distinct inject calls.
+    setPendingPayment(7, 'https://x.example/media', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-A',
+      origin: 'https://x.example', chainId: 8453,
+      asset: '0xabc', amount: '10000',
+    }, { range: 'bytes=0-99' });
+    setPendingPayment(7, 'https://x.example/media', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig-B',
+      origin: 'https://x.example', chainId: 8453,
+      asset: '0xdef', amount: '20000',
+    }, { range: 'bytes=100-199' });
+
+    injectPaymentSignatureHandler({
+      id: 601, webContentsId: 7, url: 'https://x.example/media',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    injectPaymentSignatureHandler({
+      id: 602, webContentsId: 7, url: 'https://x.example/media',
+      requestHeaders: { Range: 'bytes=100-199' },
+    });
+
+    // Two distinct receipts get logged, each tagged with the right amount.
+    const responseB64 = Buffer.from(JSON.stringify({ txHash: '0xtx', success: true })).toString('base64');
+    paymentResponseLoggingHandler({
+      id: 601, webContentsId: 7, url: 'https://x.example/media',
+      statusLine: 'HTTP/1.1 206 Partial Content',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    paymentResponseLoggingHandler({
+      id: 602, webContentsId: 7, url: 'https://x.example/media',
+      statusLine: 'HTTP/1.1 206 Partial Content',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(2);
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({ amount: '10000' }));
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({ amount: '20000' }));
+  });
+
+  test('loop guard fires by followed-request id (not url)', async () => {
+    // Set up "already signed" state for id=701; a 402 on id=701 must NOT
+    // re-sign even though the URL is the same.
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2, value: 'sig',
+      origin: 'https://api.example', chainId: 8453,
+      asset: '0xabc', amount: '10000', authorizedBy: 'cap',
+    });
+    injectPaymentSignatureHandler({
+      id: 701, webContentsId: 7, url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+
+    // Cap still covers; without the id-based loop guard the detector
+    // would re-sign.
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '10000',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    const result = await detectPaymentRequiredHandler({
+      id: 701,
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+      resourceType: 'xhr',
+    });
+    expect(result).toBeNull();
+    expect(mockSignAndQueueRetry).not.toHaveBeenCalled();
+  });
+
+  test('loop guard does NOT fire when a NEW request id 402s the same URL (a different request shape on the wire)', async () => {
+    // First-signed (id=801) already in awaitingResponse from inject.
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2, value: 'sig',
+      origin: 'https://api.example', chainId: 8453,
+      asset: '0xabc', amount: '10000', authorizedBy: 'cap',
+    });
+    injectPaymentSignatureHandler({
+      id: 801, webContentsId: 7, url: 'https://api.example/article',
+      requestHeaders: {},
+    });
+
+    // A SECOND request to the same URL (different id) 402s. Loop guard
+    // shouldn't fire — this is a fresh request, not a rejected retry.
+    mockGetPermission.mockReturnValueOnce({
+      capAmount: '20000', spentAmount: '10000',
+      createdAt: 1, expiresAt: 9999999999,
+    });
+    const result = await detectPaymentRequiredHandler({
+      id: 802,
+      webContentsId: 7,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+      resourceType: 'xhr',
+    });
+    // Cap-covered auto-pay branch fires.
+    expect(result).toEqual({
+      statusLine: 'HTTP/1.1 307 Temporary Redirect',
+      responseHeaders: { Location: ['https://api.example/article'] },
+    });
+    expect(mockSignAndQueueRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+// === requestContext capture + cleanup ====================================
+
+describe('captureRequestContextHandler', () => {
+  test('stores method + url + range + webContentsId keyed by details.id', () => {
+    captureRequestContextHandler({
+      id: 900,
+      webContentsId: 7,
+      method: 'GET',
+      url: 'https://x.example/m',
+      requestHeaders: { Range: 'bytes=0-99' },
+      resourceType: 'media',
+    });
+    // Verify via the detector's downstream consumer — feed a 402 with
+    // the same id and assert requestShape rides into the detection.
+    detectPaymentRequiredHandler({
+      id: 900,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+      resourceType: 'media',
+    });
+    expect(getDetectedPayment(7)?.requestShape).toEqual({
+      method: 'GET',
+      range: 'bytes=0-99',
+    });
+  });
+
+  test('synthetic fallback when capture did not run (e.g. SW request or test driving the detector directly)', async () => {
+    // No prior capture for id=901. Detection falls back to synthetic shape.
+    await detectPaymentRequiredHandler({
+      id: 901,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      method: 'POST',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    });
+    expect(getDetectedPayment(7)?.requestShape).toEqual({
+      method: 'POST',
+      range: null,
+    });
+  });
+
+  test('skips capture for non-x402 resource types (image, stylesheet, font, script) to bound the working set', async () => {
+    // These resource types will never receive an x402 paywall in
+    // practice — pages with image galleries / CSS sprites / web fonts
+    // would otherwise flood `requestContext`.
+    for (const resourceType of ['image', 'stylesheet', 'font', 'script']) {
+      captureRequestContextHandler({
+        id: 800 + resourceType.length, // distinct ids per type
+        webContentsId: 7,
+        method: 'GET',
+        url: `https://x.example/${resourceType}`,
+        requestHeaders: { Range: 'bytes=0-99' },
+        resourceType,
+      });
+    }
+    // None of these captures landed. A detection with the same id falls
+    // back to synthetic shape.
+    await detectPaymentRequiredHandler({
+      id: 800 + 'image'.length,
+      webContentsId: 7,
+      url: 'https://x.example/image',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    });
+    expect(getDetectedPayment(7)?.requestShape).toEqual({
+      method: 'GET',
+      range: null,
+    });
+  });
+
+  test('Range header case-insensitive on capture (lowercase from Chromium / proxies)', () => {
+    captureRequestContextHandler({
+      id: 902,
+      webContentsId: 7,
+      method: 'GET',
+      url: 'https://x.example/m',
+      requestHeaders: { range: 'bytes=0-99' },
+    });
+    detectPaymentRequiredHandler({
+      id: 902,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    });
+    expect(getDetectedPayment(7)?.requestShape).toEqual({
+      method: 'GET',
+      range: 'bytes=0-99',
+    });
+  });
+});
+
+describe('clearRequestContextHandler', () => {
+  test('drops the requestContext entry for the given details.id', async () => {
+    captureRequestContextHandler({
+      id: 1000,
+      webContentsId: 7,
+      method: 'GET',
+      url: 'https://x.example/m',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    clearRequestContextHandler({ id: 1000 });
+
+    // A subsequent 402 with the same id finds no captured context →
+    // synthetic fallback kicks in.
+    await detectPaymentRequiredHandler({
+      id: 1000,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    });
+    expect(getDetectedPayment(7)?.requestShape).toEqual({
+      method: 'GET',
+      range: null,
+    });
+  });
+
+  test('TTL backstop: capture sweeps entries past TTL on each set()', () => {
+    captureRequestContextHandler({
+      id: 1100,
+      webContentsId: 7,
+      method: 'GET',
+      url: 'https://x.example/old',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    // Jump past the 60s TTL.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 61_000;
+    try {
+      captureRequestContextHandler({
+        id: 1101,
+        webContentsId: 7,
+        method: 'GET',
+        url: 'https://x.example/new',
+        requestHeaders: {},
+      });
+      // Old entry was swept. Detection on id=1100 falls back to synthetic.
+      detectPaymentRequiredHandler({
+        id: 1100,
+        webContentsId: 7,
+        url: 'https://x.example/old',
+        statusLine: 'HTTP/1.1 402 Payment Required',
+        responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+      });
+      expect(getDetectedPayment(7)?.requestShape).toEqual({
+        method: 'GET',
+        range: null,
+      });
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test('cleanupWebContents drops this tab\'s requestContext entries (without touching other tabs)', () => {
+    captureRequestContextHandler({
+      id: 1200, webContentsId: 7, method: 'GET',
+      url: 'https://x.example/a',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+    captureRequestContextHandler({
+      id: 1201, webContentsId: 9, method: 'GET',
+      url: 'https://x.example/b',
+      requestHeaders: { Range: 'bytes=0-99' },
+    });
+
+    cleanupWebContents(7);
+
+    // Tab 7's entry is gone; tab 9's survives. Verify via the detector.
+    detectPaymentRequiredHandler({
+      id: 1200, webContentsId: 7,
+      url: 'https://x.example/a',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    });
+    expect(getDetectedPayment(7)?.requestShape).toEqual({
+      method: 'GET',
+      range: null, // synthetic — captured shape was cleaned up
+    });
+
+    detectPaymentRequiredHandler({
+      id: 1201, webContentsId: 9,
+      url: 'https://x.example/b',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      responseHeaders: { 'PAYMENT-REQUIRED': [sampleRequirementsB64] },
+    });
+    expect(getDetectedPayment(9)?.requestShape).toEqual({
+      method: 'GET',
+      range: 'bytes=0-99', // captured shape preserved
+    });
+  });
+});
+
 // === cleanupWebContents ==================================================
 
 describe('cleanupWebContents', () => {
@@ -1152,6 +1596,45 @@ describe('cleanupWebContents', () => {
       requestHeaders: {},
     })).not.toBeNull();
   });
+
+  test('drops only the closed tab\'s in-flight awaitingResponse entries (keyed by request id, value-tagged with webContentsId)', () => {
+    // Arm two in-flight entries from two tabs.
+    setPendingPayment(7, 'https://x.example/a', {
+      header: X402_HEADERS.SIGNATURE_V2, value: 'sig-7',
+      origin: 'https://x.example', chainId: 8453, asset: '0xa', amount: '1',
+    });
+    setPendingPayment(8, 'https://x.example/a', {
+      header: X402_HEADERS.SIGNATURE_V2, value: 'sig-8',
+      origin: 'https://x.example', chainId: 8453, asset: '0xa', amount: '1',
+    });
+    injectPaymentSignatureHandler({
+      id: 1300, webContentsId: 7, url: 'https://x.example/a',
+      requestHeaders: {},
+    });
+    injectPaymentSignatureHandler({
+      id: 1301, webContentsId: 8, url: 'https://x.example/a',
+      requestHeaders: {},
+    });
+
+    cleanupWebContents(7);
+
+    // Tab 7's response no longer attributes (entry was dropped).
+    const responseB64 = Buffer.from(JSON.stringify({ txHash: '0xtx' })).toString('base64');
+    paymentResponseLoggingHandler({
+      id: 1300, webContentsId: 7, url: 'https://x.example/a',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).not.toHaveBeenCalled();
+
+    // Tab 8's response still attributes.
+    paymentResponseLoggingHandler({
+      id: 1301, webContentsId: 8, url: 'https://x.example/a',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
+  });
 });
 
 // === isStatus402 edge cases (via detector) ===============================
@@ -1197,10 +1680,20 @@ describe('isStatus402 edge cases (via detector pass-through)', () => {
 // === installX402Interception =============================================
 
 describe('installX402Interception', () => {
-  test('registers detect+receipt on onHeadersReceived and inject on onBeforeSendHeaders', () => {
+  test('registers capture+inject on onBeforeSendHeaders, detect+receipt on onHeadersReceived, cleanup on onCompleted+onErrorOccurred', () => {
     installX402Interception();
 
-    expect(mockRegister).toHaveBeenCalledTimes(3);
+    expect(mockRegister).toHaveBeenCalledTimes(6);
+    expect(mockRegister).toHaveBeenCalledWith(
+      'onBeforeSendHeaders',
+      'x402-capture',
+      captureRequestContextHandler
+    );
+    expect(mockRegister).toHaveBeenCalledWith(
+      'onBeforeSendHeaders',
+      'x402-inject',
+      injectPaymentSignatureHandler
+    );
     expect(mockRegister).toHaveBeenCalledWith(
       'onHeadersReceived',
       'x402-detect',
@@ -1212,11 +1705,17 @@ describe('installX402Interception', () => {
       paymentResponseLoggingHandler
     );
     expect(mockRegister).toHaveBeenCalledWith(
-      'onBeforeSendHeaders',
-      'x402-inject',
-      injectPaymentSignatureHandler
+      'onCompleted',
+      'x402-cleanup',
+      clearRequestContextHandler
+    );
+    expect(mockRegister).toHaveBeenCalledWith(
+      'onErrorOccurred',
+      'x402-cleanup',
+      clearRequestContextHandler
     );
   });
+
 });
 
 describe('paymentResponseLoggingHandler', () => {

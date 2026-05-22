@@ -56,10 +56,13 @@ const { tupleFromAccept } = require('./payment-utils');
  * `accepts[0]` — preserves single-accept behavior during the WP-MA
  * migration.
  *
+ * `detection.requestShape` (captured `{ method, range }`) threads
+ * through to setPendingPayment for shape-keyed FIFO bucketing.
+ *
  * @param {number} webContentsId
  * @param {{
  *   grant?: { capAmount: string, windowSeconds: number },
- *   detection?: { url: string, requirements: object, resourceType?: string, selectedAccept?: object },
+ *   detection?: { url: string, requirements: object, resourceType?: string, selectedAccept?: object, requestShape?: { method: string, range: string | null } },
  *   selectedAccept?: object,
  *   authorizedBy?: 'cap' | 'manual',
  * }} [opts]
@@ -97,17 +100,22 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   const tuple = tupleFromAccept(selectedAccept);
   const payTo = selectedAccept.payTo ?? null;
 
-  setPendingPayment(webContentsId, detected.url, {
-    header: headerName,
-    value: headerValue,
-    origin,
-    chainId: tuple?.chainId,
-    asset: tuple?.asset,
-    amount: tuple?.amount,
-    payTo,
-    fromAddress: client.address,
-    authorizedBy: opts.authorizedBy ?? AUTHORIZED_BY.MANUAL,
-  });
+  setPendingPayment(
+    webContentsId,
+    detected.url,
+    {
+      header: headerName,
+      value: headerValue,
+      origin,
+      chainId: tuple?.chainId,
+      asset: tuple?.asset,
+      amount: tuple?.amount,
+      payTo,
+      fromAddress: client.address,
+      authorizedBy: opts.authorizedBy ?? AUTHORIZED_BY.MANUAL,
+    },
+    detected.requestShape,
+  );
   // Only clear the map when we sourced FROM it. With a snapshot we used
   // our own copy and clearing here would erase whatever detection has
   // since taken its place (e.g. a second 402 that fired during our async
