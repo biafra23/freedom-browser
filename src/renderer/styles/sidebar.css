@@ -5420,6 +5420,21 @@
   white-space: nowrap;
 }
 
+/* --- x402 approval card locked state ----------------------------- */
+/* When the vault is locked, collapse the card to the essentials:
+   site header, payment-detail rows (so the user knows WHAT they're
+   about to biometric-auth for), warnings (over-cap, etc.), unlock
+   block, and Reject. Hide the controls the user can't act on until
+   unlocked — the multi-accept chooser (network/asset choice belongs
+   to post-unlock), the auto-pay grant editor (opt-in for future
+   caps), and the Pay button itself. Toggled from `checkUnlockState`
+   in dapp-x402.js. */
+#sidebar-x402-approval.is-locked .x402-chooser,
+#sidebar-x402-approval.is-locked .x402-grant,
+#sidebar-x402-approval.is-locked #x402-approval-approve {
+  display: none;
+}
+
 /* --- x402 multi-accept chooser ------------------------------------ */
 /* Visible only when 2+ accepts[] entries are fundable from the
    active wallet. Sits above the standard detail rows; selecting a
@@ -5717,6 +5732,10 @@
 .dapp-tx-actions {
   display: flex;
   gap: 12px;
+  /* Breathing room above the Reject/Confirm buttons — without this
+     they sit flush against whatever was rendered above (auto-approve
+     checkbox, x402 grant editor, etc.) and read as a layout bug. */
+  margin-top: 16px;
 }
 
 .dapp-tx-reject-btn {

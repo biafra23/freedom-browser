@@ -615,17 +615,22 @@ async function checkUnlockState() {
     const status = await window.identity.getStatus();
 
     if (status.isUnlocked) {
-      unlockBlock?.classList.add('hidden');
-      // Re-derive Pay-button state from fundability + asset-recognised.
-      // The locked branch below force-disables, so when the user
-      // unlocks via the Touch ID / password handlers this is what
+      // Drop locked-mode collapse + re-derive Pay-button state from
+      // fundability + asset-recognised. The locked branch below
+      // force-disables Pay, so when the user unlocks this is what
       // restores the correct disabled state — without it the Pay
       // button stays stuck until a chooser interaction re-triggers
-      // renderCard (which was the user-visible bug we hit in smoke).
+      // renderCard.
+      screen?.classList.remove('is-locked');
+      unlockBlock?.classList.add('hidden');
       if (pending) renderCard();
       return;
     }
 
+    // Collapse to just the site header + unlock block + Reject — the
+    // CSS rules for `.is-locked` hide everything the user can't act
+    // on yet (chooser, payment details, grant editor, Pay button).
+    screen?.classList.add('is-locked');
     unlockBlock?.classList.remove('hidden');
     if (approveBtn) approveBtn.disabled = true;
 
@@ -653,6 +658,11 @@ async function checkUnlockState() {
     }
   } catch (err) {
     console.error('[x402] failed to check vault status:', err);
+    // Treat status-check failure as locked — show the unlock UI in
+    // its safest shape (password section, no Touch ID), and keep the
+    // card in locked-collapse mode so the user isn't presented with
+    // the full chooser/details/grant they can't act on yet.
+    screen?.classList.add('is-locked');
     unlockBlock?.classList.remove('hidden');
     touchIdBtn?.classList.add('hidden');
     passwordLink?.classList.add('hidden');
