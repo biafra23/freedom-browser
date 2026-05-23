@@ -2,7 +2,7 @@
 
 All notable changes to Freedom will be documented in this file.
 
-## [0.7.2] - 2026-05-23
+## [0.7.2] - 2026-05-24
 
 ### Added
 
