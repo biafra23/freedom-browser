@@ -2061,7 +2061,7 @@
                   </div>
                 </div>
 
-                <div class="swarm-feed-identity-choice">
+                <div class="swarm-feed-identity-choice" id="swarm-feed-identity-choice">
                   <div class="swarm-feed-identity-title">Choose publisher identity:</div>
 
                   <label class="swarm-feed-identity-option">
@@ -2079,6 +2079,17 @@
                       <span class="swarm-feed-identity-desc">Uses your node's wallet address</span>
                     </div>
                   </label>
+                </div>
+
+                <div class="swarm-feed-current-identity hidden" id="swarm-feed-current-identity">
+                  <div class="swarm-feed-current-row">
+                    <span class="swarm-feed-current-label">Publisher identity</span>
+                    <span class="swarm-feed-current-name" id="swarm-feed-current-name">App-scoped identity</span>
+                  </div>
+                  <p class="swarm-feed-current-desc" id="swarm-feed-current-desc">
+                    This app already has a publisher identity. Feed and SOC writes use this signing owner by default.
+                  </p>
+                  <button type="button" class="swarm-feed-manage-btn" id="swarm-feed-manage-identity">Manage identity</button>
                 </div>
 
                 <div class="swarm-connect-warning">
@@ -2236,6 +2247,16 @@
                     </label>
                   </div>
                 </div>
+                <div class="perms-section" id="swarm-perms-identity-section">
+                  <div class="perms-section-header">Publisher identity</div>
+                  <div class="publisher-identity-current" id="swarm-perms-identity-current"></div>
+                  <div class="publisher-identity-detail-list" id="swarm-perms-identity-list"></div>
+                  <div class="publisher-identity-actions">
+                    <button type="button" class="publisher-identity-action-btn" id="swarm-perms-create-app-identity">New app-scoped identity</button>
+                    <button type="button" class="publisher-identity-action-btn" id="swarm-perms-use-bee-identity">Use Bee wallet</button>
+                  </div>
+                  <div class="publisher-identity-note hidden" id="swarm-perms-identity-note"></div>
+                </div>
                 <div class="perms-actions">
                   <button type="button" class="perms-disconnect-btn" id="swarm-perms-disconnect">Disconnect</button>
                 </div>
@@ -2255,11 +2276,24 @@
               </div>
 
               <div class="subscreen-content">
-                <div class="publisher-identity-search">
-                  <input type="text" id="publisher-identity-filter" placeholder="Search origins..." autocomplete="off">
+                <div id="publisher-identity-list-view">
+                  <div class="publisher-identity-search">
+                    <input type="text" id="publisher-identity-filter" placeholder="Search origins..." autocomplete="off">
+                  </div>
+                  <div id="publisher-identity-list"></div>
+                  <div class="publisher-identity-empty hidden" id="publisher-identity-empty">No publisher identities yet.</div>
                 </div>
-                <div id="publisher-identity-list"></div>
-                <div class="publisher-identity-empty hidden" id="publisher-identity-empty">No publisher identities yet.</div>
+
+                <div class="publisher-identity-detail hidden" id="publisher-identity-detail">
+                  <div class="perms-site" id="publisher-identity-detail-origin">site.eth</div>
+                  <div class="publisher-identity-current" id="publisher-identity-detail-current"></div>
+                  <div class="publisher-identity-detail-list" id="publisher-identity-detail-list"></div>
+                  <div class="publisher-identity-actions">
+                    <button type="button" class="publisher-identity-action-btn" id="publisher-identity-create-app">New app-scoped identity</button>
+                    <button type="button" class="publisher-identity-action-btn" id="publisher-identity-use-bee">Use Bee wallet</button>
+                  </div>
+                  <div class="publisher-identity-note hidden" id="publisher-identity-detail-note"></div>
+                </div>
               </div>
             </div>
 

@@ -14,12 +14,12 @@
  *     }
  *   }
  *
- * A default identity is chosen once per origin at first feed grant:
+ * A default identity is chosen when an origin first receives feed access:
  *   - 'bee-wallet': uses the Bee node wallet key for signing
  *   - 'app-scoped': uses a dedicated publisher key derived at m/44'/73406'/{index}'/0/0
  *
  * Survives permission revocation — revoking Swarm connection does not
- * forget the publisher identity. Only an explicit reset changes it.
+ * forget publisher identities. Switching identity is an explicit user action.
  */
 
 const { app, ipcMain } = require('electron');
@@ -307,7 +307,7 @@ function getOriginEntry(origin) {
 
 /**
  * Create or update an origin entry with identity mode and key index.
- * Called once when the user first grants feed access to an origin.
+ * Used by the feed approval prompt to establish or re-grant feed access.
  * @param {string} origin
  * @param {{ identityMode: string, publisherKeyIndex?: number }} data
  * @returns {Object} The origin entry
