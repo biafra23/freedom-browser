@@ -102,6 +102,15 @@ Common deduplication failures:
 
 Dependency updates inside an active major series almost always carry upstream security fixes. Default to **Security** for these (matching `0.6.1`'s `Updated dependencies: Electron 39 to 40, …` placement). Use Changed only when the bump is purely a feature pickup with no security content.
 
+**Electron updates always state the bundled Chromium and Node versions.** Security-aware users track CVE coverage by Chromium and Node version, not by Electron version. Look them up in `https://releases.electronjs.org/releases.json` (one entry per Electron version, with `chrome` / `node` / `v8` fields).
+
+Format: `Updated Electron <old> to <new> (Chromium <old> to <new>, Node <old> to <new>)`. Use the full upstream version strings, not the marketing-major (`Chromium 146.0.7680.216`, not `Chromium 146`). If Chromium or Node did not change between the two Electron versions, still name the version that's bundled — knowing which Chromium/Node ships is the point, regardless of whether it moved this cycle:
+
+- Both moved: `Updated Electron 41 to 42 (Chromium 146.0.7680.216 to 148.0.7778.97, Node 24.15.0 unchanged)`
+- Neither moved: `Updated Electron 41.5.0 to 41.7.0 (Chromium 146.0.7680.216, Node 24.15.0 — same as 41.5.0; Electron-side patches only)`
+
+The vague historical phrasing (`Chromium and Node patches`, used in `0.7.1`'s `Electron 41.2.1 to 41.5.0`) is **not enough** — it doesn't let a reader confirm which Chromium they're getting, and in `0.7.2`'s case it was even inaccurate (Chromium/Node didn't actually change between 41.5.0 and 41.7.0).
+
 **Skip in-release version drift for dependencies first added in this release.** If `foo` is added at `1.0.0` mid-cycle and bumped to `1.0.2` before the release ships, users only ever see `1.0.2` — listing `foo 1.0.0 to 1.0.2` in `Security` misrepresents in-release iteration as a security update on a previously shipped surface. Mention the dep once, in the `Added` parent for the feature it backs, and let its shipping version stand on its own. Same logic as the in-release polish rule for fixes (Procedure step 5).
 
 ### Review gate
