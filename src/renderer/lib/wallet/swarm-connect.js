@@ -14,7 +14,6 @@ import { showPublisherIdentityCreate } from './publisher-identity-create.js';
 import {
   BEE_WALLET_IDENTITY_ID,
   getActivePublisherIdentity,
-  identityLabel,
   renderPublisherIdentitySelector,
 } from './publisher-identity-selector.js';
 
@@ -53,7 +52,6 @@ let swarmFeedSite;
 let swarmFeedName;
 let swarmFeedIdentityChoice;
 let swarmFeedIdentitySelector;
-let swarmFeedIdentityHelp;
 let swarmFeedRejectBtn;
 let swarmFeedApproveBtn;
 
@@ -127,7 +125,6 @@ export function initSwarmConnect() {
   swarmFeedName = document.getElementById('swarm-feed-name');
   swarmFeedIdentityChoice = document.getElementById('swarm-feed-identity-choice');
   swarmFeedIdentitySelector = document.getElementById('swarm-feed-identity-selector');
-  swarmFeedIdentityHelp = document.getElementById('swarm-feed-identity-help');
   swarmFeedRejectBtn = document.getElementById('swarm-feed-reject');
   swarmFeedApproveBtn = document.getElementById('swarm-feed-approve');
 
@@ -536,12 +533,6 @@ function renderFeedIdentitySelector() {
     onSelect: (identity) => activateFeedPromptIdentity(identity),
     onCreateAppScoped: () => createFeedPromptIdentity(),
   });
-  if (swarmFeedIdentityHelp) {
-    const active = getActivePublisherIdentity(swarmFeedIdentityState);
-    swarmFeedIdentityHelp.textContent = active?.owner
-      ? `Feed and SOC writes will use ${identityLabel(active)} (${active.owner}).`
-      : 'Unlock your vault to choose the signing owner for feed and SOC writes.';
-  }
 }
 
 async function refreshFeedIdentitySelector() {

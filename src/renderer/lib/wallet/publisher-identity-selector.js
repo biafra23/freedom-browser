@@ -100,17 +100,23 @@ function orderIdentities(state) {
     owner: null,
     stored: false,
   };
-  const appScoped = identities.filter((identity) => identity.id !== BEE_WALLET_IDENTITY_ID);
-  const activeApp = appScoped.find((identity) => identity.id === state?.activeIdentityId);
-  const inactiveApps = appScoped
-    .filter((identity) => identity.id !== state?.activeIdentityId)
-    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const appScoped = identities
+    .filter((identity) => identity.id !== BEE_WALLET_IDENTITY_ID)
+    .sort(compareAppScopedIdentities);
 
   return [
-    ...(activeApp ? [activeApp] : []),
-    ...inactiveApps,
+    ...appScoped,
     beeWallet,
   ];
+}
+
+function compareAppScopedIdentities(a, b) {
+  if (typeof a.publisherKeyIndex === 'number' && typeof b.publisherKeyIndex === 'number') {
+    return a.publisherKeyIndex - b.publisherKeyIndex;
+  }
+  if (typeof a.publisherKeyIndex === 'number') return -1;
+  if (typeof b.publisherKeyIndex === 'number') return 1;
+  return (a.createdAt || 0) - (b.createdAt || 0);
 }
 
 function buildIdentityItem(identity, isActive, handlers) {
