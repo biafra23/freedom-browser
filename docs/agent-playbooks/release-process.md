@@ -30,7 +30,7 @@ Rationale:
 
 ## 1. Promote the dev version
 
-Between releases, `main` carries a `<next>-dev` version (see Step 9). On the release branch, strip that suffix so the build advertises the real release number.
+Between releases, `main` carries a `<next>-dev` version (see Step 10). On the release branch, strip that suffix so the build advertises the real release number.
 
 Update the version string in exactly these two files:
 
@@ -47,7 +47,53 @@ Commit style (matches prior releases):
 chore(release): bump version to <version>
 ```
 
-## 2. Finalize the changelog
+## 2. Refresh dependencies
+
+On the release branch, before finalizing the changelog, bring npm packages and bundled binaries to their current stable versions. Per `AGENTS.md` rule 9, **this requires explicit releaser approval per bump** — agents working through this step should triage and propose, not unilaterally upgrade.
+
+### npm dependencies
+
+Run `npm outdated --json` and triage:
+
+- **In-range bumps** (`wanted == latest`): patch and minor updates that semver guarantees back-compat for. Default to taking them all unless one has a known regression.
+- **Out-of-range bumps** (`wanted < latest`): a new major (or a constrained range still pointing at an older line). Defer to a dedicated release cycle unless the major bump is the headline of this release. Electron majors (which bring Chromium and Node leaps) in particular should get their own cycle.
+
+Apply approved bumps with `npm update` (matches `0.7.1`'s `chore(deps): refresh in-range bumps` commit). This updates `package-lock.json` to the resolved versions without touching the declared `^` ranges in `package.json`, because the ranges already permit those versions. Use `npm install <pkg>@<version>` only when you need to widen a `^` range or pin an exact version. Re-run `npm ci && npm run lint && npm test` before committing to catch regressions.
+
+### Audit warnings
+
+After updating, run `npm audit` and decide per advisory:
+
+- **Auto-fixable, non-breaking**: take `npm audit fix`.
+- **Auto-fixable but `--force` required** (downgrades a top-level dep across a major): do **not** take the auto-fix. Add an `overrides` block in `package.json` pinning just the transitive to a non-vulnerable version. `0.7.1` did exactly this for `uuid` under `@metamask/utils`; the same pattern applies to anything where the auto-fix would regress a direct dependency.
+- **Not exploitable in our usage**: document why in the commit body (`0.7.1`'s commit explains the `uuid.v3/v5/v6` advisory is unreachable from our import graph).
+
+### Bundled binaries (Bee, Kubo / IPFS, Radicle)
+
+`scripts/fetch-bee.js`, `scripts/fetch-ipfs.js`, and `scripts/fetch-radicle.js` resolve the latest stable release from the upstream GitHub API by default. To check whether the currently-bundled binary is stale, read its self-reported version and compare against upstream's latest tag:
+
+```
+./bee-bin/<arch>/bee version
+./ipfs-bin/<arch>/ipfs --version
+./radicle-bin/<arch>/rad --version
+```
+
+For each binary that's behind, re-run its fetch script for every supported arch and verify the result still passes `npm run check-binaries`. Skip pre-release tags (e.g. Radicle's `releases/X.Y.Z-rc.N`) unless explicitly pulled in.
+
+### Commit style
+
+Match `0.7.1`'s grouping: one commit for npm refresh (lockfile + any `overrides`), a separate commit per bundled-binary group only if the upstream version changed. Body lists the bumps as `name old -> new` lines (no decorative arrows) and documents any audit decisions taken (see Audit warnings above).
+
+```
+chore(deps): refresh in-range bumps[ and clear <advisory> audit advisory]
+chore(build): update bundled <binary> to <version>
+```
+
+### Changelog placement
+
+Per `changelog-process.md` § Categorising dependency updates, dependency updates inside an active major series default to `Security` (they almost always carry upstream security fixes). The next step (§3 Finalize the changelog) is where this lands.
+
+## 3. Finalize the changelog
 
 Follow `changelog-process.md` in full. Key points for release branches:
 
@@ -61,11 +107,11 @@ Commit style:
 docs(changelog): add user-facing <version> release notes
 ```
 
-**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — **do not create the `docs(changelog): …` commit yet**. Leave the `CHANGELOG.md` edits unstaged (or staged, but uncommitted) on the release branch, present the diff to the releaser, and wait for explicit approval before committing. Iterating in the working tree is cheaper than amending a commit, and avoids the `git commit --amend` ambiguity for agents whose tooling discourages amending without an explicit user request. `CHANGELOG.md` is not read by §3 (verify) or §4 (build distributables), so those steps can run in parallel with the review. §5 (upload + website) and §6 (tag) freeze the changelog state visible to end users and must wait until the commit lands.
+**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — **do not create the `docs(changelog): …` commit yet**. Leave the `CHANGELOG.md` edits unstaged (or staged, but uncommitted) on the release branch, present the diff to the releaser, and wait for explicit approval before committing. Iterating in the working tree is cheaper than amending a commit, and avoids the `git commit --amend` ambiguity for agents whose tooling discourages amending without an explicit user request. `CHANGELOG.md` is not read by §4 (verify) or §5 (build distributables), so those steps can run in parallel with the review. §6 (upload + website) and §7 (tag) freeze the changelog state visible to end users and must wait until the commit lands.
 
 If the changelog is already committed when a correction is requested (e.g. the releaser drafted it themselves, or this gate was missed), amend the existing `docs(changelog): …` commit rather than stacking a second changelog commit.
 
-## 3. Verify before building
+## 4. Verify before building
 
 On the release branch, with a clean working tree:
 
@@ -78,7 +124,7 @@ npm run check-binaries
 
 Spot-check the app once (`npm start`) and confirm the About/version surface reflects the new number.
 
-## 4. Build distributables
+## 5. Build distributables
 
 Run from the release branch. All builds read the version from `package.json`.
 
@@ -119,7 +165,7 @@ npm run dist -- --win --x64
 
 `electron-builder` cross-builds the Windows NSIS installer and zip from the mac host — no Windows machine required. Windows builds intentionally ship without Radicle (see `README.md`).
 
-## 5. Upload binaries and update the website
+## 6. Upload binaries and update the website
 
 1. Upload the generated artifacts from `dist/` to `https://freedom.baby/downloads`, including the `latest*.yml` manifests so existing installs pick up the update via `electron-updater` (which is configured with `publish.provider = generic` pointing at that URL).
 2. Update the Freedom website to point at the new version:
@@ -129,7 +175,7 @@ npm run dist -- --win --x64
 
 Do this **before** tagging — if an upload reveals a broken artifact, you want to be able to fix it on the release branch without already having a tag pointing at a broken commit.
 
-## 6. Tag the release
+## 7. Tag the release
 
 On the release branch, from the commit you actually built and shipped:
 
@@ -139,7 +185,7 @@ git tag -a v<version> -m "Release <version>"
 
 Tag format is `v<version>` (lowercase `v`), matching `v0.6.2`. Do not push the tag yet — push it together with the merge in the next step so `main` and the tag move as one.
 
-## 7. Merge the release branch into main
+## 8. Merge the release branch into main
 
 Optionally open a PR from `release/<version>` into `main` for review. Otherwise merge directly:
 
@@ -153,13 +199,13 @@ git push origin v<version>
 
 The `--no-ff` is deliberate — it preserves the release branch as a visible bubble in `main`'s history, which matches how earlier releases landed.
 
-## 8. Post-release housekeeping
+## 9. Post-release housekeeping
 
 - Confirm the GitHub release page lists the correct artifacts and release notes.
 - Keep the `release/<version>` branch around (do not delete) — it matches the historical pattern and is the natural base for a `hotfix/<version>.<patch>` branch later if needed.
 - Any build-only fixes that land after the version bump should be committed on the release branch with `fix(build): ...` messages, same as the `0.6.2` cycle did.
 
-## 9. Open the next dev cycle on `main`
+## 10. Open the next dev cycle on `main`
 
 Immediately after the merge, bump `main` to the next dev version so local/CI builds and the About dialog stop advertising the just-shipped release.
 
