@@ -61,7 +61,9 @@ Commit style:
 docs(changelog): add user-facing <version> release notes
 ```
 
-**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — the releaser must read through the diff on the release branch and amend the `docs(changelog): …` commit with any wording, scope, or categorisation corrections. `CHANGELOG.md` is not read by §3 (verify) or §4 (build distributables), so those steps can run in parallel with the review. §5 (upload + website) and §6 (tag) freeze the changelog state visible to end users and must wait until review is complete.
+**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — **do not create the `docs(changelog): …` commit yet**. Leave the `CHANGELOG.md` edits unstaged (or staged, but uncommitted) on the release branch, present the diff to the releaser, and wait for explicit approval before committing. Iterating in the working tree is cheaper than amending a commit, and avoids the `git commit --amend` ambiguity for agents whose tooling discourages amending without an explicit user request. `CHANGELOG.md` is not read by §3 (verify) or §4 (build distributables), so those steps can run in parallel with the review. §5 (upload + website) and §6 (tag) freeze the changelog state visible to end users and must wait until the commit lands.
+
+If the changelog is already committed when a correction is requested (e.g. the releaser drafted it themselves, or this gate was missed), amend the existing `docs(changelog): …` commit rather than stacking a second changelog commit.
 
 ## 3. Verify before building
 

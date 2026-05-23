@@ -37,6 +37,27 @@ Use this playbook when asked to update `CHANGELOG.md` for a new version.
 
 The shipped releases (e.g. `0.6.x`, `0.7.0`) are the canonical voice. When drafting a new release, read the most recent shipped entry first and match its density. Drift is easy and shows up immediately in side-by-side comparison.
 
+### Density budget (check before the review gate)
+
+The voice rules below are descriptive of the `0.6.x` / `0.7.x` shipped entries, not aspirational. Before presenting a draft for review, read it side-by-side with the previous shipped release in the same file. If your entries are visibly longer, or your sub-bullets are full sentences where the previous release used noun phrases, you've drifted — tighten until the comparison stops looking lopsided.
+
+Mechanical sanity checks:
+
+- Top-level bullets: aim ≤ 25 words.
+- Sub-bullets: aim ≤ 15 words.
+- Sub-bullets across the whole release: aim ≤ 10 total. If you're over, fold related surfaces into the parent or drop them.
+
+Drift patterns to cut on sight (every one of these has shipped into a draft and had to be trimmed later):
+
+- **Mechanism in user-facing copy.** RPC method names (`eth_call`), protocol terms ("Universal Resolver", "sync committee"), helper-function names — the reader doesn't need the protocol step. Leave it in the commit message and PR description.
+- **"so X" tails justifying the change.** `Forward and reverse lookups are both verified, so the wallet's recipient-name display carries the same guarantee` — the parent bullet already conveys it; drop the tail.
+- **Em-dash explanations expanding into mechanism.** `X keeps working — the prover does Y, ethers does Z, the final callback is independently proven`. The `X keeps working` half is the entry; drop the expansion.
+- **Consecutive sub-bullets repeating their subject.** Two bullets both opening with `Wallet send review screen shows…` — open each with the distinct surface (`Green ✓ next to a verified name`, `Amber ⚠ next to a spoofed name`) and let the parent carry the shared context.
+- **Defensive parentheticals.** `(zk-proven sync bootstrap by default)`, `(stale record or spoofing attempt)` — drop unless the reader genuinely can't infer the case.
+- **Thin sub-bullet groups.** If a parent has only 1–2 sub-bullets and they add no surface variety, fold them into the parent.
+
+If a sub-bullet runs past 20 words, opens with the same noun phrase as a sibling, or names an internal helper, rewrite it before committing.
+
 ### Voice rules (apply across all sections)
 
 - **One thought per bullet.** If you joined two ideas with `;` or `. `, split into two bullets. Bullets are not paragraphs.
@@ -77,4 +98,6 @@ Dependency updates inside an active major series almost always carry upstream se
 
 ### Review gate
 
-An agent draft is a starting point, not a final. After drafting, diff the new section against the previous shipped release and trim/restructure until per-entry density matches. The releaser must read and amend the changelog commit before §5 (upload) and §6 (tag) of the release process — see `release-process.md`.
+An agent draft is a starting point, not a final. After drafting, diff the new section against the previous shipped release and trim/restructure until per-entry density matches.
+
+**Do not commit the changelog edits until the releaser has reviewed them.** Leave the `CHANGELOG.md` changes unstaged on the release branch, present the diff for review, and create the `docs(changelog): …` commit only after explicit approval — iterating in the working tree is simpler than amending. See `release-process.md` for the full review-gate workflow and how it sequences against verify / build / upload / tag.
