@@ -206,13 +206,22 @@ export const isActiveTab = (tabId) =>
 
 /**
  * Get the committed display URL for a specific webview.
- * Always reads from the tab's addressBarSnapshot — the last display URL
- * committed by a navigation event or tab switch. Never reads the live
- * address bar input, which could contain user edits in progress.
+ * Reads from the tab's `committedDisplayUrl` — the last display URL
+ * written by a `did-navigate` handler. Never reads the live address bar
+ * input, and deliberately does not read `addressBarSnapshot`, which is
+ * transient draft/restoration state (overwritten on `focusin` and on
+ * `tab-switched`, so it can carry an unsubmitted typed-but-not-yet-loaded
+ * value).
  *
  * This is critical for provider permission checks — if a page fires a
- * request while the user is typing in the address bar, we must derive
+ * request while the user is typing in the address bar (or has switched
+ * away from a tab whose snapshot now carries a draft), we must derive
  * the origin from the committed navigation identity, not partial input.
+ *
+ * Falls back to `addressBarSnapshot` only for legacy/partially-initialised
+ * tab state that predates the `committedDisplayUrl` field — new tabs always
+ * start with `committedDisplayUrl: ''` and have it populated on the first
+ * `did-navigate`.
  *
  * @param {HTMLElement} webview - The webview element
  * @returns {string} The committed display URL for this webview's tab
@@ -220,7 +229,11 @@ export const isActiveTab = (tabId) =>
 export const getDisplayUrlForWebview = (webview) => {
   const tab = tabState.tabs.find((t) => t.webview === webview);
   if (!tab) return '';
-  return tab.navigationState?.addressBarSnapshot || '';
+  return (
+    tab.navigationState?.committedDisplayUrl
+    || tab.navigationState?.addressBarSnapshot
+    || ''
+  );
 };
 
 // Create default navigation state for a tab

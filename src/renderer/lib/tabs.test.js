@@ -90,6 +90,7 @@ describe('Tab Navigation State Isolation', () => {
       expect(tab.navigationState).toHaveProperty('isWebviewLoading');
       expect(tab.navigationState).toHaveProperty('currentBzzBase');
       expect(tab.navigationState).toHaveProperty('addressBarSnapshot');
+      expect(tab.navigationState).toHaveProperty('committedDisplayUrl');
       expect(tab.navigationState).toHaveProperty('cachedWebContentsId');
     });
   });
@@ -136,6 +137,46 @@ describe('Tab Navigation State Isolation', () => {
       // Switch back to tab1 - state should be preserved
       switchTab(tab1.id);
       expect(getActiveTab().navigationState.currentPageUrl).toBe('http://tab1.com');
+    });
+  });
+
+  describe('getDisplayUrlForWebview', () => {
+    // Provider permission checks (swarm-provider.js etc.) call this helper
+    // to derive the page origin for keying prompts and storing decisions.
+    // It must return the *committed* display identity, never the user's
+    // unsubmitted address-bar draft — otherwise a Swarm site could fire a
+    // request while the user is mid-typing and have its permission prompt
+    // keyed on the typed-but-not-loaded URL instead of the actual page.
+    test('returns committedDisplayUrl, ignoring an unsubmitted draft in addressBarSnapshot', async () => {
+      const { createTab, getDisplayUrlForWebview } = await import('./tabs.js');
+
+      const tab = createTab('https://example.com/');
+      // Mirror the production did-navigate commit shape: committedDisplayUrl
+      // is the source of truth for the active page identity.
+      tab.navigationState.committedDisplayUrl = 'https://example.com/';
+      // addressBarSnapshot can carry an unsubmitted draft (focusin /
+      // tab-switched both write the live address-bar value into it). It
+      // must NOT be the value getDisplayUrlForWebview returns.
+      tab.navigationState.addressBarSnapshot = 'vitalik.eth';
+
+      expect(getDisplayUrlForWebview(tab.webview)).toBe('https://example.com/');
+    });
+
+    test('falls back to addressBarSnapshot when committedDisplayUrl is empty (legacy state)', async () => {
+      const { createTab, getDisplayUrlForWebview } = await import('./tabs.js');
+
+      const tab = createTab('https://example.com/');
+      tab.navigationState.committedDisplayUrl = '';
+      tab.navigationState.addressBarSnapshot = 'https://legacy.example/';
+
+      expect(getDisplayUrlForWebview(tab.webview)).toBe('https://legacy.example/');
+    });
+
+    test('returns empty string when the webview is not tracked', async () => {
+      const { getDisplayUrlForWebview } = await import('./tabs.js');
+
+      const orphan = createMockWebview(999);
+      expect(getDisplayUrlForWebview(orphan)).toBe('');
     });
   });
 
