@@ -1679,13 +1679,18 @@ describe('navigation', () => {
       });
     };
 
-    // Mirror the production did-navigate commit shape: the handler writes
-    // the user-facing display URL into the address input AND into both
-    // `addressBarSnapshot` (transient draft/restoration state) and
-    // `committedDisplayUrl` (commit-only, the field reload reads). The
-    // split matters because `addressBarSnapshot` is overwritten on focusin
-    // and tab-switched, so it can carry unsubmitted user input — only
-    // `committedDisplayUrl` stays a stable identity.
+    // Mirror the production post-commit shape across the two handlers
+    // that write to it:
+    //   - `addressInput.value` and `navState.addressBarSnapshot` are
+    //     written by navigation.js' did-navigate handler (foreground UI
+    //     and draft-restoration snapshot).
+    //   - `navState.committedDisplayUrl` is written by tabs.js'
+    //     per-webview did-navigate handler — for both active and
+    //     background tabs — so reload and provider permission keying
+    //     read the actual committed page identity rather than a draft
+    //     in addressBarSnapshot or an in-flight destination URL.
+    // The helper sets all three so reload tests start from a fully
+    // committed state regardless of which handler owns each field.
     const commitDisplay = (ctx, value) => {
       ctx.elements.addressInput.value = value;
       ctx.activeRef.tab.navigationState.addressBarSnapshot = value;
@@ -1882,17 +1887,26 @@ describe('navigation', () => {
     });
 
     test('reload after a background ENS navigation commits in another tab re-resolves on switch-back', async () => {
-      // Regression for the background-commit gap: tabs.js only forwards
-      // did-navigate to navigation.js's webviewEventHandler for the active
-      // tab, so an ENS load that finishes while its tab is in the
-      // background never wrote `committedDisplayUrl` through the regular
-      // did-navigate path. Pre-fix, that left committedDisplayUrl empty —
-      // switching back and hitting reload fell through to webview.reload()
-      // instead of re-running ENS resolution under today's verification
-      // method. The fix marks the commit points (commitDwebNavigationPrefix,
-      // HTTP, Radicle, view-source) with `{ commit: true }` so
-      // setAddressDisplayForTab writes committedDisplayUrl on the *target*
-      // tab regardless of active state.
+      // Regression for the background-commit gap: a slow ENS load that
+      // finishes while its tab is in the background must still populate
+      // `committedDisplayUrl` so a later reload re-runs ENS resolution
+      // under today's verification method.
+      //
+      // The committed write itself lives in tabs.js' per-webview
+      // did-navigate handler (which fires for active and background
+      // tabs). This test stubs that write so navigation.js' setup-and-
+      // reload flow can be exercised end-to-end against the resulting
+      // post-commit state — see tabs.test.js for the test that pins the
+      // tabs.js handler itself.
+      //
+      // Crucially, navigation.js must NOT be writing `committedDisplayUrl`
+      // before navigation actually commits. Doing so would let
+      // `getDisplayUrlForWebview()` (which feeds Swarm provider permission
+      // keys) briefly point at the destination origin while the previous
+      // page is still loaded. The pre-commit `setAddressDisplayForTab`
+      // call in the dweb dispatch path must therefore leave
+      // `committedDisplayUrl` untouched until the simulated did-navigate
+      // fires below.
       const tabA = createTab(1, 'https://a.example', { title: 'Tab A' });
       const tabB = createTab(2, 'about:blank', { title: 'Tab B' });
       const ctx = await loadNavigationModule({
@@ -1934,11 +1948,13 @@ describe('navigation', () => {
       });
       await flushMicrotasks();
 
-      // Step 3: resolveEns settles in the background, which triggers the
-      // recursive loadTarget that ultimately commits the IPFS dispatch on
-      // Tab A — setAddressDisplayForTab is called with `{ commit: true }`
-      // and writes both addressBarSnapshot AND committedDisplayUrl on Tab A
-      // even though Tab A is not active.
+      // Step 3: resolveEns settles in the background and the recursive
+      // loadTarget commits the IPFS dispatch on Tab A. Pre-fix this also
+      // wrote `committedDisplayUrl`, but that was wrong — Chromium hasn't
+      // committed yet (and for bzz the Bee warm-probe hasn't even run).
+      // Today the dispatch only stashes the display value into the
+      // background tab's `addressBarSnapshot` for switchback restoration,
+      // and `committedDisplayUrl` stays empty until did-navigate fires.
       resolveResolver({
         type: 'ok',
         name: 'vitalik.eth',
@@ -1950,12 +1966,21 @@ describe('navigation', () => {
 
       // Tab B's foreground address bar must not have been clobbered.
       expect(ctx.elements.addressInput.value).toBe('about:blank');
-      // Tab A picked up the resolved display in BOTH fields — the snapshot
-      // (existing behaviour) and committedDisplayUrl (new commit-only field).
+      // Tab A picked up the resolved display in addressBarSnapshot for
+      // tab-switched restoration, but `committedDisplayUrl` stays empty
+      // — it's only written by tabs.js' did-navigate handler.
       expect(tabA.navigationState.addressBarSnapshot).toBe('ipfs://vitalik.eth');
-      expect(tabA.navigationState.committedDisplayUrl).toBe('ipfs://vitalik.eth');
+      expect(tabA.navigationState.committedDisplayUrl).toBe('');
 
-      // Step 4: switch back to Tab A. The tab-switched handler restores
+      // Step 4: simulate the per-webview did-navigate that tabs.js fires
+      // for Tab A once Chromium commits the navigation. tabs.js writes
+      // `webview.getURL()` into `committedDisplayUrl` regardless of
+      // whether the tab is active. We mirror that here so the post-
+      // commit state matches production for the reload exercise below.
+      tabA.webview.getURL.mockReturnValue('ipfs://vitalik.eth');
+      tabA.navigationState.committedDisplayUrl = 'ipfs://vitalik.eth';
+
+      // Step 5: switch back to Tab A. The tab-switched handler restores
       // addressInput.value from the snapshot.
       ctx.navigationUtilsMocks.deriveSwitchedTabDisplay.mockReturnValueOnce(
         'ipfs://vitalik.eth'
@@ -1969,7 +1994,7 @@ describe('navigation', () => {
       await flushMicrotasks();
       expect(ctx.elements.addressInput.value).toBe('ipfs://vitalik.eth');
 
-      // Step 5: hit reload. Now that committedDisplayUrl is populated, the
+      // Step 6: hit reload. Now that committedDisplayUrl is populated, the
       // ENS branch fires instead of webview.reload().
       ctx.electronAPI.resolveEns.mockReset();
       ctx.electronAPI.resolveEns.mockResolvedValue({

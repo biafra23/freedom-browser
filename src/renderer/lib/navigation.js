@@ -194,16 +194,15 @@ const setLoading = (isLoading, tabId = null) => {
 // switchback after a background-tab view-source dispatch picks up the
 // right state.
 //
-// `commit` marks this call as the actual navigation commit point — the
-// site we're about to (or just did) hand to `webview.loadURL`. When set,
-// we also write the value into `navState.committedDisplayUrl`, which is
-// what reload reads. For the active tab `did-navigate` will overwrite
-// this shortly after, so the early write is harmless (but consistent).
-// For *background* tabs `tabs.js` does not forward `did-navigate` to the
-// renderer's navigation handler, so without this early write a background
-// ENS load would never populate `committedDisplayUrl` — the user could
-// switch back, hit reload, and fall through to `webview.reload()` instead
-// of re-resolving under today's verification method.
+// This helper deliberately never writes `committedDisplayUrl`. That
+// field is the post-commit page identity used by reload and by provider
+// permission keying; writing it before `webview.loadURL` actually
+// commits would let the destination origin briefly stand in for the
+// still-loaded previous page (most starkly: `bzz://name.eth` is set
+// here before the Bee warm-probe even completes). The committed write
+// belongs in tabs.js' per-webview `did-navigate` handler, which fires
+// for both active and background tabs once Chromium has actually
+// committed the navigation.
 //
 // The active-tab branch is gated on a value-change check so repeated
 // no-op calls (every dispatch + every did-navigate on the hot path) don't
@@ -212,13 +211,8 @@ const setLoading = (isLoading, tabId = null) => {
 const setAddressDisplayForTab = (
   displayValue,
   tabId,
-  { isViewingSourceForTab = false, commit = false } = {}
+  { isViewingSourceForTab = false } = {}
 ) => {
-  const targetTab =
-    tabId !== null && tabId !== undefined ? getTabById(tabId) : getActiveTab();
-  if (commit && targetTab?.navigationState) {
-    targetTab.navigationState.committedDisplayUrl = displayValue;
-  }
   if (isActiveTab(tabId) || tabId === null) {
     if (addressInput.value !== displayValue) {
       addressInput.value = displayValue;
@@ -226,6 +220,8 @@ const setAddressDisplayForTab = (
     }
     return;
   }
+  const targetTab =
+    tabId !== null && tabId !== undefined ? getTabById(tabId) : null;
   if (!targetTab) return;
   if (targetTab.navigationState) {
     targetTab.navigationState.addressBarSnapshot = displayValue;
@@ -971,7 +967,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           if (transportDisplay) {
             setAddressDisplayForTab(`view-source:${transportDisplay}`, capturedTabId, {
               isViewingSourceForTab: true,
-              commit: true,
             });
           }
 
@@ -1013,7 +1008,6 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     });
     setAddressDisplayForTab(viewSourceNavigation.addressValue, targetTabId, {
       isViewingSourceForTab: true,
-      commit: true,
     });
     webview.loadURL(viewSourceNavigation.loadUrl);
     return;
@@ -1236,7 +1230,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     const radicleTarget = formatRadicleUrl(value, state.radicleBase);
     if (radicleTarget) {
       const radicleDisplayValue = displayOverride || radicleTarget.displayValue;
-      setAddressDisplayForTab(radicleDisplayValue, targetTabId, { commit: true });
+      setAddressDisplayForTab(radicleDisplayValue, targetTabId);
       pushDebug(`[AddressBar] Loading Radicle target, set to: ${radicleDisplayValue}`);
       navState.pendingTitleForUrl = radicleTarget.targetUrl;
       navState.pendingNavigationUrl = radicleTarget.targetUrl;
@@ -1282,7 +1276,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
       }
     }
     const displayValue = displayOverride || target.displayValue;
-    setAddressDisplayForTab(displayValue, targetTabId, { commit: true });
+    setAddressDisplayForTab(displayValue, targetTabId);
     navState.pendingTitleForUrl = expectedNavUrl;
     navState.pendingNavigationUrl = expectedNavUrl;
     navState.hasNavigatedDuringCurrentLoad = false;
@@ -1349,7 +1343,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
   // Try HTTP/HTTPS URLs
   if (value.startsWith('http://') || value.startsWith('https://')) {
     const httpDisplayValue = displayOverride || value;
-    setAddressDisplayForTab(httpDisplayValue, targetTabId, { commit: true });
+    setAddressDisplayForTab(httpDisplayValue, targetTabId);
     pushDebug(`[AddressBar] Loading HTTP(S) target: ${value}`);
     navState.pendingTitleForUrl = value;
     navState.pendingNavigationUrl = value;
@@ -1552,7 +1546,6 @@ const handleNavigationEvent = (event) => {
       updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
-      navState.committedDisplayUrl = addressInput.value;
       return;
     }
 
@@ -1576,7 +1569,6 @@ const handleNavigationEvent = (event) => {
       // from an ENS page leaves the prior page's trust shield stuck on.
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
-      navState.committedDisplayUrl = addressInput.value;
       return;
     }
 
@@ -1594,7 +1586,6 @@ const handleNavigationEvent = (event) => {
       updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
-      navState.committedDisplayUrl = addressInput.value;
       return;
     }
 
@@ -1664,14 +1655,14 @@ const handleNavigationEvent = (event) => {
   updateGithubBridgeIcon();
   updateProtocolIcon();
 
-  // Snapshot the committed display URL for provider origin derivation.
-  // This ensures getDisplayUrlForWebview() reads the post-navigation identity,
-  // not a stale or user-edited address bar value. Also write
-  // `committedDisplayUrl`, the dedicated commit-only field that reload reads
-  // — `addressBarSnapshot` gets overwritten by focusin/tab-switched and so
-  // must not be used for reload's "what page are we currently on" check.
+  // Snapshot the live address bar so the `tab-switched` handler and any
+  // focusin-style draft restoration can paint the foreground value back
+  // when the user comes back to this tab. The dedicated commit-only
+  // `committedDisplayUrl` (used by reload and provider permission keying)
+  // is written by tabs.js' per-webview did-navigate handler — that's the
+  // single source of truth for "what page are we actually on", and it
+  // covers background tabs too.
   navState.addressBarSnapshot = addressInput.value;
-  navState.committedDisplayUrl = addressInput.value;
 };
 
 // Update bookmark bar visibility for a URL change

@@ -58,8 +58,11 @@ export const state = {
   // bar value on focusin and tab-switched. Do not key reload or other
   // commit-sensitive decisions on this field; use `committedDisplayUrl`.
   addressBarSnapshot: '',
-  // Display URL of the last committed navigation. Written only by
-  // did-navigate handlers, so it stays stable when the user is mid-typing.
+  // URL of the last committed navigation (`webview.getURL()` at
+  // did-navigate time). Written only by tabs.js' per-webview did-navigate
+  // handler, so it stays stable when the user is mid-typing or while a
+  // navigation is still in flight. Used by reload and by
+  // `getDisplayUrlForWebview` for provider permission keying.
   committedDisplayUrl: '',
 
   // Webview
