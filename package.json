@@ -195,6 +195,9 @@
   "overrides": {
     "@metamask/utils": {
       "uuid": "^14.0.0"
+    },
+    "ethers": {
+      "ws": "^8.21.0"
     }
   },
   "title": "Freedom",
