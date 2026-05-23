@@ -7,39 +7,33 @@ All notable changes to Freedom will be documented in this file.
 ### Added
 
 - Cryptographic ENS verification via Colibri (`@corpus-core/colibri-stateless`) as the new default resolution path:
-  - Every `eth_call` against the ENS Universal Resolver is verified locally against the Ethereum sync committee (zk-proven sync bootstrap by default), rather than trusting M-of-K agreement between public RPCs
-  - Forward (`contenthash`, `addr`) and reverse lookups are both verified, so the wallet's recipient-name display carries the same guarantee as the address-bar shield
-  - Address-bar trust shield popover differentiates Colibri-verified from quorum-verified, showing the Colibri method, proof, and prover host instead of the per-RPC quorum rows
-  - Wallet send review screen shows a green ✓ next to the recipient name when its ENS resolution is cryptographically verified, with the verification method in the tooltip
-  - Wallet send review screen shows an amber ⚠ next to a bare address when the address claims a primary ENS name that doesn't forward-verify (stale record or spoofing attempt)
-  - CCIP-Read names (`.box` via 3DNS, and offchain ENS resolvers generally) keep working — the prover proves the initial call, ethers fetches the gateway response, and the final `resolveCallback` is independently proven
-- `freedom://settings` → ENS Resolution: pick between Colibri (recommended), the public-RPC quorum, or your own RPC; toggle whether Colibri / your-RPC fall back to the quorum if their primary path fails
+  - Forward and reverse lookups verified locally rather than trusted across public RPCs
+  - Address-bar shield popover distinguishes Colibri verification from quorum verification
+  - Verification mark next to cryptographically verified recipient names on the wallet send review screen
+  - Warning when a recipient address claims an ENS name that doesn't forward-verify
+  - Reload on an ENS page re-runs verification under the current method (hard reload also bypasses the 15-minute cache)
+  - Settings > ENS Resolution: choose between Colibri, the public-RPC quorum, or your own RPC
 - Unified network registry as the single source for chains, RPC endpoints, prover endpoints, and keyed RPC providers:
-  - `freedom://settings` → Chains: per-chain endpoint list grouped into three tiers (your custom RPCs, commercial keyed providers, public RPCs), with the active primary marked
-  - "+ Add a chain" flow that searches the chainlist.org catalogue or accepts a chain by hand
-  - `freedom://settings` → RPC Providers: one screen to manage Alchemy / Infura / DRPC API keys with the chains each provider covers
-- Link-hover URL preview in the bottom-left of the page area, matching Chrome and Firefox:
-  - Fades in after a 150 ms hover delay, swaps text instantly between links, and fades out when the cursor leaves all links
-  - Auto-flips to the bottom-right when the cursor enters its zone so it never covers the hovered link
-  - Active-tab only, non-interactive, and respects `prefers-reduced-motion`
+  - Settings > Chains: per-chain endpoint list across three tiers (your RPCs, commercial keyed providers, public RPCs)
+  - Add a chain via the chainlist.org catalogue or by hand
+  - Settings > RPC Providers: manage Alchemy / Infura / DRPC API keys
+- Destination URL preview on link hover, shown in the bottom-left like Chrome and Firefox
 
 ### Changed
 
-- Default ENS resolution changed from public-RPC quorum to Colibri, with a one-shot launch migration that keeps anyone running a custom RPC on a direct-RPC-first path and upgrades everyone else to Colibri
-- Wallet, ENS resolution, and the Bee node manager now read chains and RPC endpoints from the unified network registry, so a chain or endpoint added in settings reaches every consumer without a restart
+- Default ENS resolution changed from public-RPC quorum to Colibri (custom-RPC users keep their direct-RPC-first path)
+- Wallet, ENS, and the Bee node manager all read chains and RPC endpoints from the unified network registry
 
 ### Fixed
 
-- Address-bar Ctrl+C / Ctrl+V / Ctrl+X / Ctrl+A and right-click Cut / Copy / Paste / Select All work on Windows and Linux
-- ENS trust badges persist across network and ENS settings updates instead of disappearing globally on every settings change
-- Reload on an ENS page re-runs ENS resolution under the currently-configured verification method, so the address-bar trust badge refreshes after switching between Colibri and the public-RPC quorum:
-  - Hard reload (Cmd/Ctrl+Shift+R) additionally bypasses the 15-minute ENS contenthash cache
-  - An unsubmitted draft URL typed into the address bar no longer hijacks a subsequent reload after a tab switch
-  - ENS pages that finish loading while their tab is backgrounded also commit a stable identity, so a later reload re-resolves as expected
+- Address-bar copy and paste work as expected on all platforms
 
 ### Security
 
-- Swarm dApp provider permission prompts now key on the committed page URL, not on whatever the user happens to be typing into the address bar at the moment of the request
+- Swarm dApp provider permission prompts key on the committed page URL, not on the address-bar draft
+- Updated runtime dependencies: Electron 41.5.0 to 41.7.0 (Chromium and Node patches), `@ethersphere/bee-js` 12.1.0 to 12.2.1, `@corpus-core/colibri-stateless` 1.1.25 to 1.1.26, `better-sqlite3` 12.9.0 to 12.10.0, `electron-log` 5.4.3 to 5.4.4
+- Updated dev dependencies: `@playwright/test` 1.60.0, `jest` 30.4.2, `babel-jest` 30.4.1, `eslint` 10.4.0, `@babel/preset-env` 7.29.5
+- Override `ws` to ^8.21.0 under `ethers` to clear `GHSA-58qx-3vcg-4xpx` (uninitialised memory disclosure); `ethers@6.16.0` pinned `ws@8.17.1`, the auto-fix would have downgraded ethers across a major
 
 ## [0.7.1] - 2026-05-07
 
