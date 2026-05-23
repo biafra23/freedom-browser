@@ -116,6 +116,16 @@ function invalidParams(message, reason = 'invalid_params', extra = {}) {
   };
 }
 
+function feedNotGranted() {
+  return {
+    error: {
+      ...ERRORS.UNAUTHORIZED,
+      message: 'The origin is not authorized for this operation',
+      data: { reason: 'feed_not_granted' },
+    },
+  };
+}
+
 function validateEmptyOptions(options) {
   if (options === undefined || options === null) return null;
   if (typeof options !== 'object' || Array.isArray(options)) {
@@ -144,6 +154,7 @@ function validateHexString(value, bytes, reason, field, options = {}) {
 }
 
 function normalizeAddress(address) {
+  // Ethereum owners conventionally include 0x; Swarm refs and identifiers do not.
   return typeof address === 'string' ? address.replace(/^0x/, '') : '';
 }
 
@@ -177,6 +188,7 @@ function validateChunkPayload(data) {
     };
   }
   if (payload.length === 0) {
+    // Bee rejects empty chunks; fail before prompting or spending postage.
     return {
       error: invalidParams('data must not be empty', 'invalid_params').error,
       payload: null,
@@ -345,7 +357,7 @@ async function executeSwarmMethod(method, params, origin) {
 function handleRequestAccess(origin) {
   const permission = getPermission(origin);
   if (!permission) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Permission not granted. Renderer should show prompt first.' } };
+    return { error: { ...ERRORS.UNAUTHORIZED, message: 'The origin is not authorized for this operation' } };
   }
   return { result: { connected: true, origin, capabilities: ['publish'] } };
 }
@@ -631,6 +643,8 @@ async function handleGetUploadStatus(params, origin) {
 }
 
 function mapChunkReadError(err) {
+  // Only semantic chunk-read failures become invalid params. Bee 5xx/timeouts
+  // must remain internal/transient errors so callers can distinguish them.
   if (err.reason === 'chunk_not_found' || err.reason === 'chunk_type_mismatch') {
     return { error: { ...ERRORS.INVALID_PARAMS, message: err.message, data: { reason: err.reason } } };
   }
@@ -742,7 +756,7 @@ async function handleWriteSingleOwnerChunk(params, origin) {
   }
 
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -892,7 +906,7 @@ async function resolveSignerKey(originEntry) {
  */
 async function handleGetSigningIdentity(origin) {
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -931,7 +945,7 @@ async function handleCreateFeed(params, origin) {
 
   // Feed capability = connection permission (already checked by caller) + active feed grant
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted. Renderer should show feed prompt first.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -1023,7 +1037,7 @@ async function handleUpdateFeed(params, origin) {
   }
 
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -1112,7 +1126,7 @@ async function handleWriteFeedEntry(params, origin) {
   }
 
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);

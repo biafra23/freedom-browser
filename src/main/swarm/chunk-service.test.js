@@ -192,12 +192,30 @@ describe('chunk-service', () => {
     });
   });
 
+  test('readChunk maps CAC unmarshal failures to chunk_type_mismatch', async () => {
+    mockDownloadChunk.mockResolvedValue(Buffer.from('raw'));
+    mockUnmarshalContentAddressedChunk.mockImplementation(() => {
+      throw new Error('unmarshal failed');
+    });
+
+    await expect(readChunk(CAC_REFERENCE)).rejects.toMatchObject({
+      reason: 'chunk_type_mismatch',
+    });
+  });
+
   test('readChunk maps Bee 404 to chunk_not_found', async () => {
     mockDownloadChunk.mockRejectedValue(new MockBeeResponseError(404));
 
     await expect(readChunk(CAC_REFERENCE)).rejects.toMatchObject({
       reason: 'chunk_not_found',
     });
+  });
+
+  test('readChunk preserves transient Bee errors', async () => {
+    const err = new MockBeeResponseError(500);
+    mockDownloadChunk.mockRejectedValue(err);
+
+    await expect(readChunk(CAC_REFERENCE)).rejects.toBe(err);
   });
 
   test('writeSingleOwnerChunk signs and uploads an SOC', async () => {
@@ -248,5 +266,23 @@ describe('chunk-service', () => {
     );
     expect(mockDownloadChunk).toHaveBeenCalledWith(SOC_REFERENCE);
     expect(result.reference).toBe(SOC_REFERENCE);
+  });
+
+  test('readSingleOwnerChunk maps SOC unmarshal failures to chunk_type_mismatch', async () => {
+    mockDownloadChunk.mockResolvedValue(Buffer.from('raw'));
+    mockUnmarshalSingleOwnerChunk.mockImplementation(() => {
+      throw new Error('unmarshal failed');
+    });
+
+    await expect(readSingleOwnerChunk({ address: SOC_REFERENCE })).rejects.toMatchObject({
+      reason: 'chunk_type_mismatch',
+    });
+  });
+
+  test('readSingleOwnerChunk preserves transient Bee errors', async () => {
+    const err = new MockBeeResponseError(500);
+    mockDownloadChunk.mockRejectedValue(err);
+
+    await expect(readSingleOwnerChunk({ address: SOC_REFERENCE })).rejects.toBe(err);
   });
 });

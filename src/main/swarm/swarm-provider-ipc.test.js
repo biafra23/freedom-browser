@@ -165,6 +165,7 @@ describe('swarm-provider-ipc', () => {
       const result = await invokeProvider('swarm_requestAccess', {}, 'unknown.eth');
       expect(result.error).toBeDefined();
       expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
     });
   });
 
@@ -789,6 +790,17 @@ describe('swarm-provider-ipc', () => {
       expect(result.error.data.reason).toBe('chunk_type_mismatch');
     });
 
+    test('keeps transient chunk read errors internal', async () => {
+      mockGetPermission.mockReturnValue(null);
+      mockReachable();
+      mockReadChunk.mockRejectedValue(new Error('Bee gateway timed out'));
+
+      const result = await invokeProvider('swarm_readChunk', { reference: VALID_REF }, 'unknown.eth');
+
+      expect(result.error.code).toBe(-32603);
+      expect(result.error.message).toBe('Bee gateway timed out');
+    });
+
     test('rejects invalid chunk reference', async () => {
       mockGetPermission.mockReturnValue(null);
 
@@ -837,6 +849,7 @@ describe('swarm-provider-ipc', () => {
       }, 'myapp.eth');
 
       expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
       expect(result.error.data.reason).toBe('feed_not_granted');
     });
 
@@ -887,6 +900,17 @@ describe('swarm-provider-ipc', () => {
         identityMode: 'bee-wallet',
       });
       expect(mockGetSignerAddress).toHaveBeenCalledWith('0xbeekey');
+    });
+
+    test('rejects signing identity without feed grant using spec-shaped 4100', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+      mockHasFeedGrant.mockReturnValue(false);
+
+      const result = await invokeProvider('swarm_getSigningIdentity', {}, 'myapp.eth');
+
+      expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
+      expect(result.error.data.reason).toBe('feed_not_granted');
     });
   });
 
@@ -995,6 +1019,8 @@ describe('swarm-provider-ipc', () => {
       mockHasFeedGrant.mockReturnValue(false);
       const result = await invokeProvider('swarm_createFeed', { name: 'blog' }, 'myapp.eth');
       expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
+      expect(result.error.data.reason).toBe('feed_not_granted');
     });
 
     test('returns existing feed when idempotent', async () => {
@@ -1274,6 +1300,7 @@ describe('swarm-provider-ipc', () => {
       mockHasFeedGrant.mockReturnValue(false);
       const result = await invokeProvider('swarm_writeFeedEntry', { name: 'feed', data: 'hello' }, 'myapp.eth');
       expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
       expect(result.error.data.reason).toBe('feed_not_granted');
     });
 
