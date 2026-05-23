@@ -42,6 +42,7 @@ const {
   setFeed,
   updateFeedReference,
   getAllFeeds,
+  getAllOriginEntries,
   hasIdentityMode,
   hasFeedGrant,
   grantFeedAccess,
@@ -53,6 +54,14 @@ const {
 beforeEach(() => {
   _resetCache();
 });
+
+function getFeedsFilePath() {
+  return path.join(tmpDir, 'swarm-feeds.json');
+}
+
+function readFeedsFile() {
+  return JSON.parse(fs.readFileSync(getFeedsFilePath(), 'utf-8'));
+}
 
 describe('feed-store', () => {
   describe('origin entries', () => {
@@ -67,6 +76,11 @@ describe('feed-store', () => {
       });
       expect(entry.identityMode).toBe('app-scoped');
       expect(entry.publisherKeyIndex).toBe(0);
+      expect(entry.activeIdentityId).toBe('app-scoped:0');
+      expect(entry.identities['app-scoped:0']).toMatchObject({
+        mode: 'app-scoped',
+        publisherKeyIndex: 0,
+      });
       expect(entry.grantedAt).toEqual(expect.any(Number));
       expect(entry.feeds).toEqual({});
     });
@@ -77,6 +91,7 @@ describe('feed-store', () => {
       });
       expect(entry.identityMode).toBe('bee-wallet');
       expect(entry.publisherKeyIndex).toBeNull();
+      expect(entry.activeIdentityId).toBe('bee-wallet');
     });
 
     test('getOriginEntry returns entry after set', () => {
@@ -141,6 +156,7 @@ describe('feed-store', () => {
       expect(feed.topic).toBe('abc123');
       expect(feed.owner).toBe('def456');
       expect(feed.manifestReference).toBe('789abc');
+      expect(feed.identityId).toBe('app-scoped:0');
       expect(feed.createdAt).toEqual(expect.any(Number));
       expect(feed.lastUpdated).toBeNull();
       expect(feed.lastReference).toBeNull();
@@ -234,23 +250,133 @@ describe('feed-store', () => {
       const entry = getOriginEntry('myapp.eth');
       // Mutate the returned object at every level
       entry.identityMode = 'corrupted';
+      entry.identities['app-scoped:0'].mode = 'corrupted';
       entry.feeds.blog.owner = 'corrupted';
       entry.feeds.newFeed = { topic: 'injected' };
 
       // Cache should be unaffected
       const fresh = getOriginEntry('myapp.eth');
       expect(fresh.identityMode).toBe('app-scoped');
+      expect(fresh.identities['app-scoped:0'].mode).toBe('app-scoped');
       expect(fresh.feeds.blog.owner).toBe('b');
       expect(fresh.feeds.newFeed).toBeUndefined();
     });
 
     test('writes to disk', () => {
       setOriginEntry('myapp.eth', { identityMode: 'bee-wallet' });
-      const filePath = path.join(tmpDir, 'swarm-feeds.json');
+      const filePath = getFeedsFilePath();
       expect(fs.existsSync(filePath)).toBe(true);
       const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      expect(data.version).toBe(1);
+      expect(data.version).toBe(2);
       expect(data.origins['myapp.eth']).toBeDefined();
+      expect(data.origins['myapp.eth'].activeIdentityId).toBe('bee-wallet');
+    });
+  });
+
+  describe('store migration', () => {
+    test('migrates v1 app-scoped origin entries to v2 identities', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 1,
+        nextPublisherKeyIndex: 7,
+        origins: {
+          'myapp.eth': {
+            identityMode: 'app-scoped',
+            publisherKeyIndex: 3,
+            feedGranted: true,
+            grantedAt: 1234,
+            feeds: {
+              blog: {
+                topic: 'topic',
+                owner: 'owner',
+                manifestReference: 'manifest',
+                createdAt: 1300,
+                lastUpdated: 1400,
+                lastReference: 'reference',
+              },
+            },
+          },
+        },
+      }), 'utf-8');
+
+      const entry = getOriginEntry('myapp.eth');
+      expect(entry.identityMode).toBe('app-scoped');
+      expect(entry.publisherKeyIndex).toBe(3);
+      expect(entry.activeIdentityId).toBe('app-scoped:3');
+      expect(entry.identities['app-scoped:3']).toMatchObject({
+        id: 'app-scoped:3',
+        mode: 'app-scoped',
+        publisherKeyIndex: 3,
+        label: 'App-scoped identity 4',
+        createdAt: 1234,
+      });
+      expect(entry.feeds.blog.identityId).toBe('app-scoped:3');
+
+      const persisted = readFeedsFile();
+      expect(persisted.version).toBe(2);
+      expect(persisted.nextPublisherKeyIndex).toBe(7);
+      expect(persisted.origins['myapp.eth'].feeds.blog.identityId).toBe('app-scoped:3');
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.v1-backup.json'))).toBe(true);
+    });
+
+    test('migrates v1 bee-wallet origin entries to v2 identities', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 1,
+        nextPublisherKeyIndex: 2,
+        origins: {
+          'beeapp.eth': {
+            identityMode: 'bee-wallet',
+            feedGranted: false,
+            grantedAt: 2345,
+            feeds: {},
+          },
+        },
+      }), 'utf-8');
+
+      const entry = getOriginEntry('beeapp.eth');
+      expect(entry.identityMode).toBe('bee-wallet');
+      expect(entry.publisherKeyIndex).toBeNull();
+      expect(entry.activeIdentityId).toBe('bee-wallet');
+      expect(entry.identities['bee-wallet']).toMatchObject({
+        id: 'bee-wallet',
+        mode: 'bee-wallet',
+        publisherKeyIndex: null,
+        label: 'Bee wallet identity',
+      });
+    });
+
+    test('treats missing version as corrupt and starts fresh', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        nextPublisherKeyIndex: 99,
+        origins: {
+          'myapp.eth': {
+            identityMode: 'app-scoped',
+            publisherKeyIndex: 0,
+          },
+        },
+      }), 'utf-8');
+
+      expect(getOriginEntry('myapp.eth')).toBeNull();
+      const persisted = readFeedsFile();
+      expect(persisted).toEqual({
+        version: 2,
+        nextPublisherKeyIndex: 0,
+        origins: {},
+      });
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.corrupt.json'))).toBe(true);
+    });
+
+    test('treats unknown version as corrupt and starts fresh', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 999,
+        nextPublisherKeyIndex: 99,
+        origins: {},
+      }), 'utf-8');
+
+      expect(getAllOriginEntries()).toEqual([]);
+      const persisted = readFeedsFile();
+      expect(persisted.version).toBe(2);
+      expect(persisted.nextPublisherKeyIndex).toBe(0);
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.corrupt.json'))).toBe(true);
     });
   });
 

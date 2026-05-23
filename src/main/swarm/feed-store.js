@@ -6,9 +6,15 @@
  * connection permission state.
  *
  * Data model:
- *   { version, nextPublisherKeyIndex, origins: { [origin]: { identityMode, publisherKeyIndex, feeds } } }
+ *   {
+ *     version,
+ *     nextPublisherKeyIndex,
+ *     origins: {
+ *       [origin]: { activeIdentityId, identities, feedGranted, grantedAt, feeds }
+ *     }
+ *   }
  *
- * Identity mode is chosen once per origin at first feed grant:
+ * A default identity is chosen once per origin at first feed grant:
  *   - 'bee-wallet': uses the Bee node wallet key for signing
  *   - 'app-scoped': uses a dedicated publisher key derived at m/44'/73406'/{index}'/0/0
  *
@@ -24,9 +30,10 @@ const { normalizeOrigin } = require('../../shared/origin-utils');
 const log = require('electron-log');
 
 const FEEDS_FILE = 'swarm-feeds.json';
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 const VALID_IDENTITY_MODES = ['bee-wallet', 'app-scoped'];
+const BEE_WALLET_IDENTITY_ID = 'bee-wallet';
 
 let feedsCache = null;
 
@@ -42,21 +49,229 @@ function createEmptyStore() {
   };
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getIdentityId(identityMode, publisherKeyIndex = null) {
+  if (identityMode === 'bee-wallet') {
+    return BEE_WALLET_IDENTITY_ID;
+  }
+  if (identityMode === 'app-scoped') {
+    if (typeof publisherKeyIndex !== 'number' || !Number.isInteger(publisherKeyIndex) || publisherKeyIndex < 0) {
+      throw new Error('App-scoped identity requires a non-negative publisher key index');
+    }
+    return `app-scoped:${publisherKeyIndex}`;
+  }
+  throw new Error(`Invalid identity mode: ${identityMode}`);
+}
+
+function getIdentityLabel(identityMode, publisherKeyIndex = null) {
+  if (identityMode === 'bee-wallet') {
+    return 'Bee wallet identity';
+  }
+  return `App-scoped identity ${(publisherKeyIndex ?? 0) + 1}`;
+}
+
+function createIdentity(identityMode, publisherKeyIndex = null, createdAt = Date.now()) {
+  if (!VALID_IDENTITY_MODES.includes(identityMode)) {
+    throw new Error(`Invalid identity mode: ${identityMode}`);
+  }
+
+  const id = getIdentityId(identityMode, publisherKeyIndex);
+  return {
+    id,
+    mode: identityMode,
+    publisherKeyIndex: identityMode === 'app-scoped' ? publisherKeyIndex : null,
+    label: getIdentityLabel(identityMode, publisherKeyIndex),
+    createdAt,
+    lastUsedAt: null,
+  };
+}
+
+function getActiveIdentityFromEntry(entry) {
+  if (!entry || !entry.activeIdentityId || !isPlainObject(entry.identities)) {
+    return null;
+  }
+  return entry.identities[entry.activeIdentityId] || null;
+}
+
+function copyFeeds(feeds) {
+  const feedsCopy = {};
+  if (!isPlainObject(feeds)) {
+    return feedsCopy;
+  }
+  for (const [name, feed] of Object.entries(feeds)) {
+    feedsCopy[name] = { ...feed };
+  }
+  return feedsCopy;
+}
+
+function copyIdentities(identities) {
+  const identitiesCopy = {};
+  if (!isPlainObject(identities)) {
+    return identitiesCopy;
+  }
+  for (const [id, identity] of Object.entries(identities)) {
+    identitiesCopy[id] = { ...identity };
+  }
+  return identitiesCopy;
+}
+
+function decorateOriginEntry(entry) {
+  const activeIdentity = getActiveIdentityFromEntry(entry);
+  return {
+    ...entry,
+    identities: copyIdentities(entry.identities),
+    feeds: copyFeeds(entry.feeds),
+    identityMode: activeIdentity?.mode || null,
+    publisherKeyIndex: activeIdentity?.publisherKeyIndex ?? null,
+  };
+}
+
+function migrateV1OriginEntry(entry) {
+  if (!isPlainObject(entry) || !VALID_IDENTITY_MODES.includes(entry.identityMode)) {
+    throw new Error('Invalid v1 origin entry');
+  }
+
+  const grantedAt = entry.grantedAt || Date.now();
+  const publisherKeyIndex = entry.identityMode === 'app-scoped' ? entry.publisherKeyIndex : null;
+  const identity = createIdentity(entry.identityMode, publisherKeyIndex, grantedAt);
+  const feeds = {};
+
+  if (entry.feeds !== undefined && !isPlainObject(entry.feeds)) {
+    throw new Error('Invalid v1 feed map');
+  }
+
+  for (const [feedName, feed] of Object.entries(entry.feeds || {})) {
+    if (!isPlainObject(feed)) {
+      throw new Error('Invalid v1 feed entry');
+    }
+    feeds[feedName] = {
+      ...feed,
+      identityId: feed.identityId || identity.id,
+    };
+  }
+
+  return {
+    activeIdentityId: identity.id,
+    feedGranted: !!entry.feedGranted,
+    grantedAt,
+    identities: {
+      [identity.id]: identity,
+    },
+    feeds,
+  };
+}
+
+function migrateV1Store(store) {
+  if (!isPlainObject(store.origins)) {
+    throw new Error('Invalid v1 feed store: origins must be an object');
+  }
+
+  const migrated = {
+    version: CURRENT_VERSION,
+    nextPublisherKeyIndex: Number.isInteger(store.nextPublisherKeyIndex) && store.nextPublisherKeyIndex >= 0
+      ? store.nextPublisherKeyIndex
+      : 0,
+    origins: {},
+  };
+
+  for (const [origin, entry] of Object.entries(store.origins)) {
+    migrated.origins[origin] = migrateV1OriginEntry(entry);
+  }
+
+  return migrated;
+}
+
+function validateV2Store(store) {
+  if (!isPlainObject(store.origins)) {
+    throw new Error('Invalid v2 feed store: origins must be an object');
+  }
+  if (!Number.isInteger(store.nextPublisherKeyIndex) || store.nextPublisherKeyIndex < 0) {
+    throw new Error('Invalid v2 feed store: nextPublisherKeyIndex must be a non-negative integer');
+  }
+
+  for (const [origin, entry] of Object.entries(store.origins)) {
+    if (!isPlainObject(entry) || !entry.activeIdentityId || !isPlainObject(entry.identities)) {
+      throw new Error(`Invalid v2 origin entry: ${origin}`);
+    }
+    const activeIdentity = getActiveIdentityFromEntry(entry);
+    if (!activeIdentity || !VALID_IDENTITY_MODES.includes(activeIdentity.mode)) {
+      throw new Error(`Invalid active identity for origin: ${origin}`);
+    }
+    if (!isPlainObject(entry.feeds)) {
+      entry.feeds = {};
+    }
+  }
+
+  return store;
+}
+
+function getBackupPath(filePath, suffix) {
+  const parsed = path.parse(filePath);
+  let index = 0;
+  let candidate;
+  do {
+    const extra = index === 0 ? '' : `-${index}`;
+    candidate = path.join(parsed.dir, `${parsed.name}.${suffix}${extra}${parsed.ext}`);
+    index += 1;
+  } while (fs.existsSync(candidate));
+  return candidate;
+}
+
+function backupFeedsFile(filePath, suffix) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const backupPath = getBackupPath(filePath, suffix);
+    fs.copyFileSync(filePath, backupPath);
+    log.info(`[FeedStore] Backed up ${FEEDS_FILE} to ${path.basename(backupPath)}`);
+    return backupPath;
+  } catch (err) {
+    log.error('[FeedStore] Failed to back up feeds file:', err.message);
+    return null;
+  }
+}
+
+function loadFeedsFromFile(filePath) {
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+  if (!isPlainObject(parsed)) {
+    throw new Error('Feed store root must be an object');
+  }
+
+  if (parsed.version === 1) {
+    const migrated = migrateV1Store(parsed);
+    backupFeedsFile(filePath, 'v1-backup');
+    feedsCache = migrated;
+    saveFeeds();
+    return migrated;
+  }
+
+  if (parsed.version === CURRENT_VERSION) {
+    return validateV2Store(parsed);
+  }
+
+  throw new Error(`Unsupported feed store version: ${parsed.version ?? 'missing'}`);
+}
+
 function loadFeeds() {
   if (feedsCache !== null) {
     return feedsCache;
   }
 
+  const filePath = getFeedsPath();
   try {
-    const filePath = getFeedsPath();
     if (fs.existsSync(filePath)) {
-      feedsCache = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      feedsCache = loadFeedsFromFile(filePath);
     } else {
       feedsCache = createEmptyStore();
     }
   } catch (err) {
     log.error('[FeedStore] Failed to load feeds:', err.message);
+    backupFeedsFile(filePath, 'corrupt');
     feedsCache = createEmptyStore();
+    saveFeeds();
   }
 
   return feedsCache;
@@ -65,7 +280,9 @@ function loadFeeds() {
 function saveFeeds() {
   try {
     const filePath = getFeedsPath();
-    fs.writeFileSync(filePath, JSON.stringify(feedsCache, null, 2), 'utf-8');
+    const tempPath = `${filePath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(feedsCache, null, 2), 'utf-8');
+    fs.renameSync(tempPath, filePath);
   } catch (err) {
     log.error('[FeedStore] Failed to save feeds:', err.message);
   }
@@ -80,13 +297,7 @@ function getOriginEntry(origin) {
   const key = normalizeOrigin(origin);
   const entry = store.origins[key];
   if (!entry) return null;
-  const feedsCopy = {};
-  if (entry.feeds) {
-    for (const [name, feed] of Object.entries(entry.feeds)) {
-      feedsCopy[name] = { ...feed };
-    }
-  }
-  return { ...entry, feeds: feedsCopy };
+  return decorateOriginEntry(entry);
 }
 
 /**
@@ -97,14 +308,32 @@ function getOriginEntry(origin) {
  * @returns {Object} The origin entry
  */
 function setOriginEntry(origin, data) {
+  if (!VALID_IDENTITY_MODES.includes(data.identityMode)) {
+    throw new Error(`Invalid identity mode: ${data.identityMode}`);
+  }
+
   const store = loadFeeds();
   const key = normalizeOrigin(origin);
 
   const existing = store.origins[key] || {};
+  let publisherKeyIndex = data.publisherKeyIndex ?? null;
+  if (data.identityMode === 'app-scoped' && publisherKeyIndex === null) {
+    publisherKeyIndex = allocatePublisherKeyIndex();
+  }
+  const identity = createIdentity(
+    data.identityMode,
+    publisherKeyIndex,
+    existing.grantedAt || Date.now()
+  );
+  const identities = {
+    ...(existing.identities || {}),
+    [identity.id]: identity,
+  };
+
   store.origins[key] = {
     ...existing,
-    identityMode: data.identityMode,
-    publisherKeyIndex: data.publisherKeyIndex ?? existing.publisherKeyIndex ?? null,
+    activeIdentityId: identity.id,
+    identities,
     feedGranted: data.feedGranted ?? existing.feedGranted ?? false,
     grantedAt: existing.grantedAt || Date.now(),
     feeds: existing.feeds || {},
@@ -165,6 +394,7 @@ function setFeed(origin, feedName, feedData) {
     topic: feedData.topic,
     owner: feedData.owner,
     manifestReference: feedData.manifestReference,
+    identityId: existing?.identityId || feedData.identityId || store.origins[key].activeIdentityId || null,
     createdAt: existing?.createdAt || Date.now(),
     lastUpdated: existing?.lastUpdated || null,
     lastReference: existing?.lastReference || null,
@@ -220,15 +450,20 @@ function getAllFeeds(origin) {
 function getAllOriginEntries() {
   const store = loadFeeds();
   return Object.entries(store.origins)
-    .filter(([, entry]) => entry.identityMode)
-    .map(([origin, entry]) => ({
-      origin,
-      identityMode: entry.identityMode,
-      publisherKeyIndex: entry.publisherKeyIndex ?? null,
-      feedGranted: !!entry.feedGranted,
-      grantedAt: entry.grantedAt || null,
-      feedCount: entry.feeds ? Object.keys(entry.feeds).length : 0,
-    }))
+    .filter(([, entry]) => entry.activeIdentityId)
+    .map(([origin, entry]) => {
+      const activeIdentity = getActiveIdentityFromEntry(entry);
+      return {
+        origin,
+        identityMode: activeIdentity?.mode || null,
+        publisherKeyIndex: activeIdentity?.publisherKeyIndex ?? null,
+        activeIdentityId: entry.activeIdentityId,
+        identityCount: entry.identities ? Object.keys(entry.identities).length : 0,
+        feedGranted: !!entry.feedGranted,
+        grantedAt: entry.grantedAt || null,
+        feedCount: entry.feeds ? Object.keys(entry.feeds).length : 0,
+      };
+    })
     .sort((a, b) => (b.grantedAt || 0) - (a.grantedAt || 0));
 }
 
@@ -244,7 +479,7 @@ function hasIdentityMode(origin) {
   const store = loadFeeds();
   const key = normalizeOrigin(origin);
   const entry = store.origins[key];
-  return !!(entry && entry.identityMode);
+  return !!(entry && entry.activeIdentityId && getActiveIdentityFromEntry(entry));
 }
 
 /**
@@ -316,7 +551,7 @@ function registerFeedStoreIpc() {
     }
 
     const existing = getOriginEntry(origin);
-    if (existing && existing.identityMode) {
+    if (existing && existing.activeIdentityId) {
       // Identity already set — just re-grant feed access
       if (!existing.feedGranted) {
         grantFeedAccess(origin);
@@ -324,11 +559,7 @@ function registerFeedStoreIpc() {
       return getOriginEntry(origin);
     }
 
-    let publisherKeyIndex = null;
-    if (identityMode === 'app-scoped') {
-      publisherKeyIndex = allocatePublisherKeyIndex();
-    }
-    return setOriginEntry(origin, { identityMode, publisherKeyIndex, feedGranted: true });
+    return setOriginEntry(origin, { identityMode, feedGranted: true });
   });
 
   ipcMain.handle(IPC.SWARM_REVOKE_FEED_ACCESS, (_event, origin) => {
