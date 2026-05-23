@@ -194,11 +194,31 @@ const setLoading = (isLoading, tabId = null) => {
 // switchback after a background-tab view-source dispatch picks up the
 // right state.
 //
+// `commit` marks this call as the actual navigation commit point — the
+// site we're about to (or just did) hand to `webview.loadURL`. When set,
+// we also write the value into `navState.committedDisplayUrl`, which is
+// what reload reads. For the active tab `did-navigate` will overwrite
+// this shortly after, so the early write is harmless (but consistent).
+// For *background* tabs `tabs.js` does not forward `did-navigate` to the
+// renderer's navigation handler, so without this early write a background
+// ENS load would never populate `committedDisplayUrl` — the user could
+// switch back, hit reload, and fall through to `webview.reload()` instead
+// of re-resolving under today's verification method.
+//
 // The active-tab branch is gated on a value-change check so repeated
 // no-op calls (every dispatch + every did-navigate on the hot path) don't
 // re-run `updateProtocolIcon`, which walks `state.ensTrustByName` and
 // invokes the trust-badge resolver on every call.
-const setAddressDisplayForTab = (displayValue, tabId, { isViewingSourceForTab = false } = {}) => {
+const setAddressDisplayForTab = (
+  displayValue,
+  tabId,
+  { isViewingSourceForTab = false, commit = false } = {}
+) => {
+  const targetTab =
+    tabId !== null && tabId !== undefined ? getTabById(tabId) : getActiveTab();
+  if (commit && targetTab?.navigationState) {
+    targetTab.navigationState.committedDisplayUrl = displayValue;
+  }
   if (isActiveTab(tabId) || tabId === null) {
     if (addressInput.value !== displayValue) {
       addressInput.value = displayValue;
@@ -206,13 +226,12 @@ const setAddressDisplayForTab = (displayValue, tabId, { isViewingSourceForTab = 
     }
     return;
   }
-  const tab = getTabById(tabId);
-  if (!tab) return;
-  if (tab.navigationState) {
-    tab.navigationState.addressBarSnapshot = displayValue;
+  if (!targetTab) return;
+  if (targetTab.navigationState) {
+    targetTab.navigationState.addressBarSnapshot = displayValue;
   }
   if (isViewingSourceForTab) {
-    tab.isViewingSource = true;
+    targetTab.isViewingSource = true;
   }
 };
 
@@ -952,6 +971,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           if (transportDisplay) {
             setAddressDisplayForTab(`view-source:${transportDisplay}`, capturedTabId, {
               isViewingSourceForTab: true,
+              commit: true,
             });
           }
 
@@ -993,6 +1013,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     });
     setAddressDisplayForTab(viewSourceNavigation.addressValue, targetTabId, {
       isViewingSourceForTab: true,
+      commit: true,
     });
     webview.loadURL(viewSourceNavigation.loadUrl);
     return;
@@ -1215,7 +1236,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     const radicleTarget = formatRadicleUrl(value, state.radicleBase);
     if (radicleTarget) {
       const radicleDisplayValue = displayOverride || radicleTarget.displayValue;
-      setAddressDisplayForTab(radicleDisplayValue, targetTabId);
+      setAddressDisplayForTab(radicleDisplayValue, targetTabId, { commit: true });
       pushDebug(`[AddressBar] Loading Radicle target, set to: ${radicleDisplayValue}`);
       navState.pendingTitleForUrl = radicleTarget.targetUrl;
       navState.pendingNavigationUrl = radicleTarget.targetUrl;
@@ -1261,7 +1282,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
       }
     }
     const displayValue = displayOverride || target.displayValue;
-    setAddressDisplayForTab(displayValue, targetTabId);
+    setAddressDisplayForTab(displayValue, targetTabId, { commit: true });
     navState.pendingTitleForUrl = expectedNavUrl;
     navState.pendingNavigationUrl = expectedNavUrl;
     navState.hasNavigatedDuringCurrentLoad = false;
@@ -1328,7 +1349,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
   // Try HTTP/HTTPS URLs
   if (value.startsWith('http://') || value.startsWith('https://')) {
     const httpDisplayValue = displayOverride || value;
-    setAddressDisplayForTab(httpDisplayValue, targetTabId);
+    setAddressDisplayForTab(httpDisplayValue, targetTabId, { commit: true });
     pushDebug(`[AddressBar] Loading HTTP(S) target: ${value}`);
     navState.pendingTitleForUrl = value;
     navState.pendingNavigationUrl = value;

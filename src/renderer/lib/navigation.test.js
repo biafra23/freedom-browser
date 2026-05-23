@@ -1881,6 +1881,112 @@ describe('navigation', () => {
       expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
     });
 
+    test('reload after a background ENS navigation commits in another tab re-resolves on switch-back', async () => {
+      // Regression for the background-commit gap: tabs.js only forwards
+      // did-navigate to navigation.js's webviewEventHandler for the active
+      // tab, so an ENS load that finishes while its tab is in the
+      // background never wrote `committedDisplayUrl` through the regular
+      // did-navigate path. Pre-fix, that left committedDisplayUrl empty —
+      // switching back and hitting reload fell through to webview.reload()
+      // instead of re-running ENS resolution under today's verification
+      // method. The fix marks the commit points (commitDwebNavigationPrefix,
+      // HTTP, Radicle, view-source) with `{ commit: true }` so
+      // setAddressDisplayForTab writes committedDisplayUrl on the *target*
+      // tab regardless of active state.
+      const tabA = createTab(1, 'https://a.example', { title: 'Tab A' });
+      const tabB = createTab(2, 'about:blank', { title: 'Tab B' });
+      const ctx = await loadNavigationModule({
+        firstTab: tabA,
+        tabs: [tabA, tabB],
+        activeTab: tabA,
+      });
+      installEnsParser(ctx);
+      ctx.tabsRef.list = [tabA, tabB];
+      ctx.activeRef.tab = tabA;
+      await ctx.mod.initNavigation();
+
+      // Step 1: kick off ENS navigation in Tab A with a deferred resolveEns.
+      let resolveResolver;
+      ctx.electronAPI.resolveEns.mockReturnValue(
+        new Promise((resolve) => {
+          resolveResolver = resolve;
+        })
+      );
+      ctx.mod.loadTarget('vitalik.eth', null, tabA.webview);
+      await flushMicrotasks();
+      expect(ctx.elements.addressInput.value).toBe('vitalik.eth');
+
+      // Step 2: user switches to Tab B before resolveEns settles. We seed
+      // previousActiveTabId via the prior tab-switched dispatch so a real
+      // switch flow is exercised, and clear the foreground address input
+      // to mimic Tab B's own URL taking over.
+      ctx.tabsMocks.webviewEventHandler('tab-switched', {
+        tabId: tabA.id,
+        tab: tabA,
+        isNewTab: false,
+      });
+      ctx.activeRef.tab = tabB;
+      ctx.elements.addressInput.value = 'about:blank';
+      ctx.tabsMocks.webviewEventHandler('tab-switched', {
+        tabId: tabB.id,
+        tab: tabB,
+        isNewTab: false,
+      });
+      await flushMicrotasks();
+
+      // Step 3: resolveEns settles in the background, which triggers the
+      // recursive loadTarget that ultimately commits the IPFS dispatch on
+      // Tab A — setAddressDisplayForTab is called with `{ commit: true }`
+      // and writes both addressBarSnapshot AND committedDisplayUrl on Tab A
+      // even though Tab A is not active.
+      resolveResolver({
+        type: 'ok',
+        name: 'vitalik.eth',
+        protocol: 'ipfs',
+        uri: 'ipfs://QmVitalik',
+        trust: { level: 'verified', queried: ['a', 'b'], agreed: ['a', 'b'] },
+      });
+      await flushMicrotasks();
+
+      // Tab B's foreground address bar must not have been clobbered.
+      expect(ctx.elements.addressInput.value).toBe('about:blank');
+      // Tab A picked up the resolved display in BOTH fields — the snapshot
+      // (existing behaviour) and committedDisplayUrl (new commit-only field).
+      expect(tabA.navigationState.addressBarSnapshot).toBe('ipfs://vitalik.eth');
+      expect(tabA.navigationState.committedDisplayUrl).toBe('ipfs://vitalik.eth');
+
+      // Step 4: switch back to Tab A. The tab-switched handler restores
+      // addressInput.value from the snapshot.
+      ctx.navigationUtilsMocks.deriveSwitchedTabDisplay.mockReturnValueOnce(
+        'ipfs://vitalik.eth'
+      );
+      ctx.activeRef.tab = tabA;
+      ctx.tabsMocks.webviewEventHandler('tab-switched', {
+        tabId: tabA.id,
+        tab: tabA,
+        isNewTab: false,
+      });
+      await flushMicrotasks();
+      expect(ctx.elements.addressInput.value).toBe('ipfs://vitalik.eth');
+
+      // Step 5: hit reload. Now that committedDisplayUrl is populated, the
+      // ENS branch fires instead of webview.reload().
+      ctx.electronAPI.resolveEns.mockReset();
+      ctx.electronAPI.resolveEns.mockResolvedValue({
+        type: 'ok',
+        name: 'vitalik.eth',
+        protocol: 'ipfs',
+        uri: 'ipfs://QmVitalik',
+        trust: { level: 'verified', queried: ['a', 'b', 'c'], agreed: ['a', 'b', 'c'] },
+      });
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
+      await flushMicrotasks();
+
+      expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+      expect(tabA.webview.reload).not.toHaveBeenCalled();
+      expect(tabA.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+    });
+
     test('reload after typing ENS draft, switching tabs, and switching back reloads the current non-ENS page', async () => {
       // Regression for the addressBarSnapshot-vs-committedDisplayUrl split:
       //   1. Open https://example.com (commits).
