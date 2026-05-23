@@ -634,7 +634,7 @@ async function handleGetUploadStatus(params, origin) {
 
   const owner = tagOwnership.get(tagUid);
   if (!owner || owner !== origin) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Tag not found or not owned by this origin' } };
+    return notAuthorized('tag_ownership_mismatch');
   }
 
   try {

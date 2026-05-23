@@ -653,6 +653,8 @@ describe('swarm-provider-ipc', () => {
       mockGetPermission.mockReturnValue({ origin: 'other.eth' });
       const result = await invokeProvider('swarm_getUploadStatus', { tagUid: 99 }, 'other.eth');
       expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
+      expect(result.error.data.reason).toBe('tag_ownership_mismatch');
     });
 
     test('rejects invalid tagUid', async () => {
