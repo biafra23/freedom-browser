@@ -341,7 +341,7 @@ function setupSwarmPublishScreen() {
  * Show the per-publish approval prompt.
  * Resolves on "Publish", rejects (code 4001) on "Cancel".
  */
-export function showSwarmPublishApproval(permissionKey, params, resolve, reject) {
+export function showSwarmPublishApproval(permissionKey, params, resolve, reject, method) {
   swarmPublishPending = { permissionKey, resolve, reject };
   if (swarmPublishAutoApproveCheckbox) swarmPublishAutoApproveCheckbox.checked = false;
 
@@ -350,6 +350,7 @@ export function showSwarmPublishApproval(permissionKey, params, resolve, reject)
   }
 
   const isFileMode = Array.isArray(params?.files);
+  const isChunkMode = method === 'swarm_publishChunk';
 
   if (isFileMode) {
     // File mode: show file count, total size, path preview
@@ -376,7 +377,7 @@ export function showSwarmPublishApproval(permissionKey, params, resolve, reject)
   } else {
     // Data mode: show content type, size, optional name
     if (swarmPublishType) {
-      swarmPublishType.textContent = params?.contentType || 'unknown';
+      swarmPublishType.textContent = isChunkMode ? 'Swarm chunk' : (params?.contentType || 'unknown');
     }
     if (swarmPublishSize) {
       const data = params?.data;
@@ -496,7 +497,7 @@ export async function showSwarmFeedApproval(permissionKey, params, resolve, reje
   }
 
   if (swarmFeedName) {
-    swarmFeedName.textContent = params?.name || params?.feedId || 'unnamed';
+    swarmFeedName.textContent = params?.name || params?.feedId || params?.identifier || 'Signing identity';
   }
 
   // Pre-select the stored identity mode when re-granting, default to app-scoped for new origins

@@ -329,7 +329,13 @@ function renderHistory(entries) {
     const item = document.createElement('div');
     item.className = 'publish-history-item';
 
-    const typeIcon = { data: '\u{1F4DD}', file: '\u{1F4C4}', directory: '\u{1F4C1}' }[entry.type] || '\u{1F4E6}';
+    const typeIcon = {
+      data: '\u{1F4DD}',
+      file: '\u{1F4C4}',
+      directory: '\u{1F4C1}',
+      chunk: '\u{1F9E9}',
+      soc: '\u{1F510}',
+    }[entry.type] || '\u{1F4E6}';
 
     const header = document.createElement('div');
     header.className = 'publish-history-item-header';
@@ -357,6 +363,11 @@ function renderHistory(entries) {
         window.freedomAPI?.openInNewTab?.(entry.bzzUrl);
       });
       item.appendChild(urlEl);
+    } else if (entry.reference && entry.status === 'completed') {
+      const refEl = document.createElement('div');
+      refEl.className = 'publish-history-item-url';
+      refEl.textContent = entry.reference;
+      item.appendChild(refEl);
     }
 
     const timeEl = document.createElement('div');

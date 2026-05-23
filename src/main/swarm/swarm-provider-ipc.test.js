@@ -45,6 +45,19 @@ jest.mock('./feed-service', () => ({
   buildTopicString: mockBuildTopicString,
 }));
 
+const mockPublishChunk = jest.fn();
+const mockReadChunk = jest.fn();
+const mockWriteSingleOwnerChunk = jest.fn();
+const mockReadSingleOwnerChunk = jest.fn();
+const mockGetSignerAddress = jest.fn();
+jest.mock('./chunk-service', () => ({
+  publishChunk: mockPublishChunk,
+  readChunk: mockReadChunk,
+  writeSingleOwnerChunk: mockWriteSingleOwnerChunk,
+  readSingleOwnerChunk: mockReadSingleOwnerChunk,
+  getSignerAddress: mockGetSignerAddress,
+}));
+
 // Mock bee-js Topic for readFeedEntry topic resolution
 class MockTopic {
   constructor(hex) { this._hex = hex; }
@@ -87,7 +100,16 @@ jest.mock('./publish-history', () => ({
 // Mock global fetch for pre-flight checks
 global.fetch = jest.fn();
 
-const { registerSwarmProviderIpc, checkSwarmPreFlight, checkBeeReachable, validateVirtualPath, validateFeedName, clearTagOwnership, LIMITS } = require('./swarm-provider-ipc');
+const {
+  registerSwarmProviderIpc,
+  checkSwarmPreFlight,
+  checkBeeReachable,
+  validateVirtualPath,
+  validateFeedName,
+  clearTagOwnership,
+  clearPermissionFreeReadBudgets,
+  LIMITS,
+} = require('./swarm-provider-ipc');
 
 registerSwarmProviderIpc();
 
@@ -99,6 +121,7 @@ async function invokeProvider(method, params, origin) {
 describe('swarm-provider-ipc', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    clearPermissionFreeReadBudgets();
   });
 
   test('registers swarm:provider-execute handler', () => {
@@ -156,12 +179,15 @@ describe('swarm-provider-ipc', () => {
 
       const result = await invokeProvider('swarm_getCapabilities', {}, 'myapp.eth');
       expect(result.result).toEqual({
+        specVersion: '1.0',
         canPublish: true,
         reason: null,
         limits: {
           maxDataBytes: LIMITS.maxDataBytes,
           maxFilesBytes: LIMITS.maxFilesBytes,
           maxFileCount: LIMITS.maxFileCount,
+          maxPathBytes: LIMITS.maxPathBytes,
+          maxChunkPayloadBytes: LIMITS.maxChunkPayloadBytes,
         },
       });
     });
@@ -220,7 +246,10 @@ describe('swarm-provider-ipc', () => {
         maxDataBytes: LIMITS.maxDataBytes,
         maxFilesBytes: LIMITS.maxFilesBytes,
         maxFileCount: LIMITS.maxFileCount,
+        maxPathBytes: LIMITS.maxPathBytes,
+        maxChunkPayloadBytes: LIMITS.maxChunkPayloadBytes,
       });
+      expect(result.result.specVersion).toBe('1.0');
     });
   });
 
@@ -547,8 +576,9 @@ describe('swarm-provider-ipc', () => {
       expect(validateVirtualPath('').valid).toBe(false);
     });
 
-    test('rejects path over 256 chars', () => {
-      expect(validateVirtualPath('a'.repeat(257)).valid).toBe(false);
+    test('rejects path over maxPathBytes UTF-8 bytes', () => {
+      expect(validateVirtualPath('a'.repeat(LIMITS.maxPathBytes + 1)).valid).toBe(false);
+      expect(validateVirtualPath('é'.repeat(51)).valid).toBe(false);
     });
 
     test('rejects null bytes', () => {
@@ -631,6 +661,232 @@ describe('swarm-provider-ipc', () => {
       mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
       const result = await invokeProvider('swarm_getUploadStatus', { tagUid: -1 }, 'myapp.eth');
       expect(result.error.code).toBe(-32602);
+    });
+  });
+
+  describe('chunk methods', () => {
+    const VALID_REF = 'aa'.repeat(32);
+    const VALID_IDENTIFIER = 'bb'.repeat(32);
+    const VALID_OWNER = '0x' + 'cd'.repeat(20);
+
+    function mockPreFlightOk() {
+      mockGetBeeApiUrl.mockReturnValue('http://127.0.0.1:1633');
+      global.fetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ beeMode: 'light' }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'ready' }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ stamps: [{ usable: true }] }) });
+    }
+
+    function mockReachable() {
+      mockGetBeeApiUrl.mockReturnValue('http://127.0.0.1:1633');
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ beeMode: 'light' }) });
+    }
+
+    function mockFeedCapability(origin, mode = 'app-scoped', keyIndex = 0) {
+      mockGetPermission.mockReturnValue({ origin, connectedAt: 1, lastUsed: 1, autoApprove: { publish: false, feeds: false } });
+      mockHasFeedGrant.mockReturnValue(true);
+      mockGetOriginEntry.mockReturnValue({
+        identityMode: mode,
+        publisherKeyIndex: keyIndex,
+        feeds: {},
+      });
+    }
+
+    test('publishes a CAC chunk and records history', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+      mockPreFlightOk();
+      mockPublishChunk.mockResolvedValue({ reference: VALID_REF, batchIdUsed: 'batch1' });
+
+      const result = await invokeProvider('swarm_publishChunk', { data: 'hello' }, 'myapp.eth');
+
+      expect(result.result).toEqual({ reference: VALID_REF });
+      expect(mockPublishChunk).toHaveBeenCalledWith(Buffer.from('hello'), { span: undefined });
+      expect(mockAddEntry).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'chunk',
+        name: 'CAC chunk',
+        bytesSize: 5,
+      }));
+      expect(mockUpdateEntry).toHaveBeenCalledWith('test-id', expect.objectContaining({
+        status: 'completed',
+        reference: VALID_REF,
+      }));
+    });
+
+    test('rejects empty chunk payload before publishing', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+
+      const result = await invokeProvider('swarm_publishChunk', { data: '' }, 'myapp.eth');
+
+      expect(result.error.code).toBe(-32602);
+      expect(result.error.data.reason).toBe('invalid_params');
+      expect(mockPublishChunk).not.toHaveBeenCalled();
+    });
+
+    test('rejects oversized chunk payload', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+
+      const result = await invokeProvider('swarm_publishChunk', {
+        data: Buffer.alloc(LIMITS.maxChunkPayloadBytes + 1),
+      }, 'myapp.eth');
+
+      expect(result.error.code).toBe(-32602);
+      expect(result.error.data.reason).toBe('payload_too_large');
+    });
+
+    test('rejects unsafe numeric span', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+
+      const result = await invokeProvider('swarm_publishChunk', {
+        data: 'hello',
+        span: Number.MAX_SAFE_INTEGER + 1,
+      }, 'myapp.eth');
+
+      expect(result.error.code).toBe(-32602);
+      expect(result.error.data.reason).toBe('invalid_span');
+    });
+
+    test('rejects unsupported chunk options', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+
+      const result = await invokeProvider('swarm_publishChunk', {
+        data: 'hello',
+        options: { deferred: true },
+      }, 'myapp.eth');
+
+      expect(result.error.code).toBe(-32602);
+      expect(result.error.data.reason).toBe('unsupported_option');
+    });
+
+    test('reads CAC chunks without connection permission', async () => {
+      mockGetPermission.mockReturnValue(null);
+      mockReachable();
+      mockReadChunk.mockResolvedValue({
+        data: Buffer.from('hello').toString('base64'),
+        encoding: 'base64',
+        span: 5,
+      });
+
+      const result = await invokeProvider('swarm_readChunk', { reference: VALID_REF }, 'unknown.eth');
+
+      expect(result.result).toEqual({
+        data: Buffer.from('hello').toString('base64'),
+        encoding: 'base64',
+        span: 5,
+      });
+      expect(mockReadChunk).toHaveBeenCalledWith(VALID_REF);
+    });
+
+    test('maps read chunk type mismatch', async () => {
+      mockGetPermission.mockReturnValue(null);
+      mockReachable();
+      const err = new Error('wrong type');
+      err.reason = 'chunk_type_mismatch';
+      mockReadChunk.mockRejectedValue(err);
+
+      const result = await invokeProvider('swarm_readChunk', { reference: VALID_REF }, 'unknown.eth');
+
+      expect(result.error.code).toBe(-32602);
+      expect(result.error.data.reason).toBe('chunk_type_mismatch');
+    });
+
+    test('rejects invalid chunk reference', async () => {
+      mockGetPermission.mockReturnValue(null);
+
+      const result = await invokeProvider('swarm_readChunk', { reference: 'not-hex' }, 'unknown.eth');
+
+      expect(result.error.code).toBe(-32602);
+      expect(result.error.data.reason).toBe('invalid_reference');
+    });
+
+    test('writes an SOC with feed signing identity', async () => {
+      mockFeedCapability('myapp.eth');
+      mockPreFlightOk();
+      mockGetPublisherKey.mockResolvedValue({ privateKey: '0xkey' });
+      mockWriteSingleOwnerChunk.mockResolvedValue({
+        reference: VALID_REF,
+        owner: VALID_OWNER,
+        identifier: VALID_IDENTIFIER,
+        batchIdUsed: 'batch1',
+      });
+
+      const result = await invokeProvider('swarm_writeSingleOwnerChunk', {
+        identifier: VALID_IDENTIFIER,
+        data: 'hello',
+      }, 'myapp.eth');
+
+      expect(result.result).toEqual({
+        reference: VALID_REF,
+        owner: VALID_OWNER,
+        identifier: VALID_IDENTIFIER,
+      });
+      expect(mockWriteSingleOwnerChunk).toHaveBeenCalledWith('0xkey', VALID_IDENTIFIER, Buffer.from('hello'), { span: undefined });
+      expect(mockAddEntry).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'soc',
+        name: 'SOC chunk',
+        bytesSize: 5,
+      }));
+    });
+
+    test('rejects SOC writes without feed grant', async () => {
+      mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
+      mockHasFeedGrant.mockReturnValue(false);
+
+      const result = await invokeProvider('swarm_writeSingleOwnerChunk', {
+        identifier: VALID_IDENTIFIER,
+        data: 'hello',
+      }, 'myapp.eth');
+
+      expect(result.error.code).toBe(4100);
+      expect(result.error.data.reason).toBe('feed_not_granted');
+    });
+
+    test('reads SOC chunks by owner and identifier without connection permission', async () => {
+      mockGetPermission.mockReturnValue(null);
+      mockReachable();
+      mockReadSingleOwnerChunk.mockResolvedValue({
+        data: Buffer.from('hello').toString('base64'),
+        encoding: 'base64',
+        span: 5,
+        reference: VALID_REF,
+        owner: VALID_OWNER,
+        identifier: VALID_IDENTIFIER,
+        signature: 'ee'.repeat(65),
+      });
+
+      const result = await invokeProvider('swarm_readSingleOwnerChunk', {
+        owner: VALID_OWNER,
+        identifier: VALID_IDENTIFIER,
+      }, 'unknown.eth');
+
+      expect(result.result.reference).toBe(VALID_REF);
+      expect(mockReadSingleOwnerChunk).toHaveBeenCalledWith({
+        owner: VALID_OWNER,
+        identifier: VALID_IDENTIFIER,
+      });
+    });
+
+    test('rejects malformed SOC read coordinates', async () => {
+      mockGetPermission.mockReturnValue(null);
+
+      const result = await invokeProvider('swarm_readSingleOwnerChunk', {
+        owner: VALID_OWNER,
+      }, 'unknown.eth');
+
+      expect(result.error.code).toBe(-32602);
+    });
+
+    test('returns signing identity after feed grant', async () => {
+      mockFeedCapability('myapp.eth', 'bee-wallet');
+      mockGetDerivedKeys.mockReturnValue({ beeWallet: { privateKey: '0xbeekey' } });
+      mockGetSignerAddress.mockReturnValue(VALID_OWNER);
+
+      const result = await invokeProvider('swarm_getSigningIdentity', {}, 'myapp.eth');
+
+      expect(result.result).toEqual({
+        owner: VALID_OWNER,
+        identityMode: 'bee-wallet',
+      });
+      expect(mockGetSignerAddress).toHaveBeenCalledWith('0xbeekey');
     });
   });
 

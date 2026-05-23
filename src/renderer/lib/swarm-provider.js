@@ -69,23 +69,33 @@ async function handleSwarmRequest(webview, request) {
     } else if (method === 'swarm_getCapabilities') {
       // No prompt needed — coarse capability info, safe for any origin
       result = await forwardToMain(method, params, permissionKey);
-    } else if (method === 'swarm_publishData' || method === 'swarm_publishFiles') {
+    } else if (method === 'swarm_publishData' || method === 'swarm_publishFiles' || method === 'swarm_publishChunk') {
       const permission = await requirePermissionAndReturn(permissionKey);
 
       if (!permission?.autoApprove?.publish) {
         await new Promise((resolve, reject) => {
-          showSwarmPublishApproval(permissionKey, params, resolve, reject);
+          showSwarmPublishApproval(permissionKey, params, resolve, reject, method);
         });
       }
 
       result = await executeWithPermission(method, params, permissionKey);
-    } else if (method === 'swarm_readFeedEntry') {
-      // No permission required — feeds are public Swarm data
+    } else if (
+      method === 'swarm_readFeedEntry' ||
+      method === 'swarm_readChunk' ||
+      method === 'swarm_readSingleOwnerChunk'
+    ) {
+      // No permission required — feeds/chunks are public Swarm data
       result = await forwardToMain(method, params, permissionKey);
     } else if (method === 'swarm_listFeeds') {
       // No permission required — origin-scoped introspection of own feed metadata
       result = await forwardToMain(method, params, permissionKey);
-    } else if (method === 'swarm_createFeed' || method === 'swarm_updateFeed' || method === 'swarm_writeFeedEntry') {
+    } else if (
+      method === 'swarm_createFeed' ||
+      method === 'swarm_updateFeed' ||
+      method === 'swarm_writeFeedEntry' ||
+      method === 'swarm_writeSingleOwnerChunk' ||
+      method === 'swarm_getSigningIdentity'
+    ) {
       await requirePermission(permissionKey);
 
       const [hasFeedAccess, vaultStatus] = await Promise.all([
