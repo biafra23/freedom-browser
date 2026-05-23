@@ -61,21 +61,21 @@ All notable changes to Freedom will be documented in this file.
   - `ipfs://QmXoy.../docs` opens as `ipfs://bafyb.../docs`; `ipns://12D3KooW.../` becomes `ipns://k51.../`
   - Reasoning: Chromium's URL parser lowercases the host, which corrupts mixed-case base58btc encodings; the lowercase-only base32 and base36 forms round-trip cleanly through navigation, the address bar, storage origin, and DevTools
 - ENS names display under their resolved transport, with stricter scheme rules:
-  - `vitalik.eth` → `ipfs://vitalik.eth`, `meinhard.eth` → `bzz://meinhard.eth`
+  - `vitalik.eth` displays as `ipfs://vitalik.eth`, `meinhard.eth` as `bzz://meinhard.eth`
   - Mismatched transport schemes show an error: typing `bzz://name.eth` for an IPFS-hosted name no longer silently switches to IPFS
   - In-page ENS links must carry a scheme (`ens://`, `bzz://`, `ipfs://`, `ipns://`)
 - Speculative gateway prefetch during ENS quorum waves (faster first paint on cold-cache lookups)
 
 ### Fixed
 
-- Bee's raw 404 JSON suppressed during cold-content Swarm lookups; spinner stays running, timeouts → "Content not ready yet" page
+- Bee's raw 404 JSON suppressed during cold-content Swarm lookups; spinner stays running, and timeouts show the "Content not ready yet" page
 - IPFS / IPNS loads on macOS no longer fail with "kubo gateway unreachable"
 
 ### Security
 
-- Updated Electron 41.2.1 → 41.5.0, picking up the latest Chromium 146 and Node 24 patches
-- Updated bundled nodes: Kubo 0.40.1 → 0.41.0, `@ethersphere/bee-js` 11.1.1 → 12.1.0 (drops local axios override, picks up axios 1.x fixes)
-- Updated JS dependencies: ESLint 10.2.1 → 10.3.0, `@scure/bip39` 2.0.1 → 2.2.0, `globals` 17.5.0 → 17.6.0, `micro-key-producer` 0.8.5 → 0.8.6, `@babel/preset-env` 7.29.2 → 7.29.3
+- Updated Electron 41.2.1 to 41.5.0, picking up the latest Chromium 146 and Node 24 patches
+- Updated bundled nodes: Kubo 0.40.1 to 0.41.0, `@ethersphere/bee-js` 11.1.1 to 12.1.0 (drops local axios override, picks up axios 1.x fixes)
+- Updated JS dependencies: ESLint 10.2.1 to 10.3.0, `@scure/bip39` 2.0.1 to 2.2.0, `globals` 17.5.0 to 17.6.0, `micro-key-producer` 0.8.5 to 0.8.6, `@babel/preset-env` 7.29.2 to 7.29.3
 
 ## [0.7.0] - 2026-04-19
 
@@ -105,7 +105,7 @@ All notable changes to Freedom will be documented in this file.
 - ENS resolution uses the Universal Resolver: 3–4× fewer RPC round-trips on cold-cache `.eth` / `.box` navigation; names normalized per ENSIP-15
 - Settings moved from a modal to a full `freedom://settings` page
 - Toolbar icons, nodes menu, and experimental settings polished for consistency
-- Updated bundled nodes: Bee 2.7.0 → 2.7.1, Kubo 0.39.0 → 0.40.1, Radicle 1.6.1 → 1.8.0 (rad-httpd 0.23.0 → 0.24.0)
+- Updated bundled nodes: Bee 2.7.0 to 2.7.1, Kubo 0.39.0 to 0.40.1, Radicle 1.6.1 to 1.8.0 (rad-httpd 0.23.0 to 0.24.0)
 - Upgraded Electron to 41; all other dependencies refreshed to latest
 
 ### Fixed
@@ -155,7 +155,7 @@ First public open-source release.
 
 - Address bar staying focused after selecting autocomplete suggestion
 - Unreadable pages in dark mode — inject light background/text defaults for external pages that don't support dark mode
-- ENS resolution reliability: replace broken RPC providers (llamarpc, ankr, cloudflare-eth → drpc, blastapi, merkle) and fix failed handle cleanup
+- ENS resolution reliability: replace broken RPC providers (llamarpc, ankr, cloudflare-eth replaced with drpc, blastapi, merkle) and fix failed handle cleanup
 - View-source address bar and title not updating correctly
 - IPFS routing and DNSLink resolution on networks with broken or slow local DNS
 
@@ -165,7 +165,7 @@ First public open-source release.
 - Validate IPFS CID format, IPNS names, and block malformed `bzz://` requests
 - Harden webview preferences, restrict `freedomAPI` to internal pages only, tighten local API CORS and IPC base URLs, redact logged URLs
 - Resolve all npm audit vulnerabilities (11 total: 10 high, 1 moderate)
-- Updated dependencies: Electron 39→40, electron-builder 26.0→26.7, better-sqlite3 12.5→12.6, electron-updater 6.6→6.7
+- Updated dependencies: Electron 39 to 40, electron-builder 26.0 to 26.7, better-sqlite3 12.5 to 12.6, electron-updater 6.6 to 6.7
 
 ## [0.6.0] - 2026-01-01
 
