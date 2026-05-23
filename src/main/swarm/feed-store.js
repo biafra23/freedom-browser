@@ -178,7 +178,12 @@ function migrateV1Store(store) {
   };
 
   for (const [origin, entry] of Object.entries(store.origins)) {
-    migrated.origins[origin] = migrateV1OriginEntry(entry);
+    const migratedEntry = migrateV1OriginEntry(entry);
+    migrated.origins[origin] = migratedEntry;
+    const activeIdentity = getActiveIdentityFromEntry(migratedEntry);
+    if (activeIdentity?.mode === 'app-scoped') {
+      updateNextPublisherKeyIndex(migrated, activeIdentity.publisherKeyIndex);
+    }
   }
 
   return migrated;
@@ -318,7 +323,10 @@ function setOriginEntry(origin, data) {
   const existing = store.origins[key] || {};
   let publisherKeyIndex = data.publisherKeyIndex ?? null;
   if (data.identityMode === 'app-scoped' && publisherKeyIndex === null) {
-    publisherKeyIndex = allocatePublisherKeyIndex();
+    publisherKeyIndex = allocatePublisherKeyIndexInStore(store);
+  }
+  if (data.identityMode === 'app-scoped') {
+    updateNextPublisherKeyIndex(store, publisherKeyIndex);
   }
   const identity = createIdentity(
     data.identityMode,
@@ -351,10 +359,116 @@ function setOriginEntry(origin, data) {
  */
 function allocatePublisherKeyIndex() {
   const store = loadFeeds();
-  const index = store.nextPublisherKeyIndex;
-  store.nextPublisherKeyIndex = index + 1;
+  const index = allocatePublisherKeyIndexInStore(store);
   saveFeeds();
   return index;
+}
+
+function allocatePublisherKeyIndexInStore(store) {
+  const index = store.nextPublisherKeyIndex;
+  store.nextPublisherKeyIndex = index + 1;
+  return index;
+}
+
+function updateNextPublisherKeyIndex(store, publisherKeyIndex) {
+  if (typeof publisherKeyIndex !== 'number') return;
+  if (store.nextPublisherKeyIndex <= publisherKeyIndex) {
+    store.nextPublisherKeyIndex = publisherKeyIndex + 1;
+  }
+}
+
+function createOriginShell() {
+  return {
+    activeIdentityId: null,
+    feedGranted: false,
+    grantedAt: Date.now(),
+    identities: {},
+    feeds: {},
+  };
+}
+
+function getOriginIdentityState(origin) {
+  const entry = getOriginEntry(origin);
+  if (!entry) return null;
+  return {
+    origin: normalizeOrigin(origin),
+    activeIdentityId: entry.activeIdentityId,
+    identityMode: entry.identityMode,
+    publisherKeyIndex: entry.publisherKeyIndex,
+    identities: Object.values(entry.identities || {})
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+    feedGranted: !!entry.feedGranted,
+    grantedAt: entry.grantedAt || null,
+    feedCount: entry.feeds ? Object.keys(entry.feeds).length : 0,
+  };
+}
+
+function createAppScopedIdentity(origin, options = {}) {
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key] || createOriginShell();
+  const publisherKeyIndex = allocatePublisherKeyIndexInStore(store);
+  const identity = createIdentity('app-scoped', publisherKeyIndex);
+
+  entry.identities = {
+    ...(entry.identities || {}),
+    [identity.id]: identity,
+  };
+  if (options.activate !== false || !entry.activeIdentityId) {
+    entry.activeIdentityId = identity.id;
+    entry.identities[identity.id].lastUsedAt = Date.now();
+  }
+  entry.feeds = entry.feeds || {};
+  entry.grantedAt = entry.grantedAt || Date.now();
+  entry.feedGranted = !!entry.feedGranted;
+
+  store.origins[key] = entry;
+  saveFeeds();
+  log.info(`[FeedStore] Created app-scoped identity ${identity.id} for ${key}`);
+  return getOriginEntry(origin);
+}
+
+function ensureBeeWalletIdentity(origin, options = {}) {
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key] || createOriginShell();
+  const existing = entry.identities?.[BEE_WALLET_IDENTITY_ID];
+  const identity = existing || createIdentity('bee-wallet');
+
+  entry.identities = {
+    ...(entry.identities || {}),
+    [identity.id]: identity,
+  };
+  if (options.activate === true || !entry.activeIdentityId) {
+    entry.activeIdentityId = identity.id;
+    entry.identities[identity.id].lastUsedAt = Date.now();
+  }
+  entry.feeds = entry.feeds || {};
+  entry.grantedAt = entry.grantedAt || Date.now();
+  entry.feedGranted = !!entry.feedGranted;
+
+  store.origins[key] = entry;
+  saveFeeds();
+  log.info(`[FeedStore] Ensured Bee wallet identity for ${key}`);
+  return getOriginEntry(origin);
+}
+
+function activateIdentity(origin, identityId) {
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key];
+  if (!entry) {
+    throw new Error(`No origin entry for ${key}`);
+  }
+  if (!entry.identities?.[identityId]) {
+    throw new Error(`Publisher identity not found: ${identityId}`);
+  }
+
+  entry.activeIdentityId = identityId;
+  entry.identities[identityId].lastUsedAt = Date.now();
+  saveFeeds();
+  log.info(`[FeedStore] Activated identity ${identityId} for ${key}`);
+  return getOriginEntry(origin);
 }
 
 /**
@@ -542,6 +656,22 @@ function registerFeedStoreIpc() {
     return entry?.identityMode || null;
   });
 
+  ipcMain.handle(IPC.SWARM_GET_ORIGIN_IDENTITIES, (_event, origin) => {
+    return getOriginIdentityState(origin);
+  });
+
+  ipcMain.handle(IPC.SWARM_CREATE_APP_SCOPED_IDENTITY, (_event, origin, options = {}) => {
+    return createAppScopedIdentity(origin, options);
+  });
+
+  ipcMain.handle(IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY, (_event, origin, options = {}) => {
+    return ensureBeeWalletIdentity(origin, options);
+  });
+
+  ipcMain.handle(IPC.SWARM_ACTIVATE_FEED_IDENTITY, (_event, origin, identityId) => {
+    return activateIdentity(origin, identityId);
+  });
+
   // Idempotent for identity: if the origin already has an identity mode set,
   // return the existing entry without allocating a new key index.
   // Always grants feed access (feedGranted = true).
@@ -578,6 +708,10 @@ module.exports = {
   getOriginEntry,
   setOriginEntry,
   allocatePublisherKeyIndex,
+  getOriginIdentityState,
+  createAppScopedIdentity,
+  ensureBeeWalletIdentity,
+  activateIdentity,
   getFeed,
   setFeed,
   updateFeedReference,

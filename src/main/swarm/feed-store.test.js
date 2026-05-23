@@ -38,6 +38,10 @@ const {
   getOriginEntry,
   setOriginEntry,
   allocatePublisherKeyIndex,
+  getOriginIdentityState,
+  createAppScopedIdentity,
+  ensureBeeWalletIdentity,
+  activateIdentity,
   getFeed,
   setFeed,
   updateFeedReference,
@@ -131,6 +135,75 @@ describe('feed-store', () => {
       allocatePublisherKeyIndex(); // 1
       _resetCache();
       expect(allocatePublisherKeyIndex()).toBe(2);
+    });
+  });
+
+  describe('identity management', () => {
+    test('getOriginIdentityState lists identities for an origin', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const state = getOriginIdentityState('myapp.eth');
+
+      expect(state.origin).toBe('myapp.eth');
+      expect(state.activeIdentityId).toBe('app-scoped:0');
+      expect(state.identities).toHaveLength(1);
+      expect(state.identities[0]).toMatchObject({
+        id: 'app-scoped:0',
+        mode: 'app-scoped',
+      });
+    });
+
+    test('createAppScopedIdentity adds and activates a new identity without dropping old identities', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = createAppScopedIdentity('myapp.eth');
+
+      expect(entry.activeIdentityId).toBe('app-scoped:1');
+      expect(entry.identities['app-scoped:0']).toBeDefined();
+      expect(entry.identities['app-scoped:1']).toMatchObject({
+        mode: 'app-scoped',
+        publisherKeyIndex: 1,
+      });
+      expect(allocatePublisherKeyIndex()).toBe(2);
+    });
+
+    test('ensureBeeWalletIdentity can add Bee wallet without activating it', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = ensureBeeWalletIdentity('myapp.eth');
+
+      expect(entry.activeIdentityId).toBe('app-scoped:0');
+      expect(entry.identities['bee-wallet']).toMatchObject({
+        mode: 'bee-wallet',
+        publisherKeyIndex: null,
+      });
+    });
+
+    test('ensureBeeWalletIdentity can activate Bee wallet identity', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = ensureBeeWalletIdentity('myapp.eth', { activate: true });
+
+      expect(entry.activeIdentityId).toBe('bee-wallet');
+      expect(entry.identityMode).toBe('bee-wallet');
+      expect(entry.publisherKeyIndex).toBeNull();
+    });
+
+    test('activateIdentity switches active identity without retagging existing feeds', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+      setFeed('myapp.eth', 'blog', { topic: 'a', owner: 'b', manifestReference: 'c' });
+      createAppScopedIdentity('myapp.eth');
+
+      const entry = activateIdentity('myapp.eth', 'app-scoped:0');
+
+      expect(entry.activeIdentityId).toBe('app-scoped:0');
+      expect(getFeed('myapp.eth', 'blog').identityId).toBe('app-scoped:0');
+    });
+
+    test('activateIdentity rejects unknown identities', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      expect(() => activateIdentity('myapp.eth', 'missing')).toThrow('Publisher identity not found');
     });
   });
 
@@ -454,6 +527,10 @@ describe('feed-store', () => {
     test('registers expected channels', () => {
       expect(ipcHandlers[IPC.SWARM_HAS_FEED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]).toBeDefined();
     });
 
     test('has-feed-identity returns false for unknown origin', () => {
@@ -521,6 +598,30 @@ describe('feed-store', () => {
       const second = ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-regrant.eth', 'app-scoped');
       expect(second.feedGranted).toBe(true);
       expect(second.publisherKeyIndex).toBe(first.publisherKeyIndex);
+    });
+
+    test('identity management IPC creates, ensures, and activates identities', () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-manage.eth', 'app-scoped');
+
+      const withNewIdentity = ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]({}, 'ipc-manage.eth');
+      expect(withNewIdentity.activeIdentityId).toBe('app-scoped:1');
+
+      const withBeeIdentity = ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]({}, 'ipc-manage.eth');
+      expect(withBeeIdentity.activeIdentityId).toBe('app-scoped:1');
+      expect(withBeeIdentity.identities['bee-wallet']).toBeDefined();
+
+      const switched = ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]({}, 'ipc-manage.eth', 'bee-wallet');
+      expect(switched.activeIdentityId).toBe('bee-wallet');
+      expect(switched.identityMode).toBe('bee-wallet');
+
+      const state = ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-manage.eth');
+      expect(state.activeIdentityId).toBe('bee-wallet');
+      expect(state.identities.map((identity) => identity.id)).toEqual([
+        'app-scoped:0',
+        'app-scoped:1',
+        'bee-wallet',
+      ]);
     });
   });
 });
