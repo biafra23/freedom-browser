@@ -106,7 +106,8 @@ function renderList(entries, query) {
     const identityCount = entry.identityCount || 1;
     const identityCountLabel = identityCount === 1 ? '1 identity' : `${identityCount} identities`;
 
-    const item = document.createElement('div');
+    const item = document.createElement('button');
+    item.type = 'button';
     item.className = 'publisher-identity-item';
     item.title = entry.origin;
     item.innerHTML = `<div class="publisher-identity-header">
@@ -118,13 +119,7 @@ function renderList(entries, query) {
       <span class="publisher-identity-feeds">${feedLabel}</span>
       <span class="publisher-identity-feeds">${identityCountLabel}</span>
     </div>`;
-
-    const manageBtn = document.createElement('button');
-    manageBtn.type = 'button';
-    manageBtn.className = 'publisher-identity-manage-btn';
-    manageBtn.textContent = 'Manage';
-    manageBtn.addEventListener('click', () => openOriginIdentityDetail(entry.origin));
-    item.appendChild(manageBtn);
+    item.addEventListener('click', () => openOriginIdentityDetail(entry.origin));
     listContainer.appendChild(item);
   }
 }
