@@ -19,6 +19,14 @@ jest.mock('electron-log', () => ({
   error: jest.fn(),
 }));
 
+const mockGetDerivedKeys = jest.fn();
+const mockGetPublisherKey = jest.fn();
+
+jest.mock('../identity-manager', () => ({
+  getDerivedKeys: (...args) => mockGetDerivedKeys(...args),
+  getPublisherKey: (...args) => mockGetPublisherKey(...args),
+}));
+
 const { app } = require('electron');
 
 let tmpDir;
@@ -57,6 +65,16 @@ const {
 
 beforeEach(() => {
   _resetCache();
+  mockGetDerivedKeys.mockReturnValue({
+    beeWallet: {
+      address: '0xBee0000000000000000000000000000000000000',
+      privateKey: '0xbeekey',
+    },
+  });
+  mockGetPublisherKey.mockImplementation(async (index) => ({
+    address: `0xPublisher${index}`,
+    privateKey: `0xpublisher${index}`,
+  }));
 });
 
 function getFeedsFilePath() {
@@ -156,13 +174,14 @@ describe('feed-store', () => {
     test('createAppScopedIdentity adds and activates a new identity without dropping old identities', () => {
       setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
 
-      const entry = createAppScopedIdentity('myapp.eth');
+      const entry = createAppScopedIdentity('myapp.eth', { label: '  Testing identity  ' });
 
       expect(entry.activeIdentityId).toBe('app-scoped:1');
       expect(entry.identities['app-scoped:0']).toBeDefined();
       expect(entry.identities['app-scoped:1']).toMatchObject({
         mode: 'app-scoped',
         publisherKeyIndex: 1,
+        label: 'Testing identity',
       });
       expect(allocatePublisherKeyIndex()).toBe(2);
     });
@@ -600,28 +619,61 @@ describe('feed-store', () => {
       expect(second.publisherKeyIndex).toBe(first.publisherKeyIndex);
     });
 
-    test('identity management IPC creates, ensures, and activates identities', () => {
+    test('identity management IPC creates, ensures, and activates identities', async () => {
       _resetCache();
       ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-manage.eth', 'app-scoped');
 
-      const withNewIdentity = ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]({}, 'ipc-manage.eth');
+      const withNewIdentity = await ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]({}, 'ipc-manage.eth', {
+        label: 'Second identity',
+      });
       expect(withNewIdentity.activeIdentityId).toBe('app-scoped:1');
+      expect(withNewIdentity.identities.find((identity) => identity.id === 'app-scoped:1')).toMatchObject({
+        label: 'Second identity',
+        owner: '0xPublisher1',
+        stored: true,
+      });
 
-      const withBeeIdentity = ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]({}, 'ipc-manage.eth');
+      const withBeeIdentity = await ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]({}, 'ipc-manage.eth');
       expect(withBeeIdentity.activeIdentityId).toBe('app-scoped:1');
-      expect(withBeeIdentity.identities['bee-wallet']).toBeDefined();
+      expect(withBeeIdentity.identities.find((identity) => identity.id === 'bee-wallet')).toMatchObject({
+        owner: '0xBee0000000000000000000000000000000000000',
+        stored: true,
+      });
 
-      const switched = ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]({}, 'ipc-manage.eth', 'bee-wallet');
+      const switched = await ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]({}, 'ipc-manage.eth', 'bee-wallet');
       expect(switched.activeIdentityId).toBe('bee-wallet');
       expect(switched.identityMode).toBe('bee-wallet');
 
-      const state = ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-manage.eth');
+      const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-manage.eth');
       expect(state.activeIdentityId).toBe('bee-wallet');
       expect(state.identities.map((identity) => identity.id)).toEqual([
         'app-scoped:0',
         'app-scoped:1',
         'bee-wallet',
       ]);
+    });
+
+    test('get-origin-identities includes Bee wallet as an available identity', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-available.eth', 'app-scoped');
+
+      const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-available.eth');
+      const beeIdentity = state.identities.find((identity) => identity.id === 'bee-wallet');
+
+      expect(beeIdentity).toMatchObject({
+        mode: 'bee-wallet',
+        owner: '0xBee0000000000000000000000000000000000000',
+        stored: false,
+      });
+    });
+
+    test('get-origin-identities requires unlocked vault for owner inspection', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-locked.eth', 'app-scoped');
+      mockGetDerivedKeys.mockReturnValue(null);
+
+      await expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-locked.eth'))
+        .rejects.toThrow('Vault must be unlocked');
     });
   });
 });

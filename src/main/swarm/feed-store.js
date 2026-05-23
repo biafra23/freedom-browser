@@ -27,10 +27,12 @@ const path = require('path');
 const fs = require('fs');
 const IPC = require('../../shared/ipc-channels');
 const { normalizeOrigin } = require('../../shared/origin-utils');
+const { getDerivedKeys, getPublisherKey } = require('../identity-manager');
 const log = require('electron-log');
 
 const FEEDS_FILE = 'swarm-feeds.json';
 const CURRENT_VERSION = 2;
+const MAX_IDENTITY_LABEL_BYTES = 80;
 
 const VALID_IDENTITY_MODES = ['bee-wallet', 'app-scoped'];
 const BEE_WALLET_IDENTITY_ID = 'bee-wallet';
@@ -73,17 +75,35 @@ function getIdentityLabel(identityMode, publisherKeyIndex = null) {
   return `App-scoped identity ${(publisherKeyIndex ?? 0) + 1}`;
 }
 
-function createIdentity(identityMode, publisherKeyIndex = null, createdAt = Date.now()) {
+function normalizeIdentityLabel(label, fallback) {
+  if (label === undefined || label === null) {
+    return fallback;
+  }
+  if (typeof label !== 'string') {
+    throw new Error('Publisher identity label must be a string');
+  }
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  if (Buffer.byteLength(trimmed, 'utf-8') > MAX_IDENTITY_LABEL_BYTES) {
+    throw new Error(`Publisher identity label must be ${MAX_IDENTITY_LABEL_BYTES} bytes or less`);
+  }
+  return trimmed;
+}
+
+function createIdentity(identityMode, publisherKeyIndex = null, createdAt = Date.now(), label = null) {
   if (!VALID_IDENTITY_MODES.includes(identityMode)) {
     throw new Error(`Invalid identity mode: ${identityMode}`);
   }
 
   const id = getIdentityId(identityMode, publisherKeyIndex);
+  const fallbackLabel = getIdentityLabel(identityMode, publisherKeyIndex);
   return {
     id,
     mode: identityMode,
     publisherKeyIndex: identityMode === 'app-scoped' ? publisherKeyIndex : null,
-    label: getIdentityLabel(identityMode, publisherKeyIndex),
+    label: normalizeIdentityLabel(label, fallbackLabel),
     createdAt,
     lastUsedAt: null,
   };
@@ -403,12 +423,76 @@ function getOriginIdentityState(origin) {
   };
 }
 
+async function enrichIdentityOwner(identity, options = {}) {
+  const stored = options.stored !== false;
+  if (identity.mode === 'bee-wallet') {
+    const keys = getDerivedKeys();
+    if (!keys?.beeWallet?.address) {
+      throw new Error('Vault must be unlocked to inspect publisher identities');
+    }
+    return {
+      ...identity,
+      owner: keys.beeWallet.address,
+      stored,
+    };
+  }
+
+  if (identity.mode === 'app-scoped') {
+    if (typeof identity.publisherKeyIndex !== 'number') {
+      throw new Error('App-scoped identity is missing a publisher key index');
+    }
+    const publisherKey = await getPublisherKey(identity.publisherKeyIndex);
+    return {
+      ...identity,
+      owner: publisherKey.address,
+      stored,
+    };
+  }
+
+  return { ...identity, owner: null, stored };
+}
+
+async function getOriginIdentityStateWithOwners(origin) {
+  const state = getOriginIdentityState(origin) || {
+    origin: normalizeOrigin(origin),
+    activeIdentityId: null,
+    identityMode: null,
+    publisherKeyIndex: null,
+    identities: [],
+    feedGranted: false,
+    grantedAt: null,
+    feedCount: 0,
+  };
+
+  const identities = [];
+  let hasBeeWallet = false;
+  for (const identity of state.identities || []) {
+    const enriched = await enrichIdentityOwner(identity);
+    identities.push(enriched);
+    if (identity.id === BEE_WALLET_IDENTITY_ID) {
+      hasBeeWallet = true;
+    }
+  }
+
+  if (!hasBeeWallet) {
+    identities.push(await enrichIdentityOwner(
+      createIdentity('bee-wallet', null, 0),
+      { stored: false }
+    ));
+  }
+
+  return {
+    ...state,
+    identities,
+  };
+}
+
 function createAppScopedIdentity(origin, options = {}) {
   const store = loadFeeds();
   const key = normalizeOrigin(origin);
   const entry = store.origins[key] || createOriginShell();
   const publisherKeyIndex = allocatePublisherKeyIndexInStore(store);
-  const identity = createIdentity('app-scoped', publisherKeyIndex);
+  const identity = createIdentity('app-scoped', publisherKeyIndex, Date.now(), options.label);
 
   entry.identities = {
     ...(entry.identities || {}),
@@ -433,7 +517,7 @@ function ensureBeeWalletIdentity(origin, options = {}) {
   const key = normalizeOrigin(origin);
   const entry = store.origins[key] || createOriginShell();
   const existing = entry.identities?.[BEE_WALLET_IDENTITY_ID];
-  const identity = existing || createIdentity('bee-wallet');
+  const identity = existing || createIdentity('bee-wallet', null, Date.now(), options.label);
 
   entry.identities = {
     ...(entry.identities || {}),
@@ -656,20 +740,23 @@ function registerFeedStoreIpc() {
     return entry?.identityMode || null;
   });
 
-  ipcMain.handle(IPC.SWARM_GET_ORIGIN_IDENTITIES, (_event, origin) => {
-    return getOriginIdentityState(origin);
+  ipcMain.handle(IPC.SWARM_GET_ORIGIN_IDENTITIES, async (_event, origin) => {
+    return getOriginIdentityStateWithOwners(origin);
   });
 
-  ipcMain.handle(IPC.SWARM_CREATE_APP_SCOPED_IDENTITY, (_event, origin, options = {}) => {
-    return createAppScopedIdentity(origin, options);
+  ipcMain.handle(IPC.SWARM_CREATE_APP_SCOPED_IDENTITY, async (_event, origin, options = {}) => {
+    createAppScopedIdentity(origin, options);
+    return getOriginIdentityStateWithOwners(origin);
   });
 
-  ipcMain.handle(IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY, (_event, origin, options = {}) => {
-    return ensureBeeWalletIdentity(origin, options);
+  ipcMain.handle(IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY, async (_event, origin, options = {}) => {
+    ensureBeeWalletIdentity(origin, options);
+    return getOriginIdentityStateWithOwners(origin);
   });
 
-  ipcMain.handle(IPC.SWARM_ACTIVATE_FEED_IDENTITY, (_event, origin, identityId) => {
-    return activateIdentity(origin, identityId);
+  ipcMain.handle(IPC.SWARM_ACTIVATE_FEED_IDENTITY, async (_event, origin, identityId) => {
+    activateIdentity(origin, identityId);
+    return getOriginIdentityStateWithOwners(origin);
   });
 
   // Idempotent for identity: if the origin already has an identity mode set,
@@ -709,6 +796,7 @@ module.exports = {
   setOriginEntry,
   allocatePublisherKeyIndex,
   getOriginIdentityState,
+  getOriginIdentityStateWithOwners,
   createAppScopedIdentity,
   ensureBeeWalletIdentity,
   activateIdentity,
