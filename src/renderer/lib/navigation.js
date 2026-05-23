@@ -1640,10 +1640,6 @@ export const toggleBookmarkBar = async () => {
 export const onSettingsChanged = (settings = null) => {
   const navState = getNavState();
   if (settings?.networkConfigUpdated === true) {
-    state.ensTrustByName.clear();
-    state.ensUriByName.clear();
-    updateProtocolIcon();
-
     const currentAddress = (addressInput?.value || '').trim();
     if (parseEnsInput(currentAddress)) {
       loadTarget(currentAddress);

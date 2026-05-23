@@ -171,7 +171,9 @@ const loadNavigationModule = async (options = {}) => {
     resolveTrustBadge: jest.fn(({ value, ensTrustByName }) => {
       // Mirror the production helper's shape. Tests that need specific
       // trust levels populate ensTrustByName; default is null.
-      const m = value?.toLowerCase().match(/^(?:ens:\/\/)?([^/]+\.(?:eth|box))/);
+      const m = value
+        ?.toLowerCase()
+        .match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^/?#]+\.(?:eth|box))/);
       if (!m) return null;
       const name = m[1];
       const trust = ensTrustByName?.get?.(name);
@@ -1420,6 +1422,23 @@ describe('navigation', () => {
   });
 
   describe('trust shield', () => {
+    const installEnsParser = (ctx) => {
+      ctx.pageUrlsMocks.parseEnsInput.mockImplementation((value) => {
+        const prefixMatch = value.match(/^(ens|bzz|ipfs|ipns):\/\//i);
+        const assertedTransport = prefixMatch
+          ? prefixMatch[1].toLowerCase() === 'ens'
+            ? null
+            : prefixMatch[1].toLowerCase()
+          : null;
+        const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
+        if (!m) return null;
+        const name = m[1].toLowerCase();
+        return name.endsWith('.eth') || name.endsWith('.box')
+          ? { name, suffix: m[2] || '', assertedTransport }
+          : null;
+      });
+    };
+
     test('shows verified badge with aria-label when stored trust is verified', async () => {
       const ctx = await loadNavigationModule();
       await ctx.mod.initNavigation();
@@ -1457,33 +1476,59 @@ describe('navigation', () => {
       expect(ctx.elements.trustShield.hidden).toBe(true);
     });
 
-    test('network config updates clear ENS trust and re-resolve the current name', async () => {
+    test('network config updates keep current trust while re-resolving foreground ENS name', async () => {
       const ctx = await loadNavigationModule();
-      ctx.pageUrlsMocks.parseEnsInput.mockImplementation((value) => {
-        const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
-        if (!m) return null;
-        const name = m[1].toLowerCase();
-        return name.endsWith('.eth') ? { name, suffix: m[2] || '', assertedTransport: null } : null;
-      });
+      installEnsParser(ctx);
       await ctx.mod.initNavigation();
 
-      ctx.state.ensTrustByName.set('vitalik.eth', {
+      const trust = {
         level: 'verified',
         queried: ['a', 'b'],
         agreed: ['a', 'b'],
-      });
+      };
+      ctx.state.ensTrustByName.set('vitalik.eth', trust);
       ctx.state.ensUriByName.set('vitalik.eth', 'bzz://old-reference');
-      ctx.elements.addressInput.value = 'ens://vitalik.eth';
+      ctx.elements.addressInput.value = 'bzz://vitalik.eth';
       ctx.elements.addressInput.dispatch('input');
       expect(ctx.elements.trustShield.hidden).toBe(false);
 
       ctx.electronAPI.resolveEns.mockReturnValue(new Promise(() => {}));
       ctx.mod.onSettingsChanged({ networkConfigUpdated: true });
 
-      expect(ctx.state.ensTrustByName.size).toBe(0);
-      expect(ctx.state.ensUriByName.size).toBe(0);
-      expect(ctx.elements.trustShield.hidden).toBe(true);
+      expect(ctx.state.ensTrustByName.get('vitalik.eth')).toBe(trust);
+      expect(ctx.state.ensUriByName.get('vitalik.eth')).toBe('bzz://old-reference');
+      expect(ctx.elements.trustShield.hidden).toBe(false);
       expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+    });
+
+    test('network config updates from settings keep background ENS trust cached', async () => {
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      const trust = {
+        level: 'verified',
+        queried: ['a', 'b'],
+        agreed: ['a', 'b'],
+      };
+      ctx.state.ensTrustByName.set('vitalik.eth', trust);
+      ctx.state.ensUriByName.set('vitalik.eth', 'bzz://old-reference');
+
+      ctx.elements.addressInput.value = 'freedom://settings/ens';
+      ctx.elements.addressInput.dispatch('input');
+      expect(ctx.elements.trustShield.hidden).toBe(true);
+
+      ctx.mod.onSettingsChanged({ networkConfigUpdated: true });
+
+      expect(ctx.state.ensTrustByName.get('vitalik.eth')).toBe(trust);
+      expect(ctx.state.ensUriByName.get('vitalik.eth')).toBe('bzz://old-reference');
+      expect(ctx.electronAPI.resolveEns).not.toHaveBeenCalled();
+
+      ctx.elements.addressInput.value = 'bzz://vitalik.eth';
+      ctx.elements.addressInput.dispatch('input');
+
+      expect(ctx.elements.trustShield.getAttribute('data-trust')).toBe('verified');
+      expect(ctx.elements.trustShield.hidden).toBe(false);
     });
   });
 
