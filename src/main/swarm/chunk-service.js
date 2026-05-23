@@ -35,6 +35,10 @@ function ensureSameReference(actual, expected, type) {
   }
 }
 
+function normalizeReference(reference) {
+  return String(reference || '').replace(/^0x/, '').toLowerCase();
+}
+
 async function selectChunkBatch() {
   const batchId = await selectBestBatch(4096);
   if (!batchId) {
@@ -46,6 +50,45 @@ async function selectChunkBatch() {
 function getSignerAddress(signerPrivateKey) {
   const signer = new PrivateKey(signerPrivateKey);
   return signer.publicKey().address().toChecksum();
+}
+
+function makeSocUploadBody(soc) {
+  return Buffer.concat([
+    Buffer.from(soc.span.toUint8Array()),
+    Buffer.from(soc.payload.toUint8Array()),
+  ]);
+}
+
+async function uploadSingleOwnerChunk(bee, batchId, soc) {
+  const expectedReference = normalizeReference(toHex(soc.address));
+  const baseUrl = bee.url.endsWith('/') ? bee.url : `${bee.url}/`;
+  const uploadUrl = new URL(`soc/${toHex(soc.owner)}/${soc.identifier.toHex()}`, baseUrl);
+  uploadUrl.searchParams.set('sig', soc.signature.toHex());
+
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/octet-stream',
+      'swarm-postage-batch-id': batchId,
+      'swarm-pin': 'true',
+      'swarm-deferred-upload': 'false',
+    },
+    body: makeSocUploadBody(soc),
+  });
+
+  if (!response.ok) {
+    const body = typeof response.text === 'function' ? await response.text() : '';
+    throw new Error(`SOC upload failed (${response.status}): ${body || response.statusText || 'Bee rejected request'}`);
+  }
+
+  const body = await response.json();
+  const reference = normalizeReference(body.reference);
+  if (!reference) {
+    throw new Error('SOC upload response missing reference');
+  }
+  if (reference !== expectedReference) {
+    throw new Error(`SOC upload returned unexpected reference: ${reference}`);
+  }
 }
 
 async function publishChunk(data, options = {}) {
@@ -101,7 +144,7 @@ async function writeSingleOwnerChunk(signerPrivateKey, identifier, data, options
   const soc = chunk.toSingleOwnerChunk(identifier, signer);
   const batchId = await selectChunkBatch();
 
-  await bee.uploadChunk(batchId, soc, { pin: true, deferred: false });
+  await uploadSingleOwnerChunk(bee, batchId, soc);
 
   return {
     reference: toHex(soc.address),

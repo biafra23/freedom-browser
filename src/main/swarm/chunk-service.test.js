@@ -22,6 +22,11 @@ class MockHexValue {
 class MockSpan {
   constructor(value) { this._value = BigInt(value); }
   toBigInt() { return this._value; }
+  toUint8Array() {
+    const bytes = Buffer.alloc(8);
+    bytes.writeBigUInt64LE(this._value);
+    return bytes;
+  }
 }
 
 class MockPayload {
@@ -57,6 +62,7 @@ class MockEthAddress {
 }
 
 var mockBee = {
+  url: 'http://127.0.0.1:1633',
   makeContentAddressedChunk: mockMakeContentAddressedChunk,
   uploadChunk: mockUploadChunk,
   downloadChunk: mockDownloadChunk,
@@ -96,14 +102,17 @@ const SIGNATURE = 'ee'.repeat(65);
 const OWNER = '11'.repeat(20);
 const PRIVATE_KEY = `0x${OWNER}${'22'.repeat(12)}`;
 
+global.fetch = jest.fn();
+
 function makeCac(payload = 'hello', span = 5n, reference = CAC_REFERENCE) {
+  const spanBytes = new MockSpan(span).toUint8Array();
   return {
-    data: Buffer.concat([Buffer.alloc(8), Buffer.from(payload)]),
+    data: Buffer.concat([Buffer.from(spanBytes), Buffer.from(payload)]),
     span: new MockSpan(span),
     payload: new MockPayload(payload),
     address: new MockHexValue(reference),
     toSingleOwnerChunk: jest.fn((identifier, signer) => ({
-      data: Buffer.concat([Buffer.from(identifier, 'hex'), Buffer.alloc(65), Buffer.alloc(8), Buffer.from(payload)]),
+      data: Buffer.concat([Buffer.from(identifier, 'hex'), Buffer.from(SIGNATURE, 'hex'), Buffer.from(spanBytes), Buffer.from(payload)]),
       span: new MockSpan(span),
       payload: new MockPayload(payload),
       address: new MockHexValue(SOC_REFERENCE),
@@ -131,6 +140,10 @@ beforeEach(() => {
   mockSelectBestBatch.mockResolvedValue(BATCH_ID);
   mockUploadChunk.mockResolvedValue({ reference: new MockHexValue(CAC_REFERENCE) });
   mockCalculateSingleOwnerChunkAddress.mockReturnValue(new MockHexValue(SOC_REFERENCE));
+  global.fetch.mockResolvedValue({
+    ok: true,
+    json: async () => ({ reference: SOC_REFERENCE }),
+  });
 });
 
 describe('chunk-service', () => {
@@ -224,16 +237,55 @@ describe('chunk-service', () => {
 
     const result = await writeSingleOwnerChunk(PRIVATE_KEY, IDENTIFIER, Buffer.from('hello'), { span: 5n });
 
+    expect(mockMakeContentAddressedChunk).toHaveBeenCalledWith(Buffer.from('hello'), 5n);
     expect(cac.toSingleOwnerChunk).toHaveBeenCalledWith(IDENTIFIER, expect.any(MockPrivateKey));
-    expect(mockUploadChunk).toHaveBeenCalledWith(BATCH_ID, expect.objectContaining({
-      address: expect.any(MockHexValue),
-    }), { pin: true, deferred: false });
+    expect(mockUploadChunk).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url, request] = global.fetch.mock.calls[0];
+    expect(String(url)).toBe(`http://127.0.0.1:1633/soc/${OWNER}/${IDENTIFIER}?sig=${SIGNATURE}`);
+    expect(request.method).toBe('POST');
+    expect(request.headers).toEqual({
+      'content-type': 'application/octet-stream',
+      'swarm-postage-batch-id': BATCH_ID,
+      'swarm-pin': 'true',
+      'swarm-deferred-upload': 'false',
+    });
+    expect(Buffer.from(request.body)).toEqual(Buffer.concat([
+      Buffer.from(new MockSpan(5n).toUint8Array()),
+      Buffer.from('hello'),
+    ]));
     expect(result).toEqual({
       reference: SOC_REFERENCE,
       owner: `0x${OWNER}`,
       identifier: IDENTIFIER,
       batchIdUsed: BATCH_ID,
     });
+  });
+
+  test('writeSingleOwnerChunk rejects mismatched Bee SOC upload references', async () => {
+    const cac = makeCac();
+    mockMakeContentAddressedChunk.mockReturnValue(cac);
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ reference: 'ff'.repeat(32) }),
+    });
+
+    await expect(writeSingleOwnerChunk(PRIVATE_KEY, IDENTIFIER, Buffer.from('hello')))
+      .rejects.toThrow('SOC upload returned unexpected reference');
+  });
+
+  test('writeSingleOwnerChunk reports Bee SOC upload failures', async () => {
+    const cac = makeCac();
+    mockMakeContentAddressedChunk.mockReturnValue(cac);
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => 'boom',
+    });
+
+    await expect(writeSingleOwnerChunk(PRIVATE_KEY, IDENTIFIER, Buffer.from('hello')))
+      .rejects.toThrow('SOC upload failed (500): boom');
   });
 
   test('readSingleOwnerChunk supports address reads', async () => {
