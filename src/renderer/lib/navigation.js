@@ -194,11 +194,25 @@ const setLoading = (isLoading, tabId = null) => {
 // switchback after a background-tab view-source dispatch picks up the
 // right state.
 //
+// This helper deliberately never writes `committedDisplayUrl`. That
+// field is the post-commit page identity used by reload and by provider
+// permission keying; writing it before `webview.loadURL` actually
+// commits would let the destination origin briefly stand in for the
+// still-loaded previous page (most starkly: `bzz://name.eth` is set
+// here before the Bee warm-probe even completes). The committed write
+// belongs in tabs.js' per-webview `did-navigate` handler, which fires
+// for both active and background tabs once Chromium has actually
+// committed the navigation.
+//
 // The active-tab branch is gated on a value-change check so repeated
 // no-op calls (every dispatch + every did-navigate on the hot path) don't
 // re-run `updateProtocolIcon`, which walks `state.ensTrustByName` and
 // invokes the trust-badge resolver on every call.
-const setAddressDisplayForTab = (displayValue, tabId, { isViewingSourceForTab = false } = {}) => {
+const setAddressDisplayForTab = (
+  displayValue,
+  tabId,
+  { isViewingSourceForTab = false } = {}
+) => {
   if (isActiveTab(tabId) || tabId === null) {
     if (addressInput.value !== displayValue) {
       addressInput.value = displayValue;
@@ -206,13 +220,14 @@ const setAddressDisplayForTab = (displayValue, tabId, { isViewingSourceForTab = 
     }
     return;
   }
-  const tab = getTabById(tabId);
-  if (!tab) return;
-  if (tab.navigationState) {
-    tab.navigationState.addressBarSnapshot = displayValue;
+  const targetTab =
+    tabId !== null && tabId !== undefined ? getTabById(tabId) : null;
+  if (!targetTab) return;
+  if (targetTab.navigationState) {
+    targetTab.navigationState.addressBarSnapshot = displayValue;
   }
   if (isViewingSourceForTab) {
-    tab.isViewingSource = true;
+    targetTab.isViewingSource = true;
   }
 };
 
@@ -1397,11 +1412,32 @@ export const loadHomePage = () => {
   pushDebug('Loading home page');
 };
 
+// Hard-reload (Cmd/Ctrl+Shift+R) bypasses Chromium's HTTP cache; the ENS
+// analogue is to also bypass the main-process `ensResultCache` (15-min TTL)
+// so a hard reload performed shortly after the previous resolution actually
+// re-resolves rather than returning the cached result. Fire-and-forget IPC —
+// the subsequent `loadTarget` call kicks off a fresh `resolveEns` that misses
+// the now-empty cache.
+const invalidateEnsContentForHardReload = (ensName) => {
+  if (!ensName || !electronAPI?.invalidateEnsContent) return;
+  pushDebug(`Hard reload: invalidating ENS contenthash cache for ${ensName}`);
+  electronAPI.invalidateEnsContent(ensName).catch((err) => {
+    pushDebug(`[ENS] invalidateEnsContent failed: ${err?.message || err}`);
+  });
+};
+
 // Shared error-page retry logic used by both reload variants and the reload button
 const retryErrorPageOrReload = (webview, hard) => {
   const current = webview.getURL();
   const originalUrl = getOriginalUrlFromErrorPage(current, errorUrlBase);
   if (originalUrl) {
+    // Hard reload of an ENS error page also bypasses `ensResultCache` so the
+    // recovery resolution actually re-runs under today's verification method
+    // rather than returning the cached contenthash from the failed attempt.
+    if (hard) {
+      const errorEns = parseEnsInput(originalUrl);
+      if (errorEns) invalidateEnsContentForHardReload(errorEns.name);
+    }
     pushDebug(`Retrying original URL from error page: ${originalUrl}`);
     loadTarget(originalUrl);
     return;
@@ -1412,6 +1448,32 @@ const retryErrorPageOrReload = (webview, hard) => {
     } catch (err) {
       pushDebug(`[Nav] Could not extract original URL from error page: ${err.message}`);
     }
+  }
+
+  // ENS pages: reload re-resolves under the currently-configured verification
+  // method so the trust badge reflects today's settings, not whatever was in
+  // effect at first load. The webview's URL holds the resolved transport URL
+  // with the resolved hash/CID (or the ENS-host form like
+  // `bzz://name.eth/...`); re-running `webview.reload()` would just refetch
+  // the same content hash and never re-enter the ENS resolution path.
+  //
+  // We key the decision on the active tab's `committedDisplayUrl`, which is
+  // written *only* by did-navigate handlers and so represents the last
+  // user-facing display URL that actually committed. We deliberately do NOT
+  // use `addressInput.value` (reflects in-progress user typing) or
+  // `navState.addressBarSnapshot` (gets overwritten by `focusin` and
+  // `tab-switched` and so can carry an unsubmitted draft — e.g. typing
+  // `vitalik.eth` over an `https://example.com` page, switching tabs, and
+  // switching back). Submitting the typed value is the form `submit`
+  // handler's job; reload is the "do whatever you do, again" affordance.
+  const navState = getNavState();
+  const committedDisplay = (navState.committedDisplayUrl || '').trim();
+  const ensInput = committedDisplay ? parseEnsInput(committedDisplay) : null;
+  if (ensInput) {
+    if (hard) invalidateEnsContentForHardReload(ensInput.name);
+    pushDebug(`${hard ? 'Hard reload' : 'Reload'} re-resolving ENS: ${committedDisplay}`);
+    loadTarget(committedDisplay);
+    return;
   }
 
   if (hard) {
@@ -1593,9 +1655,13 @@ const handleNavigationEvent = (event) => {
   updateGithubBridgeIcon();
   updateProtocolIcon();
 
-  // Snapshot the committed display URL for provider origin derivation.
-  // This ensures getDisplayUrlForWebview() reads the post-navigation identity,
-  // not a stale or user-edited address bar value.
+  // Snapshot the live address bar so the `tab-switched` handler and any
+  // focusin-style draft restoration can paint the foreground value back
+  // when the user comes back to this tab. The dedicated commit-only
+  // `committedDisplayUrl` (used by reload and provider permission keying)
+  // is written by tabs.js' per-webview did-navigate handler — that's the
+  // single source of truth for "what page are we actually on", and it
+  // covers background tabs too.
   navState.addressBarSnapshot = addressInput.value;
 };
 

@@ -206,13 +206,21 @@ export const isActiveTab = (tabId) =>
 
 /**
  * Get the committed display URL for a specific webview.
- * Always reads from the tab's addressBarSnapshot — the last display URL
- * committed by a navigation event or tab switch. Never reads the live
- * address bar input, which could contain user edits in progress.
+ * Reads from the tab's `committedDisplayUrl` — the last URL committed
+ * by a `did-navigate` event for this tab's webview. Never falls back
+ * to the live address bar input or to `addressBarSnapshot`, which is
+ * transient draft/restoration state (overwritten on `focusin` and on
+ * `tab-switched`, so it can carry unsubmitted typed-but-not-yet-loaded
+ * values).
  *
  * This is critical for provider permission checks — if a page fires a
- * request while the user is typing in the address bar, we must derive
+ * request while the user is typing in the address bar (or has switched
+ * away from a tab whose snapshot now carries a draft), we must derive
  * the origin from the committed navigation identity, not partial input.
+ *
+ * Returns the empty string for tabs that haven't yet committed a
+ * navigation. New tabs initialize `committedDisplayUrl: ''` and the
+ * value is populated on the first `did-navigate`.
  *
  * @param {HTMLElement} webview - The webview element
  * @returns {string} The committed display URL for this webview's tab
@@ -220,7 +228,7 @@ export const isActiveTab = (tabId) =>
 export const getDisplayUrlForWebview = (webview) => {
   const tab = tabState.tabs.find((t) => t.webview === webview);
   if (!tab) return '';
-  return tab.navigationState?.addressBarSnapshot || '';
+  return tab.navigationState?.committedDisplayUrl || '';
 };
 
 // Create default navigation state for a tab
@@ -231,7 +239,23 @@ const createNavigationState = () => ({
   hasNavigatedDuringCurrentLoad: false,
   isWebviewLoading: false,
   currentBzzBase: null,
+  // `addressBarSnapshot` is transient draft/restoration state — it's
+  // overwritten with `addressInput.value` on focusin and on tab-switched, so
+  // it can hold unsubmitted user input (e.g. typed-but-not-submitted ENS
+  // names). Reload and other commit-keyed decisions must NOT key on it; use
+  // `committedDisplayUrl` instead.
   addressBarSnapshot: '',
+  // `committedDisplayUrl` is the URL Chromium committed for this tab's
+  // last navigation (`webview.getURL()` at did-navigate time, including
+  // any view-source: prefix). It's written only by tabs.js' per-webview
+  // did-navigate handler — never by focusin, tab-switched, or
+  // setAddressDisplayForTab — so it stays a stable identity for the
+  // active page even while the user is mid-typing or while a slow
+  // navigation is in flight. Reload reads this to decide whether the
+  // current page is ENS-backed, and `getDisplayUrlForWebview` returns
+  // it so provider permission keys never see unsubmitted drafts or
+  // pending destinations.
+  committedDisplayUrl: '',
   cachedWebContentsId: null,
   resolvingWebContentsId: null,
   pendingSwarmProbeId: null,
@@ -388,6 +412,18 @@ const createWebview = (tabId, initialUrl) => {
         tab.hasCertError = false; // Reset cert error on new navigation
         // Track view-source state directly on tab for reliable detection in page-title-updated
         tab.isViewingSource = webviewUrl.startsWith('view-source:');
+        // Commit the post-navigation page identity for both active and
+        // background tabs. This is the single source of truth for reload
+        // ("what page are we actually on?") and for provider permission
+        // keying (Swarm/dapp prompts), which must never see destination
+        // URLs of in-flight navigations or unsubmitted address-bar drafts.
+        // about:blank is skipped because Chromium fires did-navigate
+        // through about:blank during "open in new window" before the real
+        // loadURL runs; clobbering the previous commit there would lose
+        // the actual page identity.
+        if (tab.navigationState && event.url && event.url !== 'about:blank') {
+          tab.navigationState.committedDisplayUrl = webviewUrl;
+        }
         // Clear any stale favicon from the previous page when navigating to
         // an internal page — page-favicon-updated will paint one back in if
         // the page declares a <link rel="icon">.

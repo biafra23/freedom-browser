@@ -54,7 +54,16 @@ export const state = {
   ensProtocols: new Map(), // Maps ENS name -> resolved protocol (swarm/ipfs/ipns)
   ensTrustByName: new Map(), // Maps ENS name -> trust object from last resolution
   ensUriByName: new Map(), // Maps ENS name -> full resolved content URI (bzz://HASH, ipfs://CID, ipns://NAME)
+  // Transient draft/restoration state — overwritten with the live address
+  // bar value on focusin and tab-switched. Do not key reload or other
+  // commit-sensitive decisions on this field; use `committedDisplayUrl`.
   addressBarSnapshot: '',
+  // URL of the last committed navigation (`webview.getURL()` at
+  // did-navigate time). Written only by tabs.js' per-webview did-navigate
+  // handler, so it stays stable when the user is mid-typing or while a
+  // navigation is still in flight. Used by reload and by
+  // `getDisplayUrlForWebview` for provider permission keying.
+  committedDisplayUrl: '',
 
   // Webview
   cachedWebContentsId: null,
