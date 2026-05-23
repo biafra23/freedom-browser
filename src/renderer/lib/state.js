@@ -54,7 +54,13 @@ export const state = {
   ensProtocols: new Map(), // Maps ENS name -> resolved protocol (swarm/ipfs/ipns)
   ensTrustByName: new Map(), // Maps ENS name -> trust object from last resolution
   ensUriByName: new Map(), // Maps ENS name -> full resolved content URI (bzz://HASH, ipfs://CID, ipns://NAME)
+  // Transient draft/restoration state — overwritten with the live address
+  // bar value on focusin and tab-switched. Do not key reload or other
+  // commit-sensitive decisions on this field; use `committedDisplayUrl`.
   addressBarSnapshot: '',
+  // Display URL of the last committed navigation. Written only by
+  // did-navigate handlers, so it stays stable when the user is mid-typing.
+  committedDisplayUrl: '',
 
   // Webview
   cachedWebContentsId: null,

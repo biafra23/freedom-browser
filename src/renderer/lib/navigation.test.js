@@ -44,6 +44,7 @@ const createTab = (id, url, overrides = {}) => {
     currentBzzBase: null,
     currentRadBase: null,
     addressBarSnapshot: '',
+    committedDisplayUrl: '',
     cachedWebContentsId: null,
     resolvingWebContentsId: null,
     ...overrides.navigationState,
@@ -1678,14 +1679,17 @@ describe('navigation', () => {
       });
     };
 
-    // Mirror the production commit shape: on every did-navigate the
-    // renderer writes the user-facing display URL into both the address
-    // input and `navState.addressBarSnapshot`. Reload reads the snapshot
-    // (the *committed* display identity), not `addressInput.value`, so an
-    // unsubmitted draft in the address bar can't hijack reload.
+    // Mirror the production did-navigate commit shape: the handler writes
+    // the user-facing display URL into the address input AND into both
+    // `addressBarSnapshot` (transient draft/restoration state) and
+    // `committedDisplayUrl` (commit-only, the field reload reads). The
+    // split matters because `addressBarSnapshot` is overwritten on focusin
+    // and tab-switched, so it can carry unsubmitted user input — only
+    // `committedDisplayUrl` stays a stable identity.
     const commitDisplay = (ctx, value) => {
       ctx.elements.addressInput.value = value;
       ctx.activeRef.tab.navigationState.addressBarSnapshot = value;
+      ctx.activeRef.tab.navigationState.committedDisplayUrl = value;
     };
 
     test('soft reload of an ENS page re-resolves and updates trust', async () => {
@@ -1852,19 +1856,19 @@ describe('navigation', () => {
     });
 
     test('reload with unsubmitted ENS-looking text in the address bar reloads the current non-ENS page', async () => {
-      // Reload reads the *committed* display identity from
-      // `navState.addressBarSnapshot`, not `addressInput.value`. If the
-      // user has typed `vitalik.eth` over an `https://example.com` page
-      // but hasn't submitted it, hitting reload should reload the current
-      // page — submitting the typed value is the form-submit handler's job.
+      // Reload reads `committedDisplayUrl`, not `addressInput.value`. If
+      // the user has typed `vitalik.eth` over an `https://example.com`
+      // page but hasn't submitted it, hitting reload should reload the
+      // current page — submitting the typed value is the form-submit
+      // handler's job.
       const ctx = await loadNavigationModule();
       installEnsParser(ctx);
       await ctx.mod.initNavigation();
 
       commitDisplay(ctx, 'https://example.com/');
       // Now simulate the user typing into the address bar without
-      // submitting: addressInput.value is dirty, but the snapshot still
-      // reflects the committed page.
+      // submitting: addressInput.value is dirty, but committedDisplayUrl
+      // still reflects the committed page.
       ctx.elements.addressInput.value = 'vitalik.eth';
       ctx.activeRef.tab.webview.getURL.mockReturnValue('https://example.com/');
 
@@ -1873,6 +1877,86 @@ describe('navigation', () => {
 
       expect(ctx.activeRef.tab.webview.reload).toHaveBeenCalled();
       expect(ctx.activeRef.tab.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.resolveEns).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
+    });
+
+    test('reload after typing ENS draft, switching tabs, and switching back reloads the current non-ENS page', async () => {
+      // Regression for the addressBarSnapshot-vs-committedDisplayUrl split:
+      //   1. Open https://example.com (commits).
+      //   2. Type `vitalik.eth` into the address bar (no submit).
+      //   3. Switch to another tab — tab-switched writes the live
+      //      addressInput.value (the draft) into the previous tab's
+      //      addressBarSnapshot.
+      //   4. Switch back — addressInput.value is restored from the snapshot
+      //      (still the draft).
+      //   5. Hit reload.
+      // Pre-fix, reload read addressBarSnapshot and re-resolved
+      // `vitalik.eth` — wrong, the user never submitted it. Post-fix,
+      // reload reads committedDisplayUrl (which only commits write to)
+      // and reloads `https://example.com`.
+      const tabA = createTab(1, 'https://example.com', { title: 'Tab A' });
+      const tabB = createTab(2, 'https://other.example', { title: 'Tab B' });
+      const ctx = await loadNavigationModule({
+        firstTab: tabA,
+        tabs: [tabA, tabB],
+        activeTab: tabA,
+      });
+      installEnsParser(ctx);
+      ctx.tabsRef.list = [tabA, tabB];
+      ctx.activeRef.tab = tabA;
+      await ctx.mod.initNavigation();
+
+      commitDisplay(ctx, 'https://example.com/');
+      tabA.webview.getURL.mockReturnValue('https://example.com/');
+
+      // Seed `previousActiveTabId` so the next tab-switched actually fires
+      // the address-bar-save branch (the first switch records the previous
+      // id and skips the save). Mirrors the existing tab-switching test.
+      ctx.tabsMocks.webviewEventHandler('tab-switched', {
+        tabId: tabA.id,
+        tab: tabA,
+        isNewTab: false,
+      });
+
+      // Step 2: user types an unsubmitted draft into the address bar.
+      ctx.elements.addressInput.value = 'vitalik.eth';
+
+      // Step 3: switch to tab B. The handler writes the live (draft)
+      // addressInput.value into Tab A's addressBarSnapshot.
+      ctx.activeRef.tab = tabB;
+      ctx.tabsMocks.webviewEventHandler('tab-switched', {
+        tabId: tabB.id,
+        tab: tabB,
+        isNewTab: false,
+      });
+      await flushMicrotasks();
+
+      expect(tabA.navigationState.addressBarSnapshot).toBe('vitalik.eth');
+      // Crucially, the draft did NOT leak into committedDisplayUrl.
+      expect(tabA.navigationState.committedDisplayUrl).toBe('https://example.com/');
+
+      // Step 4: switch back to tab A.
+      ctx.navigationUtilsMocks.deriveSwitchedTabDisplay.mockReturnValueOnce('vitalik.eth');
+      ctx.activeRef.tab = tabA;
+      ctx.tabsMocks.webviewEventHandler('tab-switched', {
+        tabId: tabA.id,
+        tab: tabA,
+        isNewTab: false,
+      });
+      await flushMicrotasks();
+
+      // Address input restored to the draft — but committedDisplayUrl
+      // remains the genuinely-committed URL.
+      expect(ctx.elements.addressInput.value).toBe('vitalik.eth');
+      expect(tabA.navigationState.committedDisplayUrl).toBe('https://example.com/');
+
+      // Step 5: hit reload.
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
+      await flushMicrotasks();
+
+      expect(tabA.webview.reload).toHaveBeenCalled();
+      expect(tabA.webview.reloadIgnoringCache).not.toHaveBeenCalled();
       expect(ctx.electronAPI.resolveEns).not.toHaveBeenCalled();
       expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
     });

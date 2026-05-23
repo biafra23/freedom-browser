@@ -231,7 +231,17 @@ const createNavigationState = () => ({
   hasNavigatedDuringCurrentLoad: false,
   isWebviewLoading: false,
   currentBzzBase: null,
+  // `addressBarSnapshot` is transient draft/restoration state — it's
+  // overwritten with `addressInput.value` on focusin and on tab-switched, so
+  // it can hold unsubmitted user input (e.g. typed-but-not-submitted ENS
+  // names). Reload and other commit-keyed decisions must NOT key on it; use
+  // `committedDisplayUrl` instead.
   addressBarSnapshot: '',
+  // `committedDisplayUrl` is the user-facing display URL of the last
+  // committed navigation. It's written only by did-navigate handlers, never
+  // by focusin/tab-switched/setAddressDisplayForTab, so it stays a stable
+  // identity for the active page even when the user is mid-typing.
+  committedDisplayUrl: '',
   cachedWebContentsId: null,
   resolvingWebContentsId: null,
   pendingSwarmProbeId: null,

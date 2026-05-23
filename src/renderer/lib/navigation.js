@@ -1442,16 +1442,17 @@ const retryErrorPageOrReload = (webview, hard) => {
   // `bzz://name.eth/...`); re-running `webview.reload()` would just refetch
   // the same content hash and never re-enter the ENS resolution path.
   //
-  // We key the decision on the active tab's *committed* display identity
-  // (`navState.addressBarSnapshot`, set on every `did-navigate`) rather than
-  // `addressInput.value`. The latter reflects whatever the user is currently
-  // typing — if they have an unsubmitted `vitalik.eth` over a committed
-  // `https://example.com` page and hit reload, we want to reload the current
-  // page, not navigate to the typed-but-unsubmitted ENS value. The Form
-  // `submit` handler already covers the "actually navigate to typed input"
-  // path; reload is the "do whatever you do, again" affordance.
+  // We key the decision on the active tab's `committedDisplayUrl`, which is
+  // written *only* by did-navigate handlers and so represents the last
+  // user-facing display URL that actually committed. We deliberately do NOT
+  // use `addressInput.value` (reflects in-progress user typing) or
+  // `navState.addressBarSnapshot` (gets overwritten by `focusin` and
+  // `tab-switched` and so can carry an unsubmitted draft — e.g. typing
+  // `vitalik.eth` over an `https://example.com` page, switching tabs, and
+  // switching back). Submitting the typed value is the form `submit`
+  // handler's job; reload is the "do whatever you do, again" affordance.
   const navState = getNavState();
-  const committedDisplay = (navState.addressBarSnapshot || '').trim();
+  const committedDisplay = (navState.committedDisplayUrl || '').trim();
   const ensInput = committedDisplay ? parseEnsInput(committedDisplay) : null;
   if (ensInput) {
     if (hard) invalidateEnsContentForHardReload(ensInput.name);
@@ -1530,6 +1531,7 @@ const handleNavigationEvent = (event) => {
       updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
+      navState.committedDisplayUrl = addressInput.value;
       return;
     }
 
@@ -1553,6 +1555,7 @@ const handleNavigationEvent = (event) => {
       // from an ENS page leaves the prior page's trust shield stuck on.
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
+      navState.committedDisplayUrl = addressInput.value;
       return;
     }
 
@@ -1570,6 +1573,7 @@ const handleNavigationEvent = (event) => {
       updateGithubBridgeIcon();
       updateProtocolIcon();
       navState.addressBarSnapshot = addressInput.value;
+      navState.committedDisplayUrl = addressInput.value;
       return;
     }
 
@@ -1641,8 +1645,12 @@ const handleNavigationEvent = (event) => {
 
   // Snapshot the committed display URL for provider origin derivation.
   // This ensures getDisplayUrlForWebview() reads the post-navigation identity,
-  // not a stale or user-edited address bar value.
+  // not a stale or user-edited address bar value. Also write
+  // `committedDisplayUrl`, the dedicated commit-only field that reload reads
+  // — `addressBarSnapshot` gets overwritten by focusin/tab-switched and so
+  // must not be used for reload's "what page are we currently on" check.
   navState.addressBarSnapshot = addressInput.value;
+  navState.committedDisplayUrl = addressInput.value;
 };
 
 // Update bookmark bar visibility for a URL change
