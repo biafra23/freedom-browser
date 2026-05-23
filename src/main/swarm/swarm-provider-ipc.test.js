@@ -166,6 +166,7 @@ describe('swarm-provider-ipc', () => {
       expect(result.error).toBeDefined();
       expect(result.error.code).toBe(4100);
       expect(result.error.message).toBe('The origin is not authorized for this operation');
+      expect(result.error.data.reason).toBe('not_connected');
     });
   });
 
@@ -412,6 +413,8 @@ describe('swarm-provider-ipc', () => {
       }, 'unauthorized.eth');
 
       expect(result.error.code).toBe(4100);
+      expect(result.error.message).toBe('The origin is not authorized for this operation');
+      expect(result.error.data.reason).toBe('not_connected');
     });
 
     test('records failed history on publish error', async () => {
@@ -1012,6 +1015,7 @@ describe('swarm-provider-ipc', () => {
       mockGetPermission.mockReturnValue(null);
       const result = await invokeProvider('swarm_createFeed', { name: 'blog' }, 'myapp.eth');
       expect(result.error.code).toBe(4100);
+      expect(result.error.data.reason).toBe('not_connected');
     });
 
     test('rejects without feed capability (connected but no feed grant)', async () => {

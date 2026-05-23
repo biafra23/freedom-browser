@@ -116,14 +116,22 @@ function invalidParams(message, reason = 'invalid_params', extra = {}) {
   };
 }
 
-function feedNotGranted() {
+function notAuthorized(reason) {
   return {
     error: {
       ...ERRORS.UNAUTHORIZED,
       message: 'The origin is not authorized for this operation',
-      data: { reason: 'feed_not_granted' },
+      data: { reason },
     },
   };
+}
+
+function notConnected() {
+  return notAuthorized('not_connected');
+}
+
+function feedNotGranted() {
+  return notAuthorized('feed_not_granted');
 }
 
 function validateEmptyOptions(options) {
@@ -292,7 +300,7 @@ async function executeSwarmMethod(method, params, origin) {
     // All other methods require permission
     const permission = getPermission(normalizedOrigin);
     if (!permission) {
-      return { error: { ...ERRORS.UNAUTHORIZED, message: 'Origin not authorized. Call swarm_requestAccess first.' } };
+      return notConnected();
     }
 
     if (method === 'swarm_publishData') {
@@ -357,7 +365,7 @@ async function executeSwarmMethod(method, params, origin) {
 function handleRequestAccess(origin) {
   const permission = getPermission(origin);
   if (!permission) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'The origin is not authorized for this operation' } };
+    return notConnected();
   }
   return { result: { connected: true, origin, capabilities: ['publish'] } };
 }
