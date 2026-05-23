@@ -50,6 +50,10 @@ import { initGithubBridgeUi, setOnOpenRadicleUrl } from './lib/github-bridge-ui.
 import { initMenuBackdrop } from './lib/menu-backdrop.js';
 import { initLinkStatus } from './lib/link-status.js';
 import { initPageContextMenu, hidePageContextMenu } from './lib/page-context-menu.js';
+import {
+  initChromeInputContextMenu,
+  hideChromeInputContextMenu,
+} from './lib/chrome-input-context-menu.js';
 import { pushDebug } from './lib/debug.js';
 import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
@@ -117,6 +121,7 @@ const closeAllMenus = () => {
   hideTabContextMenu();
   hideBookmarkContextMenu();
   hidePageContextMenu();
+  hideChromeInputContextMenu();
 };
 
 // Close everything including autocomplete (used by backdrop)
@@ -222,6 +227,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initTabs(); // Creates first tab and starts loading home page
   initAutocomplete(); // Address bar autocomplete
   initPageContextMenu(); // Page context menu for webviews
+  initChromeInputContextMenu({ onOpening: onAnyMenuOpening }); // Address bar edit menu
   initOnboarding();  // Identity onboarding wizard
   initSidebar();     // Identity & wallet sidebar
   initWalletUi();    // Wallet & identity display in sidebar
