@@ -118,6 +118,31 @@ async function invokeProvider(method, params, origin) {
   return handler({}, { method, params, origin });
 }
 
+function mockV2FeedCapability(origin, activeIdentityId = 'app-scoped:2') {
+  const identities = {
+    'app-scoped:1': {
+      id: 'app-scoped:1',
+      mode: 'app-scoped',
+      publisherKeyIndex: 1,
+    },
+    'app-scoped:2': {
+      id: 'app-scoped:2',
+      mode: 'app-scoped',
+      publisherKeyIndex: 2,
+    },
+  };
+  const activeIdentity = identities[activeIdentityId];
+  mockGetPermission.mockReturnValue({ origin, connectedAt: 1, lastUsed: 1, autoApprove: { publish: false, feeds: false } });
+  mockHasFeedGrant.mockReturnValue(true);
+  mockGetOriginEntry.mockReturnValue({
+    activeIdentityId,
+    identities,
+    identityMode: activeIdentity.mode,
+    publisherKeyIndex: activeIdentity.publisherKeyIndex,
+    feeds: {},
+  });
+}
+
 describe('swarm-provider-ipc', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -1212,6 +1237,25 @@ describe('swarm-provider-ipc', () => {
       expect(mockUpdateFeedReference).toHaveBeenCalledWith('myapp.eth', 'blog', VALID_REF);
     });
 
+    test('updates feed with the identity that created it', async () => {
+      mockV2FeedCapability('myapp.eth', 'app-scoped:2');
+      mockGetFeed.mockReturnValue({
+        topic: 'topichex',
+        owner: '0xOwner',
+        manifestReference: 'mref',
+        identityId: 'app-scoped:1',
+      });
+      mockPreFlightOk();
+      mockGetPublisherKey.mockImplementation(async (index) => ({ privateKey: `0xpubkey${index}` }));
+      mockUpdateFeed.mockResolvedValue({ index: 8 });
+
+      const result = await invokeProvider('swarm_updateFeed', { feedId: 'blog', reference: VALID_REF }, 'myapp.eth');
+
+      expect(result.result.index).toBe(8);
+      expect(mockGetPublisherKey).toHaveBeenCalledWith(1);
+      expect(mockUpdateFeed).toHaveBeenCalledWith('0xpubkey1', 'myapp.eth/blog', VALID_REF);
+    });
+
     test('records publish history as feed-update', async () => {
       mockFeedCapability('myapp.eth');
       mockGetFeed.mockReturnValue({ topic: 't', owner: 'o', manifestReference: 'm' });
@@ -1329,6 +1373,25 @@ describe('swarm-provider-ipc', () => {
 
       expect(result.result).toEqual({ index: 0 });
       expect(mockWriteFeedPayload).toHaveBeenCalledWith('0xkey', 'myapp.eth/feed', 'hello', { index: undefined });
+    });
+
+    test('writes feed entry with the identity that created the feed', async () => {
+      mockV2FeedCapability('myapp.eth', 'app-scoped:2');
+      mockGetFeed.mockReturnValue({
+        topic: 't',
+        owner: '0xOwner',
+        manifestReference: 'm',
+        identityId: 'app-scoped:1',
+      });
+      mockPreFlightOk();
+      mockGetPublisherKey.mockImplementation(async (index) => ({ privateKey: `0xkey${index}` }));
+      mockWriteFeedPayload.mockResolvedValue({ index: 0 });
+
+      const result = await invokeProvider('swarm_writeFeedEntry', { name: 'feed', data: 'hello' }, 'myapp.eth');
+
+      expect(result.result).toEqual({ index: 0 });
+      expect(mockGetPublisherKey).toHaveBeenCalledWith(1);
+      expect(mockWriteFeedPayload).toHaveBeenCalledWith('0xkey1', 'myapp.eth/feed', 'hello', { index: undefined });
     });
 
     test('passes explicit index to writeFeedPayload', async () => {

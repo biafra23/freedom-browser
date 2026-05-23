@@ -768,9 +768,10 @@ async function handleWriteSingleOwnerChunk(params, origin) {
   }
 
   const originEntry = getOriginEntry(origin);
+  const activeIdentity = getActiveOriginIdentity(originEntry);
   let signerKey;
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(activeIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -887,12 +888,53 @@ function validateFeedName(name) {
 }
 
 /**
- * Resolve the signer private key for an origin based on its identity mode.
- * @param {Object} originEntry - Origin entry from feed-store (must have identityMode set)
+ * Return the active identity from an origin entry. Falls back to the
+ * compatibility fields returned by older tests/mocks.
+ * @param {Object} originEntry
+ * @returns {Object|null}
+ */
+function getActiveOriginIdentity(originEntry) {
+  if (!originEntry) return null;
+  if (originEntry.activeIdentityId && originEntry.identities?.[originEntry.activeIdentityId]) {
+    return originEntry.identities[originEntry.activeIdentityId];
+  }
+  if (originEntry.identityMode) {
+    return {
+      id: originEntry.activeIdentityId || null,
+      mode: originEntry.identityMode,
+      publisherKeyIndex: originEntry.publisherKeyIndex ?? null,
+    };
+  }
+  return null;
+}
+
+/**
+ * Return the identity that owns a stored high-level feed. Existing feeds stay
+ * bound to their creation identity even if the origin's active identity later
+ * changes.
+ * @param {Object} originEntry
+ * @param {Object} feed
+ * @returns {Object|null}
+ */
+function getFeedIdentity(originEntry, feed) {
+  if (feed?.identityId && originEntry?.identities?.[feed.identityId]) {
+    return originEntry.identities[feed.identityId];
+  }
+  return getActiveOriginIdentity(originEntry);
+}
+
+function getIdentityMode(identity) {
+  return identity?.mode || identity?.identityMode || null;
+}
+
+/**
+ * Resolve the signer private key for a feed/SOC identity.
+ * @param {Object} identity - Identity record from feed-store
  * @returns {Promise<string>} 0x-prefixed hex private key
  */
-async function resolveSignerKey(originEntry) {
-  if (originEntry.identityMode === 'bee-wallet') {
+async function resolveSignerKey(identity) {
+  const identityMode = getIdentityMode(identity);
+  if (identityMode === 'bee-wallet') {
     const keys = getDerivedKeys();
     if (!keys) {
       throw new Error('Vault is locked');
@@ -900,12 +942,15 @@ async function resolveSignerKey(originEntry) {
     return keys.beeWallet.privateKey;
   }
 
-  if (originEntry.identityMode === 'app-scoped') {
-    const publisherKey = await getPublisherKey(originEntry.publisherKeyIndex);
+  if (identityMode === 'app-scoped') {
+    if (typeof identity.publisherKeyIndex !== 'number') {
+      throw new Error('App-scoped identity is missing a publisher key index');
+    }
+    const publisherKey = await getPublisherKey(identity.publisherKeyIndex);
     return publisherKey.privateKey;
   }
 
-  throw new Error(`Unknown identity mode: ${originEntry.identityMode}`);
+  throw new Error(`Unknown identity mode: ${identityMode}`);
 }
 
 /**
@@ -918,9 +963,10 @@ async function handleGetSigningIdentity(origin) {
   }
 
   const originEntry = getOriginEntry(origin);
+  const activeIdentity = getActiveOriginIdentity(originEntry);
   let signerKey;
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(activeIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -929,7 +975,7 @@ async function handleGetSigningIdentity(origin) {
     return {
       result: {
         owner: getSignerAddress(signerKey),
-        identityMode: originEntry.identityMode,
+        identityMode: getIdentityMode(activeIdentity),
       },
     };
   } catch (err) {
@@ -961,6 +1007,7 @@ async function handleCreateFeed(params, origin) {
   // Idempotent: if feed already exists, return existing metadata
   const existingFeed = getFeed(origin, name);
   if (existingFeed) {
+    const feedIdentity = getFeedIdentity(originEntry, existingFeed);
     return {
       result: {
         feedId: name,
@@ -968,7 +1015,7 @@ async function handleCreateFeed(params, origin) {
         topic: existingFeed.topic,
         manifestReference: existingFeed.manifestReference,
         bzzUrl: `bzz://${existingFeed.manifestReference}`,
-        identityMode: originEntry.identityMode,
+        identityMode: getIdentityMode(feedIdentity),
       },
     };
   }
@@ -978,9 +1025,10 @@ async function handleCreateFeed(params, origin) {
     return { error: { ...ERRORS.NODE_UNAVAILABLE, message: `Node not available: ${preFlight.reason}`, data: { reason: preFlight.reason } } };
   }
 
+  const activeIdentity = getActiveOriginIdentity(originEntry);
   let signerKey;
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(activeIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -1003,6 +1051,7 @@ async function handleCreateFeed(params, origin) {
       topic: result.topic,
       owner: result.owner,
       manifestReference: result.manifestReference,
+      identityId: activeIdentity.id,
     });
 
     updateEntry(historyEntry.id, { status: 'completed', ...result });
@@ -1016,7 +1065,7 @@ async function handleCreateFeed(params, origin) {
         topic: result.topic,
         manifestReference: result.manifestReference,
         bzzUrl: result.bzzUrl,
-        identityMode: originEntry.identityMode,
+        identityMode: getIdentityMode(activeIdentity),
       },
     };
   } catch (err) {
@@ -1061,8 +1110,9 @@ async function handleUpdateFeed(params, origin) {
   }
 
   let signerKey;
+  const feedIdentity = getFeedIdentity(originEntry, existingFeed);
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(feedIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -1150,8 +1200,9 @@ async function handleWriteFeedEntry(params, origin) {
   }
 
   let signerKey;
+  const feedIdentity = getFeedIdentity(originEntry, existingFeed);
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(feedIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
