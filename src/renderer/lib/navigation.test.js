@@ -1678,6 +1678,16 @@ describe('navigation', () => {
       });
     };
 
+    // Mirror the production commit shape: on every did-navigate the
+    // renderer writes the user-facing display URL into both the address
+    // input and `navState.addressBarSnapshot`. Reload reads the snapshot
+    // (the *committed* display identity), not `addressInput.value`, so an
+    // unsubmitted draft in the address bar can't hijack reload.
+    const commitDisplay = (ctx, value) => {
+      ctx.elements.addressInput.value = value;
+      ctx.activeRef.tab.navigationState.addressBarSnapshot = value;
+    };
+
     test('soft reload of an ENS page re-resolves and updates trust', async () => {
       const ctx = await loadNavigationModule();
       installEnsParser(ctx);
@@ -1696,7 +1706,7 @@ describe('navigation', () => {
         agreed: ['a', 'b', 'c'],
       };
       ctx.state.ensTrustByName.set('vitalik.eth', oldTrust);
-      ctx.elements.addressInput.value = 'bzz://vitalik.eth/';
+      commitDisplay(ctx, 'bzz://vitalik.eth/');
       ctx.activeRef.tab.webview.getURL.mockReturnValue(
         `bzz://${'a'.repeat(64)}/`
       );
@@ -1724,7 +1734,7 @@ describe('navigation', () => {
       installEnsParser(ctx);
       await ctx.mod.initNavigation();
 
-      ctx.elements.addressInput.value = 'ipfs://vitalik.eth/about';
+      commitDisplay(ctx, 'ipfs://vitalik.eth/about');
       ctx.activeRef.tab.webview.getURL.mockReturnValue('ipfs://bafyfake/about');
       ctx.electronAPI.resolveEns.mockResolvedValue({
         type: 'ok',
@@ -1748,7 +1758,7 @@ describe('navigation', () => {
       installEnsParser(ctx);
       await ctx.mod.initNavigation();
 
-      ctx.elements.addressInput.value = 'https://example.com/';
+      commitDisplay(ctx, 'https://example.com/');
       ctx.activeRef.tab.webview.getURL.mockReturnValue('https://example.com/');
 
       ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
@@ -1765,7 +1775,7 @@ describe('navigation', () => {
       installEnsParser(ctx);
       await ctx.mod.initNavigation();
 
-      ctx.elements.addressInput.value = 'https://example.com/';
+      commitDisplay(ctx, 'https://example.com/');
       ctx.activeRef.tab.webview.getURL.mockReturnValue('https://example.com/');
 
       ctx.elements.reloadBtn.dispatch('click', { shiftKey: true });
@@ -1784,12 +1794,12 @@ describe('navigation', () => {
       // re-runs the original URL through loadTarget (which itself re-enters
       // the ENS resolution path). The new ENS branch must not short-circuit
       // this — without the early return, an error-page reload would skip
-      // the recovery path and re-resolve a possibly-stale address-bar value.
+      // the recovery path and re-resolve a possibly-stale display value.
       const ctx = await loadNavigationModule();
       installEnsParser(ctx);
       await ctx.mod.initNavigation();
 
-      ctx.elements.addressInput.value = 'bzz://vitalik.eth/';
+      commitDisplay(ctx, 'bzz://vitalik.eth/');
       ctx.activeRef.tab.webview.getURL.mockReturnValue(
         'file:///app/pages/error.html?url=bzz%3A%2F%2Fvitalik.eth%2F'
       );
@@ -1807,6 +1817,63 @@ describe('navigation', () => {
 
       expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
       expect(ctx.activeRef.tab.webview.reload).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
+    });
+
+    test('hard reload from an ENS error page invalidates the contenthash cache and re-resolves', async () => {
+      // Hard reload must bypass `ensResultCache` even on the recovery
+      // branch — without this, a hard reload from an ENS error page would
+      // re-run loadTarget but resolveEns would return the stale cached
+      // contenthash from the failed attempt.
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      commitDisplay(ctx, 'bzz://vitalik.eth/');
+      ctx.activeRef.tab.webview.getURL.mockReturnValue(
+        'file:///app/pages/error.html?url=bzz%3A%2F%2Fvitalik.eth%2F'
+      );
+      ctx.electronAPI.resolveEns.mockResolvedValue({
+        type: 'ok',
+        name: 'vitalik.eth',
+        protocol: 'bzz',
+        uri: `bzz://${'a'.repeat(64)}`,
+        decoded: 'a'.repeat(64),
+        trust: { level: 'verified', queried: ['a'], agreed: ['a'] },
+      });
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: true });
+      await flushMicrotasks();
+
+      expect(ctx.electronAPI.invalidateEnsContent).toHaveBeenCalledWith('vitalik.eth');
+      expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+      expect(ctx.activeRef.tab.webview.reload).not.toHaveBeenCalled();
+      expect(ctx.activeRef.tab.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+    });
+
+    test('reload with unsubmitted ENS-looking text in the address bar reloads the current non-ENS page', async () => {
+      // Reload reads the *committed* display identity from
+      // `navState.addressBarSnapshot`, not `addressInput.value`. If the
+      // user has typed `vitalik.eth` over an `https://example.com` page
+      // but hasn't submitted it, hitting reload should reload the current
+      // page — submitting the typed value is the form-submit handler's job.
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      commitDisplay(ctx, 'https://example.com/');
+      // Now simulate the user typing into the address bar without
+      // submitting: addressInput.value is dirty, but the snapshot still
+      // reflects the committed page.
+      ctx.elements.addressInput.value = 'vitalik.eth';
+      ctx.activeRef.tab.webview.getURL.mockReturnValue('https://example.com/');
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
+      await flushMicrotasks();
+
+      expect(ctx.activeRef.tab.webview.reload).toHaveBeenCalled();
+      expect(ctx.activeRef.tab.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.resolveEns).not.toHaveBeenCalled();
       expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
     });
   });

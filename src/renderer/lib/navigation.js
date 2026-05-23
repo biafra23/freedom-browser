@@ -1397,11 +1397,32 @@ export const loadHomePage = () => {
   pushDebug('Loading home page');
 };
 
+// Hard-reload (Cmd/Ctrl+Shift+R) bypasses Chromium's HTTP cache; the ENS
+// analogue is to also bypass the main-process `ensResultCache` (15-min TTL)
+// so a hard reload performed shortly after the previous resolution actually
+// re-resolves rather than returning the cached result. Fire-and-forget IPC —
+// the subsequent `loadTarget` call kicks off a fresh `resolveEns` that misses
+// the now-empty cache.
+const invalidateEnsContentForHardReload = (ensName) => {
+  if (!ensName || !electronAPI?.invalidateEnsContent) return;
+  pushDebug(`Hard reload: invalidating ENS contenthash cache for ${ensName}`);
+  electronAPI.invalidateEnsContent(ensName).catch((err) => {
+    pushDebug(`[ENS] invalidateEnsContent failed: ${err?.message || err}`);
+  });
+};
+
 // Shared error-page retry logic used by both reload variants and the reload button
 const retryErrorPageOrReload = (webview, hard) => {
   const current = webview.getURL();
   const originalUrl = getOriginalUrlFromErrorPage(current, errorUrlBase);
   if (originalUrl) {
+    // Hard reload of an ENS error page also bypasses `ensResultCache` so the
+    // recovery resolution actually re-runs under today's verification method
+    // rather than returning the cached contenthash from the failed attempt.
+    if (hard) {
+      const errorEns = parseEnsInput(originalUrl);
+      if (errorEns) invalidateEnsContentForHardReload(errorEns.name);
+    }
     pushDebug(`Retrying original URL from error page: ${originalUrl}`);
     loadTarget(originalUrl);
     return;
@@ -1419,30 +1440,23 @@ const retryErrorPageOrReload = (webview, hard) => {
   // effect at first load. The webview's URL holds the resolved transport URL
   // with the resolved hash/CID (or the ENS-host form like
   // `bzz://name.eth/...`); re-running `webview.reload()` would just refetch
-  // the same content hash and never re-enter the ENS resolution path. The
-  // address bar always carries the ENS-form display
-  // (`bzz://name.eth/...`, `ipfs://name.eth/...`, `ipns://name.eth/...`,
-  // bare `name.eth`) thanks to `setAddressDisplayForTab`, so `parseEnsInput`
-  // matches and `loadTarget` runs the full resolution path, overwriting
-  // `state.ensTrustByName.get(name)` when the new resolution settles.
+  // the same content hash and never re-enter the ENS resolution path.
   //
-  // Hard-reload (Cmd/Ctrl+Shift+R) bypasses Chromium's HTTP cache; the ENS
-  // analogue is to also bypass the main-process `ensResultCache` (15-min TTL)
-  // so a hard reload performed shortly after the previous resolution actually
-  // re-resolves rather than returning the cached result. We do this by
-  // calling the already-exported `invalidateEnsContent(name)` IPC before
-  // dispatching to `loadTarget`.
-  const addressValue = (addressInput?.value || '').trim();
-  const ensInput = parseEnsInput(addressValue);
+  // We key the decision on the active tab's *committed* display identity
+  // (`navState.addressBarSnapshot`, set on every `did-navigate`) rather than
+  // `addressInput.value`. The latter reflects whatever the user is currently
+  // typing — if they have an unsubmitted `vitalik.eth` over a committed
+  // `https://example.com` page and hit reload, we want to reload the current
+  // page, not navigate to the typed-but-unsubmitted ENS value. The Form
+  // `submit` handler already covers the "actually navigate to typed input"
+  // path; reload is the "do whatever you do, again" affordance.
+  const navState = getNavState();
+  const committedDisplay = (navState.addressBarSnapshot || '').trim();
+  const ensInput = committedDisplay ? parseEnsInput(committedDisplay) : null;
   if (ensInput) {
-    if (hard && electronAPI?.invalidateEnsContent) {
-      pushDebug(`Hard reload: invalidating ENS contenthash cache for ${ensInput.name}`);
-      electronAPI.invalidateEnsContent(ensInput.name).catch((err) => {
-        pushDebug(`[ENS] invalidateEnsContent failed: ${err?.message || err}`);
-      });
-    }
-    pushDebug(`${hard ? 'Hard reload' : 'Reload'} re-resolving ENS: ${addressValue}`);
-    loadTarget(addressValue);
+    if (hard) invalidateEnsContentForHardReload(ensInput.name);
+    pushDebug(`${hard ? 'Hard reload' : 'Reload'} re-resolving ENS: ${committedDisplay}`);
+    loadTarget(committedDisplay);
     return;
   }
 
