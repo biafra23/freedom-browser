@@ -31,7 +31,7 @@ All notable changes to Freedom will be documented in this file.
 ### Security
 
 - Swarm dApp provider permission prompts key on the committed page URL, not on the address-bar draft
-- Updated runtime dependencies: Electron 41.5.0 to 41.7.0 (Chromium and Node patches), `@ethersphere/bee-js` 12.1.0 to 12.2.1, `@corpus-core/colibri-stateless` 1.1.25 to 1.1.26, `better-sqlite3` 12.9.0 to 12.10.0, `electron-log` 5.4.3 to 5.4.4
+- Updated runtime dependencies: Electron 41.5.0 to 41.7.0 (Chromium and Node patches), `@ethersphere/bee-js` 12.1.0 to 12.2.1, `better-sqlite3` 12.9.0 to 12.10.0, `electron-log` 5.4.3 to 5.4.4
 - Updated dev dependencies: `@playwright/test` 1.60.0, `jest` 30.4.2, `babel-jest` 30.4.1, `eslint` 10.4.0, `@babel/preset-env` 7.29.5
 - Override `ws` to ^8.21.0 under `ethers` to clear `GHSA-58qx-3vcg-4xpx` (uninitialised memory disclosure); `ethers@6.16.0` pinned `ws@8.17.1`, the auto-fix would have downgraded ethers across a major
 
