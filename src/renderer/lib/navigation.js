@@ -1414,6 +1414,38 @@ const retryErrorPageOrReload = (webview, hard) => {
     }
   }
 
+  // ENS pages: reload re-resolves under the currently-configured verification
+  // method so the trust badge reflects today's settings, not whatever was in
+  // effect at first load. The webview's URL holds the resolved transport URL
+  // with the resolved hash/CID (or the ENS-host form like
+  // `bzz://name.eth/...`); re-running `webview.reload()` would just refetch
+  // the same content hash and never re-enter the ENS resolution path. The
+  // address bar always carries the ENS-form display
+  // (`bzz://name.eth/...`, `ipfs://name.eth/...`, `ipns://name.eth/...`,
+  // bare `name.eth`) thanks to `setAddressDisplayForTab`, so `parseEnsInput`
+  // matches and `loadTarget` runs the full resolution path, overwriting
+  // `state.ensTrustByName.get(name)` when the new resolution settles.
+  //
+  // Hard-reload (Cmd/Ctrl+Shift+R) bypasses Chromium's HTTP cache; the ENS
+  // analogue is to also bypass the main-process `ensResultCache` (15-min TTL)
+  // so a hard reload performed shortly after the previous resolution actually
+  // re-resolves rather than returning the cached result. We do this by
+  // calling the already-exported `invalidateEnsContent(name)` IPC before
+  // dispatching to `loadTarget`.
+  const addressValue = (addressInput?.value || '').trim();
+  const ensInput = parseEnsInput(addressValue);
+  if (ensInput) {
+    if (hard && electronAPI?.invalidateEnsContent) {
+      pushDebug(`Hard reload: invalidating ENS contenthash cache for ${ensInput.name}`);
+      electronAPI.invalidateEnsContent(ensInput.name).catch((err) => {
+        pushDebug(`[ENS] invalidateEnsContent failed: ${err?.message || err}`);
+      });
+    }
+    pushDebug(`${hard ? 'Hard reload' : 'Reload'} re-resolving ENS: ${addressValue}`);
+    loadTarget(addressValue);
+    return;
+  }
+
   if (hard) {
     webview.reloadIgnoringCache();
     pushDebug('Hard reload triggered');

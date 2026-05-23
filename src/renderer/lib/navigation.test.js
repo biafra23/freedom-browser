@@ -299,6 +299,7 @@ const loadNavigationModule = async (options = {}) => {
       electronHandlers.toggleBookmarkBar = handler;
     }),
     resolveEns: jest.fn(),
+    invalidateEnsContent: jest.fn().mockResolvedValue(true),
   };
 
   const addressInput = createElement('input');
@@ -1648,6 +1649,165 @@ describe('navigation', () => {
 
       expect(ctx.elements.trustPopover.hidden).toBe(true);
       expect(ctx.elements.trustShield.getAttribute('aria-expanded')).toBe('false');
+    });
+  });
+
+  describe('ENS reload re-resolution', () => {
+    // Issue #82: reload on an ENS page used to call webview.reload() against
+    // the resolved transport URL (carrying the actual content hash), which
+    // never re-entered the ENS resolution path. After flipping the ENS
+    // verification method in settings, the trust badge stayed stuck on the
+    // previous method until the user re-typed the name. These tests pin the
+    // fix: reload now detects ENS-form address-bar values and routes them
+    // through loadTarget so the resolution + trust badge refresh under the
+    // currently-configured method.
+    const installEnsParser = (ctx) => {
+      ctx.pageUrlsMocks.parseEnsInput.mockImplementation((value) => {
+        const prefixMatch = value.match(/^(ens|bzz|ipfs|ipns):\/\//i);
+        const assertedTransport = prefixMatch
+          ? prefixMatch[1].toLowerCase() === 'ens'
+            ? null
+            : prefixMatch[1].toLowerCase()
+          : null;
+        const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
+        if (!m) return null;
+        const name = m[1].toLowerCase();
+        return name.endsWith('.eth') || name.endsWith('.box')
+          ? { name, suffix: m[2] || '', assertedTransport }
+          : null;
+      });
+    };
+
+    test('soft reload of an ENS page re-resolves and updates trust', async () => {
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      const oldTrust = {
+        level: 'verified',
+        method: 'colibri',
+        queried: ['a', 'b'],
+        agreed: ['a', 'b'],
+      };
+      const newTrust = {
+        level: 'verified',
+        method: 'public-rpc-quorum',
+        queried: ['a', 'b', 'c'],
+        agreed: ['a', 'b', 'c'],
+      };
+      ctx.state.ensTrustByName.set('vitalik.eth', oldTrust);
+      ctx.elements.addressInput.value = 'bzz://vitalik.eth/';
+      ctx.activeRef.tab.webview.getURL.mockReturnValue(
+        `bzz://${'a'.repeat(64)}/`
+      );
+      ctx.electronAPI.resolveEns.mockResolvedValue({
+        type: 'ok',
+        name: 'vitalik.eth',
+        protocol: 'bzz',
+        uri: `bzz://${'a'.repeat(64)}`,
+        decoded: 'a'.repeat(64),
+        trust: newTrust,
+      });
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
+      await flushMicrotasks();
+
+      expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+      expect(ctx.activeRef.tab.webview.reload).not.toHaveBeenCalled();
+      expect(ctx.activeRef.tab.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
+      expect(ctx.state.ensTrustByName.get('vitalik.eth')).toEqual(newTrust);
+    });
+
+    test('hard reload of an ENS page invalidates the contenthash cache and re-resolves', async () => {
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      ctx.elements.addressInput.value = 'ipfs://vitalik.eth/about';
+      ctx.activeRef.tab.webview.getURL.mockReturnValue('ipfs://bafyfake/about');
+      ctx.electronAPI.resolveEns.mockResolvedValue({
+        type: 'ok',
+        name: 'vitalik.eth',
+        protocol: 'ipfs',
+        uri: 'ipfs://bafyfake',
+        trust: { level: 'verified', queried: ['a'], agreed: ['a'] },
+      });
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: true });
+      await flushMicrotasks();
+
+      expect(ctx.electronAPI.invalidateEnsContent).toHaveBeenCalledWith('vitalik.eth');
+      expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+      expect(ctx.activeRef.tab.webview.reload).not.toHaveBeenCalled();
+      expect(ctx.activeRef.tab.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+    });
+
+    test('reload of a non-ENS page falls through to webview.reload()', async () => {
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      ctx.elements.addressInput.value = 'https://example.com/';
+      ctx.activeRef.tab.webview.getURL.mockReturnValue('https://example.com/');
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
+      await flushMicrotasks();
+
+      expect(ctx.activeRef.tab.webview.reload).toHaveBeenCalled();
+      expect(ctx.activeRef.tab.webview.reloadIgnoringCache).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.resolveEns).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
+    });
+
+    test('hard reload of a non-ENS page falls through to reloadIgnoringCache()', async () => {
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      ctx.elements.addressInput.value = 'https://example.com/';
+      ctx.activeRef.tab.webview.getURL.mockReturnValue('https://example.com/');
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: true });
+      await flushMicrotasks();
+
+      expect(ctx.activeRef.tab.webview.reloadIgnoringCache).toHaveBeenCalled();
+      expect(ctx.activeRef.tab.webview.reload).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.resolveEns).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
+    });
+
+    test('reload from an ENS error page recovers via the original-URL branch', async () => {
+      // Regression guard for the existing branch order: the
+      // getOriginalUrlFromErrorPage recovery path runs before the ENS
+      // re-resolve check, so an error page recovered from an ENS load
+      // re-runs the original URL through loadTarget (which itself re-enters
+      // the ENS resolution path). The new ENS branch must not short-circuit
+      // this — without the early return, an error-page reload would skip
+      // the recovery path and re-resolve a possibly-stale address-bar value.
+      const ctx = await loadNavigationModule();
+      installEnsParser(ctx);
+      await ctx.mod.initNavigation();
+
+      ctx.elements.addressInput.value = 'bzz://vitalik.eth/';
+      ctx.activeRef.tab.webview.getURL.mockReturnValue(
+        'file:///app/pages/error.html?url=bzz%3A%2F%2Fvitalik.eth%2F'
+      );
+      ctx.electronAPI.resolveEns.mockResolvedValue({
+        type: 'ok',
+        name: 'vitalik.eth',
+        protocol: 'bzz',
+        uri: `bzz://${'a'.repeat(64)}`,
+        decoded: 'a'.repeat(64),
+        trust: { level: 'verified', queried: ['a'], agreed: ['a'] },
+      });
+
+      ctx.elements.reloadBtn.dispatch('click', { shiftKey: false });
+      await flushMicrotasks();
+
+      expect(ctx.electronAPI.resolveEns).toHaveBeenCalledWith('vitalik.eth');
+      expect(ctx.activeRef.tab.webview.reload).not.toHaveBeenCalled();
+      expect(ctx.electronAPI.invalidateEnsContent).not.toHaveBeenCalled();
     });
   });
 });
