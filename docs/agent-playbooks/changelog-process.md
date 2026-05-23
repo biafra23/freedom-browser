@@ -102,6 +102,8 @@ Common deduplication failures:
 
 Dependency updates inside an active major series almost always carry upstream security fixes. Default to **Security** for these (matching `0.6.1`'s `Updated dependencies: Electron 39 to 40, …` placement). Use Changed only when the bump is purely a feature pickup with no security content.
 
+**Skip in-release version drift for dependencies first added in this release.** If `foo` is added at `1.0.0` mid-cycle and bumped to `1.0.2` before the release ships, users only ever see `1.0.2` — listing `foo 1.0.0 to 1.0.2` in `Security` misrepresents in-release iteration as a security update on a previously shipped surface. Mention the dep once, in the `Added` parent for the feature it backs, and let its shipping version stand on its own. Same logic as the in-release polish rule for fixes (Procedure step 5).
+
 ### Review gate
 
 An agent draft is a starting point, not a final. After drafting, diff the new section against the previous shipped release and trim/restructure until per-entry density matches.
