@@ -2,29 +2,44 @@
 
 All notable changes to Freedom will be documented in this file.
 
-## [Unreleased]
+## [0.7.2] - 2026-05-23
 
 ### Added
 
 - Cryptographic ENS verification via Colibri (`@corpus-core/colibri-stateless`) as the new default resolution path:
-  - Every `.eth` / `.box` lookup is verified locally against the Ethereum sync committee (or, with ZK consensus proof enabled, a recursive zk sync proof), rather than relying on M-of-K agreement between public RPCs
-  - Address-bar shield popover shows neutral verified status with Colibri method, proof, and server details instead of the RPC quorum row
-  - CCIP-Read names (`.box` via 3DNS and offchain ENS resolvers in general) keep working — the partner prover proves the initial call, ethers fetches the gateway response, and the final `resolveCallback` is independently proven
-- `freedom://settings` → ENS Resolution: choose between Colibri (recommended), the public-RPC quorum, or Direct RPC first; Colibri and Direct RPC first fall back to the public-RPC quorum if their primary path fails
-- Unified network registry for chains, RPC endpoints, prover endpoints, and keyed RPC providers
-- `freedom://settings` → Chains and RPC Providers pages for custom EVM chains, per-chain RPC endpoints, and Alchemy / Infura / DRPC API keys
+  - Every `eth_call` against the ENS Universal Resolver is verified locally against the Ethereum sync committee (zk-proven sync bootstrap by default), rather than trusting M-of-K agreement between public RPCs
+  - Forward (`contenthash`, `addr`) and reverse lookups are both verified, so the wallet's recipient-name display carries the same guarantee as the address-bar shield
+  - Address-bar trust shield popover differentiates Colibri-verified from quorum-verified, showing the Colibri method, proof, and prover host instead of the per-RPC quorum rows
+  - Wallet send review screen shows a green ✓ next to the recipient name when its ENS resolution is cryptographically verified, with the verification method in the tooltip
+  - Wallet send review screen shows an amber ⚠ next to a bare address when the address claims a primary ENS name that doesn't forward-verify (stale record or spoofing attempt)
+  - CCIP-Read names (`.box` via 3DNS, and offchain ENS resolvers generally) keep working — the prover proves the initial call, ethers fetches the gateway response, and the final `resolveCallback` is independently proven
+- `freedom://settings` → ENS Resolution: pick between Colibri (recommended), the public-RPC quorum, or your own RPC; toggle whether Colibri / your-RPC fall back to the quorum if their primary path fails
+- Unified network registry as the single source for chains, RPC endpoints, prover endpoints, and keyed RPC providers:
+  - `freedom://settings` → Chains: per-chain endpoint list grouped into three tiers (your custom RPCs, commercial keyed providers, public RPCs), with the active primary marked
+  - "+ Add a chain" flow that searches the chainlist.org catalogue or accepts a chain by hand
+  - `freedom://settings` → RPC Providers: one screen to manage Alchemy / Infura / DRPC API keys with the chains each provider covers
+- Link-hover URL preview in the bottom-left of the page area, matching Chrome and Firefox:
+  - Fades in after a 150 ms hover delay, swaps text instantly between links, and fades out when the cursor leaves all links
+  - Auto-flips to the bottom-right when the cursor enters its zone so it never covers the hovered link
+  - Active-tab only, non-interactive, and respects `prefers-reduced-motion`
 
 ### Changed
 
-- Default ENS resolution changed from public-RPC quorum to Colibri. Users running a custom RPC are migrated to the Direct RPC-first path (preserves the intent of keeping queries off public infrastructure); everyone else upgrades to Colibri. The migration is one-shot and idempotent
-- Wallet chains now come from the network registry, and token metadata moved from the old chain registry into `token-registry`
-- Bee light-mode config reads its Gnosis backend and Ethereum resolver RPC from the network registry, preferring keyless public/user endpoints for stable startup
+- Default ENS resolution changed from public-RPC quorum to Colibri, with a one-shot launch migration that keeps anyone running a custom RPC on a direct-RPC-first path and upgrades everyone else to Colibri
+- Wallet, ENS resolution, and the Bee node manager now read chains and RPC endpoints from the unified network registry, so a chain or endpoint added in settings reaches every consumer without a restart
 
 ### Fixed
 
-- Custom chains register their native asset with the chain's declared symbol and decimals so wallet balances use the right unit metadata
-- Manual custom-chain and custom-RPC saves are rejected before persistence unless they use public `https://` RPC URLs without placeholders
-- ENS trust shields refresh immediately when network or ENS verification settings change, instead of reusing stale renderer trust metadata
+- Address-bar Ctrl+C / Ctrl+V / Ctrl+X / Ctrl+A and right-click Cut / Copy / Paste / Select All work on Windows and Linux
+- ENS trust badges persist across network and ENS settings updates instead of disappearing globally on every settings change
+- Reload on an ENS page re-runs ENS resolution under the currently-configured verification method, so the address-bar trust badge refreshes after switching between Colibri and the public-RPC quorum:
+  - Hard reload (Cmd/Ctrl+Shift+R) additionally bypasses the 15-minute ENS contenthash cache
+  - An unsubmitted draft URL typed into the address bar no longer hijacks a subsequent reload after a tab switch
+  - ENS pages that finish loading while their tab is backgrounded also commit a stable identity, so a later reload re-resolves as expected
+
+### Security
+
+- Swarm dApp provider permission prompts now key on the committed page URL, not on whatever the user happens to be typing into the address bar at the moment of the request
 
 ## [0.7.1] - 2026-05-07
 
