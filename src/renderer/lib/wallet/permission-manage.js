@@ -5,11 +5,18 @@
  * Accessible by clicking the connection banner info area.
  */
 
-import { walletState, hideAllSubscreens } from './wallet-state.js';
+import { walletState, hideAllSubscreens, registerScreenHider } from './wallet-state.js';
 import { open as openSidebarPanel } from '../sidebar.js';
 import { updateConnectionBanner, disconnectDapp } from './dapp-connect.js';
 import { updateSwarmConnectionBanner, disconnectSwarmApp } from './swarm-connect.js';
-import { escapeHtml } from './wallet-utils.js';
+import { showVaultUnlock } from './vault-unlock.js';
+import { showPublisherIdentityCreate } from './publisher-identity-create.js';
+import {
+  BEE_WALLET_IDENTITY_ID,
+  getActivePublisherIdentity,
+  identityLabel,
+  renderPublisherIdentitySelector,
+} from './publisher-identity-selector.js';
 
 // Wallet permission management
 let dappPermsScreen;
@@ -26,18 +33,11 @@ let swarmPermsBack;
 let swarmPermsSite;
 let swarmPermsPublishToggle;
 let swarmPermsFeedsToggle;
-let swarmPermsIdentityCurrent;
-let swarmPermsIdentityList;
-let swarmPermsCreateAppIdentity;
-let swarmPermsUseBeeIdentity;
+let swarmPermsIdentitySelector;
 let swarmPermsIdentityNote;
 let swarmPermsDisconnect;
 let swarmPermsKey = null;
-
-const IDENTITY_LABELS = {
-  'app-scoped': 'App-scoped identity',
-  'bee-wallet': 'Bee wallet identity',
-};
+let swarmPermsIdentityState = null;
 
 export function initPermissionManage() {
   // Wallet permission screen
@@ -50,6 +50,7 @@ export function initPermissionManage() {
 
   dappPermsBack?.addEventListener('click', closeDappPerms);
   dappPermsDisconnect?.addEventListener('click', handleDappDisconnect);
+  registerScreenHider(() => closeDappPerms());
   dappPermsSigningToggle?.addEventListener('change', async () => {
     if (dappPermsKey) {
       await window.dappPermissions.setSigningAutoApprove(dappPermsKey, dappPermsSigningToggle.checked);
@@ -63,15 +64,13 @@ export function initPermissionManage() {
   swarmPermsSite = document.getElementById('swarm-perms-site');
   swarmPermsPublishToggle = document.getElementById('swarm-perms-publish-toggle');
   swarmPermsFeedsToggle = document.getElementById('swarm-perms-feeds-toggle');
-  swarmPermsIdentityCurrent = document.getElementById('swarm-perms-identity-current');
-  swarmPermsIdentityList = document.getElementById('swarm-perms-identity-list');
-  swarmPermsCreateAppIdentity = document.getElementById('swarm-perms-create-app-identity');
-  swarmPermsUseBeeIdentity = document.getElementById('swarm-perms-use-bee-identity');
+  swarmPermsIdentitySelector = document.getElementById('swarm-perms-identity-selector');
   swarmPermsIdentityNote = document.getElementById('swarm-perms-identity-note');
   swarmPermsDisconnect = document.getElementById('swarm-perms-disconnect');
 
   swarmPermsBack?.addEventListener('click', closeSwarmPerms);
   swarmPermsDisconnect?.addEventListener('click', handleSwarmDisconnect);
+  registerScreenHider(() => closeSwarmPerms());
   swarmPermsPublishToggle?.addEventListener('change', async () => {
     if (swarmPermsKey) {
       await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'publish', swarmPermsPublishToggle.checked);
@@ -84,16 +83,15 @@ export function initPermissionManage() {
       updateSwarmConnectionBanner(swarmPermsKey);
     }
   });
-  swarmPermsCreateAppIdentity?.addEventListener('click', () => createSwarmAppScopedIdentity());
-  swarmPermsUseBeeIdentity?.addEventListener('click', () => activateSwarmBeeIdentity());
 }
 
 export async function showDappPermissions(permissionKey) {
-  dappPermsKey = permissionKey;
-  if (dappPermsSite) dappPermsSite.textContent = permissionKey;
-
   const permission = await window.dappPermissions.getPermission(permissionKey);
   if (!permission) return;
+
+  hideAllSubscreens();
+  dappPermsKey = permissionKey;
+  if (dappPermsSite) dappPermsSite.textContent = permissionKey;
 
   if (dappPermsSigningToggle) {
     dappPermsSigningToggle.checked = permission.autoApprove?.signing === true;
@@ -101,7 +99,6 @@ export async function showDappPermissions(permissionKey) {
 
   renderTxRules(permission.autoApprove?.transactions || []);
 
-  hideAllSubscreens();
   walletState.identityView?.classList.add('hidden');
   dappPermsScreen?.classList.remove('hidden');
   openSidebarPanel();
@@ -158,7 +155,7 @@ function renderTxRules(rules) {
   }
 }
 
-function closeDappPerms() {
+export function closeDappPerms() {
   dappPermsScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   dappPermsKey = null;
@@ -171,11 +168,17 @@ async function handleDappDisconnect() {
 }
 
 export async function showSwarmPermissions(permissionKey, options = {}) {
-  swarmPermsKey = permissionKey;
-  if (swarmPermsSite) swarmPermsSite.textContent = permissionKey;
-
   const permission = await window.swarmPermissions.getPermission(permissionKey);
   if (!permission) return;
+
+  const unlocked = await ensurePublisherIdentityUnlocked(permissionKey);
+  if (!unlocked) {
+    return;
+  }
+
+  hideAllSubscreens();
+  swarmPermsKey = permissionKey;
+  if (swarmPermsSite) swarmPermsSite.textContent = permissionKey;
 
   if (swarmPermsPublishToggle) {
     swarmPermsPublishToggle.checked = permission.autoApprove?.publish === true;
@@ -185,7 +188,6 @@ export async function showSwarmPermissions(permissionKey, options = {}) {
   }
   await refreshSwarmIdentitySection();
 
-  hideAllSubscreens();
   walletState.identityView?.classList.add('hidden');
   swarmPermsScreen?.classList.remove('hidden');
   openSidebarPanel();
@@ -195,10 +197,16 @@ export async function showSwarmPermissions(permissionKey, options = {}) {
   }
 }
 
-function closeSwarmPerms() {
+export function closeSwarmPerms() {
   swarmPermsScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   swarmPermsKey = null;
+  swarmPermsIdentityState = null;
+  if (swarmPermsIdentitySelector) swarmPermsIdentitySelector.innerHTML = '';
+  if (swarmPermsIdentityNote) {
+    swarmPermsIdentityNote.textContent = '';
+    swarmPermsIdentityNote.classList.add('hidden');
+  }
 }
 
 async function handleSwarmDisconnect() {
@@ -207,80 +215,46 @@ async function handleSwarmDisconnect() {
   closeSwarmPerms();
 }
 
-function identityLabel(identity) {
-  if (!identity) return 'No publisher identity';
-  return identity.label || IDENTITY_LABELS[identity.mode] || 'Publisher identity';
-}
-
-function activeIdentityFromState(state) {
-  return state?.identities?.find((identity) => identity.id === state.activeIdentityId) || null;
+async function ensurePublisherIdentityUnlocked(permissionKey) {
+  try {
+    const status = await window.identity.getStatus();
+    if (status.isUnlocked) return true;
+    await showVaultUnlock(permissionKey);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function refreshSwarmIdentitySection(note = '') {
   if (!swarmPermsKey) return;
-  let state = null;
   try {
-    state = await window.swarmFeedStore?.getOriginIdentities?.(swarmPermsKey);
+    swarmPermsIdentityState = await loadOrCreateIdentityState(swarmPermsKey);
   } catch (err) {
     console.error('[PermissionManage] Failed to load Swarm identities:', err);
+    swarmPermsIdentityState = null;
   }
-  renderSwarmIdentitySection(state, note);
+  renderSwarmIdentitySection(note);
 }
 
-function renderSwarmIdentitySection(state, note) {
-  const active = activeIdentityFromState(state);
-
-  if (swarmPermsIdentityCurrent) {
-    swarmPermsIdentityCurrent.innerHTML = active
-      ? `<div class="publisher-identity-current-title">${escapeHtml(identityLabel(active))}</div>
-        <div class="publisher-identity-current-desc">Feed and SOC writes use this signing owner by default.</div>`
-      : '<div class="publisher-identity-current-desc">No publisher identity has been created for this app yet.</div>';
+async function loadOrCreateIdentityState(origin) {
+  let state = await window.swarmFeedStore.getOriginIdentities(origin);
+  if (!state?.activeIdentityId) {
+    state = await window.swarmFeedStore.createAppScopedIdentity(origin);
   }
+  return state;
+}
 
-  if (swarmPermsIdentityList) {
-    swarmPermsIdentityList.innerHTML = '';
-    for (const identity of state?.identities || []) {
-      swarmPermsIdentityList.appendChild(buildIdentityRow(identity, identity.id === state.activeIdentityId, (identityId) => {
-        activateSwarmIdentity(identityId);
-      }));
-    }
-  }
+function renderSwarmIdentitySection(note) {
+  renderPublisherIdentitySelector(swarmPermsIdentitySelector, swarmPermsIdentityState, {
+    onSelect: (identity) => activateSwarmIdentity(identity),
+    onCreateAppScoped: () => createSwarmAppScopedIdentity(),
+  });
 
   if (swarmPermsIdentityNote) {
     swarmPermsIdentityNote.textContent = note;
     swarmPermsIdentityNote.classList.toggle('hidden', !note);
   }
-}
-
-function buildIdentityRow(identity, isActive, onUse) {
-  const row = document.createElement('div');
-  row.className = `publisher-identity-item${isActive ? ' is-active' : ''}`;
-
-  const modeBadge = identity.mode === 'app-scoped'
-    ? '<span class="publisher-identity-badge badge-app-scoped">App-scoped</span>'
-    : '<span class="publisher-identity-badge badge-bee-wallet">Bee wallet</span>';
-
-  row.innerHTML = `<div class="publisher-identity-header">
-    <span class="publisher-identity-origin">${escapeHtml(identityLabel(identity))}</span>
-  </div>
-  <div class="publisher-identity-meta">
-    ${modeBadge}
-    <span class="publisher-identity-feeds">${isActive ? 'Active' : 'Inactive'}</span>
-  </div>`;
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'publisher-identity-use-btn';
-  button.textContent = isActive ? 'Active' : 'Use this identity';
-  button.disabled = isActive;
-  button.addEventListener('click', () => onUse(identity.id));
-  row.appendChild(button);
-
-  return row;
-}
-
-function confirmIdentitySwitch() {
-  return confirm('Changing publisher identity changes the signing owner for future SOC writes. Existing high-level feeds keep using the identity that created them. Feed auto-approve will be turned off.');
 }
 
 async function disableFeedAutoApprove() {
@@ -290,23 +264,34 @@ async function disableFeedAutoApprove() {
   updateSwarmConnectionBanner(swarmPermsKey);
 }
 
-async function activateSwarmIdentity(identityId) {
-  if (!swarmPermsKey || !identityId || !confirmIdentitySwitch()) return;
-  await window.swarmFeedStore.activateFeedIdentity(swarmPermsKey, identityId);
+async function activateSwarmIdentity(identity) {
+  if (!swarmPermsKey || !identity) return;
+  if (identity.id === swarmPermsIdentityState?.activeIdentityId) return;
+
+  if (identity.id === BEE_WALLET_IDENTITY_ID) {
+    swarmPermsIdentityState = await window.swarmFeedStore.ensureBeeWalletIdentity(swarmPermsKey, { activate: true });
+  } else {
+    swarmPermsIdentityState = await window.swarmFeedStore.activateFeedIdentity(swarmPermsKey, identity.id);
+  }
   await disableFeedAutoApprove();
-  await refreshSwarmIdentitySection('Feed auto-approve was turned off after changing identity.');
+  renderSwarmIdentitySection(`${identityLabel(getActivePublisherIdentity(swarmPermsIdentityState))} is now active. Feed auto-approve was turned off.`);
 }
 
 async function createSwarmAppScopedIdentity() {
-  if (!swarmPermsKey || !confirmIdentitySwitch()) return;
-  await window.swarmFeedStore.createAppScopedIdentity(swarmPermsKey);
-  await disableFeedAutoApprove();
-  await refreshSwarmIdentitySection('Created and activated a new app-scoped identity. Feed auto-approve was turned off.');
-}
-
-async function activateSwarmBeeIdentity() {
-  if (!swarmPermsKey || !confirmIdentitySwitch()) return;
-  await window.swarmFeedStore.ensureBeeWalletIdentity(swarmPermsKey, { activate: true });
-  await disableFeedAutoApprove();
-  await refreshSwarmIdentitySection('Bee wallet identity is now active. Feed auto-approve was turned off.');
+  if (!swarmPermsKey) return;
+  swarmPermsScreen?.classList.add('hidden');
+  try {
+    const state = await showPublisherIdentityCreate(swarmPermsKey);
+    swarmPermsScreen?.classList.remove('hidden');
+    if (state) {
+      swarmPermsIdentityState = state;
+      await disableFeedAutoApprove();
+      renderSwarmIdentitySection(`${identityLabel(getActivePublisherIdentity(state))} was created and selected. Feed auto-approve was turned off.`);
+    } else {
+      await refreshSwarmIdentitySection();
+    }
+  } catch (err) {
+    console.error('[PermissionManage] Publisher identity creation dismissed:', err);
+    closeSwarmPerms();
+  }
 }

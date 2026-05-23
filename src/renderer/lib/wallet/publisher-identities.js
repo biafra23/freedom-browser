@@ -1,12 +1,20 @@
 /**
  * Publisher Identities Module
  *
- * Sidebar sub-screen listing all origins that have Swarm feed publisher
- * identities. Shows grant status and lets users manage the active identity.
+ * Sidebar sub-screen listing origins and managing each origin's active Swarm
+ * publisher identity.
  */
 
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
+import { showVaultUnlock } from './vault-unlock.js';
+import { showPublisherIdentityCreate } from './publisher-identity-create.js';
+import {
+  BEE_WALLET_IDENTITY_ID,
+  getActivePublisherIdentity,
+  identityLabel,
+  renderPublisherIdentitySelector,
+} from './publisher-identity-selector.js';
 
 let screen;
 let backBtn;
@@ -16,14 +24,12 @@ let emptyMessage;
 let listView;
 let detailView;
 let detailOrigin;
-let detailCurrent;
-let detailList;
+let detailSelector;
 let detailNote;
-let createAppBtn;
-let useBeeBtn;
 
 let cachedEntries = [];
 let activeDetailOrigin = null;
+let activeDetailState = null;
 
 export function initPublisherIdentities() {
   screen = document.getElementById('sidebar-publisher-identities');
@@ -34,42 +40,27 @@ export function initPublisherIdentities() {
   listView = document.getElementById('publisher-identity-list-view');
   detailView = document.getElementById('publisher-identity-detail');
   detailOrigin = document.getElementById('publisher-identity-detail-origin');
-  detailCurrent = document.getElementById('publisher-identity-detail-current');
-  detailList = document.getElementById('publisher-identity-detail-list');
+  detailSelector = document.getElementById('publisher-identity-selector');
   detailNote = document.getElementById('publisher-identity-detail-note');
-  createAppBtn = document.getElementById('publisher-identity-create-app');
-  useBeeBtn = document.getElementById('publisher-identity-use-bee');
 
   registerScreenHider(() => closePublisherIdentities());
 
-  if (backBtn) {
-    backBtn.addEventListener('click', () => {
-      if (activeDetailOrigin) {
-        showPublisherIdentityList();
-      } else {
-        closePublisherIdentities();
-      }
-    });
-  }
+  backBtn?.addEventListener('click', () => {
+    if (activeDetailOrigin) {
+      showPublisherIdentityList();
+    } else {
+      closePublisherIdentities();
+    }
+  });
 
-  if (filterInput) {
-    filterInput.addEventListener('input', () => {
-      const query = filterInput.value.toLowerCase().trim();
-      renderList(cachedEntries, query);
-    });
-  }
-
-  createAppBtn?.addEventListener('click', () => createAppScopedIdentityForDetail());
-  useBeeBtn?.addEventListener('click', () => activateBeeIdentityForDetail());
+  filterInput?.addEventListener('input', () => {
+    const query = filterInput.value.toLowerCase().trim();
+    renderList(cachedEntries, query);
+  });
 }
 
 export async function openPublisherIdentities() {
-  try {
-    cachedEntries = await window.swarmFeedStore?.getAllOrigins?.() || [];
-  } catch {
-    cachedEntries = [];
-  }
-
+  await reloadEntries();
   if (filterInput) filterInput.value = '';
   showPublisherIdentityList();
 
@@ -80,14 +71,14 @@ export async function openPublisherIdentities() {
 export function closePublisherIdentities() {
   screen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
-  activeDetailOrigin = null;
+  resetDetailState();
 }
 
 function renderList(entries, query) {
   if (!listContainer) return;
 
   const filtered = query
-    ? entries.filter((e) => e.origin.toLowerCase().includes(query))
+    ? entries.filter((entry) => entry.origin.toLowerCase().includes(query))
     : entries;
 
   listContainer.innerHTML = '';
@@ -112,7 +103,8 @@ function renderList(entries, query) {
       : '';
 
     const feedLabel = entry.feedCount === 1 ? '1 feed' : `${entry.feedCount} feeds`;
-    const identityLabel = entry.identityCount === 1 ? '1 identity' : `${entry.identityCount || 1} identities`;
+    const identityCount = entry.identityCount || 1;
+    const identityCountLabel = identityCount === 1 ? '1 identity' : `${identityCount} identities`;
 
     const item = document.createElement('div');
     item.className = 'publisher-identity-item';
@@ -124,7 +116,7 @@ function renderList(entries, query) {
     <div class="publisher-identity-meta">
       ${modeBadge}
       <span class="publisher-identity-feeds">${feedLabel}</span>
-      <span class="publisher-identity-feeds">${identityLabel}</span>
+      <span class="publisher-identity-feeds">${identityCountLabel}</span>
     </div>`;
 
     const manageBtn = document.createElement('button');
@@ -138,7 +130,7 @@ function renderList(entries, query) {
 }
 
 function showPublisherIdentityList() {
-  activeDetailOrigin = null;
+  resetDetailState();
   detailView?.classList.add('hidden');
   listView?.classList.remove('hidden');
   const query = filterInput?.value.toLowerCase().trim() || '';
@@ -146,31 +138,39 @@ function showPublisherIdentityList() {
 }
 
 async function openOriginIdentityDetail(origin, note = '') {
+  const unlocked = await ensurePublisherIdentityUnlocked(origin);
+  if (!unlocked) return;
+
   activeDetailOrigin = origin;
   listView?.classList.add('hidden');
   detailView?.classList.remove('hidden');
+  walletState.identityView?.classList.add('hidden');
+  screen?.classList.remove('hidden');
   if (detailOrigin) detailOrigin.textContent = origin;
 
-  const state = await window.swarmFeedStore?.getOriginIdentities?.(origin);
-  renderIdentityDetail(state, note);
+  await refreshDetail(note);
 }
 
-function renderIdentityDetail(state, note) {
-  const active = state?.identities?.find((identity) => identity.id === state.activeIdentityId);
+async function refreshDetail(note = '') {
+  if (!activeDetailOrigin) return;
+  activeDetailState = await loadOrCreateIdentityState(activeDetailOrigin);
+  renderIdentityDetail(note);
+}
 
-  if (detailCurrent) {
-    detailCurrent.innerHTML = active
-      ? `<div class="publisher-identity-current-title">${escapeHtml(identityLabel(active))}</div>
-        <div class="publisher-identity-current-desc">Feed and SOC writes use this signing owner by default.</div>`
-      : '<div class="publisher-identity-current-desc">No publisher identity found.</div>';
+async function loadOrCreateIdentityState(origin) {
+  let state = await window.swarmFeedStore.getOriginIdentities(origin);
+  if (!state?.activeIdentityId) {
+    state = await window.swarmFeedStore.createAppScopedIdentity(origin);
+    await reloadEntries();
   }
+  return state;
+}
 
-  if (detailList) {
-    detailList.innerHTML = '';
-    for (const identity of state?.identities || []) {
-      detailList.appendChild(buildIdentityRow(identity, identity.id === state.activeIdentityId));
-    }
-  }
+function renderIdentityDetail(note) {
+  renderPublisherIdentitySelector(detailSelector, activeDetailState, {
+    onSelect: (identity) => activateIdentityForDetail(identity),
+    onCreateAppScoped: () => createAppScopedIdentityForDetail(),
+  });
 
   if (detailNote) {
     detailNote.textContent = note;
@@ -178,69 +178,78 @@ function renderIdentityDetail(state, note) {
   }
 }
 
-function buildIdentityRow(identity, isActive) {
-  const modeBadge = identity.mode === 'app-scoped'
-    ? '<span class="publisher-identity-badge badge-app-scoped">App-scoped</span>'
-    : '<span class="publisher-identity-badge badge-bee-wallet">Bee wallet</span>';
-
-  const item = document.createElement('div');
-  item.className = `publisher-identity-item${isActive ? ' is-active' : ''}`;
-  item.innerHTML = `<div class="publisher-identity-header">
-    <span class="publisher-identity-origin">${escapeHtml(identityLabel(identity))}</span>
-  </div>
-  <div class="publisher-identity-meta">
-    ${modeBadge}
-    <span class="publisher-identity-feeds">${isActive ? 'Active' : 'Inactive'}</span>
-  </div>`;
-
-  const useBtn = document.createElement('button');
-  useBtn.type = 'button';
-  useBtn.className = 'publisher-identity-use-btn';
-  useBtn.textContent = isActive ? 'Active' : 'Use this identity';
-  useBtn.disabled = isActive;
-  useBtn.addEventListener('click', () => activateIdentityForDetail(identity.id));
-  item.appendChild(useBtn);
-  return item;
+async function ensurePublisherIdentityUnlocked(origin) {
+  try {
+    const status = await window.identity.getStatus();
+    if (status.isUnlocked) return true;
+    await showVaultUnlock(origin);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function identityLabel(identity) {
-  if (!identity) return 'Publisher identity';
-  return identity.label || (identity.mode === 'bee-wallet' ? 'Bee wallet identity' : 'App-scoped identity');
+async function activateIdentityForDetail(identity) {
+  if (!activeDetailOrigin || !identity) return;
+  if (identity.id === activeDetailState?.activeIdentityId) return;
+
+  if (identity.id === BEE_WALLET_IDENTITY_ID) {
+    activeDetailState = await window.swarmFeedStore.ensureBeeWalletIdentity(activeDetailOrigin, { activate: true });
+  } else {
+    activeDetailState = await window.swarmFeedStore.activateFeedIdentity(activeDetailOrigin, identity.id);
+  }
+
+  await disableFeedAutoApprove(activeDetailOrigin);
+  await reloadEntries();
+  renderIdentityDetail(`${identityLabel(getActivePublisherIdentity(activeDetailState))} is now active. Feed auto-approve was turned off.`);
 }
 
-function confirmIdentitySwitch() {
-  return confirm('Changing publisher identity changes the signing owner for future SOC writes. Existing high-level feeds keep using the identity that created them. Feed auto-approve will be turned off.');
+async function createAppScopedIdentityForDetail() {
+  if (!activeDetailOrigin) return;
+  screen?.classList.add('hidden');
+  try {
+    const state = await showPublisherIdentityCreate(activeDetailOrigin);
+    screen?.classList.remove('hidden');
+    detailView?.classList.remove('hidden');
+    listView?.classList.add('hidden');
+
+    if (state) {
+      activeDetailState = state;
+      await disableFeedAutoApprove(activeDetailOrigin);
+      await reloadEntries();
+      renderIdentityDetail(`${identityLabel(getActivePublisherIdentity(state))} was created and selected. Feed auto-approve was turned off.`);
+    } else {
+      await refreshDetail();
+    }
+  } catch (err) {
+    console.error('[PublisherIdentities] Publisher identity creation dismissed:', err);
+    closePublisherIdentities();
+  }
 }
 
 async function disableFeedAutoApprove(origin) {
   await window.swarmPermissions?.setAutoApprove?.(origin, 'feeds', false);
 }
 
-async function activateIdentityForDetail(identityId) {
-  if (!activeDetailOrigin || !identityId || !confirmIdentitySwitch()) return;
-  await window.swarmFeedStore.activateFeedIdentity(activeDetailOrigin, identityId);
-  await disableFeedAutoApprove(activeDetailOrigin);
-  await openOriginIdentityDetail(activeDetailOrigin, 'Feed auto-approve was turned off after changing identity.');
-  cachedEntries = await window.swarmFeedStore?.getAllOrigins?.() || [];
+async function reloadEntries() {
+  try {
+    cachedEntries = await window.swarmFeedStore?.getAllOrigins?.() || [];
+  } catch {
+    cachedEntries = [];
+  }
 }
 
-async function createAppScopedIdentityForDetail() {
-  if (!activeDetailOrigin || !confirmIdentitySwitch()) return;
-  await window.swarmFeedStore.createAppScopedIdentity(activeDetailOrigin);
-  await disableFeedAutoApprove(activeDetailOrigin);
-  await openOriginIdentityDetail(activeDetailOrigin, 'Created and activated a new app-scoped identity. Feed auto-approve was turned off.');
-  cachedEntries = await window.swarmFeedStore?.getAllOrigins?.() || [];
-}
-
-async function activateBeeIdentityForDetail() {
-  if (!activeDetailOrigin || !confirmIdentitySwitch()) return;
-  await window.swarmFeedStore.ensureBeeWalletIdentity(activeDetailOrigin, { activate: true });
-  await disableFeedAutoApprove(activeDetailOrigin);
-  await openOriginIdentityDetail(activeDetailOrigin, 'Bee wallet identity is now active. Feed auto-approve was turned off.');
-  cachedEntries = await window.swarmFeedStore?.getAllOrigins?.() || [];
+function resetDetailState() {
+  activeDetailOrigin = null;
+  activeDetailState = null;
+  if (detailSelector) detailSelector.innerHTML = '';
+  if (detailNote) {
+    detailNote.textContent = '';
+    detailNote.classList.add('hidden');
+  }
 }
 
 function truncateOrigin(origin) {
   if (origin.length <= 40) return origin;
-  return origin.slice(0, 20) + '\u2026' + origin.slice(-17);
+  return `${origin.slice(0, 20)}...${origin.slice(-17)}`;
 }

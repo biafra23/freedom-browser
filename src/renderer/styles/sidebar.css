@@ -2732,6 +2732,13 @@
   margin-bottom: 10px;
 }
 
+.swarm-feed-identity-help {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .swarm-feed-identity-option {
   display: flex;
   align-items: flex-start;
@@ -2980,6 +2987,35 @@
   color: var(--muted);
   font-size: 13px;
   padding: 24px 0;
+}
+
+.publisher-identity-selector {
+  margin-bottom: 10px;
+}
+
+.publisher-identity-selector .wallet-selector-dropdown {
+  z-index: 200;
+}
+
+.publisher-identity-selector-item .wallet-selector-item-info {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.publisher-identity-mode {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.publisher-identity-create-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.publisher-identity-create-actions > button {
+  flex: 1;
 }
 
 /* ============================================
