@@ -195,6 +195,38 @@ Cross-built artifacts have **never been run** by the time §5 finishes. The Linu
 - **Windows**: a Windows VM (UTM, Parallels, VMware Fusion) or a separate Windows host. The NSIS installer (`Freedom Setup <version>.exe`) runs unprivileged; the portable `Freedom-<version>-win.zip` extracts and runs without install. Confirm Windows SmartScreen prompts behave as expected for the signed installer (a "Don't run" with an unblock-on-second-prompt is normal for newly-signed builds; outright "blocked by your administrator" is not).
 - **macOS**: the dev host is fine — install the `.dmg` locally (or open the staged `.app` from `dist/mac-arm64/`) and run the same checklist. Confirm Gatekeeper accepts the artifact (`spctl --assess --type execute --verbose dist/mac-arm64/Freedom.app` should print `accepted, source=Notarized Developer ID`).
 
+### Transferring artifacts to test machines
+
+For a one-off transfer across the local network, the lowest-friction path is Python's built-in HTTP server on the build host — zero setup on the test side, no SSH server required, doesn't bounce the unreleased build off any third party:
+
+```
+python3 -m http.server 8000 --directory dist/
+```
+
+Get the build host's LAN IP with `ipconfig getifaddr en0` (macOS, primary interface) or `ip -4 addr show scope global | awk '/inet / { print $2 }'` (Linux). Then download from the test machine:
+
+| Test OS | Command |
+|---|---|
+| Linux | `wget http://<build-host-ip>:8000/<filename>` |
+| Windows (PowerShell) | `iwr http://<build-host-ip>:8000/<filename> -OutFile <filename>` |
+| Any (GUI) | Browse to `http://<build-host-ip>:8000/` and click the file |
+
+Filenames with spaces (e.g. `Freedom Setup <version>.exe`) need URL-encoding when used in `wget` / `iwr` (`%20` for each space). The GUI browser path handles encoding automatically.
+
+Verify the transfer matches the manifest in `dist/latest-<platform>*.yml` (each file's `sha512:` field is base64):
+
+- Linux / macOS test host: `openssl dgst -sha512 -binary <file> | base64 -w0` — should print the base64 hash from the manifest verbatim
+- Windows test host: `(Get-FileHash -Algorithm SHA512 <file>).Hash` returns hex; either compare against `shasum -a 512 <file>` run on the build host (also hex), or decode the manifest's base64 once with `echo "<base64>" | base64 -d | xxd -p -c 256` on the build host
+
+Kill the HTTP server (`Ctrl+C`, or `pkill -f "http.server"` if backgrounded) once transfers are done — it serves everything in `dist/` to anything on the LAN with no auth.
+
+Alternatives if the HTTP server doesn't fit:
+
+- **USB stick** — air-gapped, no network involved. Best when the test machine is offline or on a hostile network
+- **scp** — `scp dist/<file> user@test-host:` (needs `openssh-server` on the test host)
+- **KDE Connect / LocalSend / Snapdrop** — GUI options if both ends have the app
+- Cloud storage and the `freedom.baby/downloads` URL itself both work, but bounce the file off a third party — slower, exposes the unreleased build outside your LAN, and (for `freedom.baby`) inverts the playbook order by uploading before §6 testing has signed off
+
 ### Per-platform smoke checklist
 
 For each platform, run through:
