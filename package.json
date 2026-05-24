@@ -1,6 +1,6 @@
 {
   "name": "freedom-browser",
-  "version": "0.7.2-dev",
+  "version": "0.7.2",
   "license": "MPL-2.0",
   "description": "Freedom – A browser for the decentralized web, with Swarm, IPFS, and ENS as first-class protocols.",
   "author": {
@@ -195,6 +195,9 @@
   "overrides": {
     "@metamask/utils": {
       "uuid": "^14.0.0"
+    },
+    "ethers": {
+      "ws": "^8.21.0"
     }
   },
   "title": "Freedom",
