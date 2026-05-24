@@ -20,8 +20,28 @@ function makeSemanticError(reason, message, cause) {
   return err;
 }
 
+function getBeeResponseBodyMessage(err) {
+  const body = err?.responseBody;
+  if (!body) return null;
+  if (typeof body === 'object' && !Buffer.isBuffer(body) && !(body instanceof Uint8Array)) {
+    return typeof body.message === 'string' ? body.message : null;
+  }
+
+  const text = Buffer.isBuffer(body) || body instanceof Uint8Array
+    ? Buffer.from(body).toString('utf8')
+    : String(body);
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed?.message === 'string' ? parsed.message : null;
+  } catch {
+    return null;
+  }
+}
+
 function isChunkNotFoundError(err) {
-  return err instanceof BeeResponseError && err.status === 404;
+  if (!(err instanceof BeeResponseError)) return false;
+  if (err.status === 404) return true;
+  return err.status === 500 && getBeeResponseBodyMessage(err)?.trim().toLowerCase() === 'read chunk failed';
 }
 
 function ensureSameReference(actual, expected, type) {

@@ -7,9 +7,10 @@ var mockCalculateSingleOwnerChunkAddress = jest.fn();
 var mockSelectBestBatch = jest.fn();
 
 class MockBeeResponseError extends Error {
-  constructor(status, message = 'Bee response error') {
+  constructor(status, message = 'Bee response error', responseBody) {
     super(message);
     this.status = status;
+    if (responseBody !== undefined) this.responseBody = responseBody;
   }
 }
 
@@ -153,9 +154,19 @@ describe('chunk-service', () => {
       .toBe(BigInt(Number.MAX_SAFE_INTEGER) + 1n);
   });
 
-  test('isChunkNotFoundError only matches Bee 404s', () => {
+  test('isChunkNotFoundError matches Bee 404s and chunk-read 500s only', () => {
     expect(isChunkNotFoundError(new MockBeeResponseError(404))).toBe(true);
     expect(isChunkNotFoundError(new MockBeeResponseError(500))).toBe(false);
+    expect(isChunkNotFoundError(new MockBeeResponseError(
+      500,
+      'Request failed with status code 500',
+      Buffer.from(JSON.stringify({ code: 500, message: 'read chunk failed' }))
+    ))).toBe(true);
+    expect(isChunkNotFoundError(new MockBeeResponseError(
+      500,
+      'Request failed with status code 500',
+      Buffer.from(JSON.stringify({ code: 500, message: 'node exploded politely' }))
+    ))).toBe(false);
     expect(isChunkNotFoundError(new Error('network'))).toBe(false);
   });
 
@@ -224,8 +235,24 @@ describe('chunk-service', () => {
     });
   });
 
+  test('readChunk maps Bee chunk-read 500 to chunk_not_found', async () => {
+    mockDownloadChunk.mockRejectedValue(new MockBeeResponseError(
+      500,
+      'Request failed with status code 500',
+      Buffer.from(JSON.stringify({ code: 500, message: 'read chunk failed' }))
+    ));
+
+    await expect(readChunk(CAC_REFERENCE)).rejects.toMatchObject({
+      reason: 'chunk_not_found',
+    });
+  });
+
   test('readChunk preserves transient Bee errors', async () => {
-    const err = new MockBeeResponseError(500);
+    const err = new MockBeeResponseError(
+      500,
+      'Request failed with status code 500',
+      Buffer.from(JSON.stringify({ code: 500, message: 'node unavailable' }))
+    );
     mockDownloadChunk.mockRejectedValue(err);
 
     await expect(readChunk(CAC_REFERENCE)).rejects.toBe(err);
@@ -331,8 +358,24 @@ describe('chunk-service', () => {
     });
   });
 
+  test('readSingleOwnerChunk maps Bee chunk-read 500 to chunk_not_found', async () => {
+    mockDownloadChunk.mockRejectedValue(new MockBeeResponseError(
+      500,
+      'Request failed with status code 500',
+      Buffer.from(JSON.stringify({ code: 500, message: 'read chunk failed' }))
+    ));
+
+    await expect(readSingleOwnerChunk({ address: SOC_REFERENCE })).rejects.toMatchObject({
+      reason: 'chunk_not_found',
+    });
+  });
+
   test('readSingleOwnerChunk preserves transient Bee errors', async () => {
-    const err = new MockBeeResponseError(500);
+    const err = new MockBeeResponseError(
+      500,
+      'Request failed with status code 500',
+      Buffer.from(JSON.stringify({ code: 500, message: 'node unavailable' }))
+    );
     mockDownloadChunk.mockRejectedValue(err);
 
     await expect(readSingleOwnerChunk({ address: SOC_REFERENCE })).rejects.toBe(err);
