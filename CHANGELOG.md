@@ -2,29 +2,39 @@
 
 All notable changes to Freedom will be documented in this file.
 
-## [Unreleased]
+## [0.7.2] - 2026-05-24
 
 ### Added
 
 - Cryptographic ENS verification via Colibri (`@corpus-core/colibri-stateless`) as the new default resolution path:
-  - Every `.eth` / `.box` lookup is verified locally against the Ethereum sync committee (or, with ZK consensus proof enabled, a recursive zk sync proof), rather than relying on M-of-K agreement between public RPCs
-  - Address-bar shield popover shows neutral verified status with Colibri method, proof, and server details instead of the RPC quorum row
-  - CCIP-Read names (`.box` via 3DNS and offchain ENS resolvers in general) keep working — the partner prover proves the initial call, ethers fetches the gateway response, and the final `resolveCallback` is independently proven
-- `freedom://settings` → ENS Resolution: choose between Colibri (recommended), the public-RPC quorum, or Direct RPC first; Colibri and Direct RPC first fall back to the public-RPC quorum if their primary path fails
-- Unified network registry for chains, RPC endpoints, prover endpoints, and keyed RPC providers
-- `freedom://settings` → Chains and RPC Providers pages for custom EVM chains, per-chain RPC endpoints, and Alchemy / Infura / DRPC API keys
+  - Forward and reverse lookups verified locally rather than trusted across public RPCs
+  - Address-bar shield popover distinguishes Colibri verification from quorum verification
+  - Verification mark next to cryptographically verified recipient names on the wallet send review screen
+  - Warning when a recipient address claims an ENS name that doesn't forward-verify
+  - Reload on an ENS page re-runs verification under the current method (hard reload also bypasses the 15-minute cache)
+  - Settings > ENS Resolution: choose between Colibri, the public-RPC quorum, or your own RPC
+- Unified network registry as the single source for chains, RPC endpoints, prover endpoints, and keyed RPC providers:
+  - Settings > Chains: per-chain endpoint list across three tiers (your RPCs, commercial keyed providers, public RPCs)
+  - Add a chain via the chainlist.org catalogue or by hand
+  - Settings > RPC Providers: manage Alchemy / Infura / DRPC API keys
+- Destination URL preview on link hover, shown in the bottom-left like Chrome and Firefox
 
 ### Changed
 
-- Default ENS resolution changed from public-RPC quorum to Colibri. Users running a custom RPC are migrated to the Direct RPC-first path (preserves the intent of keeping queries off public infrastructure); everyone else upgrades to Colibri. The migration is one-shot and idempotent
-- Wallet chains now come from the network registry, and token metadata moved from the old chain registry into `token-registry`
-- Bee light-mode config reads its Gnosis backend and Ethereum resolver RPC from the network registry, preferring keyless public/user endpoints for stable startup
+- Default ENS resolution changed from public-RPC quorum to Colibri (custom-RPC users keep their direct-RPC-first path)
+- Wallet, ENS, and the Bee node manager all read chains and RPC endpoints from the unified network registry
 
 ### Fixed
 
-- Custom chains register their native asset with the chain's declared symbol and decimals so wallet balances use the right unit metadata
-- Manual custom-chain and custom-RPC saves are rejected before persistence unless they use public `https://` RPC URLs without placeholders
-- ENS trust shields refresh immediately when network or ENS verification settings change, instead of reusing stale renderer trust metadata
+- Address-bar copy and paste work as expected on all platforms
+
+### Security
+
+- Swarm dApp provider permission prompts key on the committed page URL, not on the address-bar draft
+- Updated runtime dependencies: Electron 41.5.0 to 41.7.0 (Chromium 146.0.7680.216, Node 24.15.0 — same as 41.5.0; Electron-side patches only), `@ethersphere/bee-js` 12.1.0 to 12.2.1, `better-sqlite3` 12.9.0 to 12.10.0, `electron-log` 5.4.3 to 5.4.4
+- Updated bundled nodes: Radicle 1.8.0 to 1.9.1
+- Updated dev dependencies: `@playwright/test` 1.60.0, `jest` 30.4.2, `babel-jest` 30.4.1, `eslint` 10.4.0, `@babel/preset-env` 7.29.5
+- Override `ws` to ^8.21.0 under `ethers` to clear `GHSA-58qx-3vcg-4xpx` (uninitialised memory disclosure); `ethers@6.16.0` pinned `ws@8.17.1`, the auto-fix would have downgraded ethers across a major
 
 ## [0.7.1] - 2026-05-07
 
@@ -46,21 +56,21 @@ All notable changes to Freedom will be documented in this file.
   - `ipfs://QmXoy.../docs` opens as `ipfs://bafyb.../docs`; `ipns://12D3KooW.../` becomes `ipns://k51.../`
   - Reasoning: Chromium's URL parser lowercases the host, which corrupts mixed-case base58btc encodings; the lowercase-only base32 and base36 forms round-trip cleanly through navigation, the address bar, storage origin, and DevTools
 - ENS names display under their resolved transport, with stricter scheme rules:
-  - `vitalik.eth` → `ipfs://vitalik.eth`, `meinhard.eth` → `bzz://meinhard.eth`
+  - `vitalik.eth` displays as `ipfs://vitalik.eth`, `meinhard.eth` as `bzz://meinhard.eth`
   - Mismatched transport schemes show an error: typing `bzz://name.eth` for an IPFS-hosted name no longer silently switches to IPFS
   - In-page ENS links must carry a scheme (`ens://`, `bzz://`, `ipfs://`, `ipns://`)
 - Speculative gateway prefetch during ENS quorum waves (faster first paint on cold-cache lookups)
 
 ### Fixed
 
-- Bee's raw 404 JSON suppressed during cold-content Swarm lookups; spinner stays running, timeouts → "Content not ready yet" page
+- Bee's raw 404 JSON suppressed during cold-content Swarm lookups; spinner stays running, and timeouts show the "Content not ready yet" page
 - IPFS / IPNS loads on macOS no longer fail with "kubo gateway unreachable"
 
 ### Security
 
-- Updated Electron 41.2.1 → 41.5.0, picking up the latest Chromium 146 and Node 24 patches
-- Updated bundled nodes: Kubo 0.40.1 → 0.41.0, `@ethersphere/bee-js` 11.1.1 → 12.1.0 (drops local axios override, picks up axios 1.x fixes)
-- Updated JS dependencies: ESLint 10.2.1 → 10.3.0, `@scure/bip39` 2.0.1 → 2.2.0, `globals` 17.5.0 → 17.6.0, `micro-key-producer` 0.8.5 → 0.8.6, `@babel/preset-env` 7.29.2 → 7.29.3
+- Updated Electron 41.2.1 to 41.5.0, picking up the latest Chromium 146 and Node 24 patches
+- Updated bundled nodes: Kubo 0.40.1 to 0.41.0, `@ethersphere/bee-js` 11.1.1 to 12.1.0 (drops local axios override, picks up axios 1.x fixes)
+- Updated JS dependencies: ESLint 10.2.1 to 10.3.0, `@scure/bip39` 2.0.1 to 2.2.0, `globals` 17.5.0 to 17.6.0, `micro-key-producer` 0.8.5 to 0.8.6, `@babel/preset-env` 7.29.2 to 7.29.3
 
 ## [0.7.0] - 2026-04-19
 
@@ -90,7 +100,7 @@ All notable changes to Freedom will be documented in this file.
 - ENS resolution uses the Universal Resolver: 3–4× fewer RPC round-trips on cold-cache `.eth` / `.box` navigation; names normalized per ENSIP-15
 - Settings moved from a modal to a full `freedom://settings` page
 - Toolbar icons, nodes menu, and experimental settings polished for consistency
-- Updated bundled nodes: Bee 2.7.0 → 2.7.1, Kubo 0.39.0 → 0.40.1, Radicle 1.6.1 → 1.8.0 (rad-httpd 0.23.0 → 0.24.0)
+- Updated bundled nodes: Bee 2.7.0 to 2.7.1, Kubo 0.39.0 to 0.40.1, Radicle 1.6.1 to 1.8.0 (rad-httpd 0.23.0 to 0.24.0)
 - Upgraded Electron to 41; all other dependencies refreshed to latest
 
 ### Fixed
@@ -140,7 +150,7 @@ First public open-source release.
 
 - Address bar staying focused after selecting autocomplete suggestion
 - Unreadable pages in dark mode — inject light background/text defaults for external pages that don't support dark mode
-- ENS resolution reliability: replace broken RPC providers (llamarpc, ankr, cloudflare-eth → drpc, blastapi, merkle) and fix failed handle cleanup
+- ENS resolution reliability: replace broken RPC providers (llamarpc, ankr, cloudflare-eth replaced with drpc, blastapi, merkle) and fix failed handle cleanup
 - View-source address bar and title not updating correctly
 - IPFS routing and DNSLink resolution on networks with broken or slow local DNS
 
@@ -150,7 +160,7 @@ First public open-source release.
 - Validate IPFS CID format, IPNS names, and block malformed `bzz://` requests
 - Harden webview preferences, restrict `freedomAPI` to internal pages only, tighten local API CORS and IPC base URLs, redact logged URLs
 - Resolve all npm audit vulnerabilities (11 total: 10 high, 1 moderate)
-- Updated dependencies: Electron 39→40, electron-builder 26.0→26.7, better-sqlite3 12.5→12.6, electron-updater 6.6→6.7
+- Updated dependencies: Electron 39 to 40, electron-builder 26.0 to 26.7, better-sqlite3 12.5 to 12.6, electron-updater 6.6 to 6.7
 
 ## [0.6.0] - 2026-01-01
 
