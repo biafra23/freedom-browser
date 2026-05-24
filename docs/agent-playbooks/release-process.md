@@ -30,7 +30,7 @@ Rationale:
 
 ## 1. Promote the dev version
 
-Between releases, `main` carries a `<next>-dev` version (see Step 10). On the release branch, strip that suffix so the build advertises the real release number.
+Between releases, `main` carries a `<next>-dev` version (see Step 11). On the release branch, strip that suffix so the build advertises the real release number.
 
 Update the version string in exactly these two files:
 
@@ -122,7 +122,7 @@ Commit style:
 docs(changelog): add user-facing <version> release notes
 ```
 
-**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — **do not create the `docs(changelog): …` commit yet**. Leave the `CHANGELOG.md` edits unstaged (or staged, but uncommitted) on the release branch, present the diff to the releaser, and wait for explicit approval before committing. Iterating in the working tree is cheaper than amending a commit, and avoids the `git commit --amend` ambiguity for agents whose tooling discourages amending without an explicit user request. `CHANGELOG.md` is not read by §4 (verify) or §5 (build distributables), so those steps can run in parallel with the review. §6 (upload + website) and §7 (tag) freeze the changelog state visible to end users and must wait until the commit lands.
+**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — **do not create the `docs(changelog): …` commit yet**. Leave the `CHANGELOG.md` edits unstaged (or staged, but uncommitted) on the release branch, present the diff to the releaser, and wait for explicit approval before committing. Iterating in the working tree is cheaper than amending a commit, and avoids the `git commit --amend` ambiguity for agents whose tooling discourages amending without an explicit user request. `CHANGELOG.md` is not read by §4 (verify), §5 (build distributables), or §6 (manual cross-platform smoke testing), so those steps can run in parallel with the review. §7 (upload + website) and §8 (tag) freeze the changelog state visible to end users and must wait until the commit lands.
 
 If the changelog is already committed when a correction is requested (e.g. the releaser drafted it themselves, or this gate was missed), amend the existing `docs(changelog): …` commit rather than stacking a second changelog commit.
 
@@ -180,7 +180,42 @@ npm run dist -- --win --x64
 
 `electron-builder` cross-builds the Windows NSIS installer and zip from the mac host — no Windows machine required. Windows builds intentionally ship without Radicle (see `README.md`).
 
-## 6. Upload binaries and update the website
+## 6. Manual cross-platform smoke testing
+
+Cross-built artifacts have **never been run** by the time §5 finishes. The Linux container can package the AppImage and `.deb`, and the mac host can cross-build the Windows NSIS installer, but neither can execute the result on its actual target platform. Smoke testing each artifact on a real instance of its target OS catches packaging-class bugs that `npm test` and the on-host `npm start` smoke (§4) cannot:
+
+- Wrong native-module ABI for the target arch (e.g. `better-sqlite3.node` linked for the wrong NODE_MODULE_VERSION, or a x64 binary in an arm64 package)
+- Missing or wrong-arch bundled binary in `extraResources` (`bee.exe`, `ipfs`, `rad`, `radicle-httpd`)
+- `electron-builder` configuration mistakes (asar unpack rules, `extraResources` paths, NSIS installer flags, Gatekeeper / SmartScreen interaction)
+- Platform-specific code paths (file system paths, native menus, IPC permissions, system trust store, default-browser hooks)
+
+### Test environments
+
+- **Linux**: a VM or bare-metal Linux machine matching the target arch — **not the build host**. `Freedom-<version>.AppImage` runs without install (`chmod +x` then double-click or launch from a terminal); `freedom-browser_<version>_amd64.deb` installs via `sudo apt install ./freedom-browser_<version>_amd64.deb`. Repeat for the arm64 artifacts on an arm64 Linux instance (e.g. a Raspberry Pi or a UTM arm64 VM on Apple Silicon).
+- **Windows**: a Windows VM (UTM, Parallels, VMware Fusion) or a separate Windows host. The NSIS installer (`Freedom Setup <version>.exe`) runs unprivileged; the portable `Freedom-<version>-win.zip` extracts and runs without install. Confirm Windows SmartScreen prompts behave as expected for the signed installer (a "Don't run" with an unblock-on-second-prompt is normal for newly-signed builds; outright "blocked by your administrator" is not).
+- **macOS**: the dev host is fine — install the `.dmg` locally (or open the staged `.app` from `dist/mac-arm64/`) and run the same checklist. Confirm Gatekeeper accepts the artifact (`spctl --assess --type execute --verbose dist/mac-arm64/Freedom.app` should print `accepted, source=Notarized Developer ID`).
+
+### Per-platform smoke checklist
+
+For each platform, run through:
+
+1. **Launch**: the app opens cleanly — no crash dialog, main window appears
+2. **Version**: About / `freedom://settings` shows `<version>` from `package.json`
+3. **Navigation**: type `https://example.com`, confirm a basic HTTPS page renders and the address-bar shield is in its default state
+4. **Headline feature**: spot-check whatever the release leads with. For releases that touch ENS / Swarm / IPFS / Radicle, that means opening an `ens://`, `bzz://`, `ipfs://`, or `rad://` URI and confirming the documented behaviour (e.g. for `0.7.2`: Colibri verification surfaces in the address-bar shield popover)
+5. **Bundled nodes**: confirm Bee, IPFS / Kubo, and (Linux only) Radicle start cleanly. The nodes manager or the relevant `freedom://` settings page surfaces this — a "node failed to start" red badge or a missing local API port is the failure mode
+6. **Persistence**: change one trivial setting (e.g. theme), close the app fully, reopen, confirm the change stuck
+
+If any platform fails:
+
+- Fix on the release branch. The other platforms' artifacts in `dist/` are not invalidated by a fix that only changes that platform's build.
+- Re-run only the affected `npm run dist:<platform>:...`.
+- Re-test the regenerated artifact.
+- Proceed to §7 only when every platform you intend to ship passes.
+
+This step is intentionally separate from §4 — §4 verifies the source tree (`npm test`, `npm start` from source); §6 verifies the **packaged artifact** that end users will install. They catch different classes of bugs.
+
+## 7. Upload binaries and update the website
 
 1. Upload the generated artifacts from `dist/` to `https://freedom.baby/downloads`, including the `latest*.yml` manifests so existing installs pick up the update via `electron-updater` (which is configured with `publish.provider = generic` pointing at that URL).
 2. Update the Freedom website to point at the new version:
@@ -190,7 +225,7 @@ npm run dist -- --win --x64
 
 Do this **before** tagging — if an upload reveals a broken artifact, you want to be able to fix it on the release branch without already having a tag pointing at a broken commit.
 
-## 7. Tag the release
+## 8. Tag the release
 
 On the release branch, from the commit you actually built and shipped:
 
@@ -200,7 +235,7 @@ git tag -a v<version> -m "Release <version>"
 
 Tag format is `v<version>` (lowercase `v`), matching `v0.6.2`. Do not push the tag yet — push it together with the merge in the next step so `main` and the tag move as one.
 
-## 8. Merge the release branch into main
+## 9. Merge the release branch into main
 
 Optionally open a PR from `release/<version>` into `main` for review. Otherwise merge directly:
 
@@ -214,13 +249,13 @@ git push origin v<version>
 
 The `--no-ff` is deliberate — it preserves the release branch as a visible bubble in `main`'s history, which matches how earlier releases landed.
 
-## 9. Post-release housekeeping
+## 10. Post-release housekeeping
 
 - Confirm the GitHub release page lists the correct artifacts and release notes.
 - Keep the `release/<version>` branch around (do not delete) — it matches the historical pattern and is the natural base for a `hotfix/<version>.<patch>` branch later if needed.
 - Any build-only fixes that land after the version bump should be committed on the release branch with `fix(build): ...` messages, same as the `0.6.2` cycle did.
 
-## 10. Open the next dev cycle on `main`
+## 11. Open the next dev cycle on `main`
 
 Immediately after the merge, bump `main` to the next dev version so local/CI builds and the About dialog stop advertising the just-shipped release.
 
