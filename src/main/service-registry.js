@@ -13,6 +13,7 @@ const MODE = {
   BUNDLED: 'bundled',
   REUSED: 'reused',
   EXTERNAL: 'external',
+  DISABLED: 'disabled',
   NONE: 'none',
 };
 

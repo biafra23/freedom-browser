@@ -8,6 +8,7 @@ const os = require('os');
 const execFileAsync = promisify(execFile);
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { success, failure, validateNonEmptyString } = require('./ipc-contract');
@@ -86,6 +87,7 @@ let useInjectedIdentity = false;
 // Port configuration
 let currentHttpPort = DEFAULTS.radicle.httpPort;
 let currentP2pPort = DEFAULTS.radicle.p2pPort;
+let currentHttpUrl = `http://127.0.0.1:${DEFAULTS.radicle.httpPort}`;
 let currentMode = MODE.NONE;
 let activeRadHome = null;
 
@@ -125,12 +127,71 @@ function isManagedRadicleConfig(config = getProfileRadicleConfig()) {
   return config?.mode === 'managed';
 }
 
+function isExternalRadicleConfig(config = getProfileRadicleConfig()) {
+  return config?.mode === 'external';
+}
+
+function isDisabledRadicleConfig(config = getProfileRadicleConfig()) {
+  return config?.mode === 'disabled';
+}
+
+function hasUnknownRadicleMode(config) {
+  return Boolean(config?.mode) && !isManagedRadicleConfig(config)
+    && !isExternalRadicleConfig(config)
+    && !isDisabledRadicleConfig(config);
+}
+
 function getConfiguredRadicleHttpPort(config = getProfileRadicleConfig()) {
   return Number.isInteger(config?.httpPort) ? config.httpPort : DEFAULTS.radicle.httpPort;
 }
 
 function getConfiguredRadicleP2pPort(config = getProfileRadicleConfig()) {
   return Number.isInteger(config?.p2pPort) ? config.p2pPort : DEFAULTS.radicle.p2pPort;
+}
+
+function normalizeExternalUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function getPortFromUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.port) return Number(parsed.port);
+    return parsed.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return null;
+  }
+}
+
+function getEndpointLabel(rawUrl) {
+  try {
+    return new URL(rawUrl).host;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function getHttpClient(rawUrl) {
+  return rawUrl.startsWith('https:') ? https : http;
 }
 
 function getRadicleSocketPath(radHome) {
@@ -299,9 +360,9 @@ function waitForSocket(socketPath, timeout = 30000) {
  * Probe Radicle httpd health endpoint
  * Note: radicle-httpd 0.23+ uses / as the root endpoint (not /api/v1/)
  */
-function probeRadicleApi(port) {
+function probeRadicleApiUrl(apiUrl) {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/`, { timeout: 2000 }, (res) => {
+    const req = getHttpClient(apiUrl).get(`${apiUrl}/`, { timeout: 2000 }, (res) => {
       if (res.statusCode === 200) {
         let data = '';
         res.on('data', chunk => { data += chunk; });
@@ -327,6 +388,10 @@ function probeRadicleApi(port) {
     });
     req.end();
   });
+}
+
+function probeRadicleApi(port) {
+  return probeRadicleApiUrl(`http://127.0.0.1:${port}`);
 }
 
 /**
@@ -400,7 +465,7 @@ function getActiveRadHome() {
 async function checkHealth() {
   return new Promise((resolve) => {
     // Note: radicle-httpd 0.23+ uses / as the root endpoint (not /api/v1/)
-    const req = http.get(`http://127.0.0.1:${currentHttpPort}/`, { timeout: 2000 }, (res) => {
+    const req = getHttpClient(currentHttpUrl).get(`${currentHttpUrl}/`, { timeout: 2000 }, (res) => {
       if (res.statusCode === 200) {
         resolve(true);
       } else {
@@ -430,6 +495,53 @@ function startHealthCheck() {
       updateState(STATUS.RUNNING);
     }
   }, 5000);
+}
+
+async function startExternalRadicle(config) {
+  const httpUrl = normalizeExternalUrl(config?.externalHttp);
+  if (!httpUrl) {
+    updateState(STATUS.ERROR, 'External Radicle HTTP endpoint is not configured');
+    setStatusMessage('radicle', 'External node not configured');
+    return;
+  }
+
+  const probe = await probeRadicleApiUrl(httpUrl);
+  if (!probe.valid) {
+    updateState(STATUS.ERROR, 'External Radicle HTTP endpoint is unreachable');
+    setStatusMessage('radicle', 'External node unreachable');
+    return;
+  }
+
+  activeRadHome = null;
+  currentHttpUrl = httpUrl;
+  currentHttpPort = getPortFromUrl(httpUrl);
+  currentMode = MODE.EXTERNAL;
+
+  updateService('radicle', {
+    api: currentHttpUrl,
+    gateway: currentHttpUrl,
+    mode: MODE.EXTERNAL,
+  });
+  setStatusMessage('radicle', `External node: ${getEndpointLabel(currentHttpUrl)}`);
+
+  updateState(STATUS.RUNNING);
+  startHealthCheck();
+  log.info('[Radicle] Connected to external httpd at', currentHttpUrl);
+}
+
+function startDisabledRadicle() {
+  activeRadHome = null;
+  currentHttpPort = null;
+  currentHttpUrl = null;
+  currentMode = MODE.DISABLED;
+  updateService('radicle', {
+    api: null,
+    gateway: null,
+    mode: MODE.DISABLED,
+  });
+  setStatusMessage('radicle', 'Node disabled for this profile');
+  updateState(STATUS.STOPPED);
+  log.info('[Radicle] Disabled for active profile');
 }
 
 /**
@@ -481,6 +593,22 @@ async function startRadicle() {
   const profileConfig = getProfileRadicleConfig();
   const managedProfileNode = isManagedRadicleConfig(profileConfig);
 
+  if (hasUnknownRadicleMode(profileConfig)) {
+    updateState(STATUS.ERROR, `Unsupported Radicle node mode: ${profileConfig.mode}`);
+    setStatusMessage('radicle', 'Node failed to start');
+    return;
+  }
+
+  if (isDisabledRadicleConfig(profileConfig)) {
+    startDisabledRadicle();
+    return;
+  }
+
+  if (isExternalRadicleConfig(profileConfig)) {
+    await startExternalRadicle(profileConfig);
+    return;
+  }
+
   // Step 0: Detect system-wide radicle-node (~/.radicle)
   const systemNode = managedProfileNode ? { found: false } : await detectSystemNode();
 
@@ -503,10 +631,11 @@ async function startRadicle() {
       const probe = await probeRadicleApi(httpPort);
       if (probe.valid) {
         currentHttpPort = httpPort;
+        currentHttpUrl = `http://127.0.0.1:${currentHttpPort}`;
         currentMode = MODE.REUSED;
         updateService('radicle', {
-          api: `http://127.0.0.1:${currentHttpPort}`,
-          gateway: `http://127.0.0.1:${currentHttpPort}`,
+          api: currentHttpUrl,
+          gateway: currentHttpUrl,
           mode: MODE.REUSED,
         });
         setStatusMessage('radicle', `System node: localhost:${currentHttpPort}`);
@@ -526,6 +655,7 @@ async function startRadicle() {
     }
 
     currentHttpPort = httpPort;
+    currentHttpUrl = `http://127.0.0.1:${currentHttpPort}`;
     currentMode = MODE.REUSED;
 
     log.info(`[Radicle] Starting httpd against system node: ${httpdBinPath} on port ${httpPort}`);
@@ -588,8 +718,8 @@ async function startRadicle() {
       if (isHealthy) {
         clearInterval(pollInterval);
         updateService('radicle', {
-          api: `http://127.0.0.1:${currentHttpPort}`,
-          gateway: `http://127.0.0.1:${currentHttpPort}`,
+          api: currentHttpUrl,
+          gateway: currentHttpUrl,
           mode: MODE.REUSED,
         });
         setStatusMessage('radicle', `System node: localhost:${currentHttpPort}`);
@@ -618,11 +748,12 @@ async function startRadicle() {
   if (existing.found) {
     // Reuse existing daemon
     currentHttpPort = existing.port;
+    currentHttpUrl = `http://127.0.0.1:${currentHttpPort}`;
     currentMode = MODE.REUSED;
 
     updateService('radicle', {
-      api: `http://127.0.0.1:${currentHttpPort}`,
-      gateway: `http://127.0.0.1:${currentHttpPort}`,
+      api: currentHttpUrl,
+      gateway: currentHttpUrl,
       mode: MODE.REUSED,
     });
     setStatusMessage('radicle', `Node: localhost:${currentHttpPort}`);
@@ -680,6 +811,7 @@ async function startRadicle() {
 
   currentHttpPort = httpPort;
   currentP2pPort = p2pPort;
+  currentHttpUrl = `http://127.0.0.1:${currentHttpPort}`;
   currentMode = MODE.BUNDLED;
 
   const radHome = activeRadHome;
@@ -810,8 +942,8 @@ async function startRadicle() {
         clearInterval(pollInterval);
 
         updateService('radicle', {
-          api: `http://127.0.0.1:${currentHttpPort}`,
-          gateway: `http://127.0.0.1:${currentHttpPort}`,
+          api: currentHttpUrl,
+          gateway: currentHttpUrl,
           mode: MODE.BUNDLED,
         });
 
@@ -846,7 +978,7 @@ function stopRadicle() {
   return new Promise((resolve) => {
     pendingStart = false;
 
-    // If we reused an external daemon, stop our httpd but not the system node
+    // If we reused a node, stop only the httpd process this app started.
     if (currentMode === MODE.REUSED) {
       if (radicleHttpdProcess) {
         // We spawned httpd against the system node — kill it
@@ -876,7 +1008,20 @@ function stopRadicle() {
         radicleHttpdProcess.kill('SIGTERM');
         return;
       }
-      // No httpd process (fully external) — just clear state
+      // No httpd process (fully reused) — just clear state.
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval);
+        healthCheckInterval = null;
+      }
+      updateState(STATUS.STOPPED);
+      clearService('radicle');
+      currentMode = MODE.NONE;
+      activeRadHome = null;
+      resolve();
+      return;
+    }
+
+    if (currentMode === MODE.EXTERNAL || currentMode === MODE.DISABLED) {
       if (healthCheckInterval) {
         clearInterval(healthCheckInterval);
         healthCheckInterval = null;

@@ -324,6 +324,7 @@ function loadRadicleManagerModule(options = {}) {
           BUNDLED: 'bundled',
           REUSED: 'reused',
           EXTERNAL: 'external',
+          DISABLED: 'disabled',
           NONE: 'none',
         },
         DEFAULTS: {
@@ -734,6 +735,89 @@ describe('radicle-manager', () => {
     const stopPromise = ctx.mod.stopRadicle();
     await new Promise((resolve) => setTimeout(resolve, 20));
     await stopPromise;
+  });
+
+  test('connects to a configured external profile httpd without probing defaults or system node', async () => {
+    jest.spyOn(global, 'setInterval').mockReturnValue(987);
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const checkedPorts = [];
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: {
+              mode: 'external',
+              externalHttp: ' http://127.0.0.1:28780/ ',
+            },
+          },
+        },
+      },
+      systemSocketExists: true,
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:28780/') {
+          return { statusCode: 200, body: { version: '0.1.0' } };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(28780);
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: 'http://127.0.0.1:28780',
+      gateway: 'http://127.0.0.1:28780',
+      mode: 'external',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'radicle',
+      'External node: 127.0.0.1:28780'
+    );
+
+    await ctx.mod.stopRadicle();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(987);
+    expect(ctx.clearService).toHaveBeenCalledWith('radicle');
+  });
+
+  test('marks a disabled profile Radicle node without probing or spawning', async () => {
+    const checkedPorts = [];
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: { mode: 'disabled' },
+          },
+        },
+      },
+      systemSocketExists: true,
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.httpGet).not.toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBeNull();
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: null,
+      gateway: null,
+      mode: 'disabled',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('radicle', 'Node disabled for this profile');
   });
 
   test('starts httpd against a detected system node and stops only that spawned process', async () => {

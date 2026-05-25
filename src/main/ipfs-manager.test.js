@@ -287,6 +287,8 @@ function loadIpfsManagerModule(options = {}) {
         MODE: {
           BUNDLED: 'bundled',
           REUSED: 'reused',
+          EXTERNAL: 'external',
+          DISABLED: 'disabled',
           NONE: 'none',
         },
         DEFAULTS: {
@@ -461,6 +463,93 @@ describe('ipfs-manager', () => {
     const stopPromise = ctx.mod.stopIpfs();
     await flushMicrotasks();
     await stopPromise;
+  });
+
+  test('connects to configured external profile endpoints without probing default ports', async () => {
+    const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(654);
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const checkedPorts = [];
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            ipfs: {
+              mode: 'external',
+              externalApi: ' http://127.0.0.1:25001/ ',
+              externalGateway: ' http://localhost:28080/ ',
+            },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+      httpResponse: (options) => {
+        if (options.port === 25001 && options.path === '/api/v0/id') {
+          return {
+            statusCode: 200,
+            body: { ID: 'peer-external' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(25001);
+    expect(ctx.mod.getActiveGatewayPort()).toBe(28080);
+    expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
+      api: 'http://127.0.0.1:25001',
+      gateway: 'http://localhost:28080',
+      mode: 'external',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'External node: 127.0.0.1:25001');
+    expect(setIntervalSpy).toHaveBeenCalled();
+
+    await ctx.mod.stopIpfs();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(654);
+    expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
+  });
+
+  test('marks a disabled profile IPFS node without probing or spawning', async () => {
+    const checkedPorts = [];
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            ipfs: { mode: 'disabled' },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.httpRequest).not.toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBeNull();
+    expect(ctx.mod.getActiveGatewayPort()).toBeNull();
+    expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
+      api: null,
+      gateway: null,
+      mode: 'disabled',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node disabled for this profile');
   });
 
   test('starts a bundled daemon on fallback ports, enforces config, and leaves no shutdown timers behind', async () => {

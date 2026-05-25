@@ -301,6 +301,8 @@ function loadBeeManagerModule(options = {}) {
         MODE: {
           BUNDLED: 'bundled',
           REUSED: 'reused',
+          EXTERNAL: 'external',
+          DISABLED: 'disabled',
           NONE: 'none',
         },
         DEFAULTS: {
@@ -469,6 +471,90 @@ describe('bee-manager', () => {
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
+  });
+
+  test('connects to a configured external profile API without probing default ports', async () => {
+    const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(456);
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const checkedPorts = [];
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            bee: {
+              mode: 'external',
+              externalApi: ' http://127.0.0.1:22633/ ',
+            },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:22633/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(22633);
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: 'http://127.0.0.1:22633',
+      gateway: 'http://127.0.0.1:22633',
+      mode: 'external',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'External node: 127.0.0.1:22633');
+    expect(setIntervalSpy).toHaveBeenCalled();
+
+    await ctx.mod.stopBee();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(456);
+    expect(ctx.clearService).toHaveBeenCalledWith('bee');
+  });
+
+  test('marks a disabled profile Bee node without probing or spawning', async () => {
+    const checkedPorts = [];
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            bee: { mode: 'disabled' },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.httpGet).not.toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBeNull();
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: null,
+      gateway: null,
+      mode: 'disabled',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node disabled for this profile');
   });
 
   test('starts a bundled ultra-light daemon on a fallback port and writes ultra-light config', async () => {

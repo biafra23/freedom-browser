@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { loadSettings } = require('./settings-store');
@@ -51,6 +52,7 @@ let useInjectedIdentity = false;
 // Port configuration (resolved at startup)
 // Note: Newer Bee versions serve debug endpoints on the main API port
 let currentApiPort = DEFAULTS.bee.apiPort;
+let currentApiUrl = `http://127.0.0.1:${DEFAULTS.bee.apiPort}`;
 let currentMode = MODE.NONE;
 
 function getBeeBinaryPath() {
@@ -89,8 +91,67 @@ function isManagedBeeConfig(config = getProfileBeeConfig()) {
   return config?.mode === 'managed';
 }
 
+function isExternalBeeConfig(config = getProfileBeeConfig()) {
+  return config?.mode === 'external';
+}
+
+function isDisabledBeeConfig(config = getProfileBeeConfig()) {
+  return config?.mode === 'disabled';
+}
+
+function hasUnknownBeeMode(config) {
+  return Boolean(config?.mode) && !isManagedBeeConfig(config)
+    && !isExternalBeeConfig(config)
+    && !isDisabledBeeConfig(config);
+}
+
 function getConfiguredBeeApiPort(config = getProfileBeeConfig()) {
   return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.bee.apiPort;
+}
+
+function normalizeExternalUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function getPortFromUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.port) return Number(parsed.port);
+    return parsed.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return null;
+  }
+}
+
+function getEndpointLabel(rawUrl) {
+  try {
+    return new URL(rawUrl).host;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function getHttpClient(rawUrl) {
+  return rawUrl.startsWith('https:') ? https : http;
 }
 
 function getConfiguredBeeNodeMode() {
@@ -254,9 +315,10 @@ function isPortOpen(port, host = '127.0.0.1') {
 /**
  * Probe Bee health endpoint
  */
-function probeBeeApi(port) {
+function probeBeeApiUrl(apiUrl) {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/health`, { timeout: 2000 }, (res) => {
+    const healthUrl = `${apiUrl}/health`;
+    const req = getHttpClient(healthUrl).get(healthUrl, { timeout: 2000 }, (res) => {
       if (res.statusCode === 200) {
         let data = '';
         res.on('data', (chunk) => {
@@ -283,6 +345,10 @@ function probeBeeApi(port) {
     });
     req.end();
   });
+}
+
+function probeBeeApi(port) {
+  return probeBeeApiUrl(`http://127.0.0.1:${port}`);
 }
 
 /**
@@ -331,7 +397,7 @@ async function detectExistingDaemon() {
 
 async function checkHealth() {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${currentApiPort}/health`, { timeout: 2000 }, (res) => {
+    const req = getHttpClient(currentApiUrl).get(`${currentApiUrl}/health`, { timeout: 2000 }, (res) => {
       if (res.statusCode === 200) {
         resolve(true);
       } else {
@@ -366,6 +432,51 @@ function startHealthCheck() {
   }, 5000);
 }
 
+async function startExternalBee(config) {
+  const apiUrl = normalizeExternalUrl(config?.externalApi);
+  if (!apiUrl) {
+    updateState(STATUS.ERROR, 'External Bee API endpoint is not configured');
+    setStatusMessage('bee', 'External node not configured');
+    return;
+  }
+
+  const probe = await probeBeeApiUrl(apiUrl);
+  if (!probe.valid) {
+    updateState(STATUS.ERROR, 'External Bee API endpoint is unreachable');
+    setStatusMessage('bee', 'External node unreachable');
+    return;
+  }
+
+  currentApiUrl = apiUrl;
+  currentApiPort = getPortFromUrl(apiUrl);
+  currentMode = MODE.EXTERNAL;
+
+  updateService('bee', {
+    api: currentApiUrl,
+    gateway: currentApiUrl,
+    mode: MODE.EXTERNAL,
+  });
+  setStatusMessage('bee', `External node: ${getEndpointLabel(currentApiUrl)}`);
+
+  updateState(STATUS.RUNNING);
+  startHealthCheck();
+  log.info('[Bee] Connected to external API at', currentApiUrl);
+}
+
+function startDisabledBee() {
+  currentApiPort = null;
+  currentApiUrl = null;
+  currentMode = MODE.DISABLED;
+  updateService('bee', {
+    api: null,
+    gateway: null,
+    mode: MODE.DISABLED,
+  });
+  setStatusMessage('bee', 'Node disabled for this profile');
+  updateState(STATUS.STOPPED);
+  log.info('[Bee] Disabled for active profile');
+}
+
 async function startBee() {
   if (currentState === STATUS.RUNNING || currentState === STATUS.STARTING) {
     log.info(`[Bee] Ignoring start request, current state: ${currentState}`);
@@ -384,17 +495,34 @@ async function startBee() {
   const profileConfig = getProfileBeeConfig();
   const managedProfileNode = isManagedBeeConfig(profileConfig);
 
+  if (hasUnknownBeeMode(profileConfig)) {
+    updateState(STATUS.ERROR, `Unsupported Bee node mode: ${profileConfig.mode}`);
+    setStatusMessage('bee', 'Node failed to start');
+    return;
+  }
+
+  if (isDisabledBeeConfig(profileConfig)) {
+    startDisabledBee();
+    return;
+  }
+
+  if (isExternalBeeConfig(profileConfig)) {
+    await startExternalBee(profileConfig);
+    return;
+  }
+
   // Step 1: Detect existing daemon unless this profile owns a managed node.
   const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
   if (existing.found) {
     // Reuse existing daemon
     currentApiPort = existing.port;
+    currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
     currentMode = MODE.REUSED;
 
     updateService('bee', {
-      api: `http://127.0.0.1:${currentApiPort}`,
-      gateway: `http://127.0.0.1:${currentApiPort}`,
+      api: currentApiUrl,
+      gateway: currentApiUrl,
       mode: MODE.REUSED,
     });
     setStatusMessage('bee', `Node: localhost:${currentApiPort}`);
@@ -432,6 +560,7 @@ async function startBee() {
   }
 
   currentApiPort = apiPort;
+  currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
   currentMode = MODE.BUNDLED;
 
   const configuredNodeMode = getConfiguredBeeNodeMode();
@@ -512,8 +641,8 @@ async function startBee() {
 
         // Update registry (API and gateway are same port in newer Bee)
         updateService('bee', {
-          api: `http://127.0.0.1:${currentApiPort}`,
-          gateway: `http://127.0.0.1:${currentApiPort}`,
+          api: currentApiUrl,
+          gateway: currentApiUrl,
           mode: MODE.BUNDLED,
         });
 
@@ -548,8 +677,8 @@ function stopBee() {
   return new Promise((resolve) => {
     pendingStart = false;
 
-    // If we reused an external daemon, just clear state (don't stop it)
-    if (currentMode === MODE.REUSED) {
+    // If this process does not own a daemon, just clear state.
+    if (currentMode === MODE.REUSED || currentMode === MODE.EXTERNAL || currentMode === MODE.DISABLED) {
       if (healthCheckInterval) {
         clearInterval(healthCheckInterval);
         healthCheckInterval = null;

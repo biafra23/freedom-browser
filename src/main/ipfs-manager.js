@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { getIpfsDataDir } = require('./profile-paths');
@@ -40,6 +41,8 @@ let useInjectedIdentity = false;
 // Port configuration (resolved at startup)
 let currentApiPort = DEFAULTS.ipfs.apiPort;
 let currentGatewayPort = DEFAULTS.ipfs.gatewayPort;
+let currentApiUrl = `http://127.0.0.1:${DEFAULTS.ipfs.apiPort}`;
+let currentGatewayUrl = `http://localhost:${DEFAULTS.ipfs.gatewayPort}`;
 let currentMode = MODE.NONE;
 
 function getIpfsBinaryPath() {
@@ -77,6 +80,20 @@ function isManagedIpfsConfig(config = getProfileIpfsConfig()) {
   return config?.mode === 'managed';
 }
 
+function isExternalIpfsConfig(config = getProfileIpfsConfig()) {
+  return config?.mode === 'external';
+}
+
+function isDisabledIpfsConfig(config = getProfileIpfsConfig()) {
+  return config?.mode === 'disabled';
+}
+
+function hasUnknownIpfsMode(config) {
+  return Boolean(config?.mode) && !isManagedIpfsConfig(config)
+    && !isExternalIpfsConfig(config)
+    && !isDisabledIpfsConfig(config);
+}
+
 function getConfiguredIpfsApiPort(config = getProfileIpfsConfig()) {
   return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.ipfs.apiPort;
 }
@@ -85,6 +102,71 @@ function getConfiguredIpfsGatewayPort(config = getProfileIpfsConfig()) {
   return Number.isInteger(config?.gatewayPort)
     ? config.gatewayPort
     : DEFAULTS.ipfs.gatewayPort;
+}
+
+function normalizeExternalUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function getPortFromUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.port) return Number(parsed.port);
+    return parsed.protocol === 'https:' ? 443 : 80;
+  } catch {
+    return null;
+  }
+}
+
+function getEndpointLabel(rawUrl) {
+  try {
+    return new URL(rawUrl).host;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function buildApiRequestOptions(apiUrl, apiPath) {
+  const endpoint = new URL(apiUrl);
+  const basePath = endpoint.pathname.replace(/\/+$/, '');
+  endpoint.pathname = `${basePath}${apiPath}`;
+  endpoint.search = '';
+  endpoint.hash = '';
+
+  return {
+    protocol: endpoint.protocol,
+    hostname: endpoint.hostname,
+    port: endpoint.port ? Number(endpoint.port) : (endpoint.protocol === 'https:' ? 443 : 80),
+    path: endpoint.pathname,
+    method: 'POST',
+    headers: {
+      'Content-Length': 0,
+    },
+    timeout: 2000,
+  };
+}
+
+function getHttpClient(protocol) {
+  return protocol === 'https:' ? https : http;
 }
 
 function isRepoInitialized(dataDir) {
@@ -284,20 +366,11 @@ function isPortOpen(port, host = '127.0.0.1') {
 /**
  * Probe IPFS API health endpoint
  */
-function probeIpfsApi(port) {
+function probeIpfsApiUrl(apiUrl) {
   return new Promise((resolve) => {
-    const options = {
-      hostname: '127.0.0.1',
-      port: port,
-      path: '/api/v0/id',
-      method: 'POST',
-      headers: {
-        'Content-Length': 0,
-      },
-      timeout: 2000,
-    };
+    const options = buildApiRequestOptions(apiUrl, '/api/v0/id');
 
-    const req = http.request(options, (res) => {
+    const req = getHttpClient(options.protocol).request(options, (res) => {
       if (res.statusCode === 200) {
         let data = '';
         res.on('data', (chunk) => {
@@ -324,6 +397,10 @@ function probeIpfsApi(port) {
     });
     req.end();
   });
+}
+
+function probeIpfsApi(port) {
+  return probeIpfsApiUrl(`http://127.0.0.1:${port}`);
 }
 
 /**
@@ -372,17 +449,9 @@ async function detectExistingDaemon() {
 
 async function checkHealth() {
   return new Promise((resolve) => {
-    const options = {
-      hostname: '127.0.0.1',
-      port: currentApiPort,
-      path: '/api/v0/id',
-      method: 'POST',
-      headers: {
-        'Content-Length': 0,
-      },
-    };
+    const options = buildApiRequestOptions(currentApiUrl, '/api/v0/id');
 
-    const req = http.request(options, (res) => {
+    const req = getHttpClient(options.protocol).request(options, (res) => {
       if (res.statusCode === 200) {
         resolve(true);
       } else {
@@ -415,6 +484,56 @@ function startHealthCheck() {
   }, 5000);
 }
 
+async function startExternalIpfs(config) {
+  const apiUrl = normalizeExternalUrl(config?.externalApi);
+  const gatewayUrl = normalizeExternalUrl(config?.externalGateway);
+  if (!apiUrl || !gatewayUrl) {
+    updateState(STATUS.ERROR, 'External IPFS endpoints are not configured');
+    setStatusMessage('ipfs', 'External node not configured');
+    return;
+  }
+
+  const probe = await probeIpfsApiUrl(apiUrl);
+  if (!probe.valid) {
+    updateState(STATUS.ERROR, 'External IPFS API endpoint is unreachable');
+    setStatusMessage('ipfs', 'External node unreachable');
+    return;
+  }
+
+  currentApiUrl = apiUrl;
+  currentGatewayUrl = gatewayUrl;
+  currentApiPort = getPortFromUrl(apiUrl);
+  currentGatewayPort = getPortFromUrl(gatewayUrl);
+  currentMode = MODE.EXTERNAL;
+
+  updateService('ipfs', {
+    api: currentApiUrl,
+    gateway: currentGatewayUrl,
+    mode: MODE.EXTERNAL,
+  });
+  setStatusMessage('ipfs', `External node: ${getEndpointLabel(currentApiUrl)}`);
+
+  updateState(STATUS.RUNNING);
+  startHealthCheck();
+  log.info('[IPFS] Connected to external API at', currentApiUrl);
+}
+
+function startDisabledIpfs() {
+  currentApiPort = null;
+  currentGatewayPort = null;
+  currentApiUrl = null;
+  currentGatewayUrl = null;
+  currentMode = MODE.DISABLED;
+  updateService('ipfs', {
+    api: null,
+    gateway: null,
+    mode: MODE.DISABLED,
+  });
+  setStatusMessage('ipfs', 'Node disabled for this profile');
+  updateState(STATUS.STOPPED);
+  log.info('[IPFS] Disabled for active profile');
+}
+
 async function startIpfs() {
   if (currentState === STATUS.RUNNING || currentState === STATUS.STARTING) {
     log.info(`[IPFS] Ignoring start request, current state: ${currentState}`);
@@ -433,6 +552,22 @@ async function startIpfs() {
   const profileConfig = getProfileIpfsConfig();
   const managedProfileNode = isManagedIpfsConfig(profileConfig);
 
+  if (hasUnknownIpfsMode(profileConfig)) {
+    updateState(STATUS.ERROR, `Unsupported IPFS node mode: ${profileConfig.mode}`);
+    setStatusMessage('ipfs', 'Node failed to start');
+    return;
+  }
+
+  if (isDisabledIpfsConfig(profileConfig)) {
+    startDisabledIpfs();
+    return;
+  }
+
+  if (isExternalIpfsConfig(profileConfig)) {
+    await startExternalIpfs(profileConfig);
+    return;
+  }
+
   // Step 1: Detect existing daemon unless this profile owns a managed node.
   const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
@@ -440,11 +575,13 @@ async function startIpfs() {
     // Reuse existing daemon
     currentApiPort = existing.port;
     currentGatewayPort = DEFAULTS.ipfs.gatewayPort;
+    currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
+    currentGatewayUrl = `http://localhost:${currentGatewayPort}`;
     currentMode = MODE.REUSED;
 
     updateService('ipfs', {
-      api: `http://127.0.0.1:${currentApiPort}`,
-      gateway: `http://localhost:${currentGatewayPort}`,
+      api: currentApiUrl,
+      gateway: currentGatewayUrl,
       mode: MODE.REUSED,
     });
     setStatusMessage('ipfs', `Node: localhost:${currentApiPort}`);
@@ -503,6 +640,8 @@ async function startIpfs() {
 
   currentApiPort = apiPort;
   currentGatewayPort = gatewayPort;
+  currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
+  currentGatewayUrl = `http://localhost:${currentGatewayPort}`;
   currentMode = MODE.BUNDLED;
 
   // Enforce our config settings on every startup
@@ -580,8 +719,8 @@ async function startIpfs() {
 
         // Update registry
         updateService('ipfs', {
-          api: `http://127.0.0.1:${currentApiPort}`,
-          gateway: `http://localhost:${currentGatewayPort}`,
+          api: currentApiUrl,
+          gateway: currentGatewayUrl,
           mode: MODE.BUNDLED,
         });
 
@@ -616,8 +755,8 @@ function stopIpfs() {
   return new Promise((resolve) => {
     pendingStart = false;
 
-    // If we reused an external daemon, just clear state (don't stop it)
-    if (currentMode === MODE.REUSED) {
+    // If this process does not own a daemon, just clear state.
+    if (currentMode === MODE.REUSED || currentMode === MODE.EXTERNAL || currentMode === MODE.DISABLED) {
       if (healthCheckInterval) {
         clearInterval(healthCheckInterval);
         healthCheckInterval = null;
