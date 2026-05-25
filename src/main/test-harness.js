@@ -280,14 +280,14 @@ function overrideNodeIpc() {
 
 function seedRegistry() {
   updateService('bee', {
-    api: 'http://127.0.0.1:1633',
-    gateway: 'http://127.0.0.1:1633',
+    api: 'http://127.0.0.1:11633',
+    gateway: 'http://127.0.0.1:11633',
     mode: MODE.BUNDLED,
   });
   setStatusMessage('bee', 'Test mode (Swarm stub)');
   updateService('ipfs', {
-    api: 'http://127.0.0.1:5001',
-    gateway: 'http://localhost:8080',
+    api: 'http://127.0.0.1:15001',
+    gateway: 'http://localhost:18080',
     mode: MODE.BUNDLED,
   });
   setStatusMessage('ipfs', 'Test mode (IPFS stub)');

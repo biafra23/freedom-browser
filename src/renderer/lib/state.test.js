@@ -11,12 +11,12 @@ describe('renderer state', () => {
     global.window = originalWindow;
   });
 
-  test('builds route prefixes from defaults or window config', async () => {
+  test('leaves route prefixes unset until env config or registry hydration', async () => {
     const defaults = await loadModule();
-    expect(defaults.state.bzzRoutePrefix).toBe('http://127.0.0.1:1633/bzz/');
-    expect(defaults.state.ipfsRoutePrefix).toBe('http://localhost:8080/ipfs/');
-    expect(defaults.state.ipnsRoutePrefix).toBe('http://localhost:8080/ipns/');
-    expect(defaults.state.radicleApiPrefix).toBe('http://127.0.0.1:8780/api/v1/repos/');
+    expect(defaults.state.bzzRoutePrefix).toBeNull();
+    expect(defaults.state.ipfsRoutePrefix).toBeNull();
+    expect(defaults.state.ipnsRoutePrefix).toBeNull();
+    expect(defaults.state.radicleApiPrefix).toBeNull();
 
     const custom = await loadModule({
       beeApi: 'http://127.0.0.1:1733/',
@@ -27,12 +27,14 @@ describe('renderer state', () => {
     expect(custom.state.ipnsRoutePrefix).toBe('http://127.0.0.1:8181/ipns/');
   });
 
-  test('builds service urls from registry values or fallbacks', async () => {
+  test('builds service urls from registry values and rejects missing endpoints', async () => {
     const mod = await loadModule();
 
-    expect(mod.buildBeeUrl('/health')).toBe('http://127.0.0.1:1633/health');
-    expect(mod.buildIpfsApiUrl('/api/v0/id')).toBe('http://127.0.0.1:5001/api/v0/id');
-    expect(mod.buildRadicleUrl('/api/v1')).toBe('http://127.0.0.1:8780/api/v1');
+    expect(() => mod.buildBeeUrl('/health')).toThrow('Bee endpoint is not ready');
+    expect(() => mod.buildIpfsApiUrl('/api/v0/id')).toThrow(
+      'IPFS API endpoint is not ready'
+    );
+    expect(() => mod.buildRadicleUrl('/api/v1')).toThrow('Radicle endpoint is not ready');
 
     mod.updateRegistry({
       bee: { api: 'http://127.0.0.1:1999', gateway: 'http://127.0.0.1:1999' },

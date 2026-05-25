@@ -8,10 +8,12 @@ const {
 const { activeRadBases } = require('./state');
 const { formatRadicleUrl, deriveRadBaseFromUrl, deriveDisplayValue } = require('../renderer/lib/url-utils.js');
 
+const mockGetRadicleApiUrl = jest.fn(() => 'http://127.0.0.1:8780');
+
 // Mock service-registry so convertProtocolUrl can resolve gateway URLs
 jest.mock('./service-registry', () => ({
   getBeeApiUrl: () => 'http://127.0.0.1:1633',
-  getRadicleApiUrl: () => 'http://127.0.0.1:8780',
+  getRadicleApiUrl: () => mockGetRadicleApiUrl(),
 }));
 
 jest.mock('./settings-store', () => ({
@@ -27,6 +29,7 @@ describe('request-rewriter', () => {
   afterEach(() => {
     activeRadBases.clear();
     loadSettings.mockReturnValue({ enableRadicleIntegration: true });
+    mockGetRadicleApiUrl.mockReturnValue('http://127.0.0.1:8780');
   });
 
   describe('convertProtocolUrl', () => {
@@ -95,6 +98,15 @@ describe('request-rewriter', () => {
       expect(convertProtocolUrl('ipns://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8')).toEqual({
         converted: false,
         url: 'ipns://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8',
+      });
+    });
+
+    test('leaves radicle URLs unchanged when endpoint is not hydrated', () => {
+      mockGetRadicleApiUrl.mockReturnValue(null);
+
+      expect(convertProtocolUrl('rad:z123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijk')).toEqual({
+        converted: false,
+        url: 'rad:z123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijk',
       });
     });
   });

@@ -12,8 +12,8 @@
  * Why this lives in the main process and not the renderer's URL pipeline:
  *
  * Without a privileged scheme, `ipfs://` URLs were translated to the Kubo
- * path-gateway (`http://localhost:8080/ipfs/<cid>/`), Chromium followed
- * Kubo's built-in subdomain redirect to `<cidv1>.ipfs.localhost:8080`,
+ * path-gateway (`http://localhost:<gateway-port>/ipfs/<cid>/`), Chromium followed
+ * Kubo's built-in subdomain redirect to `<cidv1>.ipfs.localhost:<gateway-port>`,
  * and the page origin became the gateway subdomain. DevTools, `window.location`,
  * cookies, localStorage, IndexedDB, and service workers all saw the gateway
  * origin. Pinning the page origin to `ipfs://<cid>/` (or `ipfs://<name>/`
@@ -30,8 +30,8 @@
  *
  * So the request flow is:
  *   ipfs://name.eth/path
- *     → resolve ENS → fetch http://localhost:8080/ipfs/<cid>/path
- *     → Kubo replies 301 Location: http://<cidv1>.ipfs.localhost:8080/path
+ *     → resolve ENS → fetch http://localhost:<gateway-port>/ipfs/<cid>/path
+ *     → Kubo replies 301 Location: http://<cidv1>.ipfs.localhost:<gateway-port>/path
  *     → node's fetch follows the redirect transparently
  *     → handler streams the final body back as the response to the
  *       original ipfs:// request.
@@ -228,9 +228,12 @@ async function buildGatewayUrl(namespace, sourceUrl) {
     }
   }
 
-  const gw = getIpfsGatewayUrl();
-
   if (effectiveNs === 'ipfs' && CID_RE.test(host)) {
+    const gw = getIpfsGatewayUrl();
+    if (!gw) {
+      return { ok: false, status: 503, message: 'IPFS node is not ready' };
+    }
+
     // CIDv0 / CIDv1-base58btc hosts are case-sensitive. Sub-resource
     // requests (`<img src="ipfs://Qm.../">`, `<img src="ipfs://z.../">`,
     // `fetch('ipfs://...')`, etc.) bypass the renderer's formatIpfsUrl
@@ -284,6 +287,11 @@ async function buildGatewayUrl(namespace, sourceUrl) {
   }
 
   if (effectiveNs === 'ipns' && !isEnsHost(host) && IPNS_HOST_RE.test(host)) {
+    const gw = getIpfsGatewayUrl();
+    if (!gw) {
+      return { ok: false, status: 503, message: 'IPFS node is not ready' };
+    }
+
     // base58btc IPNS peer-ID hosts (`12D3Koo...`, `16Uiu2H...`, `Qm...`)
     // and CIDv1-base58btc IPNS keys (`z...` libp2p-key) are case-
     // sensitive; same recovery / rejection rule as CIDv0 above. Already-
@@ -328,6 +336,11 @@ async function buildGatewayUrl(namespace, sourceUrl) {
   }
 
   if (isEnsHost(host) && !hasEmptyLabel(host)) {
+    const gw = getIpfsGatewayUrl();
+    if (!gw) {
+      return { ok: false, status: 503, message: 'IPFS node is not ready' };
+    }
+
     return resolveEnsToGatewayUrl(effectiveNs, host, { pathname, search: parsed.search }, gw);
   }
 

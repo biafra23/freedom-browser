@@ -31,6 +31,7 @@ const {
   sanitizeRequestHeaders,
   handleRequest,
 } = require('./ipfs-protocol');
+const { getIpfsGatewayUrl } = require('../service-registry');
 
 const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 // Canonical CIDv1 base32 (`bafy...`) form of `CIDV0`; used to assert that
@@ -57,6 +58,17 @@ const IPNS_KEY_BASE58_ED25519 = '12D3KooWGuQafLgPqRRRkRSUNqZNQwL2gMZcQ27GiNpoVxz
 describe('buildGatewayUrl(ipfs)', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
+  });
+
+  test('returns 503 when the IPFS gateway endpoint is not hydrated', async () => {
+    getIpfsGatewayUrl.mockReturnValue(null);
+
+    await expect(buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE32}/index.html`)).resolves.toEqual({
+      ok: false,
+      status: 503,
+      message: 'IPFS node is not ready',
+    });
   });
 
   test.each([
@@ -411,6 +423,7 @@ describe('buildGatewayUrl(ipfs)', () => {
 describe('buildGatewayUrl(ipns)', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
   });
 
   test.each([
@@ -560,6 +573,7 @@ describe('sanitizeRequestHeaders', () => {
 describe('handleRequest', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
   });
 
   const makeRequest = (url, { method = 'GET', headers = {} } = {}) => ({

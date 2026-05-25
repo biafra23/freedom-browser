@@ -40,13 +40,19 @@ function prefetchGatewayUrl(uri) {
     // ultimately proxy to.
     let url;
     if (uri.startsWith('bzz://')) {
+      const beeApiUrl = getBeeApiUrl();
+      if (!beeApiUrl) return NOOP_HANDLE;
+
       const afterScheme = uri.slice(6).replace(/^\/+/, '');
       const hash = afterScheme.split(/[/?#]/)[0];
       if (!hash || !/^[a-fA-F0-9]{64}([a-fA-F0-9]{64})?$/.test(hash)) {
         return NOOP_HANDLE;
       }
-      url = `${getBeeApiUrl()}/bzz/${afterScheme}`;
+      url = `${beeApiUrl}/bzz/${afterScheme}`;
     } else {
+      const ipfsGatewayUrl = getIpfsGatewayUrl();
+      if (!ipfsGatewayUrl) return NOOP_HANDLE;
+
       const afterScheme = uri.slice(7).replace(/^\/+/, '');
       const cid = afterScheme.split(/[/?#]/)[0];
       // CIDv1 base32 covers all codecs (`bafy…`, `bagu…`, `bah…`, …) —
@@ -58,7 +64,7 @@ function prefetchGatewayUrl(uri) {
       ) {
         return NOOP_HANDLE;
       }
-      url = `${getIpfsGatewayUrl()}/ipfs/${afterScheme}`;
+      url = `${ipfsGatewayUrl}/ipfs/${afterScheme}`;
     }
 
     let aborted = false;

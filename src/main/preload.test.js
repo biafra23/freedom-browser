@@ -273,15 +273,15 @@ describe('preload', () => {
     }
   });
 
-  test('uses default gateway env values when overrides are absent', () => {
+  test('does not expose default gateway URLs when overrides are absent', () => {
     const { exposures } = loadPreloadModule({
       beeApiEnv: null,
       ipfsGatewayEnv: null,
     });
 
     expect(exposures.nodeConfig).toEqual({
-      beeApi: 'http://127.0.0.1:1633',
-      ipfsGateway: 'http://localhost:8080',
+      beeApi: null,
+      ipfsGateway: null,
     });
   });
 });

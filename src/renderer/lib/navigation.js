@@ -67,7 +67,7 @@ const extractBzzHash = (gatewayUrl) => {
   return match ? match[1] : null;
 };
 
-// Convert a Bee gateway URL (http://127.0.0.1:1633/bzz/<hash>/path?q#h) into
+// Convert a Bee gateway URL (<bee-api>/bzz/<hash>/path?q#h) into
 // the `bzz://<hash>/path?q#h` form that Chromium routes through the custom
 // protocol handler. Falls back to the gateway URL if the shape doesn't match.
 const gatewayUrlToBzzUrl = (gatewayUrl) => {
