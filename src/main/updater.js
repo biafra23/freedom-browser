@@ -3,6 +3,11 @@ const { app, dialog, ipcMain } = require('electron');
 const log = require('./logger');
 const path = require('path');
 const { loadSettings } = require('./settings-store');
+const { getActiveProfile } = require('./profile-resolver');
+const {
+  releaseUpdaterOwnerLock,
+  tryAcquireUpdaterOwnerLock,
+} = require('./updater-owner-lock');
 
 // IPC handler for restart and install
 ipcMain.on('update:restart-and-install', () => {
@@ -51,6 +56,38 @@ let mainWindow = null;
 let updateDownloaded = false;
 let menuUpdateCallback = null;
 let isManualCheck = false;
+let updaterOwnerLock = null;
+let releaseRegistered = false;
+
+function hasUpdaterOwnership() {
+  return Boolean(updaterOwnerLock && !updaterOwnerLock.released);
+}
+
+function acquireUpdaterOwnership(options = {}) {
+  if (hasUpdaterOwnership()) {
+    return true;
+  }
+
+  const profile = options.profile || getActiveProfile();
+  updaterOwnerLock = tryAcquireUpdaterOwnerLock(profile, { logger: log });
+  if (!updaterOwnerLock) {
+    return false;
+  }
+
+  if (!releaseRegistered) {
+    releaseRegistered = true;
+    app.on('will-quit', () => {
+      releaseUpdaterOwnerLock(updaterOwnerLock, { logger: log });
+      updaterOwnerLock = null;
+    });
+  }
+
+  log.info('[updater] This profile owns update checks', {
+    profileId: profile?.id,
+    appRoot: profile?.appRoot,
+  });
+  return true;
+}
 
 function setMainWindow(window) {
   mainWindow = window;
@@ -62,6 +99,11 @@ function isUpdateCheckEnabled() {
 }
 
 function checkForUpdates() {
+  if (!hasUpdaterOwnership()) {
+    log.info('[updater] Skipping update check; another profile owns updater');
+    return;
+  }
+
   if (!isUpdateCheckEnabled()) {
     log.info('[updater] Auto-update is disabled');
     return;
@@ -163,9 +205,14 @@ autoUpdater.on('error', (error) => {
 });
 
 // Initialize updater
-function initUpdater(window, onMenuUpdate) {
+function initUpdater(window, onMenuUpdate, options = {}) {
   setMainWindow(window);
   menuUpdateCallback = onMenuUpdate;
+
+  if (!acquireUpdaterOwnership(options)) {
+    log.info('[updater] Update checks disabled in this profile process');
+    return false;
+  }
 
   // Check for updates 10 seconds after app start
   setTimeout(() => {
@@ -179,10 +226,20 @@ function initUpdater(window, onMenuUpdate) {
     },
     6 * 60 * 60 * 1000
   );
+  return true;
 }
 
 // Manual update check (from menu)
 function checkForUpdatesManually() {
+  if (!hasUpdaterOwnership()) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Updates Managed Elsewhere',
+      message: 'Another open Freedom profile is already handling update checks.',
+    });
+    return;
+  }
+
   if (process.env.NODE_ENV === 'development' && !process.env.ENABLE_DEV_UPDATER) {
     dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -223,4 +280,5 @@ module.exports = {
   checkForUpdates: checkForUpdatesManually,
   isUpdateReady,
   installUpdate,
+  hasUpdaterOwnership,
 };

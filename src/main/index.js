@@ -248,7 +248,7 @@ async function bootstrap() {
   // test mode so specs don't trigger background network checks against
   // freedom.baby.
   if (!TEST_MODE) {
-    initUpdater(mainWindow, setupApplicationMenu);
+    initUpdater(mainWindow, setupApplicationMenu, { profile: activeProfile });
   }
 
   app.on('activate', () => {
