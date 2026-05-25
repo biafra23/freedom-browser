@@ -209,6 +209,46 @@ function writeProfileMetadata(profileDir, metadata) {
   writeJsonAtomic(getProfileMetaPath(profileDir), metadata);
 }
 
+function updateProfileNodeConfig(profile, protocol, updates) {
+  if (!profile?.appRoot || !profile?.userDataDir || !profile?.id || !profile?.metadata) {
+    return null;
+  }
+
+  if (!['bee', 'ipfs', 'radicle'].includes(protocol)) {
+    throw new Error(`Unsupported profile node protocol: ${protocol}`);
+  }
+
+  const catalog = loadCatalog(profile.appRoot);
+  const record = findProfile(catalog, profile.id);
+
+  if (record) {
+    record.nodes = record.nodes || {};
+    record.nodes[protocol] = {
+      ...(record.nodes[protocol] || {}),
+      ...updates,
+    };
+    saveCatalog(profile.appRoot, catalog);
+  }
+
+  const metaPath = getProfileMetaPath(profile.userDataDir);
+  const metadata = fs.existsSync(metaPath)
+    ? readJson(metaPath)
+    : { ...profile.metadata };
+
+  metadata.nodes = metadata.nodes || {};
+  metadata.nodes[protocol] = {
+    ...(metadata.nodes[protocol] || {}),
+    ...updates,
+  };
+  writeProfileMetadata(profile.userDataDir, metadata);
+
+  return {
+    catalog,
+    record,
+    metadata,
+  };
+}
+
 function ensureProfile(appRoot, profileId, options = {}) {
   ensureDir(appRoot);
 
@@ -262,5 +302,6 @@ module.exports = {
   loadCatalog,
   sanitizeProfileId,
   saveCatalog,
+  updateProfileNodeConfig,
   writeProfileMetadata,
 };

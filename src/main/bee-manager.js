@@ -10,7 +10,7 @@ const IPC = require('../shared/ipc-channels');
 const { loadSettings } = require('./settings-store');
 const registry = require('./networks/network-registry');
 const { getBeeDataDir } = require('./profile-paths');
-const { getActiveProfile } = require('./profile-resolver');
+const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
 const {
   MODE,
   DEFAULTS,
@@ -152,6 +152,13 @@ function getEndpointLabel(rawUrl) {
 
 function getHttpClient(rawUrl) {
   return rawUrl.startsWith('https:') ? https : http;
+}
+
+function persistManagedBeePort(apiPort) {
+  const result = updateActiveProfileNodeConfig('bee', { apiPort });
+  if (result) {
+    log.info('[Bee] Persisted managed profile API port:', apiPort);
+  }
 }
 
 function getConfiguredBeeNodeMode() {
@@ -545,6 +552,7 @@ async function startBee() {
 
   // Step 3: Resolve ports (handle conflicts)
   let apiPort = getConfiguredBeeApiPort(profileConfig);
+  const configuredApiPort = apiPort;
   let usingFallbackPort = false;
 
   const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
@@ -557,6 +565,17 @@ async function startBee() {
     }
     usingFallbackPort = true;
     apiPort = newApiPort;
+  }
+
+  if (managedProfileNode && apiPort !== configuredApiPort) {
+    try {
+      persistManagedBeePort(apiPort);
+    } catch (err) {
+      log.error('[Bee] Failed to persist managed profile port:', err.message);
+      updateState(STATUS.ERROR, 'Failed to save Bee port assignment');
+      setStatusMessage('bee', 'Node failed to start');
+      return;
+    }
   }
 
   currentApiPort = apiPort;

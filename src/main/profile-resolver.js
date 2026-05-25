@@ -6,6 +6,7 @@ const {
   getCheckoutId,
   hashPath,
   sanitizeProfileId,
+  updateProfileNodeConfig,
 } = require('./profile-catalog');
 
 let activeProfile = null;
@@ -149,6 +150,18 @@ function getActiveProfile() {
   return activeProfile;
 }
 
+function updateActiveProfileNodeConfig(protocol, updates) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  const result = updateProfileNodeConfig(activeProfile, protocol, updates);
+  if (result?.metadata) {
+    activeProfile.metadata = result.metadata;
+  }
+  return result;
+}
+
 module.exports = {
   applyProfile,
   findRepoRoot,
@@ -157,4 +170,5 @@ module.exports = {
   getDefaultRepoRoot,
   initializeProfile,
   resolveProfile,
+  updateActiveProfileNodeConfig,
 };

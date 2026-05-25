@@ -14,7 +14,7 @@ const IPC = require('../shared/ipc-channels');
 const { success, failure, validateNonEmptyString } = require('./ipc-contract');
 const { loadSettings } = require('./settings-store');
 const { getRadicleDataDir } = require('./profile-paths');
-const { getActiveProfile } = require('./profile-resolver');
+const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
 
 /**
  * Validate a Radicle Repository ID (RID).
@@ -192,6 +192,16 @@ function getEndpointLabel(rawUrl) {
 
 function getHttpClient(rawUrl) {
   return rawUrl.startsWith('https:') ? https : http;
+}
+
+function persistManagedRadiclePorts(httpPort, p2pPort) {
+  const result = updateActiveProfileNodeConfig('radicle', { httpPort, p2pPort });
+  if (result) {
+    log.info('[Radicle] Persisted managed profile ports:', {
+      httpPort,
+      p2pPort,
+    });
+  }
 }
 
 function getRadicleSocketPath(radHome) {
@@ -783,6 +793,8 @@ async function startRadicle() {
   // Step 3: Resolve ports (handle conflicts)
   let httpPort = getConfiguredRadicleHttpPort(profileConfig);
   let p2pPort = getConfiguredRadicleP2pPort(profileConfig);
+  const configuredHttpPort = httpPort;
+  const configuredP2pPort = p2pPort;
   let usingFallbackPort = false;
 
   const managedHttpPortBusy = managedProfileNode ? await isPortOpen(httpPort) : false;
@@ -807,6 +819,20 @@ async function startRadicle() {
     }
     usingFallbackPort = true;
     p2pPort = newP2pPort;
+  }
+
+  if (
+    managedProfileNode
+    && (httpPort !== configuredHttpPort || p2pPort !== configuredP2pPort)
+  ) {
+    try {
+      persistManagedRadiclePorts(httpPort, p2pPort);
+    } catch (err) {
+      log.error('[Radicle] Failed to persist managed profile ports:', err.message);
+      updateState(STATUS.ERROR, 'Failed to save Radicle port assignment');
+      setStatusMessage('radicle', 'Node failed to start');
+      return;
+    }
   }
 
   currentHttpPort = httpPort;

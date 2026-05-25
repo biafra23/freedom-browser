@@ -220,6 +220,7 @@ function loadIpfsManagerModule(options = {}) {
   const setErrorState = jest.fn();
   const clearErrorState = jest.fn();
   const clearService = jest.fn();
+  const updateActiveProfileNodeConfig = options.updateActiveProfileNodeConfig || jest.fn();
   const spawnedProcesses = [];
   const execSync = options.execSync || jest.fn();
   const spawn = jest.fn((binary, args = [], spawnOptions = {}) => {
@@ -282,6 +283,7 @@ function loadIpfsManagerModule(options = {}) {
       [require.resolve('./logger')]: () => log,
       [require.resolve('./profile-resolver')]: () => ({
         getActiveProfile: jest.fn(() => options.activeProfile || null),
+        updateActiveProfileNodeConfig,
       }),
       [require.resolve('./service-registry')]: () => ({
         MODE: {
@@ -327,6 +329,7 @@ function loadIpfsManagerModule(options = {}) {
     spawn,
     spawnedProcesses,
     updateService,
+    updateActiveProfileNodeConfig,
     windows,
   };
 }
@@ -459,6 +462,55 @@ describe('ipfs-manager', () => {
     const writtenConfig = JSON.parse(ctx.fsMock.writeFileSync.mock.calls[0][1]);
     expect(writtenConfig.Addresses.API).toBe('/ip4/127.0.0.1/tcp/15001');
     expect(writtenConfig.Addresses.Gateway).toBe('/ip4/127.0.0.1/tcp/18080');
+
+    const stopPromise = ctx.mod.stopIpfs();
+    await flushMicrotasks();
+    await stopPromise;
+  });
+
+  test('persists reassigned managed profile ports before launching IPFS', async () => {
+    jest.useFakeTimers();
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            ipfs: { mode: 'managed', apiPort: 15001, gatewayPort: 18080 },
+          },
+        },
+      },
+      configExists: true,
+      portResolver: (port) => port === 15001 || port === 18080,
+      httpResponse: (options) => {
+        if (options.port === 15002) {
+          return {
+            statusCode: 200,
+            body: { ID: 'peer-15002' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('ipfs', {
+      apiPort: 15002,
+      gatewayPort: 18081,
+    });
+    expect(ctx.mod.getActivePort()).toBe(15002);
+    expect(ctx.mod.getActiveGatewayPort()).toBe(18081);
+    expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
+      api: 'http://127.0.0.1:15002',
+      gateway: 'http://localhost:18081',
+      mode: 'bundled',
+    });
 
     const stopPromise = ctx.mod.stopIpfs();
     await flushMicrotasks();

@@ -143,6 +143,41 @@ describe('profile resolver', () => {
     expect(profile.userDataDir).toBe(path.join(devHome, 'Profiles', 'work'));
   });
 
+  test('persists active profile node updates to metadata and catalog', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const {
+      getActiveProfile,
+      initializeProfile,
+      updateActiveProfileNodeConfig,
+    } = require('./profile-resolver');
+
+    const profile = initializeProfile(app, {
+      argv: ['electron', '.', '--profile=work'],
+      env: {},
+      now: '2026-05-25T00:00:00.000Z',
+    });
+
+    updateActiveProfileNodeConfig('ipfs', {
+      apiPort: 15555,
+      gatewayPort: 18888,
+    });
+
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(profile.userDataDir, 'profile.json'), 'utf-8')
+    );
+    const catalog = JSON.parse(
+      fs.readFileSync(path.join(userDataDir, 'profile-registry.json'), 'utf-8')
+    );
+    const record = catalog.profiles.find((entry) => entry.id === 'work');
+
+    expect(metadata.nodes.ipfs.apiPort).toBe(15555);
+    expect(metadata.nodes.ipfs.gatewayPort).toBe(18888);
+    expect(record.nodes.ipfs.apiPort).toBe(15555);
+    expect(record.nodes.ipfs.gatewayPort).toBe(18888);
+    expect(getActiveProfile().metadata.nodes.ipfs.apiPort).toBe(15555);
+  });
+
   test('rejects path-like profile ids', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });

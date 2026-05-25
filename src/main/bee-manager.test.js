@@ -211,6 +211,7 @@ function loadBeeManagerModule(options = {}) {
   const setErrorState = jest.fn();
   const clearErrorState = jest.fn();
   const clearService = jest.fn();
+  const updateActiveProfileNodeConfig = options.updateActiveProfileNodeConfig || jest.fn();
   const spawnedProcesses = [];
   const execSync = options.execSync || jest.fn();
   const spawn = jest.fn((binary, args = [], spawnOptions = {}) => {
@@ -296,6 +297,7 @@ function loadBeeManagerModule(options = {}) {
       [require.resolve('./networks/network-registry')]: () => registry,
       [require.resolve('./profile-resolver')]: () => ({
         getActiveProfile: jest.fn(() => options.activeProfile || null),
+        updateActiveProfileNodeConfig,
       }),
       [require.resolve('./service-registry')]: () => ({
         MODE: {
@@ -343,6 +345,7 @@ function loadBeeManagerModule(options = {}) {
     spawn,
     spawnedProcesses,
     updateService,
+    updateActiveProfileNodeConfig,
     windows,
   };
 }
@@ -467,6 +470,52 @@ describe('bee-manager', () => {
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('api-addr: 127.0.0.1:11633');
+
+    const stopPromise = ctx.mod.stopBee();
+    await jest.advanceTimersByTimeAsync(0);
+    await stopPromise;
+  });
+
+  test('persists a reassigned managed profile port before launching Bee', async () => {
+    jest.useFakeTimers();
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11633 },
+          },
+        },
+      },
+      portResolver: (port) => port === 11633,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:11634/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
+      apiPort: 11634,
+    });
+    expect(ctx.mod.getActivePort()).toBe(11634);
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: 'http://127.0.0.1:11634',
+      gateway: 'http://127.0.0.1:11634',
+      mode: 'bundled',
+    });
 
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);

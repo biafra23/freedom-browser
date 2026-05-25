@@ -8,7 +8,7 @@ const https = require('https');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { getIpfsDataDir } = require('./profile-paths');
-const { getActiveProfile } = require('./profile-resolver');
+const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
 const {
   MODE,
   DEFAULTS,
@@ -167,6 +167,16 @@ function buildApiRequestOptions(apiUrl, apiPath) {
 
 function getHttpClient(protocol) {
   return protocol === 'https:' ? https : http;
+}
+
+function persistManagedIpfsPorts(apiPort, gatewayPort) {
+  const result = updateActiveProfileNodeConfig('ipfs', { apiPort, gatewayPort });
+  if (result) {
+    log.info('[IPFS] Persisted managed profile ports:', {
+      apiPort,
+      gatewayPort,
+    });
+  }
 }
 
 function isRepoInitialized(dataDir) {
@@ -615,6 +625,8 @@ async function startIpfs() {
   // Step 3: Resolve ports (handle conflicts)
   let apiPort = getConfiguredIpfsApiPort(profileConfig);
   let gatewayPort = getConfiguredIpfsGatewayPort(profileConfig);
+  const configuredApiPort = apiPort;
+  const configuredGatewayPort = gatewayPort;
   let usingFallbackPort = false;
 
   const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
@@ -635,6 +647,20 @@ async function startIpfs() {
     const newGatewayPort = await findAvailablePort(gatewayPort + 1);
     if (newGatewayPort) {
       gatewayPort = newGatewayPort;
+    }
+  }
+
+  if (
+    managedProfileNode
+    && (apiPort !== configuredApiPort || gatewayPort !== configuredGatewayPort)
+  ) {
+    try {
+      persistManagedIpfsPorts(apiPort, gatewayPort);
+    } catch (err) {
+      log.error('[IPFS] Failed to persist managed profile ports:', err.message);
+      updateState(STATUS.ERROR, 'Failed to save IPFS port assignment');
+      setStatusMessage('ipfs', 'Node failed to start');
+      return;
     }
   }
 
