@@ -8,6 +8,8 @@ const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { loadSettings } = require('./settings-store');
 const registry = require('./networks/network-registry');
+const { getBeeDataDir } = require('./profile-paths');
+const { getActiveProfile } = require('./profile-resolver');
 const {
   MODE,
   DEFAULTS,
@@ -76,33 +78,19 @@ function getBeeBinaryPath() {
 }
 
 function getBeeDataPath() {
-  // Explicit override for tests / advanced users — keeps a live E2E
-  // run from clobbering the developer's persistent dev `bee-data/`.
-  // Honoured in both dev and packaged modes; only set this when you
-  // want a throwaway repo (and you're prepared for Bee to re-init
-  // identity, swarm key, peerstore, etc.).
-  if (process.env.FREEDOM_BEE_DATA) {
-    const overrideDir = process.env.FREEDOM_BEE_DATA;
-    if (!fs.existsSync(overrideDir)) {
-      fs.mkdirSync(overrideDir, { recursive: true });
-    }
-    return overrideDir;
-  }
-  if (!app.isPackaged) {
-    // In dev, bee-data is at project root (../../ from src/main)
-    const devDataDir = path.join(__dirname, '..', '..', 'bee-data');
-    if (!fs.existsSync(devDataDir)) {
-      fs.mkdirSync(devDataDir, { recursive: true });
-    }
-    return devDataDir;
-  }
+  return getBeeDataDir();
+}
 
-  const userData = app.getPath('userData');
-  const dataDir = path.join(userData, 'bee-data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  return dataDir;
+function getProfileBeeConfig() {
+  return getActiveProfile()?.metadata?.nodes?.bee || null;
+}
+
+function isManagedBeeConfig(config = getProfileBeeConfig()) {
+  return config?.mode === 'managed';
+}
+
+function getConfiguredBeeApiPort(config = getProfileBeeConfig()) {
+  return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.bee.apiPort;
 }
 
 function getConfiguredBeeNodeMode() {
@@ -393,8 +381,11 @@ async function startBee() {
   pendingStart = false;
   updateState(STATUS.STARTING);
 
-  // Step 1: Detect existing daemon
-  const existing = await detectExistingDaemon();
+  const profileConfig = getProfileBeeConfig();
+  const managedProfileNode = isManagedBeeConfig(profileConfig);
+
+  // Step 1: Detect existing daemon unless this profile owns a managed node.
+  const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
   if (existing.found) {
     // Reuse existing daemon
@@ -425,12 +416,11 @@ async function startBee() {
   const dataDir = getBeeDataPath();
 
   // Step 3: Resolve ports (handle conflicts)
-  // Always try default port first
-  let apiPort = DEFAULTS.bee.apiPort;
+  let apiPort = getConfiguredBeeApiPort(profileConfig);
   let usingFallbackPort = false;
 
-  // Check if default API port is available
-  if (existing.conflict) {
+  const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
+  if (existing.conflict || managedApiPortBusy) {
     const newApiPort = await findAvailablePort(apiPort + 1);
     if (!newApiPort) {
       updateState(STATUS.ERROR, 'No available ports for Bee API');

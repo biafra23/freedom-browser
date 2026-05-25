@@ -6,6 +6,8 @@ const fs = require('fs');
 const http = require('http');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
+const { getIpfsDataDir } = require('./profile-paths');
+const { getActiveProfile } = require('./profile-resolver');
 const {
   MODE,
   DEFAULTS,
@@ -64,31 +66,25 @@ function getIpfsBinaryPath() {
 }
 
 function getIpfsDataPath() {
-  // Explicit override for tests / advanced users — keeps a live E2E
-  // run from clobbering the developer's persistent dev `ipfs-data/`.
-  // Honoured in both dev and packaged modes; only set this when you
-  // want a throwaway repo (Kubo will re-init identity, peerstore, etc.).
-  if (process.env.FREEDOM_IPFS_DATA) {
-    const overrideDir = process.env.FREEDOM_IPFS_DATA;
-    if (!fs.existsSync(overrideDir)) {
-      fs.mkdirSync(overrideDir, { recursive: true });
-    }
-    return overrideDir;
-  }
-  if (!app.isPackaged) {
-    const devDataDir = path.join(__dirname, '..', '..', 'ipfs-data');
-    if (!fs.existsSync(devDataDir)) {
-      fs.mkdirSync(devDataDir, { recursive: true });
-    }
-    return devDataDir;
-  }
+  return getIpfsDataDir();
+}
 
-  const userData = app.getPath('userData');
-  const dataDir = path.join(userData, 'ipfs-data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  return dataDir;
+function getProfileIpfsConfig() {
+  return getActiveProfile()?.metadata?.nodes?.ipfs || null;
+}
+
+function isManagedIpfsConfig(config = getProfileIpfsConfig()) {
+  return config?.mode === 'managed';
+}
+
+function getConfiguredIpfsApiPort(config = getProfileIpfsConfig()) {
+  return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.ipfs.apiPort;
+}
+
+function getConfiguredIpfsGatewayPort(config = getProfileIpfsConfig()) {
+  return Number.isInteger(config?.gatewayPort)
+    ? config.gatewayPort
+    : DEFAULTS.ipfs.gatewayPort;
 }
 
 function isRepoInitialized(dataDir) {
@@ -434,8 +430,11 @@ async function startIpfs() {
   pendingStart = false;
   updateState(STATUS.STARTING);
 
-  // Step 1: Detect existing daemon
-  const existing = await detectExistingDaemon();
+  const profileConfig = getProfileIpfsConfig();
+  const managedProfileNode = isManagedIpfsConfig(profileConfig);
+
+  // Step 1: Detect existing daemon unless this profile owns a managed node.
+  const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
   if (existing.found) {
     // Reuse existing daemon
@@ -477,13 +476,12 @@ async function startIpfs() {
   }
 
   // Step 3: Resolve ports (handle conflicts)
-  // Always try default ports first
-  let apiPort = DEFAULTS.ipfs.apiPort;
-  let gatewayPort = DEFAULTS.ipfs.gatewayPort;
+  let apiPort = getConfiguredIpfsApiPort(profileConfig);
+  let gatewayPort = getConfiguredIpfsGatewayPort(profileConfig);
   let usingFallbackPort = false;
 
-  // Check if default API port is available
-  if (existing.conflict) {
+  const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
+  if (existing.conflict || managedApiPortBusy) {
     const newApiPort = await findAvailablePort(apiPort + 1);
     if (!newApiPort) {
       updateState(STATUS.ERROR, 'No available ports for IPFS API');

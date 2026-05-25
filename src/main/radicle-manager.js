@@ -12,6 +12,8 @@ const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { success, failure, validateNonEmptyString } = require('./ipc-contract');
 const { loadSettings } = require('./settings-store');
+const { getRadicleDataDir } = require('./profile-paths');
+const { getActiveProfile } = require('./profile-resolver');
 
 /**
  * Validate a Radicle Repository ID (RID).
@@ -83,6 +85,7 @@ let useInjectedIdentity = false;
 
 // Port configuration
 let currentHttpPort = DEFAULTS.radicle.httpPort;
+let currentP2pPort = DEFAULTS.radicle.p2pPort;
 let currentMode = MODE.NONE;
 let activeRadHome = null;
 
@@ -111,21 +114,23 @@ function getRadicleBinaryPath(binary) {
 }
 
 function getRadicleDataPath() {
-  if (!app.isPackaged) {
-    // In dev, radicle-data is at project root (../../ from src/main)
-    const devDataDir = path.join(__dirname, '..', '..', 'radicle-data');
-    if (!fs.existsSync(devDataDir)) {
-      fs.mkdirSync(devDataDir, { recursive: true });
-    }
-    return devDataDir;
-  }
+  return getRadicleDataDir();
+}
 
-  const userData = app.getPath('userData');
-  const dataDir = path.join(userData, 'radicle-data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  return dataDir;
+function getProfileRadicleConfig() {
+  return getActiveProfile()?.metadata?.nodes?.radicle || null;
+}
+
+function isManagedRadicleConfig(config = getProfileRadicleConfig()) {
+  return config?.mode === 'managed';
+}
+
+function getConfiguredRadicleHttpPort(config = getProfileRadicleConfig()) {
+  return Number.isInteger(config?.httpPort) ? config.httpPort : DEFAULTS.radicle.httpPort;
+}
+
+function getConfiguredRadicleP2pPort(config = getProfileRadicleConfig()) {
+  return Number.isInteger(config?.p2pPort) ? config.p2pPort : DEFAULTS.radicle.p2pPort;
 }
 
 function getRadicleSocketPath(radHome) {
@@ -151,7 +156,7 @@ function cleanupStaleSocket(radHome) {
  * Ensure config.json contains preferredSeeds for peer discovery.
  * Merges seeds into an existing config or creates a new one.
  */
-function ensureConfig(radHome) {
+function ensureConfig(radHome, p2pPort = getConfiguredRadicleP2pPort()) {
   const configPath = path.join(radHome, 'config.json');
   let config = {};
 
@@ -163,28 +168,28 @@ function ensureConfig(radHome) {
     }
   }
 
-  if (config.preferredSeeds && config.preferredSeeds.length > 0) {
-    return; // already has seeds
+  if (!config.preferredSeeds || config.preferredSeeds.length === 0) {
+    config.preferredSeeds = PREFERRED_SEEDS;
   }
 
-  config.preferredSeeds = PREFERRED_SEEDS;
   config.node = config.node || {};
   config.node.alias = config.node.alias || 'FreedomBrowser';
+  config.node.listen = [`0.0.0.0:${p2pPort}`];
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  log.info('[Radicle] Config updated with preferredSeeds');
+  log.info('[Radicle] Config updated with preferredSeeds and P2P port:', p2pPort);
 }
 
 /**
  * Check if Radicle identity exists, create if not
  */
-function ensureIdentity(radHome) {
+function ensureIdentity(radHome, p2pPort = getConfiguredRadicleP2pPort()) {
   const keysDir = path.join(radHome, 'keys');
   const privateKeyPath = path.join(keysDir, 'radicle');
 
   if (fs.existsSync(privateKeyPath)) {
     log.info('[Radicle] Identity already exists (injected or created)');
-    ensureConfig(radHome);
+    ensureConfig(radHome, p2pPort);
     return true;
   }
 
@@ -214,7 +219,7 @@ function ensureIdentity(radHome) {
       stdio: 'pipe',
     });
     log.info('[Radicle] Identity created successfully');
-    ensureConfig(radHome);
+    ensureConfig(radHome, p2pPort);
     return true;
   } catch (err) {
     log.error('[Radicle] Failed to create identity:', err.message);
@@ -473,8 +478,11 @@ async function startRadicle() {
   pendingStart = false;
   updateState(STATUS.STARTING);
 
+  const profileConfig = getProfileRadicleConfig();
+  const managedProfileNode = isManagedRadicleConfig(profileConfig);
+
   // Step 0: Detect system-wide radicle-node (~/.radicle)
-  const systemNode = await detectSystemNode();
+  const systemNode = managedProfileNode ? { found: false } : await detectSystemNode();
 
   if (systemNode.found) {
     activeRadHome = systemNode.radHome;
@@ -605,7 +613,7 @@ async function startRadicle() {
   activeRadHome = getRadicleDataPath();
 
   // Step 1: Detect existing daemon (httpd already running)
-  const existing = await detectExistingDaemon();
+  const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
   if (existing.found) {
     // Reuse existing daemon
@@ -641,20 +649,13 @@ async function startRadicle() {
     return;
   }
 
-  const radHome = activeRadHome;
-
-  // Step 3: Ensure identity exists
-  if (!ensureIdentity(radHome)) {
-    updateState(STATUS.ERROR, 'Failed to create Radicle identity');
-    setStatusMessage('radicle', 'Node failed to start');
-    return;
-  }
-
-  // Step 4: Resolve ports (handle conflicts)
-  let httpPort = DEFAULTS.radicle.httpPort;
+  // Step 3: Resolve ports (handle conflicts)
+  let httpPort = getConfiguredRadicleHttpPort(profileConfig);
+  let p2pPort = getConfiguredRadicleP2pPort(profileConfig);
   let usingFallbackPort = false;
 
-  if (existing.conflict) {
+  const managedHttpPortBusy = managedProfileNode ? await isPortOpen(httpPort) : false;
+  if (existing.conflict || managedHttpPortBusy) {
     const newHttpPort = await findAvailablePort(httpPort + 1);
     if (!newHttpPort) {
       updateState(STATUS.ERROR, 'No available ports for Radicle httpd');
@@ -665,8 +666,30 @@ async function startRadicle() {
     httpPort = newHttpPort;
   }
 
+  const managedP2pPortBusy = managedProfileNode ? await isPortOpen(p2pPort) : false;
+  if (managedP2pPortBusy) {
+    const newP2pPort = await findAvailablePort(p2pPort + 1);
+    if (!newP2pPort) {
+      updateState(STATUS.ERROR, 'No available ports for Radicle P2P');
+      setStatusMessage('radicle', 'Node failed to start');
+      return;
+    }
+    usingFallbackPort = true;
+    p2pPort = newP2pPort;
+  }
+
   currentHttpPort = httpPort;
+  currentP2pPort = p2pPort;
   currentMode = MODE.BUNDLED;
+
+  const radHome = activeRadHome;
+
+  // Step 4: Ensure identity exists and config has the selected P2P port
+  if (!ensureIdentity(radHome, p2pPort)) {
+    updateState(STATUS.ERROR, 'Failed to create Radicle identity');
+    setStatusMessage('radicle', 'Node failed to start');
+    return;
+  }
 
   const socketPath = getRadicleSocketPath(radHome);
 
@@ -674,7 +697,7 @@ async function startRadicle() {
   cleanupStaleSocket(radHome);
 
   // Step 6: Start radicle-node
-  log.info(`[Radicle] Starting node: ${nodeBinPath}`);
+  log.info(`[Radicle] Starting node: ${nodeBinPath} with P2P port ${currentP2pPort}`);
 
   try {
     radicleNodeProcess = spawn(nodeBinPath, [], {

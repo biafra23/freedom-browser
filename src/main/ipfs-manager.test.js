@@ -7,7 +7,7 @@ const {
 } = require('../../test/helpers/main-process-test-utils');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const DEV_IPFS_DATA_DIR = path.join(PROJECT_ROOT, 'ipfs-data');
+const DEFAULT_USER_DATA_DIR = '/tmp/freedom-user-data';
 
 function flushMicrotasks() {
   return Promise.resolve().then(() => Promise.resolve());
@@ -204,7 +204,7 @@ function loadIpfsManagerModule(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const app = options.app || createAppMock({
     isPackaged: options.isPackaged ?? false,
-    userDataDir: options.userDataDir || '/tmp/freedom-user-data',
+    userDataDir: options.userDataDir || DEFAULT_USER_DATA_DIR,
   });
   const windows = options.windows || [];
   const BrowserWindow = {
@@ -238,9 +238,7 @@ function loadIpfsManagerModule(options = {}) {
   const platform = platformMap[process.platform] || process.platform;
   const binaryName = process.platform === 'win32' ? 'ipfs.exe' : 'ipfs';
   const binPath = path.join(PROJECT_ROOT, 'ipfs-bin', `${platform}-${process.arch}`, binaryName);
-  const dataDir = options.isPackaged
-    ? path.join(options.userDataDir || '/tmp/freedom-user-data', 'ipfs-data')
-    : DEV_IPFS_DATA_DIR;
+  const dataDir = path.join(options.userDataDir || DEFAULT_USER_DATA_DIR, 'ipfs-data');
   const configPath = path.join(dataDir, 'config');
   const lockPath = path.join(dataDir, 'repo.lock');
 
@@ -282,6 +280,9 @@ function loadIpfsManagerModule(options = {}) {
         Socket,
       }),
       [require.resolve('./logger')]: () => log,
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: jest.fn(() => options.activeProfile || null),
+      }),
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
@@ -406,6 +407,62 @@ describe('ipfs-manager', () => {
     expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
   });
 
+  test('starts a managed profile daemon on profile ports without reusing defaults', async () => {
+    jest.useFakeTimers();
+    const checkedPorts = [];
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            ipfs: { mode: 'managed', apiPort: 15001, gatewayPort: 18080 },
+          },
+        },
+      },
+      configExists: true,
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return false;
+      },
+      httpResponse: (options) => {
+        if (options.port === 15001) {
+          return {
+            statusCode: 200,
+            body: { ID: 'peer-15001' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(checkedPorts).toContain(15001);
+    expect(checkedPorts).toContain(18080);
+    expect(checkedPorts).not.toContain(5001);
+    expect(ctx.spawnedProcesses).toHaveLength(1);
+    expect(ctx.mod.getActivePort()).toBe(15001);
+    expect(ctx.mod.getActiveGatewayPort()).toBe(18080);
+    expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
+      api: 'http://127.0.0.1:15001',
+      gateway: 'http://localhost:18080',
+      mode: 'bundled',
+    });
+
+    const writtenConfig = JSON.parse(ctx.fsMock.writeFileSync.mock.calls[0][1]);
+    expect(writtenConfig.Addresses.API).toBe('/ip4/127.0.0.1/tcp/15001');
+    expect(writtenConfig.Addresses.Gateway).toBe('/ip4/127.0.0.1/tcp/18080');
+
+    const stopPromise = ctx.mod.stopIpfs();
+    await flushMicrotasks();
+    await stopPromise;
+  });
+
   test('starts a bundled daemon on fallback ports, enforces config, and leaves no shutdown timers behind', async () => {
     jest.useFakeTimers();
 
@@ -418,7 +475,7 @@ describe('ipfs-manager', () => {
     const platform = platformMap[process.platform] || process.platform;
     const binaryName = process.platform === 'win32' ? 'ipfs.exe' : 'ipfs';
     const binPath = path.join(PROJECT_ROOT, 'ipfs-bin', `${platform}-${process.arch}`, binaryName);
-    const dataDir = DEV_IPFS_DATA_DIR;
+    const dataDir = path.join(DEFAULT_USER_DATA_DIR, 'ipfs-data');
     const lockPath = path.join(dataDir, 'repo.lock');
     const configPath = path.join(dataDir, 'config');
     const execSync = jest.fn(() => {
