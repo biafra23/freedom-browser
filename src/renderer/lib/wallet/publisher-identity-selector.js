@@ -7,6 +7,7 @@
 import { escapeHtml } from './wallet-utils.js';
 
 export const BEE_WALLET_IDENTITY_ID = 'bee-wallet';
+export const ETHEREUM_WALLET_ID_PREFIX = 'ethereum-wallet:';
 
 let outsideClickAttached = false;
 
@@ -77,12 +78,16 @@ export function renderPublisherIdentitySelector(container, state, handlers = {})
 
 export function identityLabel(identity) {
   if (!identity) return 'Publisher identity';
-  return identity.label || (identity.mode === 'bee-wallet' ? 'Bee wallet identity' : 'App-scoped identity');
+  if (identity.label) return identity.label;
+  if (identity.mode === 'bee-wallet') return 'Bee wallet identity';
+  if (identity.mode === 'ethereum-wallet') return 'Ethereum wallet';
+  return 'App-scoped identity';
 }
 
 export function identityModeLabel(identity) {
   if (identity?.mode === 'bee-wallet') return 'Bee wallet';
   if (identity?.mode === 'app-scoped') return 'App-scoped';
+  if (identity?.mode === 'ethereum-wallet') return 'Ethereum wallet';
   return 'Publisher';
 }
 
@@ -101,11 +106,15 @@ function orderIdentities(state) {
     stored: false,
   };
   const appScoped = identities
-    .filter((identity) => identity.id !== BEE_WALLET_IDENTITY_ID)
+    .filter((identity) => identity.mode === 'app-scoped')
     .sort(compareAppScopedIdentities);
+  const ethereumWallets = identities
+    .filter((identity) => identity.mode === 'ethereum-wallet')
+    .sort(compareEthereumWalletIdentities);
 
   return [
     ...appScoped,
+    ...ethereumWallets,
     beeWallet,
   ];
 }
@@ -116,6 +125,15 @@ function compareAppScopedIdentities(a, b) {
   }
   if (typeof a.publisherKeyIndex === 'number') return -1;
   if (typeof b.publisherKeyIndex === 'number') return 1;
+  return (a.createdAt || 0) - (b.createdAt || 0);
+}
+
+function compareEthereumWalletIdentities(a, b) {
+  if (typeof a.walletIndex === 'number' && typeof b.walletIndex === 'number') {
+    return a.walletIndex - b.walletIndex;
+  }
+  if (typeof a.walletIndex === 'number') return -1;
+  if (typeof b.walletIndex === 'number') return 1;
   return (a.createdAt || 0) - (b.createdAt || 0);
 }
 

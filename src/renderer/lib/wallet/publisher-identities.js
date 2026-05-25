@@ -94,9 +94,7 @@ function renderList(entries, query) {
   emptyMessage?.classList.add('hidden');
 
   for (const entry of filtered) {
-    const modeBadge = entry.identityMode === 'app-scoped'
-      ? '<span class="publisher-identity-badge badge-app-scoped">App-scoped</span>'
-      : '<span class="publisher-identity-badge badge-bee-wallet">Bee wallet</span>';
+    const modeBadge = getModeBadge(entry.identityMode);
 
     const grantDot = entry.feedGranted
       ? '<span class="publisher-identity-grant-dot" title="Feed access active"></span>'
@@ -122,6 +120,16 @@ function renderList(entries, query) {
     item.addEventListener('click', () => openOriginIdentityDetail(entry.origin));
     listContainer.appendChild(item);
   }
+}
+
+function getModeBadge(identityMode) {
+  if (identityMode === 'app-scoped') {
+    return '<span class="publisher-identity-badge badge-app-scoped">App-scoped</span>';
+  }
+  if (identityMode === 'ethereum-wallet') {
+    return '<span class="publisher-identity-badge badge-ethereum-wallet">Ethereum wallet</span>';
+  }
+  return '<span class="publisher-identity-badge badge-bee-wallet">Bee wallet</span>';
 }
 
 function showPublisherIdentityList() {
@@ -190,6 +198,12 @@ async function activateIdentityForDetail(identity) {
 
   if (identity.id === BEE_WALLET_IDENTITY_ID) {
     activeDetailState = await window.swarmFeedStore.ensureBeeWalletIdentity(activeDetailOrigin, { activate: true });
+  } else if (identity.mode === 'ethereum-wallet') {
+    activeDetailState = await window.swarmFeedStore.ensureEthereumWalletIdentity(
+      activeDetailOrigin,
+      identity.walletIndex,
+      { activate: true }
+    );
   } else {
     activeDetailState = await window.swarmFeedStore.activateFeedIdentity(activeDetailOrigin, identity.id);
   }

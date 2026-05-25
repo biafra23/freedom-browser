@@ -270,6 +270,12 @@ async function activateSwarmIdentity(identity) {
 
   if (identity.id === BEE_WALLET_IDENTITY_ID) {
     swarmPermsIdentityState = await window.swarmFeedStore.ensureBeeWalletIdentity(swarmPermsKey, { activate: true });
+  } else if (identity.mode === 'ethereum-wallet') {
+    swarmPermsIdentityState = await window.swarmFeedStore.ensureEthereumWalletIdentity(
+      swarmPermsKey,
+      identity.walletIndex,
+      { activate: true }
+    );
   } else {
     swarmPermsIdentityState = await window.swarmFeedStore.activateFeedIdentity(swarmPermsKey, identity.id);
   }

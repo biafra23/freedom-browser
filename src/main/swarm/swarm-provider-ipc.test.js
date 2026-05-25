@@ -85,9 +85,11 @@ jest.mock('./feed-store', () => ({
 
 const mockGetDerivedKeys = jest.fn();
 const mockGetPublisherKey = jest.fn();
+const mockGetUserWalletKey = jest.fn();
 jest.mock('../identity-manager', () => ({
   getDerivedKeys: mockGetDerivedKeys,
   getPublisherKey: mockGetPublisherKey,
+  getUserWalletKey: mockGetUserWalletKey,
 }));
 
 const mockAddEntry = jest.fn().mockReturnValue({ id: 'test-id' });
@@ -118,19 +120,24 @@ async function invokeProvider(method, params, origin) {
   return handler({}, { method, params, origin });
 }
 
-function mockV2FeedCapability(origin, activeIdentityId = 'app-scoped:2') {
-  const identities = {
-    'app-scoped:1': {
-      id: 'app-scoped:1',
-      mode: 'app-scoped',
-      publisherKeyIndex: 1,
-    },
-    'app-scoped:2': {
-      id: 'app-scoped:2',
-      mode: 'app-scoped',
-      publisherKeyIndex: 2,
-    },
-  };
+  function mockV2FeedCapability(origin, activeIdentityId = 'app-scoped:2') {
+    const identities = {
+      'app-scoped:1': {
+        id: 'app-scoped:1',
+        mode: 'app-scoped',
+        publisherKeyIndex: 1,
+      },
+      'app-scoped:2': {
+        id: 'app-scoped:2',
+        mode: 'app-scoped',
+        publisherKeyIndex: 2,
+      },
+      'ethereum-wallet:2': {
+        id: 'ethereum-wallet:2',
+        mode: 'ethereum-wallet',
+        walletIndex: 2,
+      },
+    };
   const activeIdentity = identities[activeIdentityId];
   mockGetPermission.mockReturnValue({ origin, connectedAt: 1, lastUsed: 1, autoApprove: { publish: false, feeds: false } });
   mockHasFeedGrant.mockReturnValue(true);
@@ -869,6 +876,27 @@ describe('swarm-provider-ipc', () => {
       }));
     });
 
+    test('writes an SOC with a browser wallet identity', async () => {
+      mockV2FeedCapability('myapp.eth', 'ethereum-wallet:2');
+      mockPreFlightOk();
+      mockGetUserWalletKey.mockResolvedValue({ privateKey: '0xwalletkey' });
+      mockWriteSingleOwnerChunk.mockResolvedValue({
+        reference: VALID_REF,
+        owner: VALID_OWNER,
+        identifier: VALID_IDENTIFIER,
+        batchIdUsed: 'batch1',
+      });
+
+      const result = await invokeProvider('swarm_writeSingleOwnerChunk', {
+        identifier: VALID_IDENTIFIER,
+        data: 'hello',
+      }, 'myapp.eth');
+
+      expect(result.result.owner).toBe(VALID_OWNER);
+      expect(mockGetUserWalletKey).toHaveBeenCalledWith(2);
+      expect(mockWriteSingleOwnerChunk).toHaveBeenCalledWith('0xwalletkey', VALID_IDENTIFIER, Buffer.from('hello'), { span: undefined });
+    });
+
     test('rejects SOC writes without feed grant', async () => {
       mockGetPermission.mockReturnValue({ origin: 'myapp.eth' });
       mockHasFeedGrant.mockReturnValue(false);
@@ -930,6 +958,21 @@ describe('swarm-provider-ipc', () => {
         identityMode: 'bee-wallet',
       });
       expect(mockGetSignerAddress).toHaveBeenCalledWith('0xbeekey');
+    });
+
+    test('returns signing identity for browser wallet identities', async () => {
+      mockV2FeedCapability('myapp.eth', 'ethereum-wallet:2');
+      mockGetUserWalletKey.mockResolvedValue({ privateKey: '0xwalletkey' });
+      mockGetSignerAddress.mockReturnValue(VALID_OWNER);
+
+      const result = await invokeProvider('swarm_getSigningIdentity', {}, 'myapp.eth');
+
+      expect(result.result).toEqual({
+        owner: VALID_OWNER,
+        identityMode: 'ethereum-wallet',
+      });
+      expect(mockGetUserWalletKey).toHaveBeenCalledWith(2);
+      expect(mockGetSignerAddress).toHaveBeenCalledWith('0xwalletkey');
     });
 
     test('rejects signing identity without feed grant using spec-shaped 4100', async () => {
@@ -1124,6 +1167,28 @@ describe('swarm-provider-ipc', () => {
       expect(result.result.identityMode).toBe('bee-wallet');
       expect(mockCreateFeed).toHaveBeenCalledWith('0xbeekey', 'myapp.eth/blog');
       expect(mockGetPublisherKey).not.toHaveBeenCalled();
+    });
+
+    test('creates feed with browser wallet identity', async () => {
+      mockV2FeedCapability('myapp.eth', 'ethereum-wallet:2');
+      mockGetFeed.mockReturnValue(null);
+      mockPreFlightOk();
+      mockGetUserWalletKey.mockResolvedValue({ privateKey: '0xwalletkey' });
+      mockCreateFeed.mockResolvedValue({
+        topic: 'topichex',
+        owner: '0xWalletOwner',
+        manifestReference: 'mref',
+        bzzUrl: 'bzz://mref',
+      });
+
+      const result = await invokeProvider('swarm_createFeed', { name: 'blog' }, 'myapp.eth');
+
+      expect(result.result.identityMode).toBe('ethereum-wallet');
+      expect(mockGetUserWalletKey).toHaveBeenCalledWith(2);
+      expect(mockCreateFeed).toHaveBeenCalledWith('0xwalletkey', 'myapp.eth/blog');
+      expect(mockSetFeed).toHaveBeenCalledWith('myapp.eth', 'blog', expect.objectContaining({
+        identityId: 'ethereum-wallet:2',
+      }));
     });
 
     test('records publish history on success', async () => {

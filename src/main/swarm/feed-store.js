@@ -17,6 +17,7 @@
  * A default identity is chosen when an origin first receives feed access:
  *   - 'bee-wallet': uses the Bee node wallet key for signing
  *   - 'app-scoped': uses a dedicated publisher key derived at m/44'/73406'/{index}'/0/0
+ *   - 'ethereum-wallet': uses one of the browser's Ethereum wallet accounts
  *
  * Survives permission revocation — revoking Swarm connection does not
  * forget publisher identities. Switching identity is an explicit user action.
@@ -27,15 +28,16 @@ const path = require('path');
 const fs = require('fs');
 const IPC = require('../../shared/ipc-channels');
 const { normalizeOrigin } = require('../../shared/origin-utils');
-const { getDerivedKeys, getPublisherKey } = require('../identity-manager');
+const { getDerivedKeys, getPublisherKey, getDerivedWallets } = require('../identity-manager');
 const log = require('electron-log');
 
 const FEEDS_FILE = 'swarm-feeds.json';
 const CURRENT_VERSION = 2;
 const MAX_IDENTITY_LABEL_BYTES = 80;
 
-const VALID_IDENTITY_MODES = ['bee-wallet', 'app-scoped'];
+const VALID_IDENTITY_MODES = ['bee-wallet', 'app-scoped', 'ethereum-wallet'];
 const BEE_WALLET_IDENTITY_ID = 'bee-wallet';
+const ETHEREUM_WALLET_ID_PREFIX = 'ethereum-wallet';
 
 let feedsCache = null;
 
@@ -55,7 +57,7 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function getIdentityId(identityMode, publisherKeyIndex = null) {
+function getIdentityId(identityMode, publisherKeyIndex = null, walletIndex = null) {
   if (identityMode === 'bee-wallet') {
     return BEE_WALLET_IDENTITY_ID;
   }
@@ -65,12 +67,21 @@ function getIdentityId(identityMode, publisherKeyIndex = null) {
     }
     return `app-scoped:${publisherKeyIndex}`;
   }
+  if (identityMode === 'ethereum-wallet') {
+    if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+      throw new Error('Ethereum wallet identity requires a non-negative wallet index');
+    }
+    return `${ETHEREUM_WALLET_ID_PREFIX}:${walletIndex}`;
+  }
   throw new Error(`Invalid identity mode: ${identityMode}`);
 }
 
-function getIdentityLabel(identityMode, publisherKeyIndex = null) {
+function getIdentityLabel(identityMode, publisherKeyIndex = null, walletIndex = null) {
   if (identityMode === 'bee-wallet') {
     return 'Bee wallet identity';
+  }
+  if (identityMode === 'ethereum-wallet') {
+    return `Ethereum wallet ${(walletIndex ?? 0) + 1}`;
   }
   return `App-scoped identity ${(publisherKeyIndex ?? 0) + 1}`;
 }
@@ -92,17 +103,18 @@ function normalizeIdentityLabel(label, fallback) {
   return trimmed;
 }
 
-function createIdentity(identityMode, publisherKeyIndex = null, createdAt = Date.now(), label = null) {
+function createIdentity(identityMode, publisherKeyIndex = null, createdAt = Date.now(), label = null, walletIndex = null) {
   if (!VALID_IDENTITY_MODES.includes(identityMode)) {
     throw new Error(`Invalid identity mode: ${identityMode}`);
   }
 
-  const id = getIdentityId(identityMode, publisherKeyIndex);
-  const fallbackLabel = getIdentityLabel(identityMode, publisherKeyIndex);
+  const id = getIdentityId(identityMode, publisherKeyIndex, walletIndex);
+  const fallbackLabel = getIdentityLabel(identityMode, publisherKeyIndex, walletIndex);
   return {
     id,
     mode: identityMode,
     publisherKeyIndex: identityMode === 'app-scoped' ? publisherKeyIndex : null,
+    walletIndex: identityMode === 'ethereum-wallet' ? walletIndex : null,
     label: normalizeIdentityLabel(label, fallbackLabel),
     createdAt,
     lastUsedAt: null,
@@ -146,6 +158,7 @@ function decorateOriginEntry(entry) {
     feeds: copyFeeds(entry.feeds),
     identityMode: activeIdentity?.mode || null,
     publisherKeyIndex: activeIdentity?.publisherKeyIndex ?? null,
+    walletIndex: activeIdentity?.walletIndex ?? null,
   };
 }
 
@@ -342,16 +355,27 @@ function setOriginEntry(origin, data) {
 
   const existing = store.origins[key] || {};
   let publisherKeyIndex = data.publisherKeyIndex ?? null;
+  let walletIndex = data.walletIndex ?? null;
   if (data.identityMode === 'app-scoped' && publisherKeyIndex === null) {
     publisherKeyIndex = allocatePublisherKeyIndexInStore(store);
   }
   if (data.identityMode === 'app-scoped') {
     updateNextPublisherKeyIndex(store, publisherKeyIndex);
   }
+  if (data.identityMode === 'ethereum-wallet') {
+    if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+      throw new Error('Ethereum wallet identity requires a non-negative wallet index');
+    }
+    publisherKeyIndex = null;
+  } else {
+    walletIndex = null;
+  }
   const identity = createIdentity(
     data.identityMode,
     publisherKeyIndex,
-    existing.grantedAt || Date.now()
+    existing.grantedAt || Date.now(),
+    null,
+    walletIndex
   );
   const identities = {
     ...(existing.identities || {}),
@@ -415,6 +439,7 @@ function getOriginIdentityState(origin) {
     activeIdentityId: entry.activeIdentityId,
     identityMode: entry.identityMode,
     publisherKeyIndex: entry.publisherKeyIndex,
+    walletIndex: entry.walletIndex,
     identities: Object.values(entry.identities || {})
       .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
     feedGranted: !!entry.feedGranted,
@@ -449,6 +474,21 @@ async function enrichIdentityOwner(identity, options = {}) {
     };
   }
 
+  if (identity.mode === 'ethereum-wallet') {
+    if (typeof identity.walletIndex !== 'number') {
+      throw new Error('Ethereum wallet identity is missing a wallet index');
+    }
+    const wallets = await getDerivedWallets();
+    const wallet = wallets.find((candidate) => candidate.index === identity.walletIndex);
+    return {
+      ...identity,
+      label: wallet?.name || identity.label || getIdentityLabel('ethereum-wallet', null, identity.walletIndex),
+      owner: wallet?.address || null,
+      stored,
+      unavailable: !wallet,
+    };
+  }
+
   return { ...identity, owner: null, stored };
 }
 
@@ -458,6 +498,7 @@ async function getOriginIdentityStateWithOwners(origin) {
     activeIdentityId: null,
     identityMode: null,
     publisherKeyIndex: null,
+    walletIndex: null,
     identities: [],
     feedGranted: false,
     grantedAt: null,
@@ -479,6 +520,21 @@ async function getOriginIdentityStateWithOwners(origin) {
       createIdentity('bee-wallet', null, 0),
       { stored: false }
     ));
+  }
+
+  const knownIds = new Set(identities.map((identity) => identity.id));
+  const wallets = await getDerivedWallets();
+  for (const wallet of wallets) {
+    const walletIdentity = createIdentity(
+      'ethereum-wallet',
+      null,
+      0,
+      wallet.name,
+      wallet.index
+    );
+    if (!knownIds.has(walletIdentity.id)) {
+      identities.push(await enrichIdentityOwner(walletIdentity, { stored: false }));
+    }
   }
 
   return {
@@ -534,6 +590,44 @@ function ensureBeeWalletIdentity(origin, options = {}) {
   store.origins[key] = entry;
   saveFeeds();
   log.info(`[FeedStore] Ensured Bee wallet identity for ${key}`);
+  return getOriginEntry(origin);
+}
+
+async function ensureEthereumWalletIdentity(origin, walletIndex, options = {}) {
+  if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+    throw new Error('Wallet index must be a non-negative integer');
+  }
+  const wallets = await getDerivedWallets();
+  const wallet = wallets.find((candidate) => candidate.index === walletIndex);
+  if (!wallet) {
+    throw new Error(`Wallet with index ${walletIndex} does not exist`);
+  }
+
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key] || createOriginShell();
+  const identityId = getIdentityId('ethereum-wallet', null, walletIndex);
+  const existing = entry.identities?.[identityId];
+  const identity = existing || createIdentity('ethereum-wallet', null, Date.now(), wallet.name, walletIndex);
+
+  entry.identities = {
+    ...(entry.identities || {}),
+    [identity.id]: {
+      ...identity,
+      label: wallet.name || identity.label,
+    },
+  };
+  if (options.activate === true || !entry.activeIdentityId) {
+    entry.activeIdentityId = identity.id;
+    entry.identities[identity.id].lastUsedAt = Date.now();
+  }
+  entry.feeds = entry.feeds || {};
+  entry.grantedAt = entry.grantedAt || Date.now();
+  entry.feedGranted = !!entry.feedGranted;
+
+  store.origins[key] = entry;
+  saveFeeds();
+  log.info(`[FeedStore] Ensured Ethereum wallet identity ${identity.id} for ${key}`);
   return getOriginEntry(origin);
 }
 
@@ -655,6 +749,7 @@ function getAllOriginEntries() {
         origin,
         identityMode: activeIdentity?.mode || null,
         publisherKeyIndex: activeIdentity?.publisherKeyIndex ?? null,
+        walletIndex: activeIdentity?.walletIndex ?? null,
         activeIdentityId: entry.activeIdentityId,
         identityCount: entry.identities ? Object.keys(entry.identities).length : 0,
         feedGranted: !!entry.feedGranted,
@@ -754,6 +849,11 @@ function registerFeedStoreIpc() {
     return getOriginIdentityStateWithOwners(origin);
   });
 
+  ipcMain.handle(IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY, async (_event, origin, walletIndex, options = {}) => {
+    await ensureEthereumWalletIdentity(origin, walletIndex, options);
+    return getOriginIdentityStateWithOwners(origin);
+  });
+
   ipcMain.handle(IPC.SWARM_ACTIVATE_FEED_IDENTITY, async (_event, origin, identityId) => {
     activateIdentity(origin, identityId);
     return getOriginIdentityStateWithOwners(origin);
@@ -799,6 +899,7 @@ module.exports = {
   getOriginIdentityStateWithOwners,
   createAppScopedIdentity,
   ensureBeeWalletIdentity,
+  ensureEthereumWalletIdentity,
   activateIdentity,
   getFeed,
   setFeed,

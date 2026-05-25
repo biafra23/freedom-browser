@@ -21,10 +21,12 @@ jest.mock('electron-log', () => ({
 
 const mockGetDerivedKeys = jest.fn();
 const mockGetPublisherKey = jest.fn();
+const mockGetDerivedWallets = jest.fn();
 
 jest.mock('../identity-manager', () => ({
   getDerivedKeys: (...args) => mockGetDerivedKeys(...args),
   getPublisherKey: (...args) => mockGetPublisherKey(...args),
+  getDerivedWallets: (...args) => mockGetDerivedWallets(...args),
 }));
 
 const { app } = require('electron');
@@ -49,6 +51,7 @@ const {
   getOriginIdentityState,
   createAppScopedIdentity,
   ensureBeeWalletIdentity,
+  ensureEthereumWalletIdentity,
   activateIdentity,
   getFeed,
   setFeed,
@@ -75,6 +78,10 @@ beforeEach(() => {
     address: `0xPublisher${index}`,
     privateKey: `0xpublisher${index}`,
   }));
+  mockGetDerivedWallets.mockResolvedValue([
+    { index: 0, name: 'Main Wallet', address: '0xWallet000000000000000000000000000000000000' },
+    { index: 2, name: 'Trading Wallet', address: '0xWallet222222222222222222222222222222222222' },
+  ]);
 });
 
 function getFeedsFilePath() {
@@ -114,6 +121,21 @@ describe('feed-store', () => {
       expect(entry.identityMode).toBe('bee-wallet');
       expect(entry.publisherKeyIndex).toBeNull();
       expect(entry.activeIdentityId).toBe('bee-wallet');
+    });
+
+    test('setOriginEntry creates entry with ethereum-wallet mode', () => {
+      const entry = setOriginEntry('myapp.eth', {
+        identityMode: 'ethereum-wallet',
+        walletIndex: 2,
+      });
+      expect(entry.identityMode).toBe('ethereum-wallet');
+      expect(entry.publisherKeyIndex).toBeNull();
+      expect(entry.walletIndex).toBe(2);
+      expect(entry.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(entry.identities['ethereum-wallet:2']).toMatchObject({
+        mode: 'ethereum-wallet',
+        walletIndex: 2,
+      });
     });
 
     test('getOriginEntry returns entry after set', () => {
@@ -206,6 +228,26 @@ describe('feed-store', () => {
       expect(entry.activeIdentityId).toBe('bee-wallet');
       expect(entry.identityMode).toBe('bee-wallet');
       expect(entry.publisherKeyIndex).toBeNull();
+    });
+
+    test('ensureEthereumWalletIdentity can add and activate a browser wallet identity', async () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = await ensureEthereumWalletIdentity('myapp.eth', 2, { activate: true });
+
+      expect(entry.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(entry.identityMode).toBe('ethereum-wallet');
+      expect(entry.walletIndex).toBe(2);
+      expect(entry.identities['ethereum-wallet:2']).toMatchObject({
+        mode: 'ethereum-wallet',
+        walletIndex: 2,
+        label: 'Trading Wallet',
+      });
+    });
+
+    test('ensureEthereumWalletIdentity rejects missing browser wallets', async () => {
+      await expect(ensureEthereumWalletIdentity('myapp.eth', 99))
+        .rejects.toThrow('Wallet with index 99 does not exist');
     });
 
     test('activateIdentity switches active identity without retagging existing feeds', () => {
@@ -549,6 +591,7 @@ describe('feed-store', () => {
       expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]).toBeDefined();
     });
 
@@ -640,16 +683,27 @@ describe('feed-store', () => {
         stored: true,
       });
 
-      const switched = await ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]({}, 'ipc-manage.eth', 'bee-wallet');
-      expect(switched.activeIdentityId).toBe('bee-wallet');
-      expect(switched.identityMode).toBe('bee-wallet');
+      const withWalletIdentity = await ipcHandlers[IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY]({}, 'ipc-manage.eth', 2);
+      expect(withWalletIdentity.activeIdentityId).toBe('app-scoped:1');
+      expect(withWalletIdentity.identities.find((identity) => identity.id === 'ethereum-wallet:2')).toMatchObject({
+        label: 'Trading Wallet',
+        owner: '0xWallet222222222222222222222222222222222222',
+        stored: true,
+      });
+
+      const switched = await ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]({}, 'ipc-manage.eth', 'ethereum-wallet:2');
+      expect(switched.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(switched.identityMode).toBe('ethereum-wallet');
+      expect(switched.walletIndex).toBe(2);
 
       const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-manage.eth');
-      expect(state.activeIdentityId).toBe('bee-wallet');
+      expect(state.activeIdentityId).toBe('ethereum-wallet:2');
       expect(state.identities.map((identity) => identity.id)).toEqual([
         'app-scoped:0',
         'app-scoped:1',
         'bee-wallet',
+        'ethereum-wallet:2',
+        'ethereum-wallet:0',
       ]);
     });
 
@@ -665,6 +719,31 @@ describe('feed-store', () => {
         owner: '0xBee0000000000000000000000000000000000000',
         stored: false,
       });
+    });
+
+    test('get-origin-identities includes browser wallets as available identities', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-wallets.eth', 'app-scoped');
+
+      const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-wallets.eth');
+      const walletIdentities = state.identities.filter((identity) => identity.mode === 'ethereum-wallet');
+
+      expect(walletIdentities).toEqual([
+        expect.objectContaining({
+          id: 'ethereum-wallet:0',
+          label: 'Main Wallet',
+          walletIndex: 0,
+          owner: '0xWallet000000000000000000000000000000000000',
+          stored: false,
+        }),
+        expect.objectContaining({
+          id: 'ethereum-wallet:2',
+          label: 'Trading Wallet',
+          walletIndex: 2,
+          owner: '0xWallet222222222222222222222222222222222222',
+          stored: false,
+        }),
+      ]);
     });
 
     test('get-origin-identities requires unlocked vault for owner inspection', async () => {

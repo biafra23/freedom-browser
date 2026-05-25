@@ -564,6 +564,12 @@ async function activateFeedPromptIdentity(identity) {
         swarmFeedPending.permissionKey,
         { activate: true }
       );
+    } else if (identity.mode === 'ethereum-wallet') {
+      swarmFeedIdentityState = await window.swarmFeedStore.ensureEthereumWalletIdentity(
+        swarmFeedPending.permissionKey,
+        identity.walletIndex,
+        { activate: true }
+      );
     } else {
       swarmFeedIdentityState = await window.swarmFeedStore.activateFeedIdentity(
         swarmFeedPending.permissionKey,

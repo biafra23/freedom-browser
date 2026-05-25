@@ -38,7 +38,7 @@ const {
 } = require('./chunk-service');
 const { addEntry, updateEntry } = require('./publish-history');
 const { getBeeApiUrl } = require('../service-registry');
-const { getDerivedKeys, getPublisherKey } = require('../identity-manager');
+const { getDerivedKeys, getPublisherKey, getUserWalletKey } = require('../identity-manager');
 const { resetVaultAutoLockTimer } = require('../vault-timer');
 const log = require('electron-log');
 
@@ -948,6 +948,14 @@ async function resolveSignerKey(identity) {
     }
     const publisherKey = await getPublisherKey(identity.publisherKeyIndex);
     return publisherKey.privateKey;
+  }
+
+  if (identityMode === 'ethereum-wallet') {
+    if (typeof identity.walletIndex !== 'number') {
+      throw new Error('Ethereum wallet identity is missing a wallet index');
+    }
+    const walletKey = await getUserWalletKey(identity.walletIndex);
+    return walletKey.privateKey;
   }
 
   throw new Error(`Unknown identity mode: ${identityMode}`);

@@ -193,6 +193,7 @@ module.exports = {
   SWARM_GET_ORIGIN_IDENTITIES: 'swarm:get-origin-identities',
   SWARM_CREATE_APP_SCOPED_IDENTITY: 'swarm:create-app-scoped-identity',
   SWARM_ENSURE_BEE_WALLET_IDENTITY: 'swarm:ensure-bee-wallet-identity',
+  SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY: 'swarm:ensure-ethereum-wallet-identity',
   SWARM_ACTIVATE_FEED_IDENTITY: 'swarm:activate-feed-identity',
   SWARM_REVOKE_FEED_ACCESS: 'swarm:revoke-feed-access',
 };
