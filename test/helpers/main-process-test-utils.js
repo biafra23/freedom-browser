@@ -101,10 +101,15 @@ function createContextBridgeMock() {
 
 function createAppMock(options = {}) {
   const handlers = new Map();
+  const appPaths = {
+    userData: options.userDataDir ?? os.tmpdir(),
+    ...(options.appPaths || {}),
+  };
 
   return {
     handlers,
     isPackaged: options.isPackaged ?? false,
+    name: options.name || 'Freedom',
     on: jest.fn((event, handler) => {
       handlers.set(event, handler);
     }),
@@ -114,15 +119,17 @@ function createAppMock(options = {}) {
       return handler(...args);
     },
     getPath: jest.fn((name) => {
-      if (name === 'userData') {
-        return options.userDataDir ?? os.tmpdir();
-      }
-
-      if (options.appPaths?.[name]) {
-        return options.appPaths[name];
+      if (appPaths[name]) {
+        return appPaths[name];
       }
 
       return path.join(os.tmpdir(), name);
+    }),
+    setPath: jest.fn((name, value) => {
+      appPaths[name] = value;
+    }),
+    setName: jest.fn(function setName(name) {
+      this.name = name;
     }),
     showAboutPanel: jest.fn(),
   };
@@ -150,7 +157,10 @@ function loadMainModule(modulePath, options = {}) {
   const webContentsMock = options.webContents || {
     getAllWebContents: jest.fn(() => options.webContentsList ?? []),
   };
-  const dialog = options.dialog || { showSaveDialog: jest.fn() };
+  const dialog = options.dialog || {
+    showErrorBox: jest.fn(),
+    showSaveDialog: jest.fn(),
+  };
   const clipboard = options.clipboard || {
     writeText: jest.fn(),
     writeImage: jest.fn(),

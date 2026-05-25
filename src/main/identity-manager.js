@@ -13,6 +13,12 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const IPC = require('../shared/ipc-channels');
+const {
+  getBeeDataDir,
+  getIdentityDataDir,
+  getIpfsDataDir,
+  getRadicleDataDir,
+} = require('./profile-paths');
 
 // Identity module - loaded lazily
 let identityModule = null;
@@ -29,24 +35,6 @@ let injectedNodes = {
 
 // Vault metadata file
 const VAULT_META_FILE = 'vault-meta.json';
-
-/**
- * Get the app data directory for identity storage
- */
-function getIdentityDataDir() {
-  // Explicit override for tests / advanced users — keeps a live E2E
-  // run from picking up the developer's persistent dev `identity-data/`
-  // vault, which would flip Bee/IPFS into injected-identity mode and
-  // make them hang waiting for keys the temp data dirs don't have.
-  // Honoured in both dev and packaged modes.
-  if (process.env.FREEDOM_IDENTITY_DATA) {
-    return process.env.FREEDOM_IDENTITY_DATA;
-  }
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'identity-data');
-  }
-  return path.join(app.getPath('userData'), 'identity');
-}
 
 /**
  * Get the path to the vault metadata file
@@ -257,36 +245,6 @@ async function getPublisherKey(originIndex) {
   }
 
   return identity.derivePublisherKey(mnemonic, originIndex);
-}
-
-/**
- * Get the Bee data directory
- */
-function getBeeDataDir() {
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'bee-data');
-  }
-  return path.join(app.getPath('userData'), 'bee-data');
-}
-
-/**
- * Get the IPFS data directory
- */
-function getIpfsDataDir() {
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'ipfs-data');
-  }
-  return path.join(app.getPath('userData'), 'ipfs-data');
-}
-
-/**
- * Get the Radicle data directory
- */
-function getRadicleDataDir() {
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'radicle-data');
-  }
-  return path.join(app.getPath('userData'), 'radicle-data');
 }
 
 /**

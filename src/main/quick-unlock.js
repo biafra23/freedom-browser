@@ -8,19 +8,13 @@
 const { ipcMain, systemPreferences, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
-
-// Storage key for the encrypted credential
-const CREDENTIAL_FILE = 'quick-unlock.dat';
+const { getQuickUnlockCredentialPath } = require('./profile-paths');
 
 /**
  * Get the path to the credential file
  */
 function getCredentialPath() {
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'identity-data', CREDENTIAL_FILE);
-  }
-  return path.join(app.getPath('userData'), 'identity', CREDENTIAL_FILE);
+  return getQuickUnlockCredentialPath();
 }
 
 /**
