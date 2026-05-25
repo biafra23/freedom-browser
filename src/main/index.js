@@ -1,6 +1,8 @@
 // Set app name early, before electron-log initializes (it uses app name for log path)
-const { app } = require('electron');
-const appName = process.platform === 'linux' ? 'freedom' : 'Freedom';
+const { app, dialog } = require('electron');
+const appName = app.isPackaged
+  ? process.platform === 'linux' ? 'freedom' : 'Freedom'
+  : 'Freedom Dev';
 
 // Suppress Electron security warnings in development (CSP handles security in production)
 if (!app.isPackaged) {
@@ -22,6 +24,32 @@ if (process.env.FREEDOM_TEST_USER_DATA) {
   app.setPath('userData', process.env.FREEDOM_TEST_USER_DATA);
 }
 const TEST_MODE = process.env.FREEDOM_TEST_MODE === '1';
+const { migrateUserData } = require('./migrate-user-data');
+if (app.isPackaged && !process.env.FREEDOM_TEST_USER_DATA) {
+  migrateUserData({ logger: console });
+}
+const { initializeProfile } = require('./profile-resolver');
+const activeProfile = initializeProfile(app);
+const {
+  acquireProfileLock,
+  isLockUnavailableError,
+  releaseProfileLock,
+} = require('./profile-lock');
+let activeProfileLock = null;
+try {
+  activeProfileLock = acquireProfileLock(activeProfile, { logger: console });
+} catch (error) {
+  if (isLockUnavailableError(error)) {
+    const profileName = activeProfile.displayName || activeProfile.id || 'selected';
+    dialog.showErrorBox(
+      'Freedom profile is already open',
+      `The "${profileName}" profile is already open. Close that Freedom window or launch a different profile.`
+    );
+    app.exit(0);
+    process.exit(0);
+  }
+  throw error;
+}
 
 const { version } = require('../../package.json');
 const iconPath = app.isPackaged
@@ -50,7 +78,6 @@ process.on('unhandledRejection', (reason, _promise) => {
 });
 
 const { BrowserWindow, protocol, session } = require('electron');
-const path = require('path');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
 const { registerRequestRewriter } = require('./request-rewriter');
 const { registerBzzProtocol } = require('./swarm/bzz-protocol');
@@ -98,16 +125,24 @@ const { registerFeedStoreIpc } = require('./swarm/feed-store');
 const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
 const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
-const { migrateUserData } = require('./migrate-user-data');
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
 const { registerWebContentsHandlers } = require('./webcontents-setup');
 const { installTestHarness } = require('./test-harness');
 
 app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
-
-const crashDir = path.join(__dirname, 'crash-reports');
-app.setPath('crashDumps', crashDir);
+log.info('[profile] Active profile:', {
+  id: activeProfile.id,
+  source: activeProfile.source,
+  userDataDir: activeProfile.userDataDir,
+  appRoot: activeProfile.appRoot,
+});
+app.on('will-quit', () => {
+  if (activeProfileLock) {
+    releaseProfileLock(activeProfileLock, { logger: log });
+    activeProfileLock = null;
+  }
+});
 
 function allowInteractivePermissions(targetSession) {
   if (!targetSession || !targetSession.setPermissionRequestHandler) {
@@ -124,10 +159,6 @@ function allowInteractivePermissions(targetSession) {
 }
 
 async function bootstrap() {
-  // Migrate user data from old "Freedom Browser" directory if needed
-  // This must run before any modules access userData
-  migrateUserData();
-
   const defaultSession = session.defaultSession;
   await defaultSession.clearCache();
   registerBaseIpcHandlers({
