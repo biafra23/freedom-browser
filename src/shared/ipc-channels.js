@@ -68,6 +68,9 @@ module.exports = {
   // App
   APP_SHOW_ABOUT: 'app:show-about',
 
+  // Profiles
+  PROFILE_GET_ACTIVE: 'profile:get-active',
+
   // History
   HISTORY_GET: 'history:get',
   HISTORY_ADD: 'history:add',

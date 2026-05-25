@@ -10,6 +10,7 @@ const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
 const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
+const { getActiveProfile } = require('./profile-resolver');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -80,6 +81,18 @@ const isAllowedBaseUrl = (value) => {
 const formatWindowTitle = (title) => {
   return title?.trim() ? `${title.trim()} - Freedom` : 'Freedom';
 };
+
+function serializeActiveProfile() {
+  const profile = getActiveProfile();
+  if (!profile) return null;
+
+  return {
+    id: profile.id,
+    displayName: profile.displayName,
+    source: profile.source,
+    isDev: profile.isDev === true,
+  };
+}
 
 function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.BZZ_SET_BASE, (_event, payload = {}) => {
@@ -256,6 +269,8 @@ function registerBaseIpcHandlers(callbacks = {}) {
     app.showAboutPanel();
   });
 
+  ipcMain.handle(IPC.PROFILE_GET_ACTIVE, () => serializeActiveProfile());
+
   ipcMain.handle(IPC.GET_WEBVIEW_PRELOAD_PATH, () => {
     return webviewPreloadPath;
   });
@@ -379,4 +394,5 @@ function registerBaseIpcHandlers(callbacks = {}) {
 
 module.exports = {
   registerBaseIpcHandlers,
+  serializeActiveProfile,
 };

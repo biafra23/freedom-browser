@@ -44,6 +44,15 @@ function loadIpcHandlersModule(options = {}) {
       isEmpty: () => false,
     })),
   };
+  const activeProfile = Object.prototype.hasOwnProperty.call(options, 'activeProfile')
+    ? options.activeProfile
+    : {
+      id: 'default',
+      displayName: 'Default',
+      source: 'catalog',
+      isDev: false,
+      userDataDir: '/tmp/freedom-user-data',
+    };
 
   const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
@@ -56,6 +65,9 @@ function loadIpcHandlersModule(options = {}) {
       [require.resolve('./http-fetch')]: () => ({
         fetchBuffer,
         fetchToFile,
+      }),
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: jest.fn(() => activeProfile),
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -210,6 +222,12 @@ describe('ipc-handlers', () => {
     expect(win.setFullScreen).toHaveBeenCalledWith(true);
 
     await expect(ctx.ipcMain.invoke(IPC.WINDOW_GET_PLATFORM)).resolves.toBe(process.platform);
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_GET_ACTIVE)).resolves.toEqual({
+      id: 'default',
+      displayName: 'Default',
+      source: 'catalog',
+      isDev: false,
+    });
 
     ctx.ipcMain.emit(IPC.WINDOW_NEW, event);
     ctx.ipcMain.emit(IPC.WINDOW_NEW_WITH_URL, event, 'https://example.com');
@@ -252,6 +270,28 @@ describe('ipc-handlers', () => {
 
     await ctx.ipcMain.handlers.get(IPC.SIDEBAR_OPEN_PUBLISH_SETUP)(event);
     expect(hostWebContents.send).toHaveBeenCalledWith(IPC.SIDEBAR_OPEN_PUBLISH_SETUP);
+  });
+
+  test('returns active profile metadata without local paths', async () => {
+    const ctx = loadIpcHandlersModule({
+      activeProfile: {
+        id: 'work',
+        displayName: 'Work',
+        source: 'catalog',
+        isDev: true,
+        userDataDir: '/sensitive/profile/path',
+        appRoot: '/sensitive/app/root',
+      },
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_GET_ACTIVE)).resolves.toEqual({
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: true,
+    });
   });
 
   test('saves images through the dialog workflow', async () => {
