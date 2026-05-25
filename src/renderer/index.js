@@ -115,6 +115,24 @@ async function initPlatformUI() {
   }
 }
 
+async function initProfileIndicator() {
+  const indicator = document.getElementById('profile-indicator');
+  const nameEl = document.getElementById('profile-indicator-name');
+  if (!indicator || !nameEl) return;
+
+  try {
+    const profile = await electronAPI.getActiveProfile?.();
+    const label = profile?.displayName || profile?.id;
+    if (!label) return;
+
+    nameEl.textContent = label;
+    indicator.title = profile?.isDev ? `${label} (dev)` : label;
+    indicator.hidden = false;
+  } catch (err) {
+    pushDebug(`[profile] Failed to load active profile: ${err?.message || err}`);
+  }
+}
+
 // Close all menus and context menus
 const closeAllMenus = () => {
   closeMenus();
@@ -233,5 +251,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   initWalletUi();    // Wallet & identity display in sidebar
   loadBookmarks();
   initPlatformUI();
+  initProfileIndicator();
   initUpdateNotifications();
 });

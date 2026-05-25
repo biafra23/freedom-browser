@@ -18,6 +18,46 @@
 .title-bar-drag {
   flex: 1 1 80px;
   align-self: stretch;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding-bottom: 6px;
+}
+
+.profile-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(180px, 100%);
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+
+.profile-indicator[hidden] {
+  display: none;
+}
+
+.profile-indicator svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.profile-indicator-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-bar {

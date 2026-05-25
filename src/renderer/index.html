@@ -42,7 +42,15 @@
           </svg>
         </button>
       </div>
-      <div class="title-bar-drag"></div>
+      <div class="title-bar-drag">
+        <div id="profile-indicator" class="profile-indicator" aria-label="Active profile" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21a8 8 0 0 0-16 0" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          <span id="profile-indicator-name" class="profile-indicator-name"></span>
+        </div>
+      </div>
       <!-- Window controls for Linux (hidden by default, shown via JS) -->
       <div class="window-controls" id="window-controls">
         <button class="window-control-btn" id="minimize-btn" aria-label="Minimize">
