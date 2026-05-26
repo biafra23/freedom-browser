@@ -4,6 +4,7 @@ const path = require('path');
 const {
   acquireProfileLock,
   getProfileLockPaths,
+  isProfileLocked,
   isLockUnavailableError,
   releaseProfileLock,
 } = require('./profile-lock');
@@ -53,6 +54,17 @@ describe('profile lock', () => {
 
     const secondLock = trackLock(acquireProfileLock(profile));
     expect(fs.existsSync(secondLock.lockDir)).toBe(true);
+  });
+
+  test('checks whether a profile directory is locked', () => {
+    const profile = trackProfile(makeTempProfile());
+    expect(isProfileLocked(profile)).toBe(false);
+
+    const lock = trackLock(acquireProfileLock(profile));
+    expect(isProfileLocked(profile)).toBe(true);
+
+    releaseProfileLock(lock);
+    expect(isProfileLocked(profile)).toBe(false);
   });
 
   test('allows different profile directories to be open at the same time', () => {

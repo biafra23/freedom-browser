@@ -336,6 +336,37 @@ describe('profile resolver', () => {
     });
   });
 
+  test('refuses to delete a profile that is open in another process', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const {
+      createProfileForActiveApp,
+      deleteProfileForActiveApp,
+      initializeProfile,
+    } = require('./profile-resolver');
+    const { acquireProfileLock, releaseProfileLock } = require('./profile-lock');
+
+    initializeProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      now: '2026-05-25T00:00:00.000Z',
+    });
+    const created = createProfileForActiveApp({ displayName: 'Work' });
+    const lock = acquireProfileLock({
+      id: created.record.id,
+      displayName: created.record.displayName,
+      userDataDir: created.record.dir,
+    });
+
+    try {
+      expect(() => deleteProfileForActiveApp('work', 'Work')).toThrow(
+        'Profile is currently open: Work'
+      );
+    } finally {
+      releaseProfileLock(lock);
+    }
+  });
+
   test('rejects path-like profile ids', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });

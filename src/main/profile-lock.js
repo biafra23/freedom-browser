@@ -40,6 +40,19 @@ function isLockUnavailableError(error) {
   return Boolean(error && error.code === 'ELOCKED');
 }
 
+function isProfileLocked(profile, options = {}) {
+  const paths = getProfileLockPaths(profile);
+  if (!fs.existsSync(paths.targetPath)) {
+    return false;
+  }
+
+  return lockfile.checkSync(paths.targetPath, {
+    lockfilePath: paths.lockDir,
+    realpath: false,
+    stale: options.staleMs ?? DEFAULT_STALE_MS,
+  });
+}
+
 function acquireProfileLock(profile, options = {}) {
   const paths = ensureLockTarget(profile);
   const logger = options.logger || console;
@@ -106,6 +119,7 @@ module.exports = {
   acquireProfileLock,
   getActiveProfileLock,
   getProfileLockPaths,
+  isProfileLocked,
   isLockUnavailableError,
   releaseProfileLock,
 };

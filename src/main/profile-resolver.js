@@ -13,6 +13,7 @@ const {
   sanitizeProfileId,
   updateProfileNodeConfig,
 } = require('./profile-catalog');
+const { isProfileLocked } = require('./profile-lock');
 
 const LEGACY_DEV_DATA_DIRS = ['identity-data', 'bee-data', 'ipfs-data', 'radicle-data'];
 const LEGACY_DEV_DATA_WARNING_FILE = 'legacy-dev-data-warning.json';
@@ -282,7 +283,14 @@ function deleteProfileForActiveApp(profileId, expectedDisplayName) {
     throw new Error('The active profile cannot be deleted');
   }
 
-  return deleteProfile(activeProfile.appRoot, profileId, expectedDisplayName);
+  return deleteProfile(activeProfile.appRoot, profileId, expectedDisplayName, {
+    isProfileLocked: (record) =>
+      isProfileLocked({
+        id: record.id,
+        displayName: record.displayName,
+        userDataDir: record.dir,
+      }),
+  });
 }
 
 module.exports = {

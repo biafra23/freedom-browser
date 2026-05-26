@@ -405,7 +405,7 @@ function renameProfile(appRoot, profileId, displayName) {
   });
 }
 
-function deleteProfile(appRoot, profileId, expectedDisplayName) {
+function deleteProfile(appRoot, profileId, expectedDisplayName, options = {}) {
   const id = sanitizeProfileId(profileId);
   if (id === DEFAULT_PROFILE_ID) {
     throw new Error('The default profile cannot be deleted');
@@ -431,6 +431,9 @@ function deleteProfile(appRoot, profileId, expectedDisplayName) {
       !resolvedProfileDir.startsWith(`${resolvedAppRoot}${path.sep}`)
     ) {
       throw new Error('Refusing to delete a profile outside the app data root');
+    }
+    if (options.isProfileLocked?.(record)) {
+      throw new Error(`Profile is currently open: ${displayName}`);
     }
 
     catalog.profiles.splice(recordIndex, 1);
