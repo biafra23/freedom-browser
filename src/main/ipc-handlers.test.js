@@ -108,6 +108,12 @@ function loadIpcHandlersModule(options = {}) {
         nodes: {},
       },
     }));
+  const launchProfile =
+    options.launchProfile ||
+    jest.fn((_activeProfile, profileId) => ({
+      command: '/electron',
+      args: [`--profile=${profileId}`],
+    }));
 
   const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
@@ -127,6 +133,9 @@ function loadIpcHandlersModule(options = {}) {
         listProfilesForActiveApp,
         renameProfileForActiveApp,
         updateActiveProfileNodeConfig,
+      }),
+      [require.resolve('./profile-launcher')]: () => ({
+        launchProfile,
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -152,6 +161,7 @@ function loadIpcHandlersModule(options = {}) {
     state,
     createProfileForActiveApp,
     listProfilesForActiveApp,
+    launchProfile,
     renameProfileForActiveApp,
     updateActiveProfileNodeConfig,
   };
@@ -446,6 +456,62 @@ describe('ipc-handlers', () => {
       })
     );
     expect(ctx.renameProfileForActiveApp).toHaveBeenCalledWith('default', 'Personal');
+  });
+
+  test('opens inactive catalog profiles through profile IPC', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        {
+          id: 'default',
+          displayName: 'Default',
+          slot: 0,
+          nodes: {},
+          isActive: true,
+        },
+        {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          nodes: { bee: { mode: 'managed', apiPort: 11634 } },
+          isActive: false,
+        },
+      ],
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_OPEN, { id: 'work' })).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: undefined,
+          lastOpenedAt: undefined,
+          nodes: { bee: { mode: 'managed', apiPort: 11634 } },
+          isActive: false,
+        },
+        launch: {
+          command: '/electron',
+          args: ['--profile=work'],
+        },
+      })
+    );
+    expect(ctx.launchProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'default' }),
+      'work'
+    );
+  });
+
+  test('rejects opening the active profile', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_OPEN, { id: 'default' })).resolves.toEqual(
+      failure('PROFILE_ALREADY_OPEN', 'This profile is already open')
+    );
+    expect(ctx.launchProfile).not.toHaveBeenCalled();
   });
 
   test('updates active profile node config through validated IPC', async () => {

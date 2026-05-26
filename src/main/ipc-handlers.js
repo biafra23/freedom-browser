@@ -17,6 +17,7 @@ const {
   renameProfileForActiveApp,
   updateActiveProfileNodeConfig,
 } = require('./profile-resolver');
+const { launchProfile } = require('./profile-launcher');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -304,6 +305,37 @@ function renameProfileFromIpc(payload = {}) {
   }
 }
 
+function openProfileFromIpc(payload = {}) {
+  const activeProfile = getActiveProfile();
+  const profileId = payload.id;
+  if (!profileId || typeof profileId !== 'string') {
+    return failure('INVALID_PROFILE_ID', 'Missing profile id');
+  }
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+  }
+  if (profileId === activeProfile.id) {
+    return failure('PROFILE_ALREADY_OPEN', 'This profile is already open');
+  }
+
+  const profiles = listProfilesForActiveApp();
+  const target = profiles?.find((profile) => profile.id === profileId);
+  if (!target) {
+    return failure('PROFILE_NOT_FOUND', 'Profile not found', { id: profileId });
+  }
+
+  try {
+    const launch = launchProfile(activeProfile, profileId);
+    return success({
+      profile: serializeProfileSummary(target),
+      launch,
+    });
+  } catch (err) {
+    log.error('[profile] Failed to open profile:', err);
+    return failure('PROFILE_OPEN_FAILED', err.message || 'Profile could not be opened');
+  }
+}
+
 function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.BZZ_SET_BASE, (_event, payload = {}) => {
     const { webContentsId, baseUrl } = payload;
@@ -483,6 +515,7 @@ function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.PROFILE_LIST, () => listProfilesFromIpc());
   ipcMain.handle(IPC.PROFILE_CREATE, (_event, payload = {}) => createProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_RENAME, (_event, payload = {}) => renameProfileFromIpc(payload));
+  ipcMain.handle(IPC.PROFILE_OPEN, (_event, payload = {}) => openProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (_event, payload = {}) =>
     updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
   );
@@ -611,6 +644,7 @@ function registerBaseIpcHandlers(callbacks = {}) {
 module.exports = {
   createProfileFromIpc,
   listProfilesFromIpc,
+  openProfileFromIpc,
   renameProfileFromIpc,
   registerBaseIpcHandlers,
   serializeActiveProfile,

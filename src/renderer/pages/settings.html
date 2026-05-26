@@ -1218,7 +1218,9 @@
             </div>
             <div class="profile-manager-actions">
               <button type="button" class="btn" data-rename-profile>Save</button>
-              <button type="button" class="btn" disabled>Open</button>
+              <button type="button" class="btn" data-open-profile ${profile.isActive ? 'disabled' : ''}>
+                Open
+              </button>
             </div>
           </div>`).join('');
       };
@@ -1396,6 +1398,26 @@
       });
 
       profileFields.managerList?.addEventListener('click', async (event) => {
+        const openButton = event.target?.closest?.('[data-open-profile]');
+        if (openButton) {
+          const profileId = openButton.closest('[data-profile-id]')?.dataset.profileId;
+          if (!profileId) return;
+
+          openButton.disabled = true;
+          setManagerStatus('Opening profile…', 'testing');
+          try {
+            const result = await freedomAPI.openProfile?.(profileId);
+            if (!result?.success) {
+              throw new Error(result?.error?.message || 'Profile could not be opened');
+            }
+            setManagerStatus(`Opening ${result.profile?.displayName || profileId} in a new window…`, 'success');
+          } catch (err) {
+            setManagerStatus(err?.message || 'Profile could not be opened', 'error');
+            openButton.disabled = false;
+          }
+          return;
+        }
+
         const renameButton = event.target?.closest?.('[data-rename-profile]');
         if (!renameButton) return;
 

@@ -150,6 +150,7 @@ describe('webview-preload', () => {
       ['listProfiles', [], IPC.PROFILE_LIST, []],
       ['createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
       ['renameProfile', ['work', 'Work'], IPC.PROFILE_RENAME, [{ id: 'work', displayName: 'Work' }]],
+      ['openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
       ['updateProfileNodeConfig', ['bee', { mode: 'disabled' }], IPC.PROFILE_UPDATE_NODE_CONFIG, [{ protocol: 'bee', config: { mode: 'disabled' } }]],
       ['getServiceRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
       ['openPublishSetup', [], IPC.SIDEBAR_OPEN_PUBLISH_SETUP, []],
