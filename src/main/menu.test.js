@@ -83,6 +83,17 @@ describe('menu', () => {
     expect(capturedTemplate.some((item) => item.role === 'windowMenu')).toBe(false);
   });
 
+  test('File menu includes profile management entry', () => {
+    for (const platform of ['darwin', 'win32', 'linux']) {
+      const { capturedTemplate } = loadMenuModule(platform);
+      const file = findTopLabel(capturedTemplate, 'File');
+
+      expect(file?.submenu?.map((item) => item.label)).toEqual(
+        expect.arrayContaining(['New Profile Window...'])
+      );
+    }
+  });
+
   test('macOS template keeps appMenu and editMenu roles', () => {
     const { capturedTemplate } = loadMenuModule('darwin');
 

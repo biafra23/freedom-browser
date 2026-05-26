@@ -14,6 +14,15 @@ function getTargetWindow() {
   return mainWindows[0] || null;
 }
 
+function openProfilesManager() {
+  const win = getTargetWindow();
+  if (win) {
+    win.webContents.send('tab:new-with-url', 'freedom://settings/profiles');
+    return;
+  }
+  createMainWindow('freedom://settings/profiles');
+}
+
 let newTabMenuItem = null;
 let closeTabMenuItem = null;
 let toggleBookmarkBarMenuItem = null;
@@ -104,6 +113,13 @@ function buildFileSubmenu(isMac) {
       click: () => {
         log.info('[menu] New Window clicked');
         createMainWindow();
+      },
+    },
+    {
+      label: 'New Profile Window...',
+      click: () => {
+        log.info('[menu] New Profile Window clicked');
+        openProfilesManager();
       },
     },
     { type: 'separator' },
