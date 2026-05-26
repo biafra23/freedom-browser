@@ -124,6 +124,8 @@ describe('preload', () => {
       [exposures.electronAPI, 'clearRadBase', [31], IPC.RAD_CLEAR_BASE, [{ webContentsId: 31 }]],
       [exposures.electronAPI, 'getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
       [exposures.electronAPI, 'getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
+      [exposures.electronAPI, 'listProfiles', [], IPC.PROFILE_LIST, []],
+      [exposures.electronAPI, 'openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
       [exposures.electronAPI, 'getSettings', [], IPC.SETTINGS_GET, []],
       [exposures.electronAPI, 'saveSettings', [{ theme: 'dark' }], IPC.SETTINGS_SAVE, [{ theme: 'dark' }]],
       [exposures.electronAPI, 'getBookmarks', [], IPC.BOOKMARKS_GET, []],

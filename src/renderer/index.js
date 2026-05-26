@@ -123,9 +123,13 @@ async function initProfileIndicator() {
   const menu = document.getElementById('profile-menu');
   const menuName = document.getElementById('profile-menu-name');
   const menuMeta = document.getElementById('profile-menu-meta');
-  const settingsBtn = document.getElementById('profile-settings-btn');
+  const profileList = document.getElementById('profile-menu-list');
+  const createBtn = document.getElementById('profile-create-btn');
   const manageBtn = document.getElementById('profile-manage-btn');
+  const menuStatus = document.getElementById('profile-menu-status');
   if (!indicator || !nameEl) return;
+
+  let activeProfile = null;
 
   const setMenuOpen = (open) => {
     if (!menu) return;
@@ -133,9 +137,106 @@ async function initProfileIndicator() {
     indicator.setAttribute('aria-expanded', String(open));
   };
 
-  const openProfilesSettings = () => {
+  const setMenuStatus = (message, kind = '') => {
+    if (!menuStatus) return;
+    menuStatus.textContent = message || '';
+    menuStatus.className = 'profile-menu-status' + (kind ? ` ${kind}` : '');
+    menuStatus.hidden = !message;
+  };
+
+  const openProfilesSettings = (subroute = '') => {
     setMenuOpen(false);
-    loadTarget('freedom://settings/profiles');
+    loadTarget(subroute ? `freedom://settings/profiles/${subroute}` : 'freedom://settings/profiles');
+  };
+
+  const profileMetaText = (profile, isCurrent) => {
+    if (isCurrent) return 'Current';
+    if (profile?.isUnregistered) return 'Unregistered';
+    if (Number.isInteger(profile?.slot)) return `Slot ${profile.slot}`;
+    return 'Profile';
+  };
+
+  const renderProfileList = (profiles = []) => {
+    if (!profileList) return;
+    profileList.textContent = '';
+
+    const registeredProfiles = profiles.filter((profile) => profile?.isUnregistered !== true);
+    const rows = registeredProfiles.length
+      ? registeredProfiles
+      : activeProfile
+        ? [activeProfile]
+        : [];
+
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'profile-menu-empty';
+      empty.textContent = 'No profiles available';
+      profileList.append(empty);
+      return;
+    }
+
+    for (const profile of rows) {
+      const isCurrent = profile?.isActive === true || profile?.id === activeProfile?.id;
+      const displayName = profile?.displayName || profile?.id || 'Unnamed profile';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'profile-menu-item profile-menu-profile-item';
+      button.setAttribute('role', 'menuitem');
+      button.disabled = isCurrent;
+      if (isCurrent) button.setAttribute('aria-current', 'true');
+
+      const check = document.createElement('span');
+      check.className = 'profile-menu-check';
+      check.textContent = isCurrent ? '✓' : '';
+
+      const text = document.createElement('span');
+      text.className = 'profile-menu-item-text';
+
+      const label = document.createElement('span');
+      label.className = 'profile-menu-item-label';
+      label.textContent = displayName;
+
+      const meta = document.createElement('span');
+      meta.className = 'profile-menu-item-meta';
+      meta.textContent = profileMetaText(profile, isCurrent);
+
+      text.append(label, meta);
+      button.append(check, text);
+
+      if (!isCurrent) {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          setMenuStatus(`Opening ${displayName}...`, 'success');
+          try {
+            const result = await electronAPI.openProfile?.(profile.id);
+            if (!result?.success) {
+              throw new Error(result?.error?.message || 'Profile could not be opened');
+            }
+            setMenuOpen(false);
+          } catch (err) {
+            button.disabled = false;
+            setMenuStatus(err?.message || 'Profile could not be opened', 'error');
+          }
+        });
+      }
+
+      profileList.append(button);
+    }
+  };
+
+  const refreshProfileList = async () => {
+    if (!profileList) return;
+    setMenuStatus('', '');
+    try {
+      const result = await electronAPI.listProfiles?.();
+      if (!result?.success) {
+        throw new Error(result?.error?.message || 'Profile list unavailable');
+      }
+      renderProfileList(result.profiles || []);
+    } catch (err) {
+      renderProfileList(activeProfile ? [activeProfile] : []);
+      setMenuStatus(err?.message || 'Profile list unavailable', 'error');
+    }
   };
 
   closeProfileMenu = () => setMenuOpen(false);
@@ -145,10 +246,11 @@ async function initProfileIndicator() {
     const shouldOpen = menu?.hidden !== false;
     closeAllMenus();
     setMenuOpen(shouldOpen);
+    if (shouldOpen) refreshProfileList();
   });
 
-  settingsBtn?.addEventListener('click', openProfilesSettings);
-  manageBtn?.addEventListener('click', openProfilesSettings);
+  createBtn?.addEventListener('click', () => openProfilesSettings('create'));
+  manageBtn?.addEventListener('click', () => openProfilesSettings());
   document.addEventListener('click', (event) => {
     if (
       menu?.hidden === false &&
@@ -161,6 +263,7 @@ async function initProfileIndicator() {
   window.addEventListener('blur', () => setMenuOpen(false));
 
   const renderProfile = (profile) => {
+    activeProfile = profile;
     const label = profile?.displayName || profile?.id;
     if (!label) return;
 
@@ -174,6 +277,7 @@ async function initProfileIndicator() {
       menuMeta.textContent = meta.join(' · ');
     }
     indicator.hidden = false;
+    if (menu?.hidden === false) refreshProfileList();
   };
 
   electronAPI.onProfileUpdated?.(renderProfile);

@@ -65,15 +65,18 @@
             <span id="profile-menu-meta" class="profile-menu-meta"></span>
           </div>
           <div class="profile-menu-divider"></div>
-          <button id="profile-settings-btn" class="profile-menu-item" type="button" role="menuitem">
-            Profile Settings
+          <div class="profile-menu-section-label">Profiles</div>
+          <div id="profile-menu-list" class="profile-menu-list">
+            <div class="profile-menu-empty">Loading...</div>
+          </div>
+          <div class="profile-menu-divider"></div>
+          <button id="profile-create-btn" class="profile-menu-item" type="button" role="menuitem">
+            Create Profile...
           </button>
           <button id="profile-manage-btn" class="profile-menu-item" type="button" role="menuitem">
             Manage Profiles...
           </button>
-          <button class="profile-menu-item" type="button" role="menuitem" disabled>
-            Open Another Profile...
-          </button>
+          <div id="profile-menu-status" class="profile-menu-status" aria-live="polite"></div>
         </div>
       </div>
       <!-- Window controls for Linux (hidden by default, shown via JS) -->

@@ -75,7 +75,7 @@
   position: absolute;
   top: 31px;
   right: 0;
-  width: 220px;
+  width: 256px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -121,6 +121,45 @@
   background: var(--border);
 }
 
+.profile-menu-section-label {
+  padding: 5px 8px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.profile-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.profile-menu-empty,
+.profile-menu-status {
+  padding: 5px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.profile-menu-status {
+  min-height: 0;
+}
+
+.profile-menu-status[hidden] {
+  display: none;
+}
+
+.profile-menu-status.error {
+  color: var(--danger);
+}
+
+.profile-menu-status.success {
+  color: var(--muted);
+}
+
 .profile-menu-item {
   width: 100%;
   min-height: 30px;
@@ -133,6 +172,45 @@
   font: inherit;
   font-size: 12px;
   text-align: left;
+}
+
+.profile-menu-profile-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  min-height: 36px;
+}
+
+.profile-menu-check {
+  width: 14px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.profile-menu-item-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-menu-item-label,
+.profile-menu-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-menu-item-label {
+  color: inherit;
+}
+
+.profile-menu-item-meta {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.1;
 }
 
 .profile-menu-item:hover:not(:disabled) {

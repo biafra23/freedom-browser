@@ -1068,6 +1068,15 @@
         // Always scroll the content area to the top when switching — avoids a
         // stale scroll offset from a taller prior section.
         window.scrollTo({ top: 0 });
+        if (
+          section === 'profiles' &&
+          location.hash.replace(/^#/, '').toLowerCase() === 'profiles/create'
+        ) {
+          setTimeout(() => {
+            profileFields.createName?.focus();
+            profileFields.createName?.select();
+          }, 0);
+        }
       };
 
       navItems.forEach((item) => {
