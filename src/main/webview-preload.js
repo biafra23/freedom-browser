@@ -216,6 +216,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   createProfile: guardInternal('createProfile', (profile) =>
     ipcRenderer.invoke('profile:create', profile)
   ),
+  importProfile: guardInternal('importProfile', (id) =>
+    ipcRenderer.invoke('profile:import', { id })
+  ),
   renameProfile: guardInternal('renameProfile', (id, displayName) =>
     ipcRenderer.invoke('profile:rename', { id, displayName })
   ),

@@ -149,6 +149,7 @@ describe('webview-preload', () => {
       ['getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
       ['listProfiles', [], IPC.PROFILE_LIST, []],
       ['createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
+      ['importProfile', ['work'], IPC.PROFILE_IMPORT, [{ id: 'work' }]],
       ['renameProfile', ['work', 'Work'], IPC.PROFILE_RENAME, [{ id: 'work', displayName: 'Work' }]],
       ['openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
       ['deleteProfile', ['work', 'Work'], IPC.PROFILE_DELETE, [{ id: 'work', confirmDisplayName: 'Work' }]],

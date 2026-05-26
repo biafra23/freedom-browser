@@ -274,6 +274,68 @@ describe('profile resolver', () => {
     expect(updatedCatalog.profiles.some((entry) => entry.id === 'work-profile')).toBe(false);
   });
 
+  test('surfaces and imports unregistered profile directories', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const {
+      importProfileForActiveApp,
+      initializeProfile,
+      listProfilesForActiveApp,
+    } = require('./profile-resolver');
+
+    initializeProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      now: '2026-05-25T00:00:00.000Z',
+    });
+
+    const recoveredDir = path.join(userDataDir, 'Profiles', 'recovered');
+    fs.mkdirSync(recoveredDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(recoveredDir, 'profile.json'),
+      JSON.stringify({
+        version: 1,
+        id: 'old-id',
+        displayName: 'Recovered',
+        createdAt: '2026-05-20T00:00:00.000Z',
+        lastOpenedAt: '2026-05-21T00:00:00.000Z',
+        slot: 7,
+        nodes: {
+          bee: {
+            mode: 'external',
+            externalApi: 'http://127.0.0.1:1633',
+          },
+        },
+      })
+    );
+
+    const beforeImport = listProfilesForActiveApp();
+    expect(beforeImport.find((profile) => profile.id === 'recovered')).toMatchObject({
+      id: 'recovered',
+      displayName: 'Recovered',
+      slot: 7,
+      isUnregistered: true,
+    });
+
+    const imported = importProfileForActiveApp('recovered');
+    expect(imported.record).toMatchObject({
+      id: 'recovered',
+      displayName: 'Recovered',
+      slot: 7,
+    });
+    expect(imported.metadata.nodes.bee).toMatchObject({
+      mode: 'external',
+      apiPort: 11640,
+      externalApi: 'http://127.0.0.1:1633',
+    });
+
+    const afterImport = listProfilesForActiveApp();
+    expect(afterImport.find((profile) => profile.id === 'recovered')).toMatchObject({
+      id: 'recovered',
+      isUnregistered: false,
+    });
+  });
+
   test('rejects path-like profile ids', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });

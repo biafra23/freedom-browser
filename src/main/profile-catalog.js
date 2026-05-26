@@ -103,6 +103,28 @@ function buildNodeConfig(ports) {
   };
 }
 
+function rebaseNodeConfig(nodes = {}, ports) {
+  const defaults = buildNodeConfig(ports);
+  return {
+    bee: {
+      ...defaults.bee,
+      mode: nodes.bee?.mode || defaults.bee.mode,
+      externalApi: nodes.bee?.externalApi || null,
+    },
+    ipfs: {
+      ...defaults.ipfs,
+      mode: nodes.ipfs?.mode || defaults.ipfs.mode,
+      externalApi: nodes.ipfs?.externalApi || null,
+      externalGateway: nodes.ipfs?.externalGateway || null,
+    },
+    radicle: {
+      ...defaults.radicle,
+      mode: nodes.radicle?.mode || defaults.radicle.mode,
+      externalHttp: nodes.radicle?.externalHttp || null,
+    },
+  };
+}
+
 function getCatalogPath(appRoot) {
   return path.join(appRoot, PROFILE_REGISTRY_FILE);
 }
@@ -212,6 +234,66 @@ function allocateSlot(catalog, profileId) {
     slot += 1;
   }
   return slot;
+}
+
+function getProfilesRoot(appRoot) {
+  return path.join(appRoot, 'Profiles');
+}
+
+function listProfileDirs(appRoot) {
+  const profilesRoot = getProfilesRoot(appRoot);
+  if (!fs.existsSync(profilesRoot)) return [];
+
+  return fs.readdirSync(profilesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({
+      dirName: entry.name,
+      dir: path.join(profilesRoot, entry.name),
+    }));
+}
+
+function isPathInside(parentDir, childPath) {
+  const relative = path.relative(path.resolve(parentDir), path.resolve(childPath));
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function getCatalogDirSet(catalog) {
+  return new Set(catalog.profiles.map((profile) => path.resolve(profile.dir)));
+}
+
+function listUnregisteredProfileSummaries(appRoot, catalog, options = {}) {
+  const registeredDirs = getCatalogDirSet(catalog);
+  const registeredIds = new Set(catalog.profiles.map((profile) => profile.id));
+
+  return listProfileDirs(appRoot)
+    .filter(({ dir }) => !registeredDirs.has(path.resolve(dir)))
+    .map(({ dirName, dir }) => {
+      let id;
+      try {
+        id = sanitizeProfileId(dirName);
+      } catch {
+        return null;
+      }
+      if (id !== dirName) {
+        return null;
+      }
+      if (registeredIds.has(id)) {
+        return null;
+      }
+
+      const metadata = readProfileMetadata(dir) || {};
+      return {
+        id,
+        displayName: metadata.displayName || displayNameFromId(id),
+        slot: Number.isInteger(metadata.slot) ? metadata.slot : null,
+        createdAt: metadata.createdAt || null,
+        lastOpenedAt: metadata.lastOpenedAt || null,
+        nodes: metadata.nodes || null,
+        isActive: options.activeProfileId === id,
+        isUnregistered: true,
+      };
+    })
+    .filter(Boolean);
 }
 
 function createProfileRecord(appRoot, profileId, options = {}) {
@@ -364,7 +446,7 @@ function deleteProfile(appRoot, profileId, expectedDisplayName) {
 
 function listProfileSummaries(appRoot, options = {}) {
   const catalog = loadCatalog(appRoot);
-  return catalog.profiles.map((record) => {
+  const registeredProfiles = catalog.profiles.map((record) => {
     const metadata = readProfileMetadata(record.dir) || createProfileMetadata(record);
     return {
       id: metadata.id || record.id,
@@ -374,6 +456,68 @@ function listProfileSummaries(appRoot, options = {}) {
       lastOpenedAt: metadata.lastOpenedAt || record.lastOpenedAt || null,
       nodes: metadata.nodes || record.nodes || null,
       isActive: options.activeProfileId === record.id,
+      isUnregistered: false,
+    };
+  });
+
+  return [
+    ...registeredProfiles,
+    ...listUnregisteredProfileSummaries(appRoot, catalog, options),
+  ];
+}
+
+function importProfile(appRoot, profileId, options = {}) {
+  const id = sanitizeProfileId(profileId);
+  if (id === DEFAULT_PROFILE_ID) {
+    throw new Error('The default profile is already registered');
+  }
+
+  return withCatalogWriteLock(appRoot, () => {
+    const catalog = loadCatalog(appRoot);
+    if (findProfile(catalog, id)) {
+      throw new Error(`Profile already exists: ${id}`);
+    }
+
+    const dir = path.join(getProfilesRoot(appRoot), id);
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      throw new Error(`Profile directory not found: ${id}`);
+    }
+    if (!isPathInside(getProfilesRoot(appRoot), dir)) {
+      throw new Error('Refusing to import a profile outside the profiles directory');
+    }
+
+    const existingMetadata = readProfileMetadata(dir) || {};
+    const usedSlots = getUsedSlots(catalog);
+    const metadataSlot = Number.isInteger(existingMetadata.slot) ? existingMetadata.slot : null;
+    const slot = metadataSlot !== null && !usedSlots.has(metadataSlot)
+      ? metadataSlot
+      : allocateSlot(catalog, id);
+    const ports = getManagedPorts(slot, {
+      dev: options.dev,
+      checkoutHash: options.checkoutHash,
+    });
+    const now = options.now || new Date().toISOString();
+    const displayName = existingMetadata.displayName || displayNameFromId(id);
+    const record = {
+      id,
+      displayName,
+      dir,
+      slot,
+      createdAt: existingMetadata.createdAt || now,
+      lastOpenedAt: existingMetadata.lastOpenedAt || now,
+      nodes: rebaseNodeConfig(existingMetadata.nodes || {}, ports),
+    };
+
+    catalog.profiles.push(record);
+    saveCatalog(appRoot, catalog);
+
+    const metadata = createProfileMetadata(record);
+    writeProfileMetadata(record.dir, metadata);
+
+    return {
+      catalog,
+      record,
+      metadata,
     };
   });
 }
@@ -477,6 +621,7 @@ module.exports = {
   getManagedPorts,
   getProfileMetaPath,
   hashPath,
+  importProfile,
   listProfileSummaries,
   loadCatalog,
   renameProfile,

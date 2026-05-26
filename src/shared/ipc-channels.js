@@ -72,6 +72,7 @@ module.exports = {
   PROFILE_GET_ACTIVE: 'profile:get-active',
   PROFILE_LIST: 'profile:list',
   PROFILE_CREATE: 'profile:create',
+  PROFILE_IMPORT: 'profile:import',
   PROFILE_RENAME: 'profile:rename',
   PROFILE_OPEN: 'profile:open',
   PROFILE_DELETE: 'profile:delete',

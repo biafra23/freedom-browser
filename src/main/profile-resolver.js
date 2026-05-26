@@ -7,6 +7,7 @@ const {
   ensureProfile,
   getCheckoutId,
   hashPath,
+  importProfile,
   listProfileSummaries,
   renameProfile,
   sanitizeProfileId,
@@ -248,6 +249,14 @@ function createProfileForActiveApp(input) {
   return createProfile(activeProfile.appRoot, input, getProfileCatalogOptions());
 }
 
+function importProfileForActiveApp(profileId) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  return importProfile(activeProfile.appRoot, profileId, getProfileCatalogOptions());
+}
+
 function renameProfileForActiveApp(profileId, displayName) {
   if (!activeProfile || activeProfile.source !== 'catalog') {
     return null;
@@ -287,6 +296,7 @@ module.exports = {
   getArgValue,
   getDefaultRepoRoot,
   getLegacyDevDataDirs,
+  importProfileForActiveApp,
   initializeProfile,
   listProfilesForActiveApp,
   renameProfileForActiveApp,

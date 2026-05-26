@@ -14,6 +14,7 @@ const {
   createProfileForActiveApp,
   deleteProfileForActiveApp,
   getActiveProfile,
+  importProfileForActiveApp,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
   updateActiveProfileNodeConfig,
@@ -130,7 +131,7 @@ function broadcastProfileUpdated(profile = serializeActiveProfile()) {
 
 function serializeProfileSummary(profile) {
   if (!profile) return null;
-  return {
+  const serialized = {
     id: profile.id,
     displayName: profile.displayName,
     slot: profile.slot,
@@ -139,6 +140,10 @@ function serializeProfileSummary(profile) {
     nodes: profile.nodes,
     isActive: profile.isActive === true,
   };
+  if (profile.isUnregistered === true) {
+    serialized.isUnregistered = true;
+  }
+  return serialized;
 }
 
 function serializeProfileMutationResult(result) {
@@ -302,6 +307,18 @@ function createProfileFromIpc(payload = {}) {
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
     return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
+  }
+}
+
+function importProfileFromIpc(payload = {}) {
+  try {
+    const result = importProfileForActiveApp(payload.id);
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({ profile: serializeProfileMutationResult(result) });
+  } catch (err) {
+    return failure('PROFILE_IMPORT_FAILED', err.message || 'Profile could not be imported');
   }
 }
 
@@ -553,6 +570,7 @@ function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.PROFILE_GET_ACTIVE, () => serializeActiveProfile());
   ipcMain.handle(IPC.PROFILE_LIST, () => listProfilesFromIpc());
   ipcMain.handle(IPC.PROFILE_CREATE, (_event, payload = {}) => createProfileFromIpc(payload));
+  ipcMain.handle(IPC.PROFILE_IMPORT, (_event, payload = {}) => importProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_RENAME, (_event, payload = {}) => renameProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_OPEN, (_event, payload = {}) => openProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_DELETE, (_event, payload = {}) => deleteProfileFromIpc(payload));
@@ -685,6 +703,7 @@ module.exports = {
   broadcastProfileUpdated,
   createProfileFromIpc,
   deleteProfileFromIpc,
+  importProfileFromIpc,
   listProfilesFromIpc,
   openProfileFromIpc,
   renameProfileFromIpc,

@@ -93,6 +93,21 @@ function loadIpcHandlersModule(options = {}) {
         nodes: {},
       },
     }));
+  const importProfileForActiveApp =
+    options.importProfileForActiveApp ||
+    jest.fn((id) => ({
+      record: {
+        id,
+        displayName: id === 'work' ? 'Work' : id,
+        slot: 1,
+      },
+      metadata: {
+        id,
+        displayName: id === 'work' ? 'Work' : id,
+        slot: 1,
+        nodes: {},
+      },
+    }));
   const renameProfileForActiveApp =
     options.renameProfileForActiveApp ||
     jest.fn((id, displayName) => ({
@@ -143,6 +158,7 @@ function loadIpcHandlersModule(options = {}) {
         createProfileForActiveApp,
         deleteProfileForActiveApp,
         getActiveProfile: jest.fn(() => activeProfile),
+        importProfileForActiveApp,
         listProfilesForActiveApp,
         renameProfileForActiveApp,
         updateActiveProfileNodeConfig,
@@ -175,6 +191,7 @@ function loadIpcHandlersModule(options = {}) {
     webContents,
     createProfileForActiveApp,
     deleteProfileForActiveApp,
+    importProfileForActiveApp,
     listProfilesForActiveApp,
     launchProfile,
     renameProfileForActiveApp,
@@ -551,6 +568,27 @@ describe('ipc-handlers', () => {
       expect.objectContaining({ id: 'default' }),
       'work'
     );
+  });
+
+  test('imports unregistered profile directories through profile IPC', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_IMPORT, { id: 'work' })).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: false,
+        },
+      })
+    );
+    expect(ctx.importProfileForActiveApp).toHaveBeenCalledWith('work');
   });
 
   test('rejects opening the active profile', async () => {

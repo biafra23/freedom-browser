@@ -1234,8 +1234,30 @@
         }
 
         profileFields.managerList.innerHTML = profiles.map((profile) => {
+          const isUnregistered = profile.isUnregistered === true;
           const canDelete = !profile.isActive && profile.id !== 'default';
           const displayName = profile.displayName || profile.id;
+          const statusBadge = profile.isActive
+            ? '<span class="profile-pill">Current</span>'
+            : isUnregistered
+              ? '<span class="profile-pill">Unregistered</span>'
+              : '';
+          const metaPrefix = isUnregistered ? 'Unregistered profile directory · ' : '';
+          const actions = isUnregistered
+            ? `
+              <button type="button" class="btn" data-import-profile>
+                Register
+              </button>
+            `
+            : `
+              <button type="button" class="btn" data-rename-profile>Save</button>
+              <button type="button" class="btn" data-open-profile ${profile.isActive ? 'disabled' : ''}>
+                Open
+              </button>
+              <button type="button" class="btn danger" data-delete-profile ${canDelete ? '' : 'disabled'}>
+                Delete
+              </button>
+            `;
           return `
           <div class="profile-manager-row" data-profile-id="${esc(profile.id)}" data-profile-display-name="${esc(displayName)}">
             <div class="profile-manager-main">
@@ -1246,23 +1268,16 @@
                   data-profile-name-input
                   value="${esc(displayName)}"
                   spellcheck="false"
+                  ${isUnregistered ? 'disabled' : ''}
                 />
-                ${profile.isActive ? '<span class="profile-pill">Current</span>' : ''}
+                ${statusBadge}
               </div>
               <div class="profile-manager-meta">
-                ID: ${esc(profile.id)} · Slot ${Number.isInteger(profile.slot) ? profile.slot : 'unassigned'} · Last opened: ${esc(formatProfileDate(profile.lastOpenedAt))}
+                ${metaPrefix}ID: ${esc(profile.id)} · Slot ${Number.isInteger(profile.slot) ? profile.slot : 'unassigned'} · Last opened: ${esc(formatProfileDate(profile.lastOpenedAt))}
               </div>
               <div class="profile-manager-meta">${esc(nodeModeSummary(profile))}</div>
             </div>
-            <div class="profile-manager-actions">
-              <button type="button" class="btn" data-rename-profile>Save</button>
-              <button type="button" class="btn" data-open-profile ${profile.isActive ? 'disabled' : ''}>
-                Open
-              </button>
-              <button type="button" class="btn danger" data-delete-profile ${canDelete ? '' : 'disabled'}>
-                Delete
-              </button>
-            </div>
+            <div class="profile-manager-actions">${actions}</div>
             <div class="profile-delete-confirm" data-delete-confirm hidden>
               <p class="profile-delete-copy">
                 Deleting this profile removes its vault data, browser data, node data, RPC keys,
@@ -1467,6 +1482,27 @@
       });
 
       profileFields.managerList?.addEventListener('click', async (event) => {
+        const importButton = event.target?.closest?.('[data-import-profile]');
+        if (importButton) {
+          const profileId = importButton.closest('[data-profile-id]')?.dataset.profileId;
+          if (!profileId) return;
+
+          importButton.disabled = true;
+          setManagerStatus('Registering profile…', 'testing');
+          try {
+            const result = await freedomAPI.importProfile?.(profileId);
+            if (!result?.success) {
+              throw new Error(result?.error?.message || 'Profile could not be registered');
+            }
+            setManagerStatus('Profile registered. You can open it now.', 'success');
+            await refreshProfileManager();
+          } catch (err) {
+            setManagerStatus(err?.message || 'Profile could not be registered', 'error');
+            importButton.disabled = false;
+          }
+          return;
+        }
+
         const deleteButton = event.target?.closest?.('[data-delete-profile]');
         if (deleteButton) {
           const row = deleteButton.closest('[data-profile-id]');
