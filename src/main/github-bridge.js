@@ -2,7 +2,6 @@ const { ipcMain } = require('electron');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
-const os = require('os');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
@@ -10,6 +9,7 @@ const IPC = require('../shared/ipc-channels');
 const { success, failure, validateNonEmptyString } = require('./ipc-contract');
 const { getRadicleBinaryPath, getRadicleDataPath, getActivePort } = require('./radicle-manager');
 const { loadSettings } = require('./settings-store');
+const { createProfileTempDir } = require('./profile-paths');
 
 const execFileAsync = promisify(execFile);
 
@@ -586,7 +586,7 @@ async function importGitHubRepo(url, sender) {
 
     // Step 4: Clone
     sendProgress({ step: 'cloning', message: `Cloning ${validation.owner}/${validation.repo}...` });
-    clonePath = fs.mkdtempSync(path.join(os.tmpdir(), 'freedom-bridge-'));
+    clonePath = createProfileTempDir('github-bridge');
     activeTempDirs.add(clonePath);
 
     const repoDir = path.join(clonePath, validation.repo);

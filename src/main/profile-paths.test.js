@@ -42,12 +42,24 @@ describe('profile paths', () => {
     expect(paths.getBeeDataDir()).toBe(path.join(userDataDir, 'bee-data'));
     expect(paths.getIpfsDataDir()).toBe(path.join(userDataDir, 'ipfs-data'));
     expect(paths.getRadicleDataDir()).toBe(path.join(userDataDir, 'radicle-data'));
+    expect(paths.getProfileTempDir()).toBe(path.join(userDataDir, 'tmp'));
     expect(paths.getQuickUnlockCredentialPath()).toBe(
       path.join(userDataDir, 'identity', 'quick-unlock.dat')
     );
 
     expect(fs.existsSync(path.join(userDataDir, 'identity'))).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, 'tmp'))).toBe(true);
+  });
+
+  test('creates sanitized profile temp directories', () => {
+    const userDataDir = track(createTempUserDataDir());
+    const paths = loadPaths(userDataDir);
+
+    const tempDir = paths.createProfileTempDir('github bridge!');
+
+    expect(tempDir.startsWith(path.join(userDataDir, 'tmp', 'github-bridge-'))).toBe(true);
+    expect(fs.existsSync(tempDir)).toBe(true);
   });
 
   test('honors explicit data directory overrides', () => {

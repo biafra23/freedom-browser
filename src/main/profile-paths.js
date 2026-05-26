@@ -49,7 +49,15 @@ function getProfileTempDir() {
   return ensureDir(path.join(app.getPath('userData'), 'tmp'));
 }
 
+function createProfileTempDir(prefix) {
+  const safePrefix = String(prefix || 'tmp')
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .replace(/^-+|-+$/g, '') || 'tmp';
+  return fs.mkdtempSync(path.join(getProfileTempDir(), `${safePrefix}-`));
+}
+
 module.exports = {
+  createProfileTempDir,
   getBeeDataDir,
   getIdentityDataDir,
   getIpfsDataDir,
