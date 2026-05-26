@@ -1,10 +1,15 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const lockfile = require('proper-lockfile');
 
 const PROFILE_REGISTRY_FILE = 'profile-registry.json';
 const PROFILE_META_FILE = 'profile.json';
+const PROFILE_CATALOG_LOCK_TARGET = 'profile-registry.write-lock-target';
+const PROFILE_CATALOG_LOCK_DIR = 'profile-registry.write.lock';
 const DEFAULT_PROFILE_ID = 'default';
+const DEFAULT_CATALOG_LOCK_STALE_MS = 30000;
+const DEFAULT_CATALOG_LOCK_UPDATE_MS = 10000;
 
 const PACKAGED_PORT_BASE = {
   beeApi: 11633,
@@ -123,6 +128,44 @@ function writeJsonAtomic(filePath, data) {
   fs.renameSync(tmpPath, filePath);
 }
 
+function getCatalogLockPaths(appRoot) {
+  return {
+    targetPath: path.join(appRoot, PROFILE_CATALOG_LOCK_TARGET),
+    lockDir: path.join(appRoot, PROFILE_CATALOG_LOCK_DIR),
+  };
+}
+
+function ensureCatalogLockTarget(appRoot) {
+  ensureDir(appRoot);
+  const paths = getCatalogLockPaths(appRoot);
+  if (!fs.existsSync(paths.targetPath)) {
+    fs.writeFileSync(
+      paths.targetPath,
+      [
+        'Freedom profile catalog write lock target',
+        `createdAt=${new Date().toISOString()}`,
+      ].join('\n')
+    );
+  }
+  return paths;
+}
+
+function withCatalogWriteLock(appRoot, fn, options = {}) {
+  const paths = ensureCatalogLockTarget(appRoot);
+  const release = lockfile.lockSync(paths.targetPath, {
+    lockfilePath: paths.lockDir,
+    realpath: false,
+    stale: options.staleMs ?? DEFAULT_CATALOG_LOCK_STALE_MS,
+    update: options.updateMs ?? DEFAULT_CATALOG_LOCK_UPDATE_MS,
+  });
+
+  try {
+    return fn();
+  } finally {
+    release();
+  }
+}
+
 function loadCatalog(appRoot) {
   const catalogPath = getCatalogPath(appRoot);
   if (!fs.existsSync(catalogPath)) {
@@ -222,27 +265,29 @@ function createProfile(appRoot, profileInput = {}, options = {}) {
     throw new Error('Profile display name is required');
   }
 
-  const catalog = loadCatalog(appRoot);
-  if (findProfile(catalog, profileId)) {
-    throw new Error(`Profile already exists: ${profileId}`);
-  }
+  return withCatalogWriteLock(appRoot, () => {
+    const catalog = loadCatalog(appRoot);
+    if (findProfile(catalog, profileId)) {
+      throw new Error(`Profile already exists: ${profileId}`);
+    }
 
-  const record = createProfileRecord(appRoot, profileId, {
-    ...options,
-    catalog,
-    displayName,
+    const record = createProfileRecord(appRoot, profileId, {
+      ...options,
+      catalog,
+      displayName,
+    });
+    catalog.profiles.push(record);
+    saveCatalog(appRoot, catalog);
+
+    const metadata = createProfileMetadata(record);
+    writeProfileMetadata(record.dir, metadata);
+
+    return {
+      catalog,
+      record,
+      metadata,
+    };
   });
-  catalog.profiles.push(record);
-  saveCatalog(appRoot, catalog);
-
-  const metadata = createProfileMetadata(record);
-  writeProfileMetadata(record.dir, metadata);
-
-  return {
-    catalog,
-    record,
-    metadata,
-  };
 }
 
 function renameProfile(appRoot, profileId, displayName) {
@@ -252,28 +297,30 @@ function renameProfile(appRoot, profileId, displayName) {
     throw new Error('Profile display name is required');
   }
 
-  const catalog = loadCatalog(appRoot);
-  const record = findProfile(catalog, id);
-  if (!record) {
-    throw new Error(`Profile not found: ${id}`);
-  }
+  return withCatalogWriteLock(appRoot, () => {
+    const catalog = loadCatalog(appRoot);
+    const record = findProfile(catalog, id);
+    if (!record) {
+      throw new Error(`Profile not found: ${id}`);
+    }
 
-  record.displayName = nextDisplayName;
-  saveCatalog(appRoot, catalog);
+    record.displayName = nextDisplayName;
+    saveCatalog(appRoot, catalog);
 
-  const existingMetadata = readProfileMetadata(record.dir) || createProfileMetadata(record);
-  const metadata = {
-    ...existingMetadata,
-    id: record.id,
-    displayName: nextDisplayName,
-  };
-  writeProfileMetadata(record.dir, metadata);
+    const existingMetadata = readProfileMetadata(record.dir) || createProfileMetadata(record);
+    const metadata = {
+      ...existingMetadata,
+      id: record.id,
+      displayName: nextDisplayName,
+    };
+    writeProfileMetadata(record.dir, metadata);
 
-  return {
-    catalog,
-    record,
-    metadata,
-  };
+    return {
+      catalog,
+      record,
+      metadata,
+    };
+  });
 }
 
 function deleteProfile(appRoot, profileId, expectedDisplayName) {
@@ -282,35 +329,37 @@ function deleteProfile(appRoot, profileId, expectedDisplayName) {
     throw new Error('The default profile cannot be deleted');
   }
 
-  const catalog = loadCatalog(appRoot);
-  const recordIndex = catalog.profiles.findIndex((profile) => profile.id === id);
-  if (recordIndex === -1) {
-    throw new Error(`Profile not found: ${id}`);
-  }
+  return withCatalogWriteLock(appRoot, () => {
+    const catalog = loadCatalog(appRoot);
+    const recordIndex = catalog.profiles.findIndex((profile) => profile.id === id);
+    if (recordIndex === -1) {
+      throw new Error(`Profile not found: ${id}`);
+    }
 
-  const record = catalog.profiles[recordIndex];
-  const displayName = record.displayName || displayNameFromId(record.id);
-  if (String(expectedDisplayName || '') !== displayName) {
-    throw new Error('Profile display name confirmation did not match');
-  }
+    const record = catalog.profiles[recordIndex];
+    const displayName = record.displayName || displayNameFromId(record.id);
+    if (String(expectedDisplayName || '') !== displayName) {
+      throw new Error('Profile display name confirmation did not match');
+    }
 
-  const resolvedAppRoot = path.resolve(appRoot);
-  const resolvedProfileDir = path.resolve(record.dir);
-  if (
-    resolvedProfileDir === resolvedAppRoot ||
-    !resolvedProfileDir.startsWith(`${resolvedAppRoot}${path.sep}`)
-  ) {
-    throw new Error('Refusing to delete a profile outside the app data root');
-  }
+    const resolvedAppRoot = path.resolve(appRoot);
+    const resolvedProfileDir = path.resolve(record.dir);
+    if (
+      resolvedProfileDir === resolvedAppRoot ||
+      !resolvedProfileDir.startsWith(`${resolvedAppRoot}${path.sep}`)
+    ) {
+      throw new Error('Refusing to delete a profile outside the app data root');
+    }
 
-  catalog.profiles.splice(recordIndex, 1);
-  saveCatalog(appRoot, catalog);
-  fs.rmSync(resolvedProfileDir, { recursive: true, force: true });
+    catalog.profiles.splice(recordIndex, 1);
+    saveCatalog(appRoot, catalog);
+    fs.rmSync(resolvedProfileDir, { recursive: true, force: true });
 
-  return {
-    catalog,
-    record,
-  };
+    return {
+      catalog,
+      record,
+    };
+  });
 }
 
 function listProfileSummaries(appRoot, options = {}) {
@@ -338,75 +387,81 @@ function updateProfileNodeConfig(profile, protocol, updates) {
     throw new Error(`Unsupported profile node protocol: ${protocol}`);
   }
 
-  const catalog = loadCatalog(profile.appRoot);
-  const record = findProfile(catalog, profile.id);
+  return withCatalogWriteLock(profile.appRoot, () => {
+    const catalog = loadCatalog(profile.appRoot);
+    const record = findProfile(catalog, profile.id);
 
-  if (record) {
-    record.nodes = record.nodes || {};
-    record.nodes[protocol] = {
-      ...(record.nodes[protocol] || {}),
+    if (record) {
+      record.nodes = record.nodes || {};
+      record.nodes[protocol] = {
+        ...(record.nodes[protocol] || {}),
+        ...updates,
+      };
+      saveCatalog(profile.appRoot, catalog);
+    }
+
+    const metaPath = getProfileMetaPath(profile.userDataDir);
+    const metadata = fs.existsSync(metaPath)
+      ? readJson(metaPath)
+      : { ...profile.metadata };
+
+    metadata.nodes = metadata.nodes || {};
+    metadata.nodes[protocol] = {
+      ...(metadata.nodes[protocol] || {}),
       ...updates,
     };
-    saveCatalog(profile.appRoot, catalog);
-  }
+    writeProfileMetadata(profile.userDataDir, metadata);
 
-  const metaPath = getProfileMetaPath(profile.userDataDir);
-  const metadata = fs.existsSync(metaPath)
-    ? readJson(metaPath)
-    : { ...profile.metadata };
-
-  metadata.nodes = metadata.nodes || {};
-  metadata.nodes[protocol] = {
-    ...(metadata.nodes[protocol] || {}),
-    ...updates,
-  };
-  writeProfileMetadata(profile.userDataDir, metadata);
-
-  return {
-    catalog,
-    record,
-    metadata,
-  };
+    return {
+      catalog,
+      record,
+      metadata,
+    };
+  });
 }
 
 function ensureProfile(appRoot, profileId, options = {}) {
-  ensureDir(appRoot);
+  return withCatalogWriteLock(appRoot, () => {
+    const catalog = loadCatalog(appRoot);
+    let record = findProfile(catalog, profileId);
 
-  const catalog = loadCatalog(appRoot);
-  let record = findProfile(catalog, profileId);
+    if (!record) {
+      record = createProfileRecord(appRoot, profileId, {
+        ...options,
+        catalog,
+      });
+      catalog.profiles.push(record);
+      saveCatalog(appRoot, catalog);
+    }
 
-  if (!record) {
-    record = createProfileRecord(appRoot, profileId, {
-      ...options,
+    ensureDir(record.dir);
+
+    const metaPath = getProfileMetaPath(record.dir);
+    let metadata;
+    if (fs.existsSync(metaPath)) {
+      metadata = readJson(metaPath);
+    } else {
+      metadata = createProfileMetadata(record);
+      writeProfileMetadata(record.dir, metadata);
+    }
+
+    return {
       catalog,
-    });
-    catalog.profiles.push(record);
-    saveCatalog(appRoot, catalog);
-  }
-
-  ensureDir(record.dir);
-
-  const metaPath = getProfileMetaPath(record.dir);
-  let metadata;
-  if (fs.existsSync(metaPath)) {
-    metadata = readJson(metaPath);
-  } else {
-    metadata = createProfileMetadata(record);
-    writeProfileMetadata(record.dir, metadata);
-  }
-
-  return {
-    catalog,
-    catalogPath: getCatalogPath(appRoot),
-    record,
-    metadata,
-  };
+      catalogPath: getCatalogPath(appRoot),
+      record,
+      metadata,
+    };
+  });
 }
 
 module.exports = {
+  DEFAULT_CATALOG_LOCK_STALE_MS,
+  DEFAULT_CATALOG_LOCK_UPDATE_MS,
   DEFAULT_PROFILE_ID,
   DEV_PORT_BASE,
   PACKAGED_PORT_BASE,
+  PROFILE_CATALOG_LOCK_DIR,
+  PROFILE_CATALOG_LOCK_TARGET,
   PROFILE_META_FILE,
   PROFILE_REGISTRY_FILE,
   allocateSlot,
@@ -416,6 +471,7 @@ module.exports = {
   displayNameFromId,
   ensureProfile,
   getCatalogPath,
+  getCatalogLockPaths,
   getCheckoutId,
   getDevPortOffset,
   getManagedPorts,
@@ -429,4 +485,5 @@ module.exports = {
   saveCatalog,
   updateProfileNodeConfig,
   writeProfileMetadata,
+  withCatalogWriteLock,
 };

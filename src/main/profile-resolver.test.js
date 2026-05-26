@@ -9,6 +9,7 @@ const {
   getCheckoutId,
   getDevPortOffset,
   hashPath,
+  PROFILE_CATALOG_LOCK_TARGET,
 } = require('./profile-catalog');
 
 function makeTempDir(prefix = 'freedom-profile-') {
@@ -50,6 +51,7 @@ describe('profile resolver', () => {
     expect(profile.userDataDir).toBe(userDataDir);
     expect(profile.appRoot).toBe(userDataDir);
     expect(fs.existsSync(path.join(userDataDir, 'profile-registry.json'))).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, PROFILE_CATALOG_LOCK_TARGET))).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'profile.json'))).toBe(true);
     expect(profile.metadata.nodes.bee.apiPort).toBe(11633);
   });
