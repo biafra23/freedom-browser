@@ -2,6 +2,13 @@
 
 All notable changes to Freedom will be documented in this file.
 
+## [Unreleased]
+
+### Security
+
+- Updated bundled nodes: Bee 2.7.1 to 2.8.0 (breaking p2p upgrade; older nodes can no longer peer with the network)
+- Updated dev dependencies: `@babel/preset-env` 7.29.5 to 7.29.7
+
 ## [0.7.2] - 2026-05-24
 
 ### Added
