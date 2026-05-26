@@ -1465,7 +1465,7 @@
             throw new Error(result?.error?.message || 'Profile could not be created');
           }
           profileFields.createName.value = '';
-          setManagerStatus('Profile created. Opening profiles from the app lands in the next slice.', 'success');
+          setManagerStatus('Profile created. You can open it from the profile list.', 'success');
           await refreshProfileManager();
         } catch (err) {
           setManagerStatus(err?.message || 'Profile could not be created', 'error');
