@@ -5,6 +5,7 @@ const lockfile = require('proper-lockfile');
 
 const PROFILE_REGISTRY_FILE = 'profile-registry.json';
 const PROFILE_META_FILE = 'profile.json';
+const RADICLE_SHORT_HOME_DIR = 'R';
 const PROFILE_CATALOG_LOCK_TARGET = 'profile-registry.write-lock-target';
 const PROFILE_CATALOG_LOCK_DIR = 'profile-registry.write.lock';
 const DEFAULT_PROFILE_ID = 'default';
@@ -345,6 +346,36 @@ function getProfileDir(appRoot, profileId, options = {}) {
   return path.join(appRoot, 'Profiles', profileId);
 }
 
+function getProfileRadicleDataDir(appRoot, record, options = {}) {
+  if (!Number.isInteger(record?.slot)) {
+    return null;
+  }
+
+  const slot = String(record.slot);
+  if (options.dev) {
+    return path.join(
+      path.dirname(appRoot),
+      RADICLE_SHORT_HOME_DIR,
+      options.checkoutHash || 'dev',
+      slot
+    );
+  }
+
+  return path.join(appRoot, RADICLE_SHORT_HOME_DIR, slot);
+}
+
+function assertPathInside(parentDir, targetDir, description) {
+  const resolvedParent = path.resolve(parentDir);
+  const resolvedTarget = path.resolve(targetDir);
+  if (
+    resolvedTarget === resolvedParent
+    || !resolvedTarget.startsWith(`${resolvedParent}${path.sep}`)
+  ) {
+    throw new Error(`Refusing to delete ${description} outside its root`);
+  }
+  return resolvedTarget;
+}
+
 function getUsedSlots(catalog) {
   return new Set(
     catalog.profiles
@@ -567,6 +598,26 @@ function deleteProfile(appRoot, profileId, expectedDisplayName, options = {}) {
     catalog.profiles.splice(recordIndex, 1);
     saveCatalog(appRoot, catalog);
     fs.rmSync(resolvedProfileDir, { recursive: true, force: true });
+
+    /*
+     * IMPORTANT: Radicle data is the managed-node exception to the normal
+     * "everything lives under the profile directory" rule.
+     *
+     * profile-paths.js stores catalog-managed Radicle homes at app-owned short
+     * paths (`R/<slot>` or dev `R/<checkoutHash>/<slot>`) because radicle-node
+     * creates `$RAD_HOME/node/control.sock` and Unix socket paths have a hard
+     * length limit. Deleting a profile must remove this sibling Radicle home too;
+     * otherwise a later profile that reuses the freed slot could inherit the old
+     * Radicle identity, node database, and seeded repository state.
+     */
+    const radicleDir = getProfileRadicleDataDir(appRoot, record, options);
+    if (radicleDir) {
+      const radicleRoot = options.dev
+        ? path.join(path.dirname(appRoot), RADICLE_SHORT_HOME_DIR)
+        : path.join(appRoot, RADICLE_SHORT_HOME_DIR);
+      const resolvedRadicleDir = assertPathInside(radicleRoot, radicleDir, 'Radicle data');
+      fs.rmSync(resolvedRadicleDir, { recursive: true, force: true });
+    }
 
     return {
       catalog,

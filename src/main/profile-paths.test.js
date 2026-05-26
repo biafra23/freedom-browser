@@ -33,14 +33,11 @@ describe('profile paths', () => {
     });
     return loadMainModule(require.resolve('./profile-paths'), {
       app,
-      extraMocks: options.homeDir
-        ? {
-          os: () => ({
-            ...jest.requireActual('os'),
-            homedir: jest.fn(() => options.homeDir),
-          }),
-        }
-        : {},
+      extraMocks: {
+        [require.resolve('./profile-resolver')]: () => ({
+          getActiveProfile: jest.fn(() => options.activeProfile || null),
+        }),
+      },
     }).mod;
   }
 
@@ -91,28 +88,44 @@ describe('profile paths', () => {
     expect(paths.getRadicleDataDir()).toBe(radicleDir);
   });
 
-  test('uses a short persistent Radicle home when the profile socket path is too long', () => {
-    const tempRoot = track(createTempUserDataDir());
-    const homeDir = track(createTempUserDataDir());
-    const userDataDir = path.join(
-      tempRoot,
-      'Freedom Dev',
-      'freedom-browser-12345678',
-      'Profiles',
-      'profile-with-a-long-name'
-    );
+  test('uses an app-owned short Radicle home for catalog profiles', () => {
+    const tempRoot = track(path.join('/tmp', `freedom-profile-paths-${Date.now()}`));
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const appRoot = path.join(tempRoot, 'Freedom Dev', 'freedom-browser-12345678');
+    const userDataDir = path.join(appRoot, 'Profiles', 'profile-with-a-long-name');
     const legacyRadicleDir = path.join(userDataDir, 'radicle-data');
     fs.mkdirSync(path.join(legacyRadicleDir, 'keys'), { recursive: true });
     fs.writeFileSync(path.join(legacyRadicleDir, 'keys', 'radicle.pub'), 'public-key');
+    const activeProfile = {
+      source: 'catalog',
+      appRoot,
+      isDev: true,
+      checkoutHash: '12345678',
+      metadata: { slot: 2 },
+    };
 
-    const paths = loadPaths(userDataDir, { homeDir });
+    const paths = loadPaths(userDataDir, { activeProfile });
     const radicleDir = paths.getRadicleDataDir();
 
-    expect(radicleDir).toMatch(new RegExp(`${path.sep}\\.fr${path.sep}`));
-    expect(radicleDir.startsWith(userDataDir)).toBe(false);
+    expect(radicleDir).toBe(path.join(tempRoot, 'Freedom Dev', 'R', '12345678', '2'));
     expect(path.join(radicleDir, 'node', 'control.sock').length).toBeLessThan(100);
     expect(fs.readFileSync(path.join(radicleDir, 'keys', 'radicle.pub'), 'utf-8')).toBe(
       'public-key'
     );
+  });
+
+  test('uses a short Radicle home under the packaged app root', () => {
+    const appRoot = track(createTempUserDataDir());
+    const userDataDir = path.join(appRoot, 'Profiles', 'work');
+    const activeProfile = {
+      source: 'catalog',
+      appRoot,
+      isDev: false,
+      metadata: { slot: 1 },
+    };
+
+    const paths = loadPaths(userDataDir, { activeProfile });
+
+    expect(paths.getRadicleDataDir()).toBe(path.join(appRoot, 'R', '1'));
   });
 });

@@ -465,8 +465,12 @@ function detectSystemNode() {
 }
 
 /**
- * Return the active RAD_HOME. Long profile paths are resolved by profile-paths
- * to a short per-profile Radicle home so the control socket stays below SUN_LEN.
+ * Return the active RAD_HOME.
+ *
+ * NOTE: For catalog-managed profiles this may be the short app-owned Radicle
+ * home from profile-paths (`R/<slot>`), not `<profile>/radicle-data`. This is
+ * deliberate: radicle-node creates `$RAD_HOME/node/control.sock`, and macOS /
+ * Linux reject long Unix socket paths before the node can finish booting.
  */
 function getActiveRadHome() {
   return activeRadHome || getRadicleDataPath();

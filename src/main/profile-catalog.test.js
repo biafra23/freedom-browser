@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
+  deleteProfile,
   ensureProfile,
   getCatalogLockPaths,
   withCatalogWriteLock,
@@ -166,5 +167,34 @@ describe('profile catalog', () => {
     );
     expect(catalog.profiles[0].nodes.bee.p2pPort).toBe(12633);
     expect(metadata.nodes.bee.p2pPort).toBe(12633);
+  });
+
+  test('deletes the short app-owned Radicle home with a profile', () => {
+    const tempRoot = track(makeTempDir());
+    const appRoot = path.join(tempRoot, 'Freedom Dev', 'freedom-browser-abcdef12');
+    const defaultProfileDir = path.join(appRoot, 'Profiles', 'default');
+    fs.mkdirSync(defaultProfileDir, { recursive: true });
+
+    ensureProfile(appRoot, 'default', {
+      checkoutHash: 'abcdef12',
+      defaultProfileDir,
+      dev: true,
+    });
+    const { record } = ensureProfile(appRoot, 'work', {
+      checkoutHash: 'abcdef12',
+      defaultProfileDir,
+      dev: true,
+    });
+    const radicleDir = path.join(tempRoot, 'Freedom Dev', 'R', 'abcdef12', String(record.slot));
+    fs.mkdirSync(radicleDir, { recursive: true });
+    fs.writeFileSync(path.join(radicleDir, 'node.db'), 'radicle');
+
+    deleteProfile(appRoot, 'work', 'Work', {
+      checkoutHash: 'abcdef12',
+      dev: true,
+    });
+
+    expect(fs.existsSync(record.dir)).toBe(false);
+    expect(fs.existsSync(radicleDir)).toBe(false);
   });
 });
