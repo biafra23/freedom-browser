@@ -49,9 +49,13 @@ const {
 
 // Radicle community seed nodes for peer discovery
 const PREFERRED_SEEDS = [
-  'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.xyz:8776',
-  'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.xyz:8776',
+  'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.network:8776',
+  'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.network:8776',
 ];
+const LEGACY_SEED_REPLACEMENTS = new Map([
+  ['iris.radicle.xyz', 'iris.radicle.network'],
+  ['rosa.radicle.xyz', 'rosa.radicle.network'],
+]);
 
 // Canonical Freedom Browser repo — bundled nodes auto-seed this
 const FREEDOM_BROWSER_RID = 'rad:z3QXuMvMmSeEX3ZgoUidZC1v5MkKE';
@@ -223,6 +227,23 @@ function cleanupStaleSocket(radHome) {
   }
 }
 
+function normalizeSeedAddress(seed) {
+  if (typeof seed !== 'string') return null;
+
+  let normalized = seed;
+  for (const [legacyHost, currentHost] of LEGACY_SEED_REPLACEMENTS) {
+    normalized = normalized.replace(`@${legacyHost}:`, `@${currentHost}:`);
+  }
+  return normalized;
+}
+
+function normalizePreferredSeeds(seeds) {
+  const normalizedSeeds = Array.isArray(seeds)
+    ? seeds.map(normalizeSeedAddress).filter(Boolean)
+    : [];
+  return [...new Set([...normalizedSeeds, ...PREFERRED_SEEDS])];
+}
+
 /**
  * Ensure config.json contains preferredSeeds for peer discovery.
  * Merges seeds into an existing config or creates a new one.
@@ -239,9 +260,7 @@ function ensureConfig(radHome, p2pPort = getConfiguredRadicleP2pPort()) {
     }
   }
 
-  if (!config.preferredSeeds || config.preferredSeeds.length === 0) {
-    config.preferredSeeds = PREFERRED_SEEDS;
-  }
+  config.preferredSeeds = normalizePreferredSeeds(config.preferredSeeds);
 
   config.node = config.node || {};
   config.node.alias = config.node.alias || 'FreedomBrowser';

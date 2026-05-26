@@ -658,8 +658,8 @@ describe('radicle-manager', () => {
       path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
       JSON.stringify({
         preferredSeeds: [
-          'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.xyz:8776',
-          'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.xyz:8776',
+          'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.network:8776',
+          'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.network:8776',
         ],
         node: {
           alias: 'FreedomBrowser',
@@ -689,6 +689,59 @@ describe('radicle-manager', () => {
     expect(ctx.spawnedProcesses[1].kills).toContain('SIGTERM');
     expect(ctx.spawnedProcesses[0].kills).toContain('SIGTERM');
     expect(ctx.clearService).toHaveBeenCalledWith('radicle');
+  });
+
+  test('migrates legacy Radicle seed hostnames in existing config', async () => {
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: { mode: 'managed', httpPort: 18780, p2pPort: 18776 },
+          },
+        },
+      },
+      configExists: true,
+      configContents: JSON.stringify({
+        preferredSeeds: [
+          'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.xyz:8776',
+          'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.xyz:8776',
+          'z6Mcustom@local.example:8776',
+        ],
+        node: {
+          alias: 'CustomAlias',
+          listen: ['0.0.0.0:9999'],
+        },
+      }),
+      portResolver: (port) => port === 18780 || port === 18776,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:18781/') {
+          return { statusCode: 200, body: {} };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+
+    const configWrite = ctx.fsMock.writeFileSync.mock.calls.find(([target]) => (
+      target === path.join(PROFILE_RADICLE_DATA_DIR, 'config.json')
+    ));
+    const nextConfig = JSON.parse(configWrite[1]);
+
+    expect(nextConfig.preferredSeeds).toEqual([
+      'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.network:8776',
+      'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.network:8776',
+      'z6Mcustom@local.example:8776',
+    ]);
+    expect(nextConfig.node).toEqual({
+      alias: 'CustomAlias',
+      listen: ['0.0.0.0:18777'],
+    });
+
+    const stopPromise = ctx.mod.stopRadicle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stopPromise;
   });
 
   test('starts a managed profile node on profile ports without reusing defaults', async () => {
