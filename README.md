@@ -374,6 +374,8 @@ Freedom automatically manages node connections per profile. The default profile'
 
 Named profiles use the next profile slot (`11634`, `15002`, `18081`, `18781`, and so on). The ecosystem default ports (`1633`, `5001`, `8080`, `8780`) are treated as external/system-node endpoints, not Freedom-managed defaults.
 
+If Freedom detects a compatible daemon on an ecosystem default port for a protocol that would start at launch, it asks whether that profile should use the existing external node or keep an independent managed node.
+
 For advanced users who need to connect a profile to a remote or system node, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
 
 ```bash
