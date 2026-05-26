@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showAbout: () => ipcRenderer.send('app:show-about'),
   getPlatform: () => ipcRenderer.invoke('window:get-platform'),
   getActiveProfile: () => ipcRenderer.invoke('profile:get-active'),
+  onProfileUpdated: (callback) => {
+    const handler = (_event, profile) => callback(profile);
+    ipcRenderer.on('profile:updated', handler);
+    return () => ipcRenderer.removeListener('profile:updated', handler);
+  },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   getBookmarks: () => ipcRenderer.invoke('bookmarks:get'),

@@ -125,11 +125,13 @@ function loadIpcHandlersModule(options = {}) {
       },
     }));
 
-  const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
+  const { mod, app, webContents } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
     dialog,
     clipboard,
     nativeImage,
+    webContents: options.webContents,
+    webContentsList: options.webContentsList,
     extraMocks: {
       [require.resolve('./logger')]: () => log,
       [require.resolve('./settings-store')]: () => ({ loadSettings }),
@@ -170,6 +172,7 @@ function loadIpcHandlersModule(options = {}) {
     mod,
     nativeImage,
     state,
+    webContents,
     createProfileForActiveApp,
     deleteProfileForActiveApp,
     listProfilesForActiveApp,
@@ -394,7 +397,18 @@ describe('ipc-handlers', () => {
   });
 
   test('lists, creates, and renames profiles through profile IPC', async () => {
+    const activeProfile = {
+      id: 'default',
+      displayName: 'Default',
+      source: 'catalog',
+      isDev: false,
+    };
+    const profileWebContents = {
+      send: jest.fn(),
+    };
     const ctx = loadIpcHandlersModule({
+      activeProfile,
+      webContentsList: [profileWebContents],
       profiles: [
         {
           id: 'default',
@@ -406,6 +420,24 @@ describe('ipc-handlers', () => {
           isActive: true,
         },
       ],
+      renameProfileForActiveApp: jest.fn((id, displayName) => {
+        if (id === activeProfile.id) {
+          activeProfile.displayName = displayName;
+        }
+        return {
+          record: {
+            id,
+            displayName,
+            slot: 0,
+          },
+          metadata: {
+            id,
+            displayName,
+            slot: 0,
+            nodes: {},
+          },
+        };
+      }),
     });
 
     ctx.mod.registerBaseIpcHandlers();
@@ -461,13 +493,19 @@ describe('ipc-handlers', () => {
         },
         activeProfile: {
           id: 'default',
-          displayName: 'Default',
+          displayName: 'Personal',
           source: 'catalog',
           isDev: false,
         },
       })
     );
     expect(ctx.renameProfileForActiveApp).toHaveBeenCalledWith('default', 'Personal');
+    expect(profileWebContents.send).toHaveBeenCalledWith(IPC.PROFILE_UPDATED, {
+      id: 'default',
+      displayName: 'Personal',
+      source: 'catalog',
+      isDev: false,
+    });
   });
 
   test('opens inactive catalog profiles through profile IPC', async () => {
@@ -567,7 +605,10 @@ describe('ipc-handlers', () => {
         },
       },
     };
-    const ctx = loadIpcHandlersModule({ activeProfile });
+    const profileWebContents = {
+      send: jest.fn(),
+    };
+    const ctx = loadIpcHandlersModule({ activeProfile, webContentsList: [profileWebContents] });
 
     ctx.mod.registerBaseIpcHandlers();
 
@@ -600,6 +641,18 @@ describe('ipc-handlers', () => {
     expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
       mode: 'external',
       externalApi: 'http://127.0.0.1:1633',
+    });
+    expect(profileWebContents.send).toHaveBeenCalledWith(IPC.PROFILE_UPDATED, {
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: false,
+      slot: 1,
+      nodes: {
+        bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
+        ipfs: { mode: 'managed', apiPort: 15002, gatewayPort: 18081 },
+        radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+      },
     });
   });
 

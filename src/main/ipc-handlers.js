@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const log = require('./logger');
-const { ipcMain, app, dialog, clipboard, nativeImage } = require('electron');
+const { ipcMain, app, dialog, clipboard, nativeImage, webContents } = require('electron');
 const { URL } = require('url');
 const path = require('path');
 const { activeBzzBases, activeRadBases } = require('./state');
@@ -114,6 +114,18 @@ function serializeActiveProfile() {
   }
 
   return serialized;
+}
+
+function broadcastProfileUpdated(profile = serializeActiveProfile()) {
+  if (!webContents?.getAllWebContents) return;
+
+  for (const contents of webContents.getAllWebContents()) {
+    try {
+      contents.send(IPC.PROFILE_UPDATED, profile);
+    } catch {
+      // The target may have been destroyed between enumeration and send.
+    }
+  }
 }
 
 function serializeProfileSummary(profile) {
@@ -261,7 +273,9 @@ function updateProfileNodeConfigFromIpc(protocol, patch) {
     if (!result) {
       return failure('PROFILE_UPDATE_FAILED', 'Profile node config was not updated');
     }
-    return success({ profile: serializeActiveProfile() });
+    const profile = serializeActiveProfile();
+    broadcastProfileUpdated(profile);
+    return success({ profile });
   } catch (err) {
     log.error('[profile] Failed to update node config:', err);
     return failure('PROFILE_UPDATE_FAILED', err.message || 'Profile node config update failed');
@@ -297,9 +311,11 @@ function renameProfileFromIpc(payload = {}) {
     if (!result) {
       return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
     }
+    const activeProfile = serializeActiveProfile();
+    broadcastProfileUpdated(activeProfile);
     return success({
       profile: serializeProfileMutationResult(result),
-      activeProfile: serializeActiveProfile(),
+      activeProfile,
     });
   } catch (err) {
     return failure('PROFILE_RENAME_FAILED', err.message || 'Profile could not be renamed');
@@ -666,6 +682,7 @@ function registerBaseIpcHandlers(callbacks = {}) {
 }
 
 module.exports = {
+  broadcastProfileUpdated,
   createProfileFromIpc,
   deleteProfileFromIpc,
   listProfilesFromIpc,

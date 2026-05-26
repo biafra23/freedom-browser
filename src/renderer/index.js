@@ -160,8 +160,7 @@ async function initProfileIndicator() {
   });
   window.addEventListener('blur', () => setMenuOpen(false));
 
-  try {
-    const profile = await electronAPI.getActiveProfile?.();
+  const renderProfile = (profile) => {
     const label = profile?.displayName || profile?.id;
     if (!label) return;
 
@@ -175,6 +174,13 @@ async function initProfileIndicator() {
       menuMeta.textContent = meta.join(' · ');
     }
     indicator.hidden = false;
+  };
+
+  electronAPI.onProfileUpdated?.(renderProfile);
+
+  try {
+    const profile = await electronAPI.getActiveProfile?.();
+    renderProfile(profile);
   } catch (err) {
     pushDebug(`[profile] Failed to load active profile: ${err?.message || err}`);
   }
