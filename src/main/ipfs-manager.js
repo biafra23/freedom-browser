@@ -145,22 +145,26 @@ function getEndpointLabel(rawUrl) {
   }
 }
 
-function buildApiRequestOptions(apiUrl, apiPath) {
+function buildApiRequestOptions(apiUrl, apiPath, options = {}) {
   const endpoint = new URL(apiUrl);
   const basePath = endpoint.pathname.replace(/\/+$/, '');
   endpoint.pathname = `${basePath}${apiPath}`;
   endpoint.search = '';
+  for (const [key, value] of Object.entries(options.searchParams || {})) {
+    endpoint.searchParams.set(key, value);
+  }
   endpoint.hash = '';
 
+  const method = options.method || 'POST';
   return {
     protocol: endpoint.protocol,
     hostname: endpoint.hostname,
     port: endpoint.port ? Number(endpoint.port) : (endpoint.protocol === 'https:' ? 443 : 80),
-    path: endpoint.pathname,
-    method: 'POST',
-    headers: {
-      'Content-Length': 0,
-    },
+    path: `${endpoint.pathname}${endpoint.search}`,
+    method,
+    headers: method === 'POST'
+      ? { 'Content-Length': 0 }
+      : undefined,
     timeout: 2000,
   };
 }
@@ -373,14 +377,11 @@ function isPortOpen(port, host = '127.0.0.1') {
   });
 }
 
-/**
- * Probe IPFS API health endpoint
- */
-function probeIpfsApiUrl(apiUrl) {
+function requestIpfsApiJson(apiUrl, apiPath, options = {}) {
   return new Promise((resolve) => {
-    const options = buildApiRequestOptions(apiUrl, '/api/v0/id');
+    const requestOptions = buildApiRequestOptions(apiUrl, apiPath, options);
 
-    const req = getHttpClient(options.protocol).request(options, (res) => {
+    const req = getHttpClient(requestOptions.protocol).request(requestOptions, (res) => {
       if (res.statusCode === 200) {
         let data = '';
         res.on('data', (chunk) => {
@@ -409,8 +410,102 @@ function probeIpfsApiUrl(apiUrl) {
   });
 }
 
+/**
+ * Probe IPFS API health endpoint
+ */
+function probeIpfsApiUrl(apiUrl) {
+  return requestIpfsApiJson(apiUrl, '/api/v0/id');
+}
+
 function probeIpfsApi(port) {
   return probeIpfsApiUrl(`http://127.0.0.1:${port}`);
+}
+
+function parseGatewayMultiaddr(rawAddress) {
+  if (typeof rawAddress !== 'string' || !rawAddress.trim()) {
+    return null;
+  }
+
+  const match = rawAddress.match(/^\/(?:ip4|ip6|dns|dns4|dns6)\/([^/]+)\/tcp\/(\d+)(?:\/|$)/);
+  if (!match) {
+    return null;
+  }
+
+  const rawHost = match[1];
+  const port = Number(match[2]);
+  if (!Number.isInteger(port)) {
+    return null;
+  }
+
+  let host = rawHost;
+  if (rawHost === '127.0.0.1' || rawHost === '0.0.0.0' || rawHost === '::1' || rawHost === '::') {
+    host = 'localhost';
+  } else if (rawHost.includes(':') && !rawHost.startsWith('[')) {
+    host = `[${rawHost}]`;
+  }
+
+  return `http://${host}:${port}`;
+}
+
+async function readGatewayUrlFromIpfsApi(apiUrl) {
+  const response = await requestIpfsApiJson(apiUrl, '/api/v0/config', {
+    searchParams: { arg: 'Addresses.Gateway' },
+  });
+  if (!response.valid) {
+    return null;
+  }
+
+  const rawAddress = typeof response.data?.Value === 'string'
+    ? response.data.Value
+    : response.data;
+  return parseGatewayMultiaddr(rawAddress);
+}
+
+function probeIpfsGatewayUrl(gatewayUrl) {
+  return new Promise((resolve) => {
+    let endpoint;
+    try {
+      endpoint = new URL(gatewayUrl);
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    const basePath = endpoint.pathname.replace(/\/+$/, '');
+    endpoint.pathname = `${basePath}/`;
+    endpoint.search = '';
+    endpoint.hash = '';
+
+    const options = {
+      protocol: endpoint.protocol,
+      hostname: endpoint.hostname,
+      port: endpoint.port ? Number(endpoint.port) : (endpoint.protocol === 'https:' ? 443 : 80),
+      path: `${endpoint.pathname}${endpoint.search}`,
+      method: 'GET',
+      timeout: 2000,
+    };
+
+    const req = getHttpClient(options.protocol).request(options, (res) => {
+      resolve(true);
+      res.resume();
+    });
+
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
+async function resolveReusedIpfsGatewayUrl(apiUrl) {
+  const configuredGatewayUrl = await readGatewayUrlFromIpfsApi(apiUrl);
+  if (configuredGatewayUrl && await probeIpfsGatewayUrl(configuredGatewayUrl)) {
+    return configuredGatewayUrl;
+  }
+
+  return null;
 }
 
 /**
@@ -584,9 +679,9 @@ async function startIpfs() {
   if (existing.found) {
     // Reuse existing daemon
     currentApiPort = existing.port;
-    currentGatewayPort = DEFAULTS.ipfs.gatewayPort;
     currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
-    currentGatewayUrl = `http://localhost:${currentGatewayPort}`;
+    currentGatewayUrl = await resolveReusedIpfsGatewayUrl(currentApiUrl);
+    currentGatewayPort = currentGatewayUrl ? getPortFromUrl(currentGatewayUrl) : null;
     currentMode = MODE.REUSED;
 
     updateService('ipfs', {
@@ -594,11 +689,19 @@ async function startIpfs() {
       gateway: currentGatewayUrl,
       mode: MODE.REUSED,
     });
-    setStatusMessage('ipfs', `Node: localhost:${currentApiPort}`);
+    setStatusMessage(
+      'ipfs',
+      currentGatewayUrl
+        ? `Node: localhost:${currentApiPort}`
+        : `Node: localhost:${currentApiPort} (gateway not detected)`
+    );
 
     updateState(STATUS.RUNNING);
     startHealthCheck();
-    log.info('[IPFS] Reusing existing daemon on port', currentApiPort);
+    log.info('[IPFS] Reusing existing daemon:', {
+      api: currentApiUrl,
+      gateway: currentGatewayUrl,
+    });
     return;
   }
 

@@ -365,7 +365,7 @@ describe('ipfs-manager', () => {
     });
   });
 
-  test('reuses an existing daemon and clears the health-check interval on stop', async () => {
+  test('reuses an existing daemon with the gateway configured by its API', async () => {
     const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(321);
     const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
     const window = createWindowMock();
@@ -373,11 +373,23 @@ describe('ipfs-manager', () => {
       windows: [window],
       portSequence: [true],
       httpResponse: (options) => {
-        if (options.port === 5001) {
+        if (options.port === 5001 && options.path === '/api/v0/id') {
           return {
             statusCode: 200,
             body: { ID: 'peer-123' },
           };
+        }
+        if (options.port === 5001 && options.path === '/api/v0/config?arg=Addresses.Gateway') {
+          return {
+            statusCode: 200,
+            body: {
+              Key: 'Addresses.Gateway',
+              Value: '/ip4/127.0.0.1/tcp/8081',
+            },
+          };
+        }
+        if (options.port === 8081 && options.method === 'GET') {
+          return { statusCode: 404, body: '' };
         }
 
         return { statusCode: 500, body: '' };
@@ -389,10 +401,10 @@ describe('ipfs-manager', () => {
 
     expect(ctx.spawn).not.toHaveBeenCalled();
     expect(ctx.mod.getActivePort()).toBe(5001);
-    expect(ctx.mod.getActiveGatewayPort()).toBe(8080);
+    expect(ctx.mod.getActiveGatewayPort()).toBe(8081);
     expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
       api: 'http://127.0.0.1:5001',
-      gateway: 'http://localhost:8080',
+      gateway: 'http://localhost:8081',
       mode: 'reused',
     });
     expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node: localhost:5001');
@@ -409,6 +421,46 @@ describe('ipfs-manager', () => {
     await ctx.mod.stopIpfs();
 
     expect(clearIntervalSpy).toHaveBeenCalledWith(321);
+    expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
+  });
+
+  test('reuses an existing daemon without a gateway when none is detected', async () => {
+    const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(322);
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const ctx = loadIpfsManagerModule({
+      portSequence: [true],
+      httpResponse: (options) => {
+        if (options.port === 5001 && options.path === '/api/v0/id') {
+          return {
+            statusCode: 200,
+            body: { ID: 'peer-123' },
+          };
+        }
+
+        return { statusCode: 500, body: '' };
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(5001);
+    expect(ctx.mod.getActiveGatewayPort()).toBeNull();
+    expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
+      api: 'http://127.0.0.1:5001',
+      gateway: null,
+      mode: 'reused',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'ipfs',
+      'Node: localhost:5001 (gateway not detected)'
+    );
+    expect(setIntervalSpy).toHaveBeenCalled();
+
+    await ctx.mod.stopIpfs();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(322);
     expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
   });
 
