@@ -150,10 +150,9 @@ async function initProfileIndicator() {
   };
 
   const profileMetaText = (profile, isCurrent) => {
-    if (isCurrent) return 'Current';
-    if (profile?.isUnregistered) return 'Unregistered';
-    if (Number.isInteger(profile?.slot)) return `Slot ${profile.slot}`;
-    return 'Profile';
+    if (isCurrent) return 'Current profile';
+    if (profile?.isUnregistered) return 'Needs registration';
+    return 'Open in new window';
   };
 
   const renderProfileList = (profiles = []) => {
@@ -273,8 +272,8 @@ async function initProfileIndicator() {
     if (menuMeta) {
       const meta = [];
       if (profile?.isDev) meta.push('Development');
-      if (profile?.source) meta.push(profile.source === 'catalog' ? 'Catalog profile' : profile.source);
       menuMeta.textContent = meta.join(' · ');
+      menuMeta.hidden = meta.length === 0;
     }
     indicator.hidden = false;
     if (menu?.hidden === false) refreshProfileList();
