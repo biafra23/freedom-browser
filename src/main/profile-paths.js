@@ -1,6 +1,12 @@
 const { app } = require('electron');
+const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+
+const RADICLE_SOCKET_PATH_LIMIT = 100;
+const RADICLE_SHORT_HOME_DIR = '.fr';
+const RADICLE_SHORT_HOME_HASH_LENGTH = 8;
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -9,12 +15,42 @@ function ensureDir(dirPath) {
   return dirPath;
 }
 
+function hasEntries(dirPath) {
+  try {
+    return fs.existsSync(dirPath) && fs.readdirSync(dirPath).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function resolveDir(envName, fallbackName) {
   const override = process.env[envName];
   if (override) {
     return ensureDir(override);
   }
   return ensureDir(path.join(app.getPath('userData'), fallbackName));
+}
+
+function getShortRadicleDataDir(profileRadicleDir) {
+  const key = crypto
+    .createHash('sha256')
+    .update(path.resolve(profileRadicleDir))
+    .digest('hex')
+    .slice(0, RADICLE_SHORT_HOME_HASH_LENGTH);
+  return path.join(os.homedir(), RADICLE_SHORT_HOME_DIR, key);
+}
+
+function copyLegacyRadicleDataIfNeeded(profileRadicleDir, shortRadicleDir) {
+  if (!hasEntries(profileRadicleDir) || hasEntries(shortRadicleDir)) {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(shortRadicleDir), { recursive: true });
+  fs.cpSync(profileRadicleDir, shortRadicleDir, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+  });
 }
 
 function getProfileUserDataDir() {
@@ -34,7 +70,21 @@ function getIpfsDataDir() {
 }
 
 function getRadicleDataDir() {
-  return resolveDir('FREEDOM_RADICLE_DATA', 'radicle-data');
+  const override = process.env.FREEDOM_RADICLE_DATA;
+  if (override) {
+    return ensureDir(override);
+  }
+
+  const profileRadicleDir = path.join(app.getPath('userData'), 'radicle-data');
+  const socketPath = path.join(profileRadicleDir, 'node', 'control.sock');
+
+  if (process.platform === 'win32' || socketPath.length < RADICLE_SOCKET_PATH_LIMIT) {
+    return ensureDir(profileRadicleDir);
+  }
+
+  const shortRadicleDir = getShortRadicleDataDir(profileRadicleDir);
+  copyLegacyRadicleDataIfNeeded(profileRadicleDir, shortRadicleDir);
+  return ensureDir(shortRadicleDir);
 }
 
 function getQuickUnlockCredentialPath() {

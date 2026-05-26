@@ -26,12 +26,22 @@ describe('profile paths', () => {
     return dir;
   }
 
-  function loadPaths(userDataDir) {
+  function loadPaths(userDataDir, options = {}) {
     const app = createAppMock({
       isPackaged: false,
       userDataDir,
     });
-    return loadMainModule(require.resolve('./profile-paths'), { app }).mod;
+    return loadMainModule(require.resolve('./profile-paths'), {
+      app,
+      extraMocks: options.homeDir
+        ? {
+          os: () => ({
+            ...jest.requireActual('os'),
+            homedir: jest.fn(() => options.homeDir),
+          }),
+        }
+        : {},
+    }).mod;
   }
 
   test('resolves profile-owned directories under active userData', () => {
@@ -79,5 +89,30 @@ describe('profile paths', () => {
     expect(paths.getBeeDataDir()).toBe(beeDir);
     expect(paths.getIpfsDataDir()).toBe(ipfsDir);
     expect(paths.getRadicleDataDir()).toBe(radicleDir);
+  });
+
+  test('uses a short persistent Radicle home when the profile socket path is too long', () => {
+    const tempRoot = track(createTempUserDataDir());
+    const homeDir = track(createTempUserDataDir());
+    const userDataDir = path.join(
+      tempRoot,
+      'Freedom Dev',
+      'freedom-browser-12345678',
+      'Profiles',
+      'profile-with-a-long-name'
+    );
+    const legacyRadicleDir = path.join(userDataDir, 'radicle-data');
+    fs.mkdirSync(path.join(legacyRadicleDir, 'keys'), { recursive: true });
+    fs.writeFileSync(path.join(legacyRadicleDir, 'keys', 'radicle.pub'), 'public-key');
+
+    const paths = loadPaths(userDataDir, { homeDir });
+    const radicleDir = paths.getRadicleDataDir();
+
+    expect(radicleDir).toMatch(new RegExp(`${path.sep}\\.fr${path.sep}`));
+    expect(radicleDir.startsWith(userDataDir)).toBe(false);
+    expect(path.join(radicleDir, 'node', 'control.sock').length).toBeLessThan(100);
+    expect(fs.readFileSync(path.join(radicleDir, 'keys', 'radicle.pub'), 'utf-8')).toBe(
+      'public-key'
+    );
   });
 });

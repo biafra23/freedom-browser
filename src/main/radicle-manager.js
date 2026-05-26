@@ -4,7 +4,6 @@ const { spawn, execFileSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
 const os = require('os');
-const crypto = require('crypto');
 
 const execFileAsync = promisify(execFile);
 const fs = require('fs');
@@ -80,8 +79,6 @@ let runningSinceMs = null;
 // Grace period during which getConnections treats command failures as a silent
 // zero-peer count instead of logging a warning.
 const CONNECTIONS_STARTUP_GRACE_MS = 30_000;
-const RADICLE_RUNTIME_ROOT = path.join('/tmp', 'freedom-radicle');
-const RADICLE_RUNTIME_HASH_LENGTH = 12;
 
 // Identity injection flag - when true, skip rad auth and use pre-injected identity
 let useInjectedIdentity = false;
@@ -120,48 +117,6 @@ function getRadicleBinaryPath(binary) {
 
 function getRadicleDataPath() {
   return getRadicleDataDir();
-}
-
-function getRadicleRuntimeHome(dataPath) {
-  if (process.platform === 'win32') {
-    return dataPath;
-  }
-
-  const key = crypto
-    .createHash('sha256')
-    .update(path.resolve(dataPath))
-    .digest('hex')
-    .slice(0, RADICLE_RUNTIME_HASH_LENGTH);
-  return path.join(RADICLE_RUNTIME_ROOT, key);
-}
-
-function ensureRadicleRuntimeHome(dataPath) {
-  fs.mkdirSync(dataPath, { recursive: true });
-
-  const runtimeHome = getRadicleRuntimeHome(dataPath);
-  if (runtimeHome === dataPath) {
-    return runtimeHome;
-  }
-
-  fs.mkdirSync(RADICLE_RUNTIME_ROOT, { recursive: true });
-
-  if (fs.existsSync(runtimeHome)) {
-    const stats = fs.lstatSync(runtimeHome);
-    if (!stats.isSymbolicLink()) {
-      throw new Error(`Radicle runtime path exists and is not a symlink: ${runtimeHome}`);
-    }
-
-    const expectedTarget = fs.realpathSync(dataPath);
-    const actualTarget = fs.realpathSync(runtimeHome);
-    if (actualTarget !== expectedTarget) {
-      throw new Error(`Radicle runtime path points at ${actualTarget}, expected ${expectedTarget}`);
-    }
-
-    return runtimeHome;
-  }
-
-  fs.symlinkSync(dataPath, runtimeHome, 'dir');
-  return runtimeHome;
 }
 
 function getProfileRadicleConfig() {
@@ -510,8 +465,8 @@ function detectSystemNode() {
 }
 
 /**
- * Return the active RAD_HOME. Managed profile nodes may use a short symlinked
- * runtime home so Radicle's Unix control socket stays below macOS SUN_LEN.
+ * Return the active RAD_HOME. Long profile paths are resolved by profile-paths
+ * to a short per-profile Radicle home so the control socket stays below SUN_LEN.
  */
 function getActiveRadHome() {
   return activeRadHome || getRadicleDataPath();
@@ -884,21 +839,8 @@ async function startRadicle() {
   currentHttpUrl = `http://127.0.0.1:${currentHttpPort}`;
   currentMode = MODE.BUNDLED;
 
-  let radHome;
-  try {
-    radHome = ensureRadicleRuntimeHome(radicleDataPath);
-    activeRadHome = radHome;
-    log.info('[Radicle] Prepared RAD_HOME for managed node:', {
-      radHome,
-      dataPath: radicleDataPath,
-      socketPath: getRadicleSocketPath(radHome),
-    });
-  } catch (err) {
-    log.error('[Radicle] Failed to prepare RAD_HOME:', err.message);
-    updateState(STATUS.ERROR, 'Failed to prepare Radicle data directory');
-    setStatusMessage('radicle', 'Node failed to start');
-    return;
-  }
+  const radHome = radicleDataPath;
+  activeRadHome = radHome;
 
   // Step 4: Ensure identity exists and config has the selected P2P port
   if (!ensureIdentity(radHome, p2pPort)) {
