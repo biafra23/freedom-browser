@@ -289,6 +289,7 @@ function deleteProfileForActiveApp(profileId, expectedDisplayName) {
         id: record.id,
         displayName: record.displayName,
         userDataDir: record.dir,
+        isDev: activeProfile.isDev,
       }),
   });
 }

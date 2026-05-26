@@ -6,6 +6,8 @@ const PROFILE_LOCK_TARGET = 'profile-open';
 const PROFILE_LOCK_DIR = 'profile-open.lock';
 const DEFAULT_STALE_MS = 30000;
 const DEFAULT_UPDATE_MS = 10000;
+const DEV_STALE_MS = 5000;
+const DEV_UPDATE_MS = 1000;
 
 let activeLock = null;
 
@@ -40,28 +42,38 @@ function isLockUnavailableError(error) {
   return Boolean(error && error.code === 'ELOCKED');
 }
 
+function getProfileLockTiming(profile = {}, options = {}) {
+  const isDevProfile = Boolean(profile.isDev || profile.dev);
+  return {
+    staleMs: options.staleMs ?? (isDevProfile ? DEV_STALE_MS : DEFAULT_STALE_MS),
+    updateMs: options.updateMs ?? (isDevProfile ? DEV_UPDATE_MS : DEFAULT_UPDATE_MS),
+  };
+}
+
 function isProfileLocked(profile, options = {}) {
   const paths = getProfileLockPaths(profile);
   if (!fs.existsSync(paths.targetPath)) {
     return false;
   }
+  const timing = getProfileLockTiming(profile, options);
 
   return lockfile.checkSync(paths.targetPath, {
     lockfilePath: paths.lockDir,
     realpath: false,
-    stale: options.staleMs ?? DEFAULT_STALE_MS,
+    stale: timing.staleMs,
   });
 }
 
 function acquireProfileLock(profile, options = {}) {
   const paths = ensureLockTarget(profile);
   const logger = options.logger || console;
+  const timing = getProfileLockTiming(profile, options);
   const release = lockfile.lockSync(paths.targetPath, {
     lockfilePath: paths.lockDir,
     realpath: false,
     retries: options.retries ?? 0,
-    stale: options.staleMs ?? DEFAULT_STALE_MS,
-    update: options.updateMs ?? DEFAULT_UPDATE_MS,
+    stale: timing.staleMs,
+    update: timing.updateMs,
     onCompromised: options.onCompromised || ((error) => {
       logger.error('[profile-lock] Profile lock compromised:', error);
       throw error;
@@ -114,10 +126,13 @@ function getActiveProfileLock() {
 module.exports = {
   DEFAULT_STALE_MS,
   DEFAULT_UPDATE_MS,
+  DEV_STALE_MS,
+  DEV_UPDATE_MS,
   PROFILE_LOCK_DIR,
   PROFILE_LOCK_TARGET,
   acquireProfileLock,
   getActiveProfileLock,
+  getProfileLockTiming,
   getProfileLockPaths,
   isProfileLocked,
   isLockUnavailableError,

@@ -2,7 +2,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
+  DEFAULT_STALE_MS,
+  DEFAULT_UPDATE_MS,
+  DEV_STALE_MS,
+  DEV_UPDATE_MS,
   acquireProfileLock,
+  getProfileLockTiming,
   getProfileLockPaths,
   isProfileLocked,
   isLockUnavailableError,
@@ -95,6 +100,27 @@ describe('profile lock', () => {
 
     expect(lock.lockDir).toBe(paths.lockDir);
     expect(fs.existsSync(paths.lockDir)).toBe(true);
+  });
+
+  test('uses shorter stale-lock timing for dev profiles', () => {
+    expect(getProfileLockTiming({ isDev: true })).toEqual({
+      staleMs: DEV_STALE_MS,
+      updateMs: DEV_UPDATE_MS,
+    });
+    expect(getProfileLockTiming({ isDev: false })).toEqual({
+      staleMs: DEFAULT_STALE_MS,
+      updateMs: DEFAULT_UPDATE_MS,
+    });
+  });
+
+  test('allows explicit lock timing overrides', () => {
+    expect(getProfileLockTiming({ isDev: true }, {
+      staleMs: 12000,
+      updateMs: 3000,
+    })).toEqual({
+      staleMs: 12000,
+      updateMs: 3000,
+    });
   });
 
   test('identifies lock-unavailable errors', () => {
