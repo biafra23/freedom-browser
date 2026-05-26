@@ -52,7 +52,6 @@ const DEFAULT_EXTERNAL_NODE_CANDIDATES = {
       {
         url: 'http://127.0.0.1:8780/',
         method: 'GET',
-        acceptAnyHttpResponse: true,
       },
     ],
   },
