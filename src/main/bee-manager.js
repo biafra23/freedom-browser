@@ -109,6 +109,10 @@ function getConfiguredBeeApiPort(config = getProfileBeeConfig()) {
   return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.bee.apiPort;
 }
 
+function getConfiguredBeeP2pPort(config = getProfileBeeConfig()) {
+  return Number.isInteger(config?.p2pPort) ? config.p2pPort : DEFAULTS.bee.p2pPort;
+}
+
 function normalizeExternalUrl(rawUrl) {
   if (typeof rawUrl !== 'string') return null;
   const trimmed = rawUrl.trim();
@@ -154,10 +158,10 @@ function getHttpClient(rawUrl) {
   return rawUrl.startsWith('https:') ? https : http;
 }
 
-function persistManagedBeePort(apiPort) {
-  const result = updateActiveProfileNodeConfig('bee', { apiPort });
+function persistManagedBeePorts(updates) {
+  const result = updateActiveProfileNodeConfig('bee', updates);
   if (result) {
-    log.info('[Bee] Persisted managed profile API port:', apiPort);
+    log.info('[Bee] Persisted managed profile ports:', updates);
   }
 }
 
@@ -190,12 +194,13 @@ function getPrimaryEthereumRpcUrl() {
 }
 
 function buildBeeConfigContent({
-  dataDir, apiPort, password, nodeMode, blockchainRpcEndpoint, resolverRpcEndpoint,
+  dataDir, apiPort, p2pPort, password, nodeMode, blockchainRpcEndpoint, resolverRpcEndpoint,
 }) {
   const isLightNode = nodeMode === BEE_NODE_MODE.LIGHT;
 
   return `# Bee Configuration
 api-addr: 127.0.0.1:${apiPort}
+p2p-addr: :${p2pPort}
 swap-enable: ${isLightNode ? 'true' : 'false'}
 mainnet: true
 full-node: false
@@ -209,7 +214,12 @@ password: ${password}
 `;
 }
 
-function ensureConfig(dataDir, apiPort, nodeMode = BEE_NODE_MODE.ULTRA_LIGHT) {
+function ensureConfig(
+  dataDir,
+  apiPort,
+  nodeMode = BEE_NODE_MODE.ULTRA_LIGHT,
+  p2pPort = DEFAULTS.bee.p2pPort
+) {
   const configPath = path.join(dataDir, CONFIG_FILE);
   const crypto = require('crypto');
 
@@ -243,6 +253,7 @@ function ensureConfig(dataDir, apiPort, nodeMode = BEE_NODE_MODE.ULTRA_LIGHT) {
   const configContent = buildBeeConfigContent({
     dataDir,
     apiPort,
+    p2pPort,
     password,
     nodeMode,
     blockchainRpcEndpoint,
@@ -251,7 +262,7 @@ function ensureConfig(dataDir, apiPort, nodeMode = BEE_NODE_MODE.ULTRA_LIGHT) {
 
   fs.writeFileSync(configPath, configContent);
   log.info(
-    `[Bee] Config written at ${configPath} with API:${apiPort} mode:${nodeMode}${
+    `[Bee] Config written at ${configPath} with API:${apiPort} P2P:${p2pPort} mode:${nodeMode}${
       blockchainRpcEndpoint ? ` rpc:${blockchainRpcEndpoint}` : ''
     }`
   );
@@ -552,7 +563,9 @@ async function startBee() {
 
   // Step 3: Resolve ports (handle conflicts)
   let apiPort = getConfiguredBeeApiPort(profileConfig);
+  let p2pPort = getConfiguredBeeP2pPort(profileConfig);
   const configuredApiPort = apiPort;
+  const configuredP2pPort = p2pPort;
   let usingFallbackPort = false;
 
   const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
@@ -567,11 +580,23 @@ async function startBee() {
     apiPort = newApiPort;
   }
 
-  if (managedProfileNode && apiPort !== configuredApiPort) {
+  const managedP2pPortBusy = managedProfileNode ? await isPortOpen(p2pPort) : false;
+  if (managedP2pPortBusy) {
+    const newP2pPort = await findAvailablePort(p2pPort + 1);
+    if (!newP2pPort) {
+      updateState(STATUS.ERROR, 'No available ports for Bee P2P');
+      setStatusMessage('bee', 'Node failed to start');
+      return;
+    }
+    p2pPort = newP2pPort;
+    usingFallbackPort = true;
+  }
+
+  if (managedProfileNode && (apiPort !== configuredApiPort || p2pPort !== configuredP2pPort)) {
     try {
-      persistManagedBeePort(apiPort);
+      persistManagedBeePorts({ apiPort, p2pPort });
     } catch (err) {
-      log.error('[Bee] Failed to persist managed profile port:', err.message);
+      log.error('[Bee] Failed to persist managed profile ports:', err.message);
       updateState(STATUS.ERROR, 'Failed to save Bee port assignment');
       setStatusMessage('bee', 'Node failed to start');
       return;
@@ -585,7 +610,7 @@ async function startBee() {
   const configuredNodeMode = getConfiguredBeeNodeMode();
   let configPath;
   try {
-    configPath = ensureConfig(dataDir, apiPort, configuredNodeMode);
+    configPath = ensureConfig(dataDir, apiPort, configuredNodeMode, p2pPort);
   } catch (err) {
     log.error('[Bee] Failed to prepare config:', err.message);
     updateState(STATUS.ERROR, err.message);

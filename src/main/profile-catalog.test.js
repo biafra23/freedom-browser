@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
+  ensureProfile,
   getCatalogLockPaths,
   withCatalogWriteLock,
 } = require('./profile-catalog');
@@ -113,5 +114,57 @@ describe('profile catalog', () => {
         child.kill('SIGKILL');
       }
     }
+  });
+
+  test('fills missing Bee P2P ports in existing profile metadata', () => {
+    const appRoot = track(makeTempDir());
+    const profileDir = path.join(appRoot, 'Profiles', 'default');
+    fs.mkdirSync(profileDir, { recursive: true });
+
+    const record = {
+      id: 'default',
+      displayName: 'Default',
+      dir: profileDir,
+      slot: 0,
+      createdAt: '2026-05-25T00:00:00.000Z',
+      lastOpenedAt: '2026-05-25T00:00:00.000Z',
+      nodes: {
+        bee: {
+          mode: 'managed',
+          apiPort: 11633,
+          externalApi: null,
+        },
+      },
+    };
+
+    fs.writeFileSync(
+      path.join(appRoot, 'profile-registry.json'),
+      JSON.stringify({ version: 1, profiles: [record] }, null, 2)
+    );
+    fs.writeFileSync(
+      path.join(profileDir, 'profile.json'),
+      JSON.stringify({
+        version: 1,
+        id: 'default',
+        displayName: 'Default',
+        createdAt: record.createdAt,
+        lastOpenedAt: record.lastOpenedAt,
+        slot: 0,
+        nodes: record.nodes,
+      }, null, 2)
+    );
+
+    const result = ensureProfile(appRoot, 'default', { defaultProfileDir: profileDir });
+
+    expect(result.metadata.nodes.bee.p2pPort).toBe(12633);
+
+    const catalog = JSON.parse(
+      fs.readFileSync(path.join(appRoot, 'profile-registry.json'), 'utf-8')
+    );
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(profileDir, 'profile.json'), 'utf-8')
+    );
+    expect(catalog.profiles[0].nodes.bee.p2pPort).toBe(12633);
+    expect(metadata.nodes.bee.p2pPort).toBe(12633);
   });
 });

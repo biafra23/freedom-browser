@@ -37,6 +37,7 @@ let injectedNodes = {
 // Vault metadata file
 const VAULT_META_FILE = 'vault-meta.json';
 const LEGACY_NON_CATALOG_BEE_API_PORT = 1633;
+const LEGACY_NON_CATALOG_BEE_P2P_PORT = 1634;
 
 /**
  * Get the path to the vault metadata file
@@ -372,6 +373,20 @@ function getBeeApiPortForIdentityConfig() {
   throw new Error('Active profile is missing a Bee API port');
 }
 
+function getBeeP2pPortForIdentityConfig() {
+  const profile = getActiveProfile();
+  const p2pPort = profile?.metadata?.nodes?.bee?.p2pPort;
+  if (Number.isInteger(p2pPort)) {
+    return p2pPort;
+  }
+
+  if (!profile || profile.source !== 'catalog') {
+    return LEGACY_NON_CATALOG_BEE_P2P_PORT;
+  }
+
+  throw new Error('Active profile is missing a Bee P2P port');
+}
+
 /**
  * Inject Bee identity
  * Generates its own random password for the keystore (stored in config.yaml)
@@ -418,7 +433,12 @@ async function injectBeeIdentity() {
   await identity.injectBeeKey(dataDir, derivedKeys.beeWallet.privateKey, beePassword);
 
   // Store the password in config so Bee can decrypt the keystore on startup
-  identity.createBeeConfig(dataDir, beePassword, getBeeApiPortForIdentityConfig());
+  identity.createBeeConfig(
+    dataDir,
+    beePassword,
+    getBeeApiPortForIdentityConfig(),
+    getBeeP2pPortForIdentityConfig()
+  );
 
   injectedNodes.bee = true;
 

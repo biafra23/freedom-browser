@@ -86,7 +86,7 @@ describe('identity-manager profile paths', () => {
       source: 'catalog',
       metadata: {
         nodes: {
-          bee: { apiPort: 11644 },
+          bee: { apiPort: 11644, p2pPort: 12644 },
         },
       },
     };
@@ -118,7 +118,8 @@ describe('identity-manager profile paths', () => {
     expect(identityMock.createBeeConfig).toHaveBeenCalledWith(
       beeDir,
       expect.any(String),
-      11644
+      11644,
+      12644
     );
     expect(identityMock.injectIpfsKey).toHaveBeenCalledWith(
       ipfsDir,

@@ -114,6 +114,7 @@ describe('Bee Integration', () => {
   let tempDir;
   let beeProcess;
   const TEST_PORT = 11633; // Use non-standard port to avoid conflicts
+  const TEST_P2P_PORT = 12633;
   const TEST_PASSWORD = 'test-password-for-integration';
 
   // Skip all tests if Bee binary not found
@@ -155,7 +156,7 @@ describe('Bee Integration', () => {
       const expectedAddress = getBeeAddress(keys.beeWallet.privateKey);
 
       // 2. Create config and inject key
-      createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT);
+      createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT, TEST_P2P_PORT);
       await injectBeeKey(tempDir, keys.beeWallet.privateKey, TEST_PASSWORD);
 
       // Verify key file was created

@@ -238,6 +238,7 @@ Example catalog:
         "bee": {
           "mode": "managed",
           "apiPort": 11633,
+          "p2pPort": 12633,
           "externalApi": null
         },
         "ipfs": {
@@ -355,18 +356,19 @@ Recommended allocation:
 
 - Freedom-managed nodes should avoid the ecosystem default ports:
   - Bee API/gateway default: `1633`
+  - Bee P2P default: `1634`
   - IPFS API default: `5001`
   - IPFS gateway default: `8080`
   - Radicle HTTP default: `8780`
   - Radicle P2P default: `8776`
 - Treat daemons on those default ports as external/system-node candidates, not Freedom-managed defaults.
 - Allocate managed ports from Freedom-owned profile slots:
-  - slot 0/default profile: Bee `11633`, IPFS API `15001`, IPFS gateway `18080`, Radicle HTTP `18780`, Radicle P2P `18776`
-  - slot 1: Bee `11634`, IPFS API `15002`, IPFS gateway `18081`, Radicle HTTP `18781`, Radicle P2P `18777`
-  - slot 2: Bee `11635`, IPFS API `15003`, IPFS gateway `18082`, Radicle HTTP `18782`, Radicle P2P `18778`
+  - slot 0/default profile: Bee API `11633`, Bee P2P `12633`, IPFS API `15001`, IPFS gateway `18080`, Radicle HTTP `18780`, Radicle P2P `18776`
+  - slot 1: Bee API `11634`, Bee P2P `12634`, IPFS API `15002`, IPFS gateway `18081`, Radicle HTTP `18781`, Radicle P2P `18777`
+  - slot 2: Bee API `11635`, Bee P2P `12635`, IPFS API `15003`, IPFS gateway `18082`, Radicle HTTP `18782`, Radicle P2P `18778`
 - Development managed nodes should use a separate high range from packaged managed nodes:
-  - dev slot 0: Bee `21633`, IPFS API `25001`, IPFS gateway `28080`, Radicle HTTP `28780`, Radicle P2P `28776`
-  - dev slot 1: Bee `21634`, IPFS API `25002`, IPFS gateway `28081`, Radicle HTTP `28781`, Radicle P2P `28777`
+  - dev slot 0: Bee API `21633`, Bee P2P `22633`, IPFS API `25001`, IPFS gateway `28080`, Radicle HTTP `28780`, Radicle P2P `28776`
+  - dev slot 1: Bee API `21634`, Bee P2P `22634`, IPFS API `25002`, IPFS gateway `28081`, Radicle HTTP `28781`, Radicle P2P `28777`
   - always apply a checkout-derived offset to reduce collisions across simultaneously running local clones
 - Recommended dev offset:
   - `checkoutOffset = (parseInt(checkoutHash, 16) % 100) * 10`
@@ -725,6 +727,7 @@ Tasks:
 - Read profile runtime configuration from the resolved profile metadata.
 - Allocate and persist stable ports in WP1 profile creation:
   - Bee API/gateway
+  - Bee P2P
   - IPFS API
   - IPFS gateway
   - Radicle HTTP

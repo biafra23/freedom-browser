@@ -187,6 +187,7 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 | **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
 | **Managed Gateway Port** | 11633+     | 18080+                                | 18780+                         |
 | **Managed API Port** | 11633+         | 15001+                                | 18780+                         |
+| **Managed P2P Port** | 12633+         | Kubo default / dynamic                | 18776+                         |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
 | **Data Directory**   | `<profile>/bee-data/` | `<profile>/ipfs-data/`          | `<profile>/radicle-data/`      |
 | **Binary Directory** | `bee-bin/`     | `ipfs-bin/`                           | `radicle-bin/`                 |

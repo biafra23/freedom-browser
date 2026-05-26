@@ -431,7 +431,7 @@ describe('bee-manager', () => {
       activeProfile: {
         metadata: {
           nodes: {
-            bee: { mode: 'managed', apiPort: 11633 },
+            bee: { mode: 'managed', apiPort: 11633, p2pPort: 12633 },
           },
         },
       },
@@ -459,7 +459,9 @@ describe('bee-manager', () => {
     await flushMicrotasks();
 
     expect(checkedPorts).toContain(11633);
+    expect(checkedPorts).toContain(12633);
     expect(checkedPorts).not.toContain(1633);
+    expect(checkedPorts).not.toContain(1634);
     expect(ctx.spawnedProcesses).toHaveLength(1);
     expect(ctx.mod.getActivePort()).toBe(11633);
     expect(ctx.updateService).toHaveBeenCalledWith('bee', {
@@ -470,6 +472,7 @@ describe('bee-manager', () => {
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('api-addr: 127.0.0.1:11633');
+    expect(configContent).toContain('p2p-addr: :12633');
 
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);
@@ -483,7 +486,7 @@ describe('bee-manager', () => {
         source: 'catalog',
         metadata: {
           nodes: {
-            bee: { mode: 'managed', apiPort: 11633 },
+            bee: { mode: 'managed', apiPort: 11633, p2pPort: 12633 },
           },
         },
       },
@@ -509,6 +512,7 @@ describe('bee-manager', () => {
 
     expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
       apiPort: 11634,
+      p2pPort: 12633,
     });
     expect(ctx.mod.getActivePort()).toBe(11634);
     expect(ctx.updateService).toHaveBeenCalledWith('bee', {
@@ -672,6 +676,7 @@ describe('bee-manager', () => {
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('api-addr: 127.0.0.1:1634');
+    expect(configContent).toContain('p2p-addr: :1634');
     expect(configContent).toContain('swap-enable: false');
     expect(configContent).toContain('blockchain-rpc-endpoint: ""');
     expect(configContent).toContain('resolver-options: "https://ethereum.publicnode.com"');
