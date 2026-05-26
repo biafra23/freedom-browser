@@ -211,6 +211,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   getActiveProfile: guardInternal('getActiveProfile', () =>
     ipcRenderer.invoke('profile:get-active')
   ),
+  updateProfileNodeConfig: guardInternal('updateProfileNodeConfig', (protocol, config) =>
+    ipcRenderer.invoke('profile:update-node-config', { protocol, config })
+  ),
 
   // Network configuration (the Networks settings page + the ENS lens).
   getNetworkConfig: guardInternal('getNetworkConfig', () =>

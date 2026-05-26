@@ -53,6 +53,18 @@ function loadIpcHandlersModule(options = {}) {
       isDev: false,
       userDataDir: '/tmp/freedom-user-data',
     };
+  const updateActiveProfileNodeConfig =
+    options.updateActiveProfileNodeConfig ||
+    jest.fn((protocol, updates) => {
+      if (activeProfile?.metadata) {
+        activeProfile.metadata.nodes = activeProfile.metadata.nodes || {};
+        activeProfile.metadata.nodes[protocol] = {
+          ...(activeProfile.metadata.nodes[protocol] || {}),
+          ...updates,
+        };
+      }
+      return { metadata: activeProfile?.metadata || null };
+    });
 
   const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
@@ -68,6 +80,7 @@ function loadIpcHandlersModule(options = {}) {
       }),
       [require.resolve('./profile-resolver')]: () => ({
         getActiveProfile: jest.fn(() => activeProfile),
+        updateActiveProfileNodeConfig,
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -91,6 +104,7 @@ function loadIpcHandlersModule(options = {}) {
     mod,
     nativeImage,
     state,
+    updateActiveProfileNodeConfig,
   };
 }
 
@@ -306,6 +320,115 @@ describe('ipc-handlers', () => {
         radicle: { mode: 'disabled' },
       },
     });
+  });
+
+  test('updates active profile node config through validated IPC', async () => {
+    const activeProfile = {
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: false,
+      metadata: {
+        slot: 1,
+        nodes: {
+          bee: { mode: 'managed', apiPort: 11634 },
+          ipfs: { mode: 'managed', apiPort: 15002, gatewayPort: 18081 },
+          radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+        },
+      },
+    };
+    const ctx = loadIpcHandlersModule({ activeProfile });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'bee',
+        config: {
+          mode: 'external',
+          externalApi: '127.0.0.1:1633/',
+          ignored: true,
+        },
+      })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          source: 'catalog',
+          isDev: false,
+          slot: 1,
+          nodes: {
+            bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
+            ipfs: { mode: 'managed', apiPort: 15002, gatewayPort: 18081 },
+            radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+          },
+        },
+      })
+    );
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
+      mode: 'external',
+      externalApi: 'http://127.0.0.1:1633',
+    });
+  });
+
+  test('rejects invalid active profile node updates', async () => {
+    const ctx = loadIpcHandlersModule({
+      activeProfile: {
+        id: 'work',
+        displayName: 'Work',
+        source: 'catalog',
+        metadata: { nodes: {} },
+      },
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'bee',
+        config: { mode: 'preferExternal' },
+      })
+    ).resolves.toEqual(
+      failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
+        mode: 'preferExternal',
+      })
+    );
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'ipfs',
+        config: { mode: 'external', externalApi: '127.0.0.1:5001' },
+      })
+    ).resolves.toEqual(
+      failure('MISSING_PROFILE_NODE_ENDPOINT', 'External node mode requires endpoints', {
+        fields: ['externalGateway'],
+      })
+    );
+
+    expect(ctx.updateActiveProfileNodeConfig).not.toHaveBeenCalled();
+  });
+
+  test('rejects profile node updates outside catalog profiles', async () => {
+    const ctx = loadIpcHandlersModule({
+      activeProfile: {
+        id: 'direct',
+        displayName: 'Direct',
+        source: 'profile-dir',
+      },
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'bee',
+        config: { mode: 'disabled' },
+      })
+    ).resolves.toEqual(
+      failure('PROFILE_NOT_EDITABLE', 'The active profile cannot be edited')
+    );
   });
 
   test('saves images through the dialog workflow', async () => {

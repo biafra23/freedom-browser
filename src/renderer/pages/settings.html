@@ -507,6 +507,35 @@
         font-size: 13px;
       }
 
+      .profile-node-editor {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .profile-node-editor[hidden] {
+        display: none;
+      }
+
+      .profile-node-field {
+        display: grid;
+        grid-template-columns: 84px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+      }
+
+      .profile-node-field label {
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .profile-node-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 8px;
+      }
+
       /* Light theme */
       @media (prefers-color-scheme: light) {
         :root {
@@ -695,6 +724,7 @@
           <div class="card" id="profile-nodes-card">
             <div class="profile-node-empty">Loading…</div>
           </div>
+          <p id="profile-save-status" class="rpc-status"></p>
         </section>
 
         <!-- Startup -->
@@ -884,6 +914,7 @@
         runtime: $('profile-runtime'),
         slot: $('profile-slot'),
         nodesCard: $('profile-nodes-card'),
+        saveStatus: $('profile-save-status'),
       };
 
       let isWindows = false;
@@ -961,9 +992,9 @@
       const NODE_MODE_LABELS = {
         managed: 'Managed by Freedom',
         external: 'Use external node',
-        preferExternal: 'Prefer external node',
         disabled: 'Disabled',
       };
+      const EDITABLE_NODE_MODES = ['managed', 'external', 'disabled'];
 
       const SERVICE_LABELS = {
         bee: 'Swarm',
@@ -1005,6 +1036,58 @@
         ].filter(Boolean);
       };
 
+      const externalFields = (protocol, config) => {
+        if (protocol === 'bee') {
+          return [{ key: 'externalApi', label: 'API', value: config?.externalApi }];
+        }
+        if (protocol === 'ipfs') {
+          return [
+            { key: 'externalApi', label: 'API', value: config?.externalApi },
+            { key: 'externalGateway', label: 'Gateway', value: config?.externalGateway },
+          ];
+        }
+        return [{ key: 'externalHttp', label: 'HTTP', value: config?.externalHttp }];
+      };
+
+      const renderModeOptions = (mode) =>
+        EDITABLE_NODE_MODES.map(
+          (value) =>
+            `<option value="${value}"${mode === value ? ' selected' : ''}>${NODE_MODE_LABELS[value]}</option>`
+        ).join('');
+
+      const renderExternalEditor = (protocol, config, mode) => {
+        const fields = externalFields(protocol, config).map(
+          (field) => `
+            <div class="profile-node-field">
+              <label for="profile-${protocol}-${field.key}">${esc(field.label)}</label>
+              <input
+                id="profile-${protocol}-${field.key}"
+                class="rpc-input"
+                data-endpoint-field="${field.key}"
+                type="text"
+                value="${esc(field.value || '')}"
+                placeholder="http://127.0.0.1:${protocol === 'bee' ? '1633' : protocol === 'ipfs' ? '5001' : '8780'}"
+                spellcheck="false"
+              />
+            </div>`
+        );
+
+        return `
+          <div class="profile-node-editor" data-external-editor ${mode === 'external' ? '' : 'hidden'}>
+            ${fields.join('')}
+          </div>`;
+      };
+
+      const setProfileStatus = (message, kind) => {
+        if (!profileFields.saveStatus) return;
+        profileFields.saveStatus.textContent = message || '';
+        profileFields.saveStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
+      };
+
+      const setExternalEditorVisible = (row, mode) => {
+        row?.querySelector('[data-external-editor]')?.toggleAttribute('hidden', mode !== 'external');
+      };
+
       const renderProfileNodes = (profile, registry) => {
         const nodes = profile?.nodes || {};
         const services = ['bee', 'ipfs', 'radicle'];
@@ -1018,14 +1101,20 @@
             : '<div class="profile-node-detail">No endpoint</div>';
 
           return `
-            <div class="profile-node">
+            <div class="profile-node" data-protocol="${protocol}">
               <div class="profile-node-main">
                 <p class="profile-node-name">${SERVICE_LABELS[protocol]}</p>
-                <span class="profile-node-mode">${esc(NODE_MODE_LABELS[mode] || mode)}</span>
+                <select data-node-mode>
+                  ${renderModeOptions(mode)}
+                </select>
               </div>
               <div class="profile-node-status">
                 <div class="profile-node-status-line">${esc(statusLabel(service))}</div>
                 ${details}
+                ${renderExternalEditor(protocol, config, mode)}
+                <div class="profile-node-actions">
+                  <button type="button" class="btn" data-save-node="${protocol}">Save</button>
+                </div>
               </div>
             </div>`;
         });
@@ -1033,8 +1122,15 @@
         profileFields.nodesCard.innerHTML = rows.join('');
       };
 
-      const refreshProfileSection = async () => {
+      const refreshProfileSection = async (force = false) => {
         if (!profileFields.nodesCard) return;
+        if (
+          !force &&
+          document.activeElement &&
+          profileFields.nodesCard.contains(document.activeElement)
+        ) {
+          return;
+        }
 
         try {
           const [profile, registry] = await Promise.all([
@@ -1063,11 +1159,57 @@
           return;
         }
         if (active && !profileRefreshTimer) {
-          refreshProfileSection();
+          refreshProfileSection(true);
           profileRefreshTimer = setInterval(refreshProfileSection, 5000);
         }
       };
       setProfileRefreshActive(resolveSection(location.hash) === 'profiles');
+
+      profileFields.nodesCard?.addEventListener('change', (event) => {
+        const modeSelect = event.target?.closest?.('[data-node-mode]');
+        if (!modeSelect) return;
+        setExternalEditorVisible(modeSelect.closest('.profile-node'), modeSelect.value);
+      });
+
+      profileFields.nodesCard?.addEventListener('click', async (event) => {
+        const saveButton = event.target?.closest?.('[data-save-node]');
+        if (!saveButton) return;
+
+        const row = saveButton.closest('.profile-node');
+        const protocol = saveButton.dataset.saveNode;
+        const mode = row?.querySelector('[data-node-mode]')?.value;
+        if (!protocol || !mode) return;
+
+        const config = { mode };
+        for (const input of row.querySelectorAll('[data-endpoint-field]')) {
+          config[input.dataset.endpointField] = input.value.trim();
+        }
+
+        if (mode === 'external') {
+          const missing = [...row.querySelectorAll('[data-endpoint-field]')]
+            .filter((input) => !input.value.trim())
+            .map((input) => input.previousElementSibling?.textContent || 'Endpoint');
+          if (missing.length) {
+            setProfileStatus(`External ${SERVICE_LABELS[protocol]} requires: ${missing.join(', ')}`, 'error');
+            return;
+          }
+        }
+
+        saveButton.disabled = true;
+        setProfileStatus(`Saving ${SERVICE_LABELS[protocol]} node settings…`, 'testing');
+        try {
+          const result = await freedomAPI.updateProfileNodeConfig?.(protocol, config);
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile node settings were not saved');
+          }
+          setProfileStatus('Saved. Restart the node to apply mode or endpoint changes.', 'success');
+          await refreshProfileSection(true);
+        } catch (err) {
+          setProfileStatus(err?.message || 'Profile node settings were not saved', 'error');
+        } finally {
+          saveButton.disabled = false;
+        }
+      });
 
       const currentFormState = () => ({
         theme: fields.themeMode.value || 'system',

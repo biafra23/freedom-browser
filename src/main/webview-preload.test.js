@@ -147,6 +147,7 @@ describe('webview-preload', () => {
       ['saveSettings', [{ theme: 'light' }], IPC.SETTINGS_SAVE, [{ theme: 'light' }]],
       ['getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
       ['getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
+      ['updateProfileNodeConfig', ['bee', { mode: 'disabled' }], IPC.PROFILE_UPDATE_NODE_CONFIG, [{ protocol: 'bee', config: { mode: 'disabled' } }]],
       ['getServiceRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
       ['openPublishSetup', [], IPC.SIDEBAR_OPEN_PUBLISH_SETUP, []],
       ['getBookmarks', [], IPC.BOOKMARKS_GET, []],

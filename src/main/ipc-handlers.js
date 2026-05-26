@@ -10,7 +10,7 @@ const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
 const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
-const { getActiveProfile } = require('./profile-resolver');
+const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -106,6 +106,132 @@ function serializeActiveProfile() {
   }
 
   return serialized;
+}
+
+const PROFILE_NODE_MODES = new Set(['managed', 'external', 'disabled']);
+const PROFILE_NODE_FIELDS = {
+  bee: ['mode', 'externalApi'],
+  ipfs: ['mode', 'externalApi', 'externalGateway'],
+  radicle: ['mode', 'externalHttp'],
+};
+const EXTERNAL_FIELDS = {
+  bee: ['externalApi'],
+  ipfs: ['externalApi', 'externalGateway'],
+  radicle: ['externalHttp'],
+};
+
+function normalizeProfileNodeEndpoint(rawValue) {
+  if (rawValue == null) return null;
+  const trimmed = String(rawValue).trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function validateProfileNodeConfigUpdate(protocol, patch = {}) {
+  if (!Object.prototype.hasOwnProperty.call(PROFILE_NODE_FIELDS, protocol)) {
+    return {
+      ok: false,
+      response: failure('INVALID_PROFILE_PROTOCOL', 'Unsupported profile node protocol', {
+        protocol,
+      }),
+    };
+  }
+
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return {
+      ok: false,
+      response: failure('INVALID_PROFILE_NODE_CONFIG', 'Profile node config must be an object'),
+    };
+  }
+
+  const allowedFields = PROFILE_NODE_FIELDS[protocol];
+  const sanitized = {};
+
+  for (const field of allowedFields) {
+    if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
+
+    if (field === 'mode') {
+      if (!PROFILE_NODE_MODES.has(patch.mode)) {
+        return {
+          ok: false,
+          response: failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
+            mode: patch.mode,
+          }),
+        };
+      }
+      sanitized.mode = patch.mode;
+      continue;
+    }
+
+    const normalized = normalizeProfileNodeEndpoint(patch[field]);
+    if (patch[field] && !normalized) {
+      return {
+        ok: false,
+        response: failure('INVALID_PROFILE_NODE_ENDPOINT', 'Invalid profile node endpoint', {
+          field,
+        }),
+      };
+    }
+    sanitized[field] = normalized;
+  }
+
+  if (!Object.keys(sanitized).length) {
+    return {
+      ok: false,
+      response: failure('EMPTY_PROFILE_NODE_CONFIG', 'No supported profile node config fields'),
+    };
+  }
+
+  if (sanitized.mode === 'external') {
+    const missing = EXTERNAL_FIELDS[protocol].filter((field) => !sanitized[field]);
+    if (missing.length) {
+      return {
+        ok: false,
+        response: failure('MISSING_PROFILE_NODE_ENDPOINT', 'External node mode requires endpoints', {
+          fields: missing,
+        }),
+      };
+    }
+  }
+
+  return { ok: true, sanitized };
+}
+
+function updateProfileNodeConfigFromIpc(protocol, patch) {
+  const activeProfile = getActiveProfile();
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return failure('PROFILE_NOT_EDITABLE', 'The active profile cannot be edited');
+  }
+
+  const validation = validateProfileNodeConfigUpdate(protocol, patch);
+  if (!validation.ok) return validation.response;
+
+  try {
+    const result = updateActiveProfileNodeConfig(protocol, validation.sanitized);
+    if (!result) {
+      return failure('PROFILE_UPDATE_FAILED', 'Profile node config was not updated');
+    }
+    return success({ profile: serializeActiveProfile() });
+  } catch (err) {
+    log.error('[profile] Failed to update node config:', err);
+    return failure('PROFILE_UPDATE_FAILED', err.message || 'Profile node config update failed');
+  }
 }
 
 function registerBaseIpcHandlers(callbacks = {}) {
@@ -284,6 +410,9 @@ function registerBaseIpcHandlers(callbacks = {}) {
   });
 
   ipcMain.handle(IPC.PROFILE_GET_ACTIVE, () => serializeActiveProfile());
+  ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (_event, payload = {}) =>
+    updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
+  );
 
   ipcMain.handle(IPC.GET_WEBVIEW_PRELOAD_PATH, () => {
     return webviewPreloadPath;
@@ -409,4 +538,6 @@ function registerBaseIpcHandlers(callbacks = {}) {
 module.exports = {
   registerBaseIpcHandlers,
   serializeActiveProfile,
+  updateProfileNodeConfigFromIpc,
+  validateProfileNodeConfigUpdate,
 };
