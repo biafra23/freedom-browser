@@ -392,6 +392,10 @@ export IPFS_GATEWAY="http://remote-host:8080"
 npm start
 ```
 
+### External Protocol Links And Profiles
+
+Inside Freedom, `bzz://`, `ipfs://`, `ipns://`, and `rad://` URLs always resolve through the active profile's node settings and storage. OS-level protocol launches from other apps are a v1 limitation: they are not profile-aware and should not be used when a link must open in a specific profile. Open the target profile first and paste or navigate to the URL inside that window.
+
 ### ENS Resolution (Ethereum)
 
 ENS domains are resolved using Ethereum JSON-RPC. The browser tries multiple public RPC providers in sequence (see `src/main/ens-resolver.js` for the current list). You can prepend your own endpoint by setting the `ETH_RPC` environment variable.
