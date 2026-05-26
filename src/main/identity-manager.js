@@ -19,6 +19,7 @@ const {
   getIpfsDataDir,
   getRadicleDataDir,
 } = require('./profile-paths');
+const { getActiveProfile } = require('./profile-resolver');
 
 // Identity module - loaded lazily
 let identityModule = null;
@@ -35,6 +36,7 @@ let injectedNodes = {
 
 // Vault metadata file
 const VAULT_META_FILE = 'vault-meta.json';
+const LEGACY_NON_CATALOG_BEE_API_PORT = 1633;
 
 /**
  * Get the path to the vault metadata file
@@ -356,6 +358,20 @@ function generateBeeKeystorePassword() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function getBeeApiPortForIdentityConfig() {
+  const profile = getActiveProfile();
+  const apiPort = profile?.metadata?.nodes?.bee?.apiPort;
+  if (Number.isInteger(apiPort)) {
+    return apiPort;
+  }
+
+  if (!profile || profile.source !== 'catalog') {
+    return LEGACY_NON_CATALOG_BEE_API_PORT;
+  }
+
+  throw new Error('Active profile is missing a Bee API port');
+}
+
 /**
  * Inject Bee identity
  * Generates its own random password for the keystore (stored in config.yaml)
@@ -402,7 +418,7 @@ async function injectBeeIdentity() {
   await identity.injectBeeKey(dataDir, derivedKeys.beeWallet.privateKey, beePassword);
 
   // Store the password in config so Bee can decrypt the keystore on startup
-  identity.createBeeConfig(dataDir, beePassword);
+  identity.createBeeConfig(dataDir, beePassword, getBeeApiPortForIdentityConfig());
 
   injectedNodes.bee = true;
 

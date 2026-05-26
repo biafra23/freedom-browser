@@ -147,7 +147,11 @@ function createMinimalIpfsConfig(ipfsPath, apiPort = 5001, gatewayPort = 8080) {
  * @param {string} password - Password for the keystore
  * @param {number} apiPort - API port
  */
-function createBeeConfig(dataDir, password, apiPort = 1633) {
+function createBeeConfig(dataDir, password, apiPort) {
+  if (!Number.isInteger(apiPort) || apiPort <= 0) {
+    throw new Error('Bee API port is required to create Bee config');
+  }
+
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }

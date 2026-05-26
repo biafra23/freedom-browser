@@ -29,7 +29,17 @@ if (app.isPackaged && !process.env.FREEDOM_TEST_USER_DATA) {
   migrateUserData({ logger: console });
 }
 const { initializeProfile, warnAboutLegacyDevData } = require('./profile-resolver');
-const activeProfile = initializeProfile(app);
+let activeProfile = null;
+try {
+  activeProfile = initializeProfile(app);
+} catch (error) {
+  dialog.showErrorBox(
+    'Freedom profile could not open',
+    `Freedom could not initialize the selected profile.\n\n${error?.message || error}`
+  );
+  app.exit(1);
+  process.exit(1);
+}
 const {
   acquireProfileLock,
   isLockUnavailableError,

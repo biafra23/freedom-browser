@@ -81,10 +81,22 @@ describe('identity-manager profile paths', () => {
 
     const identityMock = makeIdentityMock();
     const identityModulePath = require.resolve('./identity');
+    const activeProfile = {
+      id: 'profiled',
+      source: 'catalog',
+      metadata: {
+        nodes: {
+          bee: { apiPort: 11644 },
+        },
+      },
+    };
     const { mod } = loadMainModule(require.resolve('./identity-manager'), {
       userDataDir,
       extraMocks: {
         [identityModulePath]: () => identityMock,
+        [require.resolve('./profile-resolver')]: () => ({
+          getActiveProfile: jest.fn(() => activeProfile),
+        }),
       },
     });
 
@@ -103,7 +115,11 @@ describe('identity-manager profile paths', () => {
       '0xbee-private',
       expect.any(String)
     );
-    expect(identityMock.createBeeConfig).toHaveBeenCalledWith(beeDir, expect.any(String));
+    expect(identityMock.createBeeConfig).toHaveBeenCalledWith(
+      beeDir,
+      expect.any(String),
+      11644
+    );
     expect(identityMock.injectIpfsKey).toHaveBeenCalledWith(
       ipfsDir,
       Buffer.from('ipfs-private'),

@@ -752,7 +752,7 @@ async function startRadicle() {
   // No system node — use bundled flow
   activeRadHome = getRadicleDataPath();
 
-  // Step 1: Detect existing daemon (httpd already running)
+  // Step 1: Legacy/profile-dir launches may still opt into a system httpd.
   const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
   if (existing.found) {

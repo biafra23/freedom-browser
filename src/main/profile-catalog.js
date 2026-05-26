@@ -10,6 +10,11 @@ const PROFILE_CATALOG_LOCK_DIR = 'profile-registry.write.lock';
 const DEFAULT_PROFILE_ID = 'default';
 const DEFAULT_CATALOG_LOCK_STALE_MS = 30000;
 const DEFAULT_CATALOG_LOCK_UPDATE_MS = 10000;
+const DEFAULT_CATALOG_LOCK_RETRIES = {
+  retries: 5,
+  minTimeout: 50,
+  maxTimeout: 250,
+};
 
 const PACKAGED_PORT_BASE = {
   beeApi: 11633,
@@ -172,14 +177,73 @@ function ensureCatalogLockTarget(appRoot) {
   return paths;
 }
 
+function normalizeCatalogLockRetries(retries) {
+  if (retries === false || retries === null || retries === 0) {
+    return { retries: 0, minTimeout: 0, maxTimeout: 0 };
+  }
+
+  if (Number.isInteger(retries)) {
+    return {
+      ...DEFAULT_CATALOG_LOCK_RETRIES,
+      retries: Math.max(0, retries),
+    };
+  }
+
+  const config = retries && typeof retries === 'object'
+    ? retries
+    : DEFAULT_CATALOG_LOCK_RETRIES;
+
+  return {
+    retries: Number.isInteger(config.retries)
+      ? Math.max(0, config.retries)
+      : DEFAULT_CATALOG_LOCK_RETRIES.retries,
+    minTimeout: Number.isFinite(config.minTimeout)
+      ? Math.max(0, config.minTimeout)
+      : DEFAULT_CATALOG_LOCK_RETRIES.minTimeout,
+    maxTimeout: Number.isFinite(config.maxTimeout)
+      ? Math.max(0, config.maxTimeout)
+      : DEFAULT_CATALOG_LOCK_RETRIES.maxTimeout,
+  };
+}
+
+function sleepSync(ms) {
+  if (!ms) return;
+  const buffer = new SharedArrayBuffer(4);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, ms);
+}
+
+function getCatalogLockRetryDelay(retryOptions, retryIndex) {
+  const minTimeout = retryOptions.minTimeout;
+  const maxTimeout = Math.max(minTimeout, retryOptions.maxTimeout);
+  return Math.min(maxTimeout, minTimeout * (retryIndex + 1));
+}
+
+function acquireCatalogWriteLock(paths, options = {}) {
+  const retryOptions = normalizeCatalogLockRetries(options.retries);
+
+  for (let attempt = 0; attempt <= retryOptions.retries; attempt += 1) {
+    try {
+      return lockfile.lockSync(paths.targetPath, {
+        lockfilePath: paths.lockDir,
+        realpath: false,
+        stale: options.staleMs ?? DEFAULT_CATALOG_LOCK_STALE_MS,
+        update: options.updateMs ?? DEFAULT_CATALOG_LOCK_UPDATE_MS,
+      });
+    } catch (error) {
+      if (error?.code !== 'ELOCKED' || attempt >= retryOptions.retries) {
+        throw error;
+      }
+      sleepSync(getCatalogLockRetryDelay(retryOptions, attempt));
+    }
+  }
+
+  throw new Error('Failed to acquire profile catalog lock');
+}
+
 function withCatalogWriteLock(appRoot, fn, options = {}) {
   const paths = ensureCatalogLockTarget(appRoot);
-  const release = lockfile.lockSync(paths.targetPath, {
-    lockfilePath: paths.lockDir,
-    realpath: false,
-    stale: options.staleMs ?? DEFAULT_CATALOG_LOCK_STALE_MS,
-    update: options.updateMs ?? DEFAULT_CATALOG_LOCK_UPDATE_MS,
-  });
+  const release = acquireCatalogWriteLock(paths, options);
 
   try {
     return fn();
@@ -603,6 +667,7 @@ function ensureProfile(appRoot, profileId, options = {}) {
 
 module.exports = {
   DEFAULT_CATALOG_LOCK_STALE_MS,
+  DEFAULT_CATALOG_LOCK_RETRIES,
   DEFAULT_CATALOG_LOCK_UPDATE_MS,
   DEFAULT_PROFILE_ID,
   DEV_PORT_BASE,

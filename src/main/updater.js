@@ -61,6 +61,7 @@ let updaterOwnerLock = null;
 let releaseRegistered = false;
 
 function getInstallRelaunchMode(profile = getActiveProfile()) {
+  // Named and explicit profile-dir launches cannot rely on Squirrel preserving profile argv.
   const canRelaunchToSameProfile =
     profile?.source === 'catalog' && profile?.id === DEFAULT_PROFILE_ID;
 

@@ -518,7 +518,7 @@ async function startBee() {
     return;
   }
 
-  // Step 1: Detect existing daemon unless this profile owns a managed node.
+  // Step 1: Legacy/profile-dir launches may still opt into a system daemon.
   const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
 
   if (existing.found) {

@@ -121,9 +121,9 @@ function buildFileSubmenu(isMac) {
       },
     },
     {
-      label: 'New Profile Window...',
+      label: 'Manage Profiles...',
       click: () => {
-        log.info('[menu] New Profile Window clicked');
+        log.info('[menu] Manage Profiles clicked');
         openProfilesManager();
       },
     },

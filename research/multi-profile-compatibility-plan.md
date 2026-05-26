@@ -854,7 +854,7 @@ Tasks:
   - node identity and node storage are shared outside this profile
   - Freedom will not stop external nodes on quit
 - Add a menu item:
-  - `File > New Profile Window...`
+  - `File > Manage Profiles...`
 - On macOS, spawn a separate app instance for another profile:
   - packaged app equivalent of `open -n -a Freedom --args --profile=<id>`
   - development equivalent using the current Electron/npm launch command
@@ -1093,7 +1093,7 @@ Deliverable:
 Goal: make the feature discoverable and prove it works.
 
 1. Add profile picker/profile management UI.
-2. Add "New Profile Window" launching.
+2. Add profile launching from the profile manager.
 3. Add active-profile IPC/preload exposure.
 4. Add hardened profile deletion flow.
 5. Add migration coverage.

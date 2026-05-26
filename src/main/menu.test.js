@@ -90,7 +90,7 @@ describe('menu', () => {
       const file = findTopLabel(capturedTemplate, 'File');
 
       expect(file?.submenu?.map((item) => item.label)).toEqual(
-        expect.arrayContaining(['New Profile Window...'])
+        expect.arrayContaining(['Manage Profiles...'])
       );
     }
   });
