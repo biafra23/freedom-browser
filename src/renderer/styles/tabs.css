@@ -25,6 +25,7 @@
   overflow: visible;
   padding-bottom: 6px;
   position: relative;
+  z-index: 10002;
 }
 
 .profile-indicator {
@@ -78,10 +79,10 @@
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--toolbar);
+  background: var(--menu-bg);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
   color: var(--text);
-  z-index: 1000;
+  z-index: 10003;
   -webkit-app-region: no-drag;
 }
 
