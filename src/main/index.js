@@ -45,16 +45,23 @@ const {
   isLockUnavailableError,
   releaseProfileLock,
 } = require('./profile-lock');
+const {
+  requestProfileFocusSync,
+  startProfileFocusRequestWatcher,
+} = require('./profile-focus-handoff');
 let activeProfileLock = null;
 try {
   activeProfileLock = acquireProfileLock(activeProfile, { logger: console });
 } catch (error) {
   if (isLockUnavailableError(error)) {
     const profileName = activeProfile.displayName || activeProfile.id || 'selected';
-    dialog.showErrorBox(
-      'Freedom profile is already open',
-      `The "${profileName}" profile is already open. Close that Freedom window or launch a different profile.`
-    );
+    const focusResult = requestProfileFocusSync(activeProfile);
+    if (!focusResult.ok) {
+      dialog.showErrorBox(
+        'Freedom profile is already open',
+        `The "${profileName}" profile is already open, but Freedom could not focus it.\n\nClose that Freedom window or launch a different profile.`
+      );
+    }
     app.exit(0);
     process.exit(0);
   }
@@ -135,7 +142,12 @@ const { registerFeedStoreIpc } = require('./swarm/feed-store');
 const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
 const { promptForDefaultExternalCandidates } = require('./profile-external-candidates');
-const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
+const {
+  createMainWindow,
+  focusOrCreateMainWindow,
+  setWindowTitle,
+  getMainWindows,
+} = require('./windows/mainWindow');
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
 const { registerWebContentsHandlers } = require('./webcontents-setup');
@@ -149,7 +161,13 @@ log.info('[profile] Active profile:', {
   appRoot: activeProfile.appRoot,
 });
 warnAboutLegacyDevData(activeProfile, { logger: log });
+const profileFocusWatcher = startProfileFocusRequestWatcher(
+  activeProfile,
+  () => app.whenReady().then(() => focusOrCreateMainWindow()),
+  { logger: log }
+);
 app.on('will-quit', () => {
+  profileFocusWatcher.stop();
   if (activeProfileLock) {
     releaseProfileLock(activeProfileLock, { logger: log });
     activeProfileLock = null;
