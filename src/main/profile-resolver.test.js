@@ -145,6 +145,47 @@ describe('profile resolver', () => {
     expect(profile.userDataDir).toBe(path.join(devHome, 'Profiles', 'work'));
   });
 
+  test('warns once when dev repo-root legacy data dirs exist', () => {
+    const appDataDir = track(makeTempDir());
+    const repoRoot = track(makeRepoRoot());
+    fs.mkdirSync(path.join(repoRoot, 'bee-data'));
+    fs.mkdirSync(path.join(repoRoot, 'identity-data'));
+    const app = createAppMock({
+      isPackaged: false,
+      appPaths: { appData: appDataDir },
+    });
+    const {
+      LEGACY_DEV_DATA_WARNING_FILE,
+      resolveProfile,
+      warnAboutLegacyDevData,
+    } = require('./profile-resolver');
+    const logger = {
+      warn: jest.fn(),
+    };
+
+    const profile = resolveProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      repoRoot,
+      now: '2026-05-25T00:00:00.000Z',
+    });
+    const firstWarning = warnAboutLegacyDevData(profile, { logger });
+    const realRepoRoot = fs.realpathSync(repoRoot);
+
+    expect(firstWarning.warned).toBe(true);
+    expect(firstWarning.paths).toEqual([
+      path.join(realRepoRoot, 'identity-data'),
+      path.join(realRepoRoot, 'bee-data'),
+    ]);
+    expect(fs.existsSync(path.join(profile.appRoot, LEGACY_DEV_DATA_WARNING_FILE))).toBe(true);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+
+    const secondWarning = warnAboutLegacyDevData(profile, { logger });
+
+    expect(secondWarning.warned).toBe(false);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+
   test('persists active profile node updates to metadata and catalog', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });

@@ -13,6 +13,9 @@ const {
   updateProfileNodeConfig,
 } = require('./profile-catalog');
 
+const LEGACY_DEV_DATA_DIRS = ['identity-data', 'bee-data', 'ipfs-data', 'radicle-data'];
+const LEGACY_DEV_DATA_WARNING_FILE = 'legacy-dev-data-warning.json';
+
 let activeProfile = null;
 
 function getArgValue(argv, name) {
@@ -144,6 +147,56 @@ function applyProfile(app, profile) {
   }
 }
 
+function getLegacyDevDataDirs(profile) {
+  if (!profile?.isDev || !profile.repoRoot) return [];
+
+  return LEGACY_DEV_DATA_DIRS
+    .map((dirName) => path.join(profile.repoRoot, dirName))
+    .filter((dirPath) => fs.existsSync(dirPath));
+}
+
+function warnAboutLegacyDevData(profile, options = {}) {
+  const legacyDirs = getLegacyDevDataDirs(profile);
+  if (!legacyDirs.length || !profile?.appRoot) {
+    return { warned: false, paths: legacyDirs };
+  }
+
+  const markerPath = path.join(profile.appRoot, LEGACY_DEV_DATA_WARNING_FILE);
+  if (fs.existsSync(markerPath) && options.force !== true) {
+    return { warned: false, paths: legacyDirs, markerPath };
+  }
+
+  const logger = options.logger || console;
+  logger.warn?.(
+    '[profile] Legacy repo-root dev data detected. Freedom Dev profiles ignore these directories by default:',
+    legacyDirs
+  );
+  logger.warn?.(
+    '[profile] To intentionally reuse old dev data, point FREEDOM_DEV_HOME or explicit data-path overrides at the desired location.'
+  );
+
+  try {
+    fs.mkdirSync(profile.appRoot, { recursive: true });
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify(
+        {
+          warnedAt: new Date().toISOString(),
+          repoRoot: profile.repoRoot,
+          paths: legacyDirs,
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+  } catch (error) {
+    logger.warn?.('[profile] Failed to write legacy dev data warning marker:', error.message);
+  }
+
+  return { warned: true, paths: legacyDirs, markerPath };
+}
+
 function initializeProfile(app, options = {}) {
   activeProfile = resolveProfile(app, options);
   applyProfile(app, activeProfile);
@@ -224,6 +277,8 @@ function deleteProfileForActiveApp(profileId, expectedDisplayName) {
 }
 
 module.exports = {
+  LEGACY_DEV_DATA_DIRS,
+  LEGACY_DEV_DATA_WARNING_FILE,
   applyProfile,
   createProfileForActiveApp,
   deleteProfileForActiveApp,
@@ -231,9 +286,11 @@ module.exports = {
   getActiveProfile,
   getArgValue,
   getDefaultRepoRoot,
+  getLegacyDevDataDirs,
   initializeProfile,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
   resolveProfile,
   updateActiveProfileNodeConfig,
+  warnAboutLegacyDevData,
 };

@@ -28,7 +28,7 @@ const { migrateUserData } = require('./migrate-user-data');
 if (app.isPackaged && !process.env.FREEDOM_TEST_USER_DATA) {
   migrateUserData({ logger: console });
 }
-const { initializeProfile } = require('./profile-resolver');
+const { initializeProfile, warnAboutLegacyDevData } = require('./profile-resolver');
 const activeProfile = initializeProfile(app);
 const {
   acquireProfileLock,
@@ -137,6 +137,7 @@ log.info('[profile] Active profile:', {
   userDataDir: activeProfile.userDataDir,
   appRoot: activeProfile.appRoot,
 });
+warnAboutLegacyDevData(activeProfile, { logger: log });
 app.on('will-quit', () => {
   if (activeProfileLock) {
     releaseProfileLock(activeProfileLock, { logger: log });
