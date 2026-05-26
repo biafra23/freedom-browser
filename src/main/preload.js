@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => ipcRenderer.invoke('window:get-platform'),
   getActiveProfile: () => ipcRenderer.invoke('profile:get-active'),
   listProfiles: () => ipcRenderer.invoke('profile:list'),
+  createProfile: (input) => ipcRenderer.invoke('profile:create', input),
   openProfile: (id) => ipcRenderer.invoke('profile:open', { id }),
   onProfileUpdated: (callback) => {
     const handler = (_event, profile) => callback(profile);

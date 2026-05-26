@@ -2304,6 +2304,49 @@
       </aside>
     </section>
 
+    <dialog id="profile-create-modal" class="modal profile-create-modal" aria-labelledby="profile-create-title">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="profile-create-title">Create Profile</h2>
+          <button id="profile-create-close" class="icon-btn close-modal" type="button" aria-label="Close">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="M6 6 18 18" />
+            </svg>
+          </button>
+        </div>
+        <form id="profile-create-form">
+          <div class="form-group">
+            <label for="profile-create-name">Profile name</label>
+            <input
+              type="text"
+              id="profile-create-name"
+              class="form-input"
+              placeholder="Work"
+              autocomplete="off"
+              spellcheck="false"
+              required
+            />
+          </div>
+          <p id="profile-create-status" class="modal-status" aria-live="polite" hidden></p>
+          <div class="modal-actions">
+            <button type="button" id="profile-create-cancel" class="secondary-btn">Cancel</button>
+            <button type="submit" id="profile-create-submit" class="primary-btn">Create and Open</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
     <dialog id="add-bookmark-modal" class="modal">
       <div class="modal-content">
         <div class="modal-header">

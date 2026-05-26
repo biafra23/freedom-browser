@@ -127,9 +127,17 @@ async function initProfileIndicator() {
   const createBtn = document.getElementById('profile-create-btn');
   const manageBtn = document.getElementById('profile-manage-btn');
   const menuStatus = document.getElementById('profile-menu-status');
+  const createModal = document.getElementById('profile-create-modal');
+  const createForm = document.getElementById('profile-create-form');
+  const createNameInput = document.getElementById('profile-create-name');
+  const createSubmitBtn = document.getElementById('profile-create-submit');
+  const createCancelBtn = document.getElementById('profile-create-cancel');
+  const createCloseBtn = document.getElementById('profile-create-close');
+  const createStatus = document.getElementById('profile-create-status');
   if (!indicator || !nameEl) return;
 
   let activeProfile = null;
+  let creatingProfile = false;
 
   const setMenuOpen = (open) => {
     if (!menu) return;
@@ -147,6 +155,45 @@ async function initProfileIndicator() {
   const openProfilesSettings = (subroute = '') => {
     setMenuOpen(false);
     loadTarget(subroute ? `freedom://settings/profiles/${subroute}` : 'freedom://settings/profiles');
+  };
+
+  const setCreateStatus = (message, kind = '') => {
+    if (!createStatus) return;
+    createStatus.textContent = message || '';
+    createStatus.className = 'modal-status' + (kind ? ` ${kind}` : '');
+    createStatus.hidden = !message;
+  };
+
+  const setCreateBusy = (busy) => {
+    creatingProfile = busy;
+    if (createSubmitBtn) createSubmitBtn.disabled = busy;
+    if (createCancelBtn) createCancelBtn.disabled = busy;
+    if (createCloseBtn) createCloseBtn.disabled = busy;
+    if (createNameInput) createNameInput.disabled = busy;
+  };
+
+  const closeCreateModal = () => {
+    if (creatingProfile || !createModal) return;
+    if (createModal.open && typeof createModal.close === 'function') {
+      createModal.close();
+    } else {
+      createModal.removeAttribute('open');
+    }
+  };
+
+  const openCreateModal = () => {
+    setMenuOpen(false);
+    setCreateBusy(false);
+    setCreateStatus('', '');
+    if (createNameInput) createNameInput.value = '';
+    if (createModal && !createModal.open && typeof createModal.showModal === 'function') {
+      createModal.showModal();
+    } else if (createModal) {
+      createModal.setAttribute('open', '');
+    }
+    requestAnimationFrame(() => {
+      createNameInput?.focus();
+    });
   };
 
   const profileMetaText = (profile, isCurrent) => {
@@ -248,8 +295,56 @@ async function initProfileIndicator() {
     if (shouldOpen) refreshProfileList();
   });
 
-  createBtn?.addEventListener('click', () => openProfilesSettings('create'));
+  createBtn?.addEventListener('click', openCreateModal);
   manageBtn?.addEventListener('click', () => openProfilesSettings());
+  createCancelBtn?.addEventListener('click', closeCreateModal);
+  createCloseBtn?.addEventListener('click', closeCreateModal);
+  createModal?.addEventListener('cancel', (event) => {
+    if (creatingProfile) event.preventDefault();
+  });
+  createModal?.addEventListener('click', (event) => {
+    if (event.target === createModal) closeCreateModal();
+  });
+  createForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (creatingProfile) return;
+
+    const displayName = createNameInput?.value.trim();
+    if (!displayName) {
+      setCreateStatus('Enter a profile name.', 'error');
+      createNameInput?.focus();
+      return;
+    }
+
+    setCreateBusy(true);
+    setCreateStatus('Creating profile...', 'success');
+    try {
+      const createResult = await electronAPI.createProfile?.({ displayName });
+      if (!createResult?.success) {
+        throw new Error(createResult?.error?.message || 'Profile could not be created');
+      }
+
+      const profile = createResult.profile;
+      const profileId = profile?.id;
+      if (!profileId) {
+        throw new Error('Profile was created but no profile id was returned');
+      }
+
+      setCreateStatus(`Opening ${profile.displayName || displayName}...`, 'success');
+      const openResult = await electronAPI.openProfile?.(profileId);
+      if (!openResult?.success) {
+        throw new Error(openResult?.error?.message || 'Profile was created but could not be opened');
+      }
+
+      setCreateBusy(false);
+      closeCreateModal();
+      refreshProfileList();
+    } catch (err) {
+      setCreateStatus(err?.message || 'Profile could not be created', 'error');
+      setCreateBusy(false);
+      createNameInput?.focus();
+    }
+  });
   document.addEventListener('click', (event) => {
     if (
       menu?.hidden === false &&

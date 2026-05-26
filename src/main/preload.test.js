@@ -125,6 +125,7 @@ describe('preload', () => {
       [exposures.electronAPI, 'getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
       [exposures.electronAPI, 'getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
       [exposures.electronAPI, 'listProfiles', [], IPC.PROFILE_LIST, []],
+      [exposures.electronAPI, 'createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
       [exposures.electronAPI, 'openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
       [exposures.electronAPI, 'getSettings', [], IPC.SETTINGS_GET, []],
       [exposures.electronAPI, 'saveSettings', [{ theme: 'dark' }], IPC.SETTINGS_SAVE, [{ theme: 'dark' }]],
