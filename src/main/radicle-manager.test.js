@@ -283,6 +283,16 @@ function loadRadicleManagerModule(options = {}) {
     }),
     mkdirSync: jest.fn(),
     unlinkSync: jest.fn(),
+    lstatSync: jest.fn(() => ({
+      isSymbolicLink: () => options.runtimeHomeIsSymlink !== false,
+    })),
+    realpathSync: jest.fn((target) => {
+      if (typeof options.realpathSync === 'function') {
+        return options.realpathSync(target);
+      }
+      return target;
+    }),
+    symlinkSync: jest.fn(),
     readdirSync: jest.fn(() => options.keyFiles || ['key']),
     readFileSync: jest.fn(() => options.configContents || '{}'),
     writeFileSync: jest.fn(),
@@ -643,19 +653,32 @@ describe('radicle-manager', () => {
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await flushMicrotasks();
 
+    const radHome = ctx.execFileSync.mock.calls[0][2].env.RAD_HOME;
+    if (process.platform === 'win32') {
+      expect(radHome).toBe(PROFILE_RADICLE_DATA_DIR);
+      expect(ctx.fsMock.symlinkSync).not.toHaveBeenCalled();
+    } else {
+      expect(radHome).toMatch(new RegExp(`${path.sep}tmp${path.sep}freedom-radicle${path.sep}`));
+      expect(ctx.fsMock.symlinkSync).toHaveBeenCalledWith(
+        PROFILE_RADICLE_DATA_DIR,
+        radHome,
+        'dir'
+      );
+    }
+
     expect(ctx.execFileSync).toHaveBeenCalledWith(
       expect.stringContaining(`${path.sep}rad`),
       ['auth', '--alias', 'FreedomBrowser'],
       expect.objectContaining({
         env: expect.objectContaining({
-          RAD_HOME: PROFILE_RADICLE_DATA_DIR,
+          RAD_HOME: radHome,
           RAD_PASSPHRASE: '',
         }),
         stdio: 'pipe',
       })
     );
     expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
-      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      path.join(radHome, 'config.json'),
       JSON.stringify({
         preferredSeeds: [
           'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.xyz:8776',
@@ -670,6 +693,8 @@ describe('radicle-manager', () => {
     expect(ctx.spawnedProcesses).toHaveLength(2);
     expect(ctx.spawnedProcesses[0].binary).toContain('radicle-node');
     expect(ctx.spawnedProcesses[1].binary).toContain('radicle-httpd');
+    expect(ctx.spawnedProcesses[0].spawnOptions.env.RAD_HOME).toBe(radHome);
+    expect(ctx.spawnedProcesses[1].spawnOptions.env.RAD_HOME).toBe(radHome);
     expect(ctx.spawnedProcesses[1].args).toEqual(['--listen', '127.0.0.1:8781']);
     expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
       api: 'http://127.0.0.1:8781',
@@ -731,7 +756,7 @@ describe('radicle-manager', () => {
       mode: 'bundled',
     });
     expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
-      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      path.join(ctx.spawnedProcesses[0].spawnOptions.env.RAD_HOME, 'config.json'),
       expect.stringContaining('"0.0.0.0:18776"')
     );
 
@@ -778,7 +803,7 @@ describe('radicle-manager', () => {
       mode: 'bundled',
     });
     expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
-      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      path.join(ctx.spawnedProcesses[0].spawnOptions.env.RAD_HOME, 'config.json'),
       expect.stringContaining('"0.0.0.0:18777"')
     );
 
