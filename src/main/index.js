@@ -124,6 +124,7 @@ const { registerSwarmProviderIpc } = require('./swarm/swarm-provider-ipc');
 const { registerFeedStoreIpc } = require('./swarm/feed-store');
 const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
+const { promptForDefaultExternalCandidates } = require('./profile-external-candidates');
 const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
@@ -226,6 +227,18 @@ async function bootstrap() {
   }
 
   const settings = loadSettings();
+
+  if (!TEST_MODE) {
+    await promptForDefaultExternalCandidates(activeProfile, {
+      dialog,
+      enabledProtocols: {
+        bee: settings.startBeeAtLaunch !== false,
+        ipfs: settings.startIpfsAtLaunch !== false,
+        radicle: settings.enableRadicleIntegration === true && settings.startRadicleAtLaunch !== false,
+      },
+      logger: log,
+    });
+  }
 
   // In test mode the harness has already seeded service-registry with
   // fake endpoints. Spawning real Bee / IPFS / Radicle binaries against
