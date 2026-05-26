@@ -70,6 +70,9 @@ module.exports = {
 
   // Profiles
   PROFILE_GET_ACTIVE: 'profile:get-active',
+  PROFILE_LIST: 'profile:list',
+  PROFILE_CREATE: 'profile:create',
+  PROFILE_RENAME: 'profile:rename',
   PROFILE_UPDATE_NODE_CONFIG: 'profile:update-node-config',
 
   // History

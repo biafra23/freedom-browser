@@ -209,6 +209,89 @@ function writeProfileMetadata(profileDir, metadata) {
   writeJsonAtomic(getProfileMetaPath(profileDir), metadata);
 }
 
+function readProfileMetadata(profileDir) {
+  const metaPath = getProfileMetaPath(profileDir);
+  if (!fs.existsSync(metaPath)) return null;
+  return readJson(metaPath);
+}
+
+function createProfile(appRoot, profileInput = {}, options = {}) {
+  const displayName = String(profileInput.displayName || '').trim();
+  const profileId = sanitizeProfileId(profileInput.id || displayName);
+  if (!displayName) {
+    throw new Error('Profile display name is required');
+  }
+
+  const catalog = loadCatalog(appRoot);
+  if (findProfile(catalog, profileId)) {
+    throw new Error(`Profile already exists: ${profileId}`);
+  }
+
+  const record = createProfileRecord(appRoot, profileId, {
+    ...options,
+    catalog,
+    displayName,
+  });
+  catalog.profiles.push(record);
+  saveCatalog(appRoot, catalog);
+
+  const metadata = createProfileMetadata(record);
+  writeProfileMetadata(record.dir, metadata);
+
+  return {
+    catalog,
+    record,
+    metadata,
+  };
+}
+
+function renameProfile(appRoot, profileId, displayName) {
+  const id = sanitizeProfileId(profileId);
+  const nextDisplayName = String(displayName || '').trim();
+  if (!nextDisplayName) {
+    throw new Error('Profile display name is required');
+  }
+
+  const catalog = loadCatalog(appRoot);
+  const record = findProfile(catalog, id);
+  if (!record) {
+    throw new Error(`Profile not found: ${id}`);
+  }
+
+  record.displayName = nextDisplayName;
+  saveCatalog(appRoot, catalog);
+
+  const existingMetadata = readProfileMetadata(record.dir) || createProfileMetadata(record);
+  const metadata = {
+    ...existingMetadata,
+    id: record.id,
+    displayName: nextDisplayName,
+  };
+  writeProfileMetadata(record.dir, metadata);
+
+  return {
+    catalog,
+    record,
+    metadata,
+  };
+}
+
+function listProfileSummaries(appRoot, options = {}) {
+  const catalog = loadCatalog(appRoot);
+  return catalog.profiles.map((record) => {
+    const metadata = readProfileMetadata(record.dir) || createProfileMetadata(record);
+    return {
+      id: metadata.id || record.id,
+      displayName: metadata.displayName || record.displayName || displayNameFromId(record.id),
+      slot: Number.isInteger(metadata.slot) ? metadata.slot : record.slot,
+      createdAt: metadata.createdAt || record.createdAt || null,
+      lastOpenedAt: metadata.lastOpenedAt || record.lastOpenedAt || null,
+      nodes: metadata.nodes || record.nodes || null,
+      isActive: options.activeProfileId === record.id,
+    };
+  });
+}
+
 function updateProfileNodeConfig(profile, protocol, updates) {
   if (!profile?.appRoot || !profile?.userDataDir || !profile?.id || !profile?.metadata) {
     return null;
@@ -290,6 +373,7 @@ module.exports = {
   PROFILE_META_FILE,
   PROFILE_REGISTRY_FILE,
   allocateSlot,
+  createProfile,
   createProfileMetadata,
   displayNameFromId,
   ensureProfile,
@@ -299,7 +383,10 @@ module.exports = {
   getManagedPorts,
   getProfileMetaPath,
   hashPath,
+  listProfileSummaries,
   loadCatalog,
+  renameProfile,
+  readProfileMetadata,
   sanitizeProfileId,
   saveCatalog,
   updateProfileNodeConfig,

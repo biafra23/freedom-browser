@@ -536,6 +536,65 @@
         margin-top: 8px;
       }
 
+      .profile-manager-list {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .profile-manager-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .profile-manager-row:last-child {
+        border-bottom: 0;
+      }
+
+      .profile-manager-main {
+        min-width: 0;
+      }
+
+      .profile-manager-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+
+      .profile-manager-name input {
+        max-width: 280px;
+      }
+
+      .profile-manager-meta {
+        color: var(--text-muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .profile-manager-actions {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .profile-manager-create {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        padding: 16px 18px;
+        border-top: 1px solid var(--border);
+        background: rgba(22, 27, 34, 0.5);
+      }
+
+      .profile-manager-empty {
+        padding: 18px;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+
       /* Light theme */
       @media (prefers-color-scheme: light) {
         :root {
@@ -563,7 +622,8 @@
         }
 
         .row.sub,
-        .rpc-block {
+        .rpc-block,
+        .profile-manager-create {
           background: #f6f8fa;
         }
 
@@ -725,6 +785,24 @@
             <div class="profile-node-empty">Loading…</div>
           </div>
           <p id="profile-save-status" class="rpc-status"></p>
+
+          <h2 class="section-title" style="margin-top: 28px">Manage Profiles</h2>
+          <div class="card">
+            <div class="profile-manager-list" id="profile-manager-list">
+              <div class="profile-manager-empty">Loading…</div>
+            </div>
+            <div class="profile-manager-create">
+              <input
+                type="text"
+                id="create-profile-name"
+                class="rpc-input"
+                placeholder="New profile name"
+                spellcheck="false"
+              />
+              <button type="button" class="btn" id="create-profile-btn">Create</button>
+            </div>
+          </div>
+          <p id="profile-manager-status" class="rpc-status"></p>
         </section>
 
         <!-- Startup -->
@@ -915,6 +993,10 @@
         slot: $('profile-slot'),
         nodesCard: $('profile-nodes-card'),
         saveStatus: $('profile-save-status'),
+        managerList: $('profile-manager-list'),
+        managerStatus: $('profile-manager-status'),
+        createName: $('create-profile-name'),
+        createButton: $('create-profile-btn'),
       };
 
       let isWindows = false;
@@ -1084,8 +1166,76 @@
         profileFields.saveStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
       };
 
+      const setManagerStatus = (message, kind) => {
+        if (!profileFields.managerStatus) return;
+        profileFields.managerStatus.textContent = message || '';
+        profileFields.managerStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
+      };
+
       const setExternalEditorVisible = (row, mode) => {
         row?.querySelector('[data-external-editor]')?.toggleAttribute('hidden', mode !== 'external');
+      };
+
+      const formatProfileDate = (value) => {
+        if (!value) return 'Never opened';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return 'Unknown';
+        return date.toLocaleString();
+      };
+
+      const nodeModeSummary = (profile) => {
+        const nodes = profile?.nodes || {};
+        return ['bee', 'ipfs', 'radicle']
+          .map((protocol) => `${SERVICE_LABELS[protocol]}: ${NODE_MODE_LABELS[nodes[protocol]?.mode || 'managed'] || 'Managed'}`)
+          .join(' · ');
+      };
+
+      const renderProfileManager = (profiles) => {
+        if (!profileFields.managerList) return;
+        if (!profiles?.length) {
+          profileFields.managerList.innerHTML =
+            '<div class="profile-manager-empty">No profiles found</div>';
+          return;
+        }
+
+        profileFields.managerList.innerHTML = profiles.map((profile) => `
+          <div class="profile-manager-row" data-profile-id="${esc(profile.id)}">
+            <div class="profile-manager-main">
+              <div class="profile-manager-name">
+                <input
+                  type="text"
+                  class="rpc-input"
+                  data-profile-name-input
+                  value="${esc(profile.displayName || profile.id)}"
+                  spellcheck="false"
+                />
+                ${profile.isActive ? '<span class="profile-pill">Current</span>' : ''}
+              </div>
+              <div class="profile-manager-meta">
+                ID: ${esc(profile.id)} · Slot ${Number.isInteger(profile.slot) ? profile.slot : 'unassigned'} · Last opened: ${esc(formatProfileDate(profile.lastOpenedAt))}
+              </div>
+              <div class="profile-manager-meta">${esc(nodeModeSummary(profile))}</div>
+            </div>
+            <div class="profile-manager-actions">
+              <button type="button" class="btn" data-rename-profile>Save</button>
+              <button type="button" class="btn" disabled>Open</button>
+            </div>
+          </div>`).join('');
+      };
+
+      const refreshProfileManager = async () => {
+        if (!profileFields.managerList) return;
+        try {
+          const result = await freedomAPI.listProfiles?.();
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profiles unavailable');
+          }
+          renderProfileManager(result.profiles || []);
+        } catch (err) {
+          profileFields.managerList.innerHTML =
+            '<div class="profile-manager-empty">Profile list unavailable</div>';
+          setManagerStatus(err?.message || 'Profile list unavailable', 'error');
+        }
       };
 
       const renderProfileNodes = (profile, registry) => {
@@ -1127,7 +1277,9 @@
         if (
           !force &&
           document.activeElement &&
-          profileFields.nodesCard.contains(document.activeElement)
+          (profileFields.nodesCard.contains(document.activeElement) ||
+            profileFields.managerList?.contains(document.activeElement) ||
+            profileFields.createName === document.activeElement)
         ) {
           return;
         }
@@ -1146,6 +1298,7 @@
             ? `Slot ${profile.slot}`
             : 'Unassigned';
           renderProfileNodes(profile, registry);
+          await refreshProfileManager();
         } catch {
           profileFields.nodesCard.innerHTML =
             '<div class="profile-node-empty">Profile data unavailable</div>';
@@ -1208,6 +1361,66 @@
           setProfileStatus(err?.message || 'Profile node settings were not saved', 'error');
         } finally {
           saveButton.disabled = false;
+        }
+      });
+
+      profileFields.createButton?.addEventListener('click', async () => {
+        const displayName = profileFields.createName?.value.trim();
+        if (!displayName) {
+          setManagerStatus('Enter a profile name.', 'error');
+          return;
+        }
+
+        profileFields.createButton.disabled = true;
+        setManagerStatus('Creating profile…', 'testing');
+        try {
+          const result = await freedomAPI.createProfile?.({ displayName });
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile could not be created');
+          }
+          profileFields.createName.value = '';
+          setManagerStatus('Profile created. Opening profiles from the app lands in the next slice.', 'success');
+          await refreshProfileManager();
+        } catch (err) {
+          setManagerStatus(err?.message || 'Profile could not be created', 'error');
+        } finally {
+          profileFields.createButton.disabled = false;
+        }
+      });
+
+      profileFields.createName?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          profileFields.createButton?.click();
+        }
+      });
+
+      profileFields.managerList?.addEventListener('click', async (event) => {
+        const renameButton = event.target?.closest?.('[data-rename-profile]');
+        if (!renameButton) return;
+
+        const row = renameButton.closest('[data-profile-id]');
+        const profileId = row?.dataset.profileId;
+        const input = row?.querySelector('[data-profile-name-input]');
+        const displayName = input?.value.trim();
+        if (!profileId || !displayName) {
+          setManagerStatus('Profile name cannot be empty.', 'error');
+          return;
+        }
+
+        renameButton.disabled = true;
+        setManagerStatus('Saving profile name…', 'testing');
+        try {
+          const result = await freedomAPI.renameProfile?.(profileId, displayName);
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile could not be renamed');
+          }
+          setManagerStatus('Profile name saved.', 'success');
+          await refreshProfileSection(true);
+        } catch (err) {
+          setManagerStatus(err?.message || 'Profile could not be renamed', 'error');
+        } finally {
+          renameButton.disabled = false;
         }
       });
 

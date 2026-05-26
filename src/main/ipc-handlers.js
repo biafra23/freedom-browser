@@ -10,7 +10,13 @@ const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
 const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
-const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
+const {
+  createProfileForActiveApp,
+  getActiveProfile,
+  listProfilesForActiveApp,
+  renameProfileForActiveApp,
+  updateActiveProfileNodeConfig,
+} = require('./profile-resolver');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -106,6 +112,32 @@ function serializeActiveProfile() {
   }
 
   return serialized;
+}
+
+function serializeProfileSummary(profile) {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    displayName: profile.displayName,
+    slot: profile.slot,
+    createdAt: profile.createdAt,
+    lastOpenedAt: profile.lastOpenedAt,
+    nodes: profile.nodes,
+    isActive: profile.isActive === true,
+  };
+}
+
+function serializeProfileMutationResult(result) {
+  if (!result) return null;
+  return serializeProfileSummary({
+    id: result.metadata?.id || result.record?.id,
+    displayName: result.metadata?.displayName || result.record?.displayName,
+    slot: result.metadata?.slot ?? result.record?.slot,
+    createdAt: result.metadata?.createdAt || result.record?.createdAt || null,
+    lastOpenedAt: result.metadata?.lastOpenedAt || result.record?.lastOpenedAt || null,
+    nodes: result.metadata?.nodes || result.record?.nodes || null,
+    isActive: result.record?.id === getActiveProfile()?.id,
+  });
 }
 
 const PROFILE_NODE_MODES = new Set(['managed', 'external', 'disabled']);
@@ -231,6 +263,44 @@ function updateProfileNodeConfigFromIpc(protocol, patch) {
   } catch (err) {
     log.error('[profile] Failed to update node config:', err);
     return failure('PROFILE_UPDATE_FAILED', err.message || 'Profile node config update failed');
+  }
+}
+
+function listProfilesFromIpc() {
+  const profiles = listProfilesForActiveApp();
+  if (!profiles) {
+    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+  }
+  return success({ profiles: profiles.map(serializeProfileSummary) });
+}
+
+function createProfileFromIpc(payload = {}) {
+  try {
+    const result = createProfileForActiveApp({
+      displayName: payload.displayName,
+      id: payload.id,
+    });
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({ profile: serializeProfileMutationResult(result) });
+  } catch (err) {
+    return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
+  }
+}
+
+function renameProfileFromIpc(payload = {}) {
+  try {
+    const result = renameProfileForActiveApp(payload.id, payload.displayName);
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({
+      profile: serializeProfileMutationResult(result),
+      activeProfile: serializeActiveProfile(),
+    });
+  } catch (err) {
+    return failure('PROFILE_RENAME_FAILED', err.message || 'Profile could not be renamed');
   }
 }
 
@@ -410,6 +480,9 @@ function registerBaseIpcHandlers(callbacks = {}) {
   });
 
   ipcMain.handle(IPC.PROFILE_GET_ACTIVE, () => serializeActiveProfile());
+  ipcMain.handle(IPC.PROFILE_LIST, () => listProfilesFromIpc());
+  ipcMain.handle(IPC.PROFILE_CREATE, (_event, payload = {}) => createProfileFromIpc(payload));
+  ipcMain.handle(IPC.PROFILE_RENAME, (_event, payload = {}) => renameProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (_event, payload = {}) =>
     updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
   );
@@ -536,8 +609,12 @@ function registerBaseIpcHandlers(callbacks = {}) {
 }
 
 module.exports = {
+  createProfileFromIpc,
+  listProfilesFromIpc,
+  renameProfileFromIpc,
   registerBaseIpcHandlers,
   serializeActiveProfile,
+  serializeProfileSummary,
   updateProfileNodeConfigFromIpc,
   validateProfileNodeConfigUpdate,
 };

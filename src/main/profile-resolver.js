@@ -2,9 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const {
   DEFAULT_PROFILE_ID,
+  createProfile,
   ensureProfile,
   getCheckoutId,
   hashPath,
+  listProfileSummaries,
+  renameProfile,
   sanitizeProfileId,
   updateProfileNodeConfig,
 } = require('./profile-catalog');
@@ -162,13 +165,61 @@ function updateActiveProfileNodeConfig(protocol, updates) {
   return result;
 }
 
+function getProfileCatalogOptions(profile = activeProfile) {
+  if (!profile || profile.source !== 'catalog') {
+    return null;
+  }
+
+  return {
+    checkoutHash: profile.checkoutHash,
+    dev: profile.isDev === true,
+  };
+}
+
+function listProfilesForActiveApp() {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  return listProfileSummaries(activeProfile.appRoot, {
+    activeProfileId: activeProfile.id,
+  });
+}
+
+function createProfileForActiveApp(input) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  return createProfile(activeProfile.appRoot, input, getProfileCatalogOptions());
+}
+
+function renameProfileForActiveApp(profileId, displayName) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  const result = renameProfile(activeProfile.appRoot, profileId, displayName);
+  if (result?.metadata && profileId === activeProfile.id) {
+    activeProfile = {
+      ...activeProfile,
+      displayName: result.metadata.displayName,
+      metadata: result.metadata,
+    };
+  }
+  return result;
+}
+
 module.exports = {
   applyProfile,
+  createProfileForActiveApp,
   findRepoRoot,
   getActiveProfile,
   getArgValue,
   getDefaultRepoRoot,
   initializeProfile,
+  listProfilesForActiveApp,
+  renameProfileForActiveApp,
   resolveProfile,
   updateActiveProfileNodeConfig,
 };

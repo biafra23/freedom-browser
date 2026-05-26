@@ -124,6 +124,7 @@ async function initProfileIndicator() {
   const menuName = document.getElementById('profile-menu-name');
   const menuMeta = document.getElementById('profile-menu-meta');
   const settingsBtn = document.getElementById('profile-settings-btn');
+  const manageBtn = document.getElementById('profile-manage-btn');
   if (!indicator || !nameEl) return;
 
   const setMenuOpen = (open) => {
@@ -147,6 +148,7 @@ async function initProfileIndicator() {
   });
 
   settingsBtn?.addEventListener('click', openProfilesSettings);
+  manageBtn?.addEventListener('click', openProfilesSettings);
   document.addEventListener('click', (event) => {
     if (
       menu?.hidden === false &&

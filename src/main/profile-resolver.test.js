@@ -178,6 +178,52 @@ describe('profile resolver', () => {
     expect(getActiveProfile().metadata.nodes.ipfs.apiPort).toBe(15555);
   });
 
+  test('creates, lists, and renames catalog profiles for the active app root', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const {
+      createProfileForActiveApp,
+      getActiveProfile,
+      initializeProfile,
+      listProfilesForActiveApp,
+      renameProfileForActiveApp,
+    } = require('./profile-resolver');
+
+    initializeProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      now: '2026-05-25T00:00:00.000Z',
+    });
+
+    const created = createProfileForActiveApp({
+      displayName: 'Work Profile',
+    });
+    expect(created.record.id).toBe('work-profile');
+    expect(created.metadata.displayName).toBe('Work Profile');
+    expect(created.metadata.nodes.bee.apiPort).toBe(11634);
+
+    const profiles = listProfilesForActiveApp();
+    expect(profiles.map((profile) => profile.id)).toEqual(['default', 'work-profile']);
+    expect(profiles.find((profile) => profile.id === 'default').isActive).toBe(true);
+    expect(profiles.find((profile) => profile.id === 'work-profile').isActive).toBe(false);
+
+    const renamedWork = renameProfileForActiveApp('work-profile', 'Work');
+    expect(renamedWork.metadata.displayName).toBe('Work');
+
+    renameProfileForActiveApp('default', 'Personal');
+    expect(getActiveProfile().displayName).toBe('Personal');
+
+    const updatedCatalog = JSON.parse(
+      fs.readFileSync(path.join(userDataDir, 'profile-registry.json'), 'utf-8')
+    );
+    expect(updatedCatalog.profiles.find((entry) => entry.id === 'default').displayName).toBe(
+      'Personal'
+    );
+    expect(
+      updatedCatalog.profiles.find((entry) => entry.id === 'work-profile').displayName
+    ).toBe('Work');
+  });
+
   test('rejects path-like profile ids', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });

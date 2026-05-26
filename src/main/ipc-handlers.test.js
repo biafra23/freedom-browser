@@ -65,6 +65,49 @@ function loadIpcHandlersModule(options = {}) {
       }
       return { metadata: activeProfile?.metadata || null };
     });
+  const listProfilesForActiveApp =
+    options.listProfilesForActiveApp ||
+    jest.fn(() => options.profiles || [
+      {
+        id: activeProfile?.id || 'default',
+        displayName: activeProfile?.displayName || 'Default',
+        slot: activeProfile?.metadata?.slot ?? 0,
+        createdAt: activeProfile?.metadata?.createdAt || null,
+        lastOpenedAt: activeProfile?.metadata?.lastOpenedAt || null,
+        nodes: activeProfile?.metadata?.nodes || null,
+        isActive: true,
+      },
+    ]);
+  const createProfileForActiveApp =
+    options.createProfileForActiveApp ||
+    jest.fn((profile) => ({
+      record: {
+        id: 'created',
+        displayName: profile.displayName,
+        slot: 1,
+      },
+      metadata: {
+        id: 'created',
+        displayName: profile.displayName,
+        slot: 1,
+        nodes: {},
+      },
+    }));
+  const renameProfileForActiveApp =
+    options.renameProfileForActiveApp ||
+    jest.fn((id, displayName) => ({
+      record: {
+        id,
+        displayName,
+        slot: 0,
+      },
+      metadata: {
+        id,
+        displayName,
+        slot: 0,
+        nodes: {},
+      },
+    }));
 
   const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
@@ -79,7 +122,10 @@ function loadIpcHandlersModule(options = {}) {
         fetchToFile,
       }),
       [require.resolve('./profile-resolver')]: () => ({
+        createProfileForActiveApp,
         getActiveProfile: jest.fn(() => activeProfile),
+        listProfilesForActiveApp,
+        renameProfileForActiveApp,
         updateActiveProfileNodeConfig,
       }),
       ...(options.swarmProbeMock
@@ -104,6 +150,9 @@ function loadIpcHandlersModule(options = {}) {
     mod,
     nativeImage,
     state,
+    createProfileForActiveApp,
+    listProfilesForActiveApp,
+    renameProfileForActiveApp,
     updateActiveProfileNodeConfig,
   };
 }
@@ -320,6 +369,83 @@ describe('ipc-handlers', () => {
         radicle: { mode: 'disabled' },
       },
     });
+  });
+
+  test('lists, creates, and renames profiles through profile IPC', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        {
+          id: 'default',
+          displayName: 'Default',
+          slot: 0,
+          createdAt: '2026-05-25T00:00:00.000Z',
+          lastOpenedAt: '2026-05-26T00:00:00.000Z',
+          nodes: { bee: { mode: 'managed', apiPort: 11633 } },
+          isActive: true,
+        },
+      ],
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_LIST)).resolves.toEqual(
+      success({
+        profiles: [
+          {
+            id: 'default',
+            displayName: 'Default',
+            slot: 0,
+            createdAt: '2026-05-25T00:00:00.000Z',
+            lastOpenedAt: '2026-05-26T00:00:00.000Z',
+            nodes: { bee: { mode: 'managed', apiPort: 11633 } },
+            isActive: true,
+          },
+        ],
+      })
+    );
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_CREATE, { displayName: 'Work' })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'created',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: false,
+        },
+      })
+    );
+    expect(ctx.createProfileForActiveApp).toHaveBeenCalledWith({
+      displayName: 'Work',
+      id: undefined,
+    });
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_RENAME, { id: 'default', displayName: 'Personal' })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'default',
+          displayName: 'Personal',
+          slot: 0,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: true,
+        },
+        activeProfile: {
+          id: 'default',
+          displayName: 'Default',
+          source: 'catalog',
+          isDev: false,
+        },
+      })
+    );
+    expect(ctx.renameProfileForActiveApp).toHaveBeenCalledWith('default', 'Personal');
   });
 
   test('updates active profile node config through validated IPC', async () => {
