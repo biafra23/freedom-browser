@@ -284,6 +284,7 @@ function deleteProfileForActiveApp(profileId, expectedDisplayName) {
   }
 
   return deleteProfile(activeProfile.appRoot, profileId, expectedDisplayName, {
+    ...getProfileCatalogOptions(),
     isProfileLocked: (record) =>
       isProfileLocked({
         id: record.id,

@@ -367,6 +367,43 @@ describe('profile resolver', () => {
     }
   });
 
+  test('deletes dev Radicle short home through the active resolver path', () => {
+    const appDataDir = track(makeTempDir());
+    const repoRoot = track(makeRepoRoot());
+    const app = createAppMock({
+      isPackaged: false,
+      appPaths: { appData: appDataDir },
+    });
+    const {
+      createProfileForActiveApp,
+      deleteProfileForActiveApp,
+      getActiveProfile,
+      initializeProfile,
+    } = require('./profile-resolver');
+
+    initializeProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      repoRoot,
+      now: '2026-05-25T00:00:00.000Z',
+    });
+    const created = createProfileForActiveApp({ displayName: 'Work' });
+    const activeProfile = getActiveProfile();
+    const radicleDir = path.join(
+      path.dirname(activeProfile.appRoot),
+      'R',
+      activeProfile.checkoutHash,
+      String(created.record.slot)
+    );
+    fs.mkdirSync(radicleDir, { recursive: true });
+    fs.writeFileSync(path.join(radicleDir, 'radicle.pub'), 'old-radicle-identity');
+
+    deleteProfileForActiveApp('work', 'Work');
+
+    expect(fs.existsSync(created.record.dir)).toBe(false);
+    expect(fs.existsSync(radicleDir)).toBe(false);
+  });
+
   test('rejects path-like profile ids', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });
