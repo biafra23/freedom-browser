@@ -78,6 +78,9 @@
       "identity": "Solar Dev Ltd (46XPHRBLH5)",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "extendInfo": {
+        "LSMultipleInstancesProhibited": false
+      },
       "entitlements": "config/entitlements.mac.plist",
       "entitlementsInherit": "config/entitlements.mac.plist",
       "notarize": true,

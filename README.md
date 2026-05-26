@@ -207,6 +207,9 @@ This means Freedom works seamlessly whether you:
 - Already have system-wide Bee/IPFS/Radicle daemons running and explicitly configure a profile to use them
 - Have port conflicts with other software (Freedom finds and records available profile ports)
 
+On macOS, the packaged app explicitly allows multiple bundle instances so profile
+launching can use `open -n -a Freedom --args --profile=<id>`.
+
 ### Integrated Swarm Bee Node
 
 - **Toolbar Toggle**: Click the network icon to access the Nodes panel with independent on/off switches.
