@@ -185,26 +185,27 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 | **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       |
 | **Node Software**    | Bee            | Kubo                                  | radicle-node + radicle-httpd   |
 | **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
-| **Gateway Port**     | 1633           | 8080                                  | 8780                           |
-| **API Port**         | 1633           | 5001                                  | 8780                           |
+| **Managed Gateway Port** | 11633+     | 18080+                                | 18780+                         |
+| **Managed API Port** | 11633+         | 15001+                                | 18780+                         |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
-| **Data Directory**   | `bee-data/`    | `ipfs-data/`                          | `radicle-data/`                |
+| **Data Directory**   | `<profile>/bee-data/` | `<profile>/ipfs-data/`          | `<profile>/radicle-data/`      |
 | **Binary Directory** | `bee-bin/`     | `ipfs-bin/`                           | `radicle-bin/`                 |
 
 ### Smart Node Connection
 
-Freedom intelligently manages node connections:
+Freedom manages nodes per browser profile:
 
-1. **Detect Existing Nodes**: On launch, checks if Swarm, IPFS, or Radicle nodes are already running on default ports
-2. **Reuse When Available**: If a healthy node is detected, Freedom connects to it instead of starting a new one
-3. **Automatic Fallback**: If default ports are busy (but not by a compatible node), Freedom starts bundled nodes on alternative ports
-4. **Visual Feedback**: The Nodes panel shows connection status, including when using an external node or fallback port
+1. **Independent Managed Nodes**: By default, each profile starts its own Bee, IPFS, and Radicle data directories on profile-specific non-default ports.
+2. **Explicit External Nodes**: Profiles can opt into external Bee/IPFS/Radicle endpoints in profile settings. External node identity and storage are shared outside that profile.
+3. **Port Conflict Handling**: If a managed profile port is busy, Freedom picks a free profile port and persists the reassignment.
+4. **Visual Feedback**: The Nodes panel and profile settings show whether a node is managed, external/shared, or disabled.
 
 This means Freedom works seamlessly whether you:
 
 - Run it standalone (bundled Swarm and IPFS nodes start automatically; Radicle is optional and behind an Experimental setting)
-- Already have system-wide Bee/IPFS/Radicle daemons running (Freedom reuses them)
-- Have port conflicts with other software (Freedom finds available ports)
+- Create multiple independent browser profiles with their own browser data, vault, and managed node state
+- Already have system-wide Bee/IPFS/Radicle daemons running and explicitly configure a profile to use them
+- Have port conflicts with other software (Freedom finds and records available profile ports)
 
 ### Integrated Swarm Bee Node
 
@@ -228,7 +229,7 @@ This means Freedom works seamlessly whether you:
 - **Live Statistics**: View connected peers, seeded repos, version, and Node ID.
 - **Repository Seeding**: Seed Radicle repositories directly from the browser to help replicate them across the network.
 - **Stale Socket Cleanup**: Automatically cleans up control sockets from unclean shutdowns.
-- **Port Conflict Resolution**: Falls back to ports 8781+ if default port 8780 is unavailable.
+- **Port Conflict Resolution**: Uses profile-specific managed ports and persists reassignment if one is unavailable.
 - **Windows**: Radicle is not available on Windows yet (no upstream binaries). The Experimental settings section is hidden on Windows builds.
 
 ### Universal Address Bar
@@ -364,14 +365,16 @@ Access built-in browser pages using the `freedom://` protocol:
 
 ### Node Endpoints
 
-Freedom automatically manages node connections. By default:
+Freedom automatically manages node connections per profile. The default profile's managed endpoints start at:
 
-- **Swarm Bee**: `http://127.0.0.1:1633`
-- **IPFS Gateway**: `http://localhost:8080` (`localhost`, not `127.0.0.1`, so Kubo's built-in subdomain gateway kicks in — required for `_redirects` SPA support)
-- **IPFS API**: `http://127.0.0.1:5001`
-- **Radicle httpd**: `http://127.0.0.1:8780`
+- **Swarm Bee**: `http://127.0.0.1:11633`
+- **IPFS Gateway**: `http://localhost:18080` (`localhost`, not `127.0.0.1`, so Kubo's built-in subdomain gateway kicks in — required for `_redirects` SPA support)
+- **IPFS API**: `http://127.0.0.1:15001`
+- **Radicle httpd**: `http://127.0.0.1:18780`
 
-The browser automatically detects existing nodes and handles port conflicts. For advanced users who need to override the defaults (e.g., connecting to a remote node), use environment variables:
+Named profiles use the next profile slot (`11634`, `15002`, `18081`, `18781`, and so on). The ecosystem default ports (`1633`, `5001`, `8080`, `8780`) are treated as external/system-node endpoints, not Freedom-managed defaults.
+
+For advanced users who need to connect a profile to a remote or system node, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
 
 ```bash
 # Connect to a remote Swarm node
@@ -700,19 +703,19 @@ npm run start:test-updater
 
 ### Bee fails to start
 
-- Freedom automatically detects port conflicts and uses fallback ports
+- Freedom automatically detects managed-port conflicts and persists a free profile port
 - If the node still fails, check terminal output for specific error messages
 - Reset Bee data: `npm run bee:reset`
 
 ### IPFS fails to start
 
-- Freedom automatically detects port conflicts and uses fallback ports
-- Check for stale lock file: the app should auto-clean, but you can manually delete `ipfs-data/repo.lock`
+- Freedom automatically detects managed-port conflicts and persists a free profile port
+- Check for stale lock file: the app should auto-clean profile-local IPFS locks
 - Reset IPFS data: `npm run ipfs:reset`
 
 ### Radicle fails to start
 - Ensure **Settings → Experimental → Enable Radicle integration (Beta)** is enabled
-- Freedom automatically detects port conflicts and uses fallback ports
+- Freedom automatically detects managed-port conflicts and persists a free profile port
 - Ensure both `radicle-node` and `radicle-httpd` binaries exist in `radicle-bin/`
 - If starting for the first time, Freedom creates a Radicle identity automatically
 - Check terminal output for specific error messages
@@ -720,9 +723,10 @@ npm run start:test-updater
 
 ### Using an external node
 
-- If you have a system-wide Bee, IPFS, or Radicle daemon running, Freedom will detect and reuse it
-- The Nodes panel will show "Node: localhost:PORT" when connected to an external node
-- The toggle switch is disabled for external nodes (can't stop a node Freedom didn't start)
+- If you have a system-wide Bee, IPFS, or Radicle daemon running, configure external mode in **Settings → Profiles → Node endpoints**
+- External mode is per profile and per protocol
+- The Nodes panel shows external/shared status when connected to an external node
+- Freedom does not stop external nodes on quit
 
 ### ENS resolution not working
 
