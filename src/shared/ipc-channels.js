@@ -74,6 +74,7 @@ module.exports = {
   PROFILE_CREATE: 'profile:create',
   PROFILE_RENAME: 'profile:rename',
   PROFILE_OPEN: 'profile:open',
+  PROFILE_DELETE: 'profile:delete',
   PROFILE_UPDATE_NODE_CONFIG: 'profile:update-node-config',
 
   // History

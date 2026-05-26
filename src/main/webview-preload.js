@@ -221,6 +221,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   openProfile: guardInternal('openProfile', (id) =>
     ipcRenderer.invoke('profile:open', { id })
   ),
+  deleteProfile: guardInternal('deleteProfile', (id, confirmDisplayName) =>
+    ipcRenderer.invoke('profile:delete', { id, confirmDisplayName })
+  ),
   updateProfileNodeConfig: guardInternal('updateProfileNodeConfig', (protocol, config) =>
     ipcRenderer.invoke('profile:update-node-config', { protocol, config })
   ),

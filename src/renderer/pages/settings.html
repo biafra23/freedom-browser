@@ -595,6 +595,41 @@
         font-size: 13px;
       }
 
+      .profile-delete-confirm {
+        grid-column: 1 / -1;
+        margin-top: 4px;
+        padding: 14px;
+        border: 1px solid rgba(248, 81, 73, 0.35);
+        border-radius: 8px;
+        background: rgba(248, 81, 73, 0.08);
+      }
+
+      .profile-delete-confirm[hidden] {
+        display: none;
+      }
+
+      .profile-delete-copy {
+        margin: 0 0 10px;
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .profile-delete-controls {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 8px;
+      }
+
+      .btn.danger {
+        border-color: rgba(248, 81, 73, 0.45);
+        color: var(--danger);
+      }
+
+      .btn.danger:hover:not(:disabled) {
+        border-color: var(--danger);
+      }
+
       /* Light theme */
       @media (prefers-color-scheme: light) {
         :root {
@@ -1198,15 +1233,18 @@
           return;
         }
 
-        profileFields.managerList.innerHTML = profiles.map((profile) => `
-          <div class="profile-manager-row" data-profile-id="${esc(profile.id)}">
+        profileFields.managerList.innerHTML = profiles.map((profile) => {
+          const canDelete = !profile.isActive && profile.id !== 'default';
+          const displayName = profile.displayName || profile.id;
+          return `
+          <div class="profile-manager-row" data-profile-id="${esc(profile.id)}" data-profile-display-name="${esc(displayName)}">
             <div class="profile-manager-main">
               <div class="profile-manager-name">
                 <input
                   type="text"
                   class="rpc-input"
                   data-profile-name-input
-                  value="${esc(profile.displayName || profile.id)}"
+                  value="${esc(displayName)}"
                   spellcheck="false"
                 />
                 ${profile.isActive ? '<span class="profile-pill">Current</span>' : ''}
@@ -1221,8 +1259,34 @@
               <button type="button" class="btn" data-open-profile ${profile.isActive ? 'disabled' : ''}>
                 Open
               </button>
+              <button type="button" class="btn danger" data-delete-profile ${canDelete ? '' : 'disabled'}>
+                Delete
+              </button>
             </div>
-          </div>`).join('');
+            <div class="profile-delete-confirm" data-delete-confirm hidden>
+              <p class="profile-delete-copy">
+                Deleting this profile removes its vault data, browser data, node data, RPC keys,
+                local settings, and any local value-bearing node state. Type
+                <strong>${esc(displayName)}</strong> to confirm.
+              </p>
+              <div class="profile-delete-controls">
+                <input
+                  type="text"
+                  class="rpc-input"
+                  data-delete-confirm-input
+                  placeholder="${esc(displayName)}"
+                  spellcheck="false"
+                />
+                <button type="button" class="btn danger" data-confirm-delete-profile>
+                  Delete Profile
+                </button>
+                <button type="button" class="btn" data-cancel-delete-profile>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
       };
 
       const refreshProfileManager = async () => {
@@ -1398,6 +1462,52 @@
       });
 
       profileFields.managerList?.addEventListener('click', async (event) => {
+        const deleteButton = event.target?.closest?.('[data-delete-profile]');
+        if (deleteButton) {
+          const row = deleteButton.closest('[data-profile-id]');
+          row?.querySelector('[data-delete-confirm]')?.removeAttribute('hidden');
+          row?.querySelector('[data-delete-confirm-input]')?.focus();
+          setManagerStatus('', '');
+          return;
+        }
+
+        const cancelDeleteButton = event.target?.closest?.('[data-cancel-delete-profile]');
+        if (cancelDeleteButton) {
+          const row = cancelDeleteButton.closest('[data-profile-id]');
+          row?.querySelector('[data-delete-confirm]')?.setAttribute('hidden', '');
+          const input = row?.querySelector('[data-delete-confirm-input]');
+          if (input) input.value = '';
+          return;
+        }
+
+        const confirmDeleteButton = event.target?.closest?.('[data-confirm-delete-profile]');
+        if (confirmDeleteButton) {
+          const row = confirmDeleteButton.closest('[data-profile-id]');
+          const profileId = row?.dataset.profileId;
+          const displayName = row?.dataset.profileDisplayName;
+          const confirmation = row?.querySelector('[data-delete-confirm-input]')?.value || '';
+          if (!profileId || !displayName) return;
+          if (confirmation !== displayName) {
+            setManagerStatus('Profile name confirmation did not match.', 'error');
+            return;
+          }
+
+          confirmDeleteButton.disabled = true;
+          setManagerStatus('Deleting profile…', 'testing');
+          try {
+            const result = await freedomAPI.deleteProfile?.(profileId, confirmation);
+            if (!result?.success) {
+              throw new Error(result?.error?.message || 'Profile could not be deleted');
+            }
+            setManagerStatus('Profile deleted.', 'success');
+            await refreshProfileManager();
+          } catch (err) {
+            setManagerStatus(err?.message || 'Profile could not be deleted', 'error');
+            confirmDeleteButton.disabled = false;
+          }
+          return;
+        }
+
         const openButton = event.target?.closest?.('[data-open-profile]');
         if (openButton) {
           const profileId = openButton.closest('[data-profile-id]')?.dataset.profileId;

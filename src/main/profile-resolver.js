@@ -3,6 +3,7 @@ const path = require('path');
 const {
   DEFAULT_PROFILE_ID,
   createProfile,
+  deleteProfile,
   ensureProfile,
   getCheckoutId,
   hashPath,
@@ -210,9 +211,22 @@ function renameProfileForActiveApp(profileId, displayName) {
   return result;
 }
 
+function deleteProfileForActiveApp(profileId, expectedDisplayName) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  if (profileId === activeProfile.id) {
+    throw new Error('The active profile cannot be deleted');
+  }
+
+  return deleteProfile(activeProfile.appRoot, profileId, expectedDisplayName);
+}
+
 module.exports = {
   applyProfile,
   createProfileForActiveApp,
+  deleteProfileForActiveApp,
   findRepoRoot,
   getActiveProfile,
   getArgValue,

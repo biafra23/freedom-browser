@@ -12,6 +12,7 @@ const IPC = require('../shared/ipc-channels');
 const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
 const {
   createProfileForActiveApp,
+  deleteProfileForActiveApp,
   getActiveProfile,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
@@ -336,6 +337,28 @@ function openProfileFromIpc(payload = {}) {
   }
 }
 
+function deleteProfileFromIpc(payload = {}) {
+  try {
+    const result = deleteProfileForActiveApp(payload.id, payload.confirmDisplayName);
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({
+      profile: serializeProfileSummary({
+        id: result.record.id,
+        displayName: result.record.displayName,
+        slot: result.record.slot,
+        createdAt: result.record.createdAt || null,
+        lastOpenedAt: result.record.lastOpenedAt || null,
+        nodes: result.record.nodes || null,
+        isActive: false,
+      }),
+    });
+  } catch (err) {
+    return failure('PROFILE_DELETE_FAILED', err.message || 'Profile could not be deleted');
+  }
+}
+
 function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.BZZ_SET_BASE, (_event, payload = {}) => {
     const { webContentsId, baseUrl } = payload;
@@ -516,6 +539,7 @@ function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.PROFILE_CREATE, (_event, payload = {}) => createProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_RENAME, (_event, payload = {}) => renameProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_OPEN, (_event, payload = {}) => openProfileFromIpc(payload));
+  ipcMain.handle(IPC.PROFILE_DELETE, (_event, payload = {}) => deleteProfileFromIpc(payload));
   ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (_event, payload = {}) =>
     updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
   );
@@ -643,6 +667,7 @@ function registerBaseIpcHandlers(callbacks = {}) {
 
 module.exports = {
   createProfileFromIpc,
+  deleteProfileFromIpc,
   listProfilesFromIpc,
   openProfileFromIpc,
   renameProfileFromIpc,

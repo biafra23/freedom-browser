@@ -276,6 +276,43 @@ function renameProfile(appRoot, profileId, displayName) {
   };
 }
 
+function deleteProfile(appRoot, profileId, expectedDisplayName) {
+  const id = sanitizeProfileId(profileId);
+  if (id === DEFAULT_PROFILE_ID) {
+    throw new Error('The default profile cannot be deleted');
+  }
+
+  const catalog = loadCatalog(appRoot);
+  const recordIndex = catalog.profiles.findIndex((profile) => profile.id === id);
+  if (recordIndex === -1) {
+    throw new Error(`Profile not found: ${id}`);
+  }
+
+  const record = catalog.profiles[recordIndex];
+  const displayName = record.displayName || displayNameFromId(record.id);
+  if (String(expectedDisplayName || '') !== displayName) {
+    throw new Error('Profile display name confirmation did not match');
+  }
+
+  const resolvedAppRoot = path.resolve(appRoot);
+  const resolvedProfileDir = path.resolve(record.dir);
+  if (
+    resolvedProfileDir === resolvedAppRoot ||
+    !resolvedProfileDir.startsWith(`${resolvedAppRoot}${path.sep}`)
+  ) {
+    throw new Error('Refusing to delete a profile outside the app data root');
+  }
+
+  catalog.profiles.splice(recordIndex, 1);
+  saveCatalog(appRoot, catalog);
+  fs.rmSync(resolvedProfileDir, { recursive: true, force: true });
+
+  return {
+    catalog,
+    record,
+  };
+}
+
 function listProfileSummaries(appRoot, options = {}) {
   const catalog = loadCatalog(appRoot);
   return catalog.profiles.map((record) => {
@@ -375,6 +412,7 @@ module.exports = {
   allocateSlot,
   createProfile,
   createProfileMetadata,
+  deleteProfile,
   displayNameFromId,
   ensureProfile,
   getCatalogPath,

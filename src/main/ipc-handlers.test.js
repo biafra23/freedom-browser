@@ -114,6 +114,16 @@ function loadIpcHandlersModule(options = {}) {
       command: '/electron',
       args: [`--profile=${profileId}`],
     }));
+  const deleteProfileForActiveApp =
+    options.deleteProfileForActiveApp ||
+    jest.fn((id, _confirmDisplayName) => ({
+      record: {
+        id,
+        displayName: id === 'work' ? 'Work' : id,
+        slot: 1,
+        nodes: {},
+      },
+    }));
 
   const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
@@ -129,6 +139,7 @@ function loadIpcHandlersModule(options = {}) {
       }),
       [require.resolve('./profile-resolver')]: () => ({
         createProfileForActiveApp,
+        deleteProfileForActiveApp,
         getActiveProfile: jest.fn(() => activeProfile),
         listProfilesForActiveApp,
         renameProfileForActiveApp,
@@ -160,6 +171,7 @@ function loadIpcHandlersModule(options = {}) {
     nativeImage,
     state,
     createProfileForActiveApp,
+    deleteProfileForActiveApp,
     listProfilesForActiveApp,
     launchProfile,
     renameProfileForActiveApp,
@@ -512,6 +524,32 @@ describe('ipc-handlers', () => {
       failure('PROFILE_ALREADY_OPEN', 'This profile is already open')
     );
     expect(ctx.launchProfile).not.toHaveBeenCalled();
+  });
+
+  test('deletes inactive profiles through typed confirmation IPC', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.ipcMain.invoke(IPC.PROFILE_DELETE, {
+        id: 'work',
+        confirmDisplayName: 'Work',
+      })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: false,
+        },
+      })
+    );
+    expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
   });
 
   test('updates active profile node config through validated IPC', async () => {

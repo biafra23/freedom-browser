@@ -183,6 +183,7 @@ describe('profile resolver', () => {
     const app = createAppMock({ isPackaged: true, userDataDir });
     const {
       createProfileForActiveApp,
+      deleteProfileForActiveApp,
       getActiveProfile,
       initializeProfile,
       listProfilesForActiveApp,
@@ -209,9 +210,17 @@ describe('profile resolver', () => {
 
     const renamedWork = renameProfileForActiveApp('work-profile', 'Work');
     expect(renamedWork.metadata.displayName).toBe('Work');
+    const workDir = renamedWork.record.dir;
 
     renameProfileForActiveApp('default', 'Personal');
     expect(getActiveProfile().displayName).toBe('Personal');
+
+    expect(() => deleteProfileForActiveApp('default', 'Personal')).toThrow(
+      'The active profile cannot be deleted'
+    );
+
+    deleteProfileForActiveApp('work-profile', 'Work');
+    expect(fs.existsSync(workDir)).toBe(false);
 
     const updatedCatalog = JSON.parse(
       fs.readFileSync(path.join(userDataDir, 'profile-registry.json'), 'utf-8')
@@ -219,9 +228,7 @@ describe('profile resolver', () => {
     expect(updatedCatalog.profiles.find((entry) => entry.id === 'default').displayName).toBe(
       'Personal'
     );
-    expect(
-      updatedCatalog.profiles.find((entry) => entry.id === 'work-profile').displayName
-    ).toBe('Work');
+    expect(updatedCatalog.profiles.some((entry) => entry.id === 'work-profile')).toBe(false);
   });
 
   test('rejects path-like profile ids', () => {
