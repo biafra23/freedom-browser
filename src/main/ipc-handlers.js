@@ -86,12 +86,26 @@ function serializeActiveProfile() {
   const profile = getActiveProfile();
   if (!profile) return null;
 
-  return {
+  const serialized = {
     id: profile.id,
     displayName: profile.displayName,
     source: profile.source,
     isDev: profile.isDev === true,
   };
+
+  const metadata = profile.metadata || null;
+  if (Number.isInteger(metadata?.slot)) {
+    serialized.slot = metadata.slot;
+  }
+  if (metadata?.nodes && typeof metadata.nodes === 'object') {
+    serialized.nodes = {
+      bee: metadata.nodes.bee ? { ...metadata.nodes.bee } : null,
+      ipfs: metadata.nodes.ipfs ? { ...metadata.nodes.ipfs } : null,
+      radicle: metadata.nodes.radicle ? { ...metadata.nodes.radicle } : null,
+    };
+  }
+
+  return serialized;
 }
 
 function registerBaseIpcHandlers(callbacks = {}) {

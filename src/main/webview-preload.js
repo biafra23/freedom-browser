@@ -208,6 +208,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
 
   // Platform / environment info needed by settings page
   getPlatform: guardInternal('getPlatform', () => ipcRenderer.invoke('window:get-platform')),
+  getActiveProfile: guardInternal('getActiveProfile', () =>
+    ipcRenderer.invoke('profile:get-active')
+  ),
 
   // Network configuration (the Networks settings page + the ENS lens).
   getNetworkConfig: guardInternal('getNetworkConfig', () =>

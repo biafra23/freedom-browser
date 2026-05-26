@@ -146,6 +146,7 @@ describe('webview-preload', () => {
       ['getSettings', [], IPC.SETTINGS_GET, []],
       ['saveSettings', [{ theme: 'light' }], IPC.SETTINGS_SAVE, [{ theme: 'light' }]],
       ['getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
+      ['getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
       ['getServiceRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
       ['openPublishSetup', [], IPC.SIDEBAR_OPEN_PUBLISH_SETUP, []],
       ['getBookmarks', [], IPC.BOOKMARKS_GET, []],

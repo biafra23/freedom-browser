@@ -64,6 +64,8 @@ const electronAPI = window.electronAPI;
 // Apply theme early to avoid flash
 initTheme();
 
+let closeProfileMenu = () => {};
+
 // Listen for service registry updates from main process
 window.serviceRegistry?.onUpdate?.((registry) => {
   pushDebug(`[ServiceRegistry] Update received: ${JSON.stringify(registry)}`);
@@ -118,7 +120,43 @@ async function initPlatformUI() {
 async function initProfileIndicator() {
   const indicator = document.getElementById('profile-indicator');
   const nameEl = document.getElementById('profile-indicator-name');
+  const menu = document.getElementById('profile-menu');
+  const menuName = document.getElementById('profile-menu-name');
+  const menuMeta = document.getElementById('profile-menu-meta');
+  const settingsBtn = document.getElementById('profile-settings-btn');
   if (!indicator || !nameEl) return;
+
+  const setMenuOpen = (open) => {
+    if (!menu) return;
+    menu.hidden = !open;
+    indicator.setAttribute('aria-expanded', String(open));
+  };
+
+  const openProfilesSettings = () => {
+    setMenuOpen(false);
+    loadTarget('freedom://settings/profiles');
+  };
+
+  closeProfileMenu = () => setMenuOpen(false);
+
+  indicator.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const shouldOpen = menu?.hidden !== false;
+    closeAllMenus();
+    setMenuOpen(shouldOpen);
+  });
+
+  settingsBtn?.addEventListener('click', openProfilesSettings);
+  document.addEventListener('click', (event) => {
+    if (
+      menu?.hidden === false &&
+      !menu.contains(event.target) &&
+      !indicator.contains(event.target)
+    ) {
+      setMenuOpen(false);
+    }
+  });
+  window.addEventListener('blur', () => setMenuOpen(false));
 
   try {
     const profile = await electronAPI.getActiveProfile?.();
@@ -127,6 +165,13 @@ async function initProfileIndicator() {
 
     nameEl.textContent = label;
     indicator.title = profile?.isDev ? `${label} (dev)` : label;
+    if (menuName) menuName.textContent = label;
+    if (menuMeta) {
+      const meta = [];
+      if (profile?.isDev) meta.push('Development');
+      if (profile?.source) meta.push(profile.source === 'catalog' ? 'Catalog profile' : profile.source);
+      menuMeta.textContent = meta.join(' · ');
+    }
     indicator.hidden = false;
   } catch (err) {
     pushDebug(`[profile] Failed to load active profile: ${err?.message || err}`);
@@ -136,6 +181,7 @@ async function initProfileIndicator() {
 // Close all menus and context menus
 const closeAllMenus = () => {
   closeMenus();
+  closeProfileMenu();
   hideTabContextMenu();
   hideBookmarkContextMenu();
   hidePageContextMenu();

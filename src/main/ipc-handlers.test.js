@@ -281,6 +281,14 @@ describe('ipc-handlers', () => {
         isDev: true,
         userDataDir: '/sensitive/profile/path',
         appRoot: '/sensitive/app/root',
+        metadata: {
+          slot: 2,
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11635 },
+            ipfs: { mode: 'external', externalApi: 'http://127.0.0.1:5001' },
+            radicle: { mode: 'disabled' },
+          },
+        },
       },
     });
 
@@ -291,6 +299,12 @@ describe('ipc-handlers', () => {
       displayName: 'Work',
       source: 'catalog',
       isDev: true,
+      slot: 2,
+      nodes: {
+        bee: { mode: 'managed', apiPort: 11635 },
+        ipfs: { mode: 'external', externalApi: 'http://127.0.0.1:5001' },
+        radicle: { mode: 'disabled' },
+      },
     });
   });
 

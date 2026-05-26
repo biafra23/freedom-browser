@@ -417,6 +417,96 @@
         text-decoration: underline;
       }
 
+      .profile-value {
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 600;
+        max-width: 280px;
+        overflow: hidden;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .profile-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 9px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg-elev);
+        color: var(--text-muted);
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .profile-node {
+        display: grid;
+        grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1fr);
+        gap: 12px;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .profile-node:last-child {
+        border-bottom: 0;
+      }
+
+      .profile-node-main {
+        min-width: 0;
+      }
+
+      .profile-node-name {
+        margin: 0;
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .profile-node-mode {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        min-height: 22px;
+        margin-top: 7px;
+        padding: 0 8px;
+        border-radius: 8px;
+        background: var(--accent-muted);
+        color: var(--accent);
+        font-size: 12px;
+      }
+
+      .profile-node-status {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .profile-node-status-line {
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .profile-node-detail {
+        color: var(--text-muted);
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .profile-node-detail + .profile-node-detail {
+        margin-top: 1px;
+      }
+
+      .profile-node-empty {
+        padding: 18px;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+
       /* Light theme */
       @media (prefers-color-scheme: light) {
         :root {
@@ -494,6 +584,13 @@
             </svg>
             Appearance
           </button>
+          <button type="button" class="nav-item" data-target="profiles">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21a8 8 0 0 0-16 0"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            Profiles
+          </button>
           <button type="button" class="nav-item" data-target="startup">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
@@ -560,6 +657,43 @@
                 </select>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- Profiles -->
+        <section class="section" id="profiles">
+          <h2 class="section-title">Profiles</h2>
+          <div class="card">
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label">Current profile</p>
+                <p class="row-help" id="profile-id">Loading…</p>
+              </div>
+              <div class="row-control">
+                <div class="profile-value" id="profile-display-name">Loading…</div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label">Runtime</p>
+              </div>
+              <div class="row-control">
+                <span class="profile-pill" id="profile-runtime">Loading…</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label">Slot</p>
+              </div>
+              <div class="row-control">
+                <span class="profile-pill" id="profile-slot">Loading…</span>
+              </div>
+            </div>
+          </div>
+
+          <h2 class="section-title" style="margin-top: 28px">Nodes</h2>
+          <div class="card" id="profile-nodes-card">
+            <div class="profile-node-empty">Loading…</div>
           </div>
         </section>
 
@@ -744,8 +878,21 @@
 
       const swarmModeHelp = $('swarm-mode-help');
       const swarmModeBtn = $('swarm-mode-action-btn');
+      const profileFields = {
+        displayName: $('profile-display-name'),
+        id: $('profile-id'),
+        runtime: $('profile-runtime'),
+        slot: $('profile-slot'),
+        nodesCard: $('profile-nodes-card'),
+      };
 
       let isWindows = false;
+      let profileRefreshTimer = null;
+      let setProfileRefreshActive = () => {};
+
+      const esc = (s) =>
+        String(s == null ? '' : s).replace(/[&<>"]/g, (c) =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
       // Each sidebar entry maps to one section; the active section is driven
       // by location.hash so the URL is the source of truth and the outer
@@ -769,6 +916,7 @@
         navItems.forEach((item) =>
           item.classList.toggle('active', item.dataset.target === section)
         );
+        setProfileRefreshActive(section === 'profiles');
         // Always scroll the content area to the top when switching — avoids a
         // stale scroll offset from a taller prior section.
         window.scrollTo({ top: 0 });
@@ -809,6 +957,117 @@
           if (input) input.disabled = !enabled;
         }
       };
+
+      const NODE_MODE_LABELS = {
+        managed: 'Managed by Freedom',
+        external: 'Use external node',
+        preferExternal: 'Prefer external node',
+        disabled: 'Disabled',
+      };
+
+      const SERVICE_LABELS = {
+        bee: 'Swarm',
+        ipfs: 'IPFS',
+        radicle: 'Radicle',
+      };
+
+      const statusLabel = (service) => {
+        const mode = service?.mode || 'none';
+        const message = service?.tempMessage || service?.statusMessage;
+        if (message) return message;
+        if (mode === 'none') return 'Not running';
+        if (mode === 'disabled') return 'Disabled';
+        return mode.charAt(0).toUpperCase() + mode.slice(1);
+      };
+
+      const profileSourceLabel = (source) => {
+        if (source === 'catalog') return 'Profile catalog';
+        if (source === 'profile-dir') return 'Profile directory';
+        if (source === 'test-user-data') return 'Test profile';
+        return source || 'Unknown';
+      };
+
+      const endpointLines = (protocol, config, service) => {
+        if (config?.mode === 'disabled') return [];
+        if (protocol === 'bee') {
+          return [
+            config?.externalApi || service?.api || (config?.apiPort ? `http://127.0.0.1:${config.apiPort}` : null),
+          ].filter(Boolean);
+        }
+        if (protocol === 'ipfs') {
+          return [
+            config?.externalApi || service?.api || (config?.apiPort ? `http://127.0.0.1:${config.apiPort}` : null),
+            config?.externalGateway || service?.gateway || (config?.gatewayPort ? `http://localhost:${config.gatewayPort}` : null),
+          ].filter(Boolean);
+        }
+        return [
+          config?.externalHttp || service?.api || (config?.httpPort ? `http://127.0.0.1:${config.httpPort}` : null),
+        ].filter(Boolean);
+      };
+
+      const renderProfileNodes = (profile, registry) => {
+        const nodes = profile?.nodes || {};
+        const services = ['bee', 'ipfs', 'radicle'];
+        const rows = services.map((protocol) => {
+          const config = nodes[protocol] || {};
+          const service = registry?.[protocol] || {};
+          const mode = config.mode || 'managed';
+          const lines = endpointLines(protocol, config, service);
+          const details = lines.length
+            ? lines.map((line) => `<div class="profile-node-detail">${esc(line)}</div>`).join('')
+            : '<div class="profile-node-detail">No endpoint</div>';
+
+          return `
+            <div class="profile-node">
+              <div class="profile-node-main">
+                <p class="profile-node-name">${SERVICE_LABELS[protocol]}</p>
+                <span class="profile-node-mode">${esc(NODE_MODE_LABELS[mode] || mode)}</span>
+              </div>
+              <div class="profile-node-status">
+                <div class="profile-node-status-line">${esc(statusLabel(service))}</div>
+                ${details}
+              </div>
+            </div>`;
+        });
+
+        profileFields.nodesCard.innerHTML = rows.join('');
+      };
+
+      const refreshProfileSection = async () => {
+        if (!profileFields.nodesCard) return;
+
+        try {
+          const [profile, registry] = await Promise.all([
+            freedomAPI.getActiveProfile?.(),
+            freedomAPI.getServiceRegistry().catch(() => null),
+          ]);
+          const label = profile?.displayName || profile?.id || 'Unknown';
+          profileFields.displayName.textContent = label;
+          profileFields.id.textContent = profile?.id ? `ID: ${profile.id}` : '';
+          profileFields.runtime.textContent = profile?.isDev ? 'Development' : 'Packaged';
+          profileFields.runtime.title = profileSourceLabel(profile?.source);
+          profileFields.slot.textContent = Number.isInteger(profile?.slot)
+            ? `Slot ${profile.slot}`
+            : 'Unassigned';
+          renderProfileNodes(profile, registry);
+        } catch {
+          profileFields.nodesCard.innerHTML =
+            '<div class="profile-node-empty">Profile data unavailable</div>';
+        }
+      };
+
+      setProfileRefreshActive = (active) => {
+        if (!active && profileRefreshTimer) {
+          clearInterval(profileRefreshTimer);
+          profileRefreshTimer = null;
+          return;
+        }
+        if (active && !profileRefreshTimer) {
+          refreshProfileSection();
+          profileRefreshTimer = setInterval(refreshProfileSection, 5000);
+        }
+      };
+      setProfileRefreshActive(resolveSection(location.hash) === 'profiles');
 
       const currentFormState = () => ({
         theme: fields.themeMode.value || 'system',
