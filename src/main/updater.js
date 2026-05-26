@@ -4,6 +4,7 @@ const log = require('./logger');
 const path = require('path');
 const { loadSettings } = require('./settings-store');
 const { getActiveProfile } = require('./profile-resolver');
+const { DEFAULT_PROFILE_ID } = require('./profile-catalog');
 const {
   releaseUpdaterOwnerLock,
   tryAcquireUpdaterOwnerLock,
@@ -12,7 +13,7 @@ const {
 // IPC handler for restart and install
 ipcMain.on('update:restart-and-install', () => {
   log.info('[updater] Restart and install requested via IPC');
-  autoUpdater.quitAndInstall(false, true);
+  installUpdate();
 });
 
 // IPC handler for manual update check
@@ -58,6 +59,39 @@ let menuUpdateCallback = null;
 let isManualCheck = false;
 let updaterOwnerLock = null;
 let releaseRegistered = false;
+
+function getInstallRelaunchMode(profile = getActiveProfile()) {
+  const canRelaunchToSameProfile =
+    profile?.source === 'catalog' && profile?.id === DEFAULT_PROFILE_ID;
+
+  if (canRelaunchToSameProfile) {
+    return {
+      autoRunAfterInstall: true,
+      actionLabel: 'Install now',
+      menuLabel: 'Install Update and Restart...',
+      readyMessage: null,
+    };
+  }
+
+  return {
+    autoRunAfterInstall: false,
+    actionLabel: 'Install and close',
+    menuLabel: 'Install Update and Close...',
+    readyMessage:
+      'Freedom will close after installing. Reopen this profile from the profile manager when the update finishes.',
+  };
+}
+
+function quitAndInstallForActiveProfile() {
+  const mode = getInstallRelaunchMode();
+  autoUpdater.autoRunAppAfterInstall = mode.autoRunAfterInstall;
+  log.info('[updater] Installing update', {
+    autoRunAppAfterInstall: mode.autoRunAfterInstall,
+    profileId: getActiveProfile()?.id,
+    profileSource: getActiveProfile()?.source,
+  });
+  autoUpdater.quitAndInstall(false, mode.autoRunAfterInstall);
+}
 
 function hasUpdaterOwnership() {
   return Boolean(updaterOwnerLock && !updaterOwnerLock.released);
@@ -165,6 +199,7 @@ autoUpdater.on('download-progress', (progressObj) => {
 autoUpdater.on('update-downloaded', (info) => {
   log.info('[updater] Update downloaded:', info.version);
   updateDownloaded = true;
+  const installMode = getInstallRelaunchMode();
 
   // Update the application menu to show "Install Update..."
   if (menuUpdateCallback) {
@@ -177,12 +212,12 @@ autoUpdater.on('update-downloaded', (info) => {
     mainWindow.webContents.send('show-update-notification', {
       type: 'ready',
       version: info.version,
-      message: `Update v${info.version} ready to install`,
+      message: installMode.readyMessage || `Update v${info.version} ready to install`,
+      actionLabel: installMode.actionLabel,
     });
   }
 
-  // Update will install automatically on next quit (autoInstallOnAppQuit = true)
-  log.info('[updater] Update ready - will install on next quit');
+  log.info('[updater] Update ready for manual install');
 });
 
 // Event: Error
@@ -271,7 +306,7 @@ function isUpdateReady() {
 function installUpdate() {
   if (updateDownloaded) {
     log.info('[updater] Manually triggering update install');
-    autoUpdater.quitAndInstall(false, true);
+    quitAndInstallForActiveProfile();
   }
 }
 
@@ -281,4 +316,5 @@ module.exports = {
   isUpdateReady,
   installUpdate,
   hasUpdaterOwnership,
+  getInstallRelaunchMode,
 };

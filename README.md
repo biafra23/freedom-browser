@@ -646,7 +646,8 @@ Freedom includes **non-intrusive auto-update functionality** that silently check
 **Update Experience:**
 
 - Silent background downloads - no interruptions
-- Updates install automatically on quit, or manually via menu
+- Updates install manually via notification/menu when ready
+- Default-profile installs restart Freedom automatically; named/profile-dir installs close after install so users do not silently relaunch into the wrong profile
 - Users stay in control - can disable in Settings
 
 **Server Setup:**
@@ -667,8 +668,8 @@ Freedom-{version}-arm64.dmg.blockmap
 2. Checks again every 6 hours
 3. If new version available → downloads silently in background
 4. Small notification: "Update downloading..."
-5. When ready → notification: "Update ready. Click to restart."
-6. Update installs automatically on quit, or via "Restart to Install Update" menu
+5. When ready → notification: "Update ready. Click to install."
+6. Update installs via the notification or app menu; named/profile-dir profiles close after installation and should be reopened from the profile manager
 
 **Manual Update Check:**
 

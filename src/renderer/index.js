@@ -220,10 +220,10 @@ function initUpdateNotifications() {
 
   let autoHideTimeout = null;
 
-  const showToast = (text, showAction = false) => {
+  const showToast = (text, showAction = false, actionLabel = 'Install now') => {
     message.textContent = text;
     actionBtn.hidden = !showAction;
-    actionBtn.textContent = 'Install now';
+    actionBtn.textContent = actionLabel;
     actionBtn.disabled = false;
     toast.hidden = false;
 
@@ -252,7 +252,7 @@ function initUpdateNotifications() {
   electronAPI.onUpdateNotification?.((data) => {
     pushDebug(`[update] Received notification: ${data.type}`);
     if (data.type === 'ready') {
-      showToast(data.message, true);
+      showToast(data.message, true, data.actionLabel || 'Install now');
     } else {
       // checking, downloading, up-to-date
       showToast(data.message, false);

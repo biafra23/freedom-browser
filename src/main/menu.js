@@ -1,7 +1,12 @@
 const log = require('./logger');
 const { BrowserWindow, Menu, app, ipcMain } = require('electron');
 const { isMainBrowserWindow, getMainWindows, createMainWindow } = require('./windows/mainWindow');
-const { checkForUpdates, isUpdateReady, installUpdate } = require('./updater');
+const {
+  checkForUpdates,
+  getInstallRelaunchMode,
+  isUpdateReady,
+  installUpdate,
+} = require('./updater');
 
 // Helper to get the best target window for tab operations
 // Only returns main browser windows we created (not DevTools or other system windows)
@@ -359,7 +364,7 @@ function setupApplicationMenu() {
   const updateMenuItems = updateReady
     ? [
         {
-          label: 'Install Update and Restart...',
+          label: getInstallRelaunchMode().menuLabel,
           click: () => {
             installUpdate();
           },

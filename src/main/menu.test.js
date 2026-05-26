@@ -26,6 +26,7 @@ function loadMenuModule(platform) {
       }),
       [require.resolve('./updater')]: () => ({
         checkForUpdates: jest.fn(),
+        getInstallRelaunchMode: () => ({ menuLabel: 'Install Update and Restart...' }),
         isUpdateReady: () => false,
         installUpdate: jest.fn(),
       }),
