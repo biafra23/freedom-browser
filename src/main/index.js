@@ -94,6 +94,8 @@ process.on('unhandledRejection', (reason, _promise) => {
   log.error('Unhandled rejection:', reason);
 });
 
+const { registerShutdownSignalHandlers } = require('./shutdown-signals');
+const unregisterShutdownSignalHandlers = registerShutdownSignalHandlers({ app, logger: log });
 const { BrowserWindow, protocol, session } = require('electron');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
 const { registerRequestRewriter } = require('./request-rewriter');
@@ -167,6 +169,7 @@ const profileFocusWatcher = startProfileFocusRequestWatcher(
   { logger: log }
 );
 app.on('will-quit', () => {
+  unregisterShutdownSignalHandlers();
   profileFocusWatcher.stop();
   if (activeProfileLock) {
     releaseProfileLock(activeProfileLock, { logger: log });
