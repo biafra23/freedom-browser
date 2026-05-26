@@ -429,8 +429,9 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | `npm run test:e2e:live`                                           | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
 | `npm run bee:download`                                            | Download the Bee binary for your platform    |
 | `npm run ipfs:download`                                           | Download the Kubo binary for your platform   |
-| `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset`     | Manage Bee outside the app                   |
-| `npm run ipfs:start` / `ipfs:stop` / `ipfs:status` / `ipfs:reset` | Manage IPFS outside the app                  |
+| `npm run bee:status` / `ipfs:status`                              | Check the default profile's Freedom-managed nodes (`11633` / `15001`) |
+| `npm run system-bee:start` / `system-bee:status` / `system-bee:stop` | Run or inspect a repo-root system Bee on the ecosystem default port (`1633`) |
+| `npm run system-ipfs:start` / `system-ipfs:status` / `system-ipfs:stop` | Run or inspect a repo-root system Kubo daemon on the ecosystem default API port (`5001`) |
 | `npm run build -- --mac --unsigned`                               | Build unsigned macOS app (for local testing) |
 | `npm run dist -- --mac`                                           | Build signed macOS distributable (DMG + ZIP) |
 | `npm run dist:mac:prepare-notary`                                 | Build signed macOS artifacts without notarization wait |
@@ -444,13 +445,17 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 
 The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with optional `--arm64`, `--x64`, `--unsigned`, `--no-notarize`, and `--verbose` flags. See `scripts/build.js` for details.
 
+`bee:start` / `ipfs:start` are kept as legacy aliases for the explicit
+`system-*` scripts. They use repo-root `bee-data/` and `ipfs-data/`, which
+Freedom no longer uses for profile-managed dev data.
+
 ### Radicle Scripts
 
 | Script | Description |
 |--------|-------------|
 | `npm run radicle:download` | Download the Radicle binaries for your platform |
 | `npm run radicle:init` | Initialize Radicle identity and configuration |
-| `npm run radicle:status` | Check Radicle httpd API status |
+| `npm run radicle:status` | Check the default profile's Radicle httpd root endpoint |
 | `npm run radicle:reset` | Delete all Radicle data and start fresh |
 
 ---
