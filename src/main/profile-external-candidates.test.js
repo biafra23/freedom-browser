@@ -1,10 +1,14 @@
+const { EventEmitter } = require('events');
 const {
   DEFAULT_EXTERNAL_NODE_CANDIDATES,
   EXTERNAL_CANDIDATE_PROMPT_KEY,
   detectDefaultExternalCandidates,
+  applyExternalCandidateDecisions,
+  presentExternalCandidatesInWindow,
   promptForDefaultExternalCandidates,
   shouldPromptForProtocol,
 } = require('./profile-external-candidates');
+const IPC = require('../shared/ipc-channels');
 
 function createProfile(nodes = {}) {
   return {
@@ -104,6 +108,55 @@ describe('profile external candidates', () => {
     });
   });
 
+  test('persists combined renderer choices for all detected default-port nodes', async () => {
+    const profile = createProfile();
+    const updateNodeConfig = jest.fn();
+    const decisions = await promptForDefaultExternalCandidates(profile, {
+      enabledProtocols: {
+        bee: true,
+        ipfs: true,
+        radicle: false,
+      },
+      logger: { info: jest.fn() },
+      now: '2026-05-26T00:00:00.000Z',
+      presentCandidates: jest.fn().mockResolvedValue({
+        bee: 'external',
+        ipfs: 'managed',
+      }),
+      probeEndpoint: jest.fn().mockResolvedValue(true),
+      updateNodeConfig,
+    });
+
+    expect(decisions).toEqual([
+      {
+        protocol: 'bee',
+        choice: 'external',
+        endpoints: ['http://127.0.0.1:1633'],
+      },
+      {
+        protocol: 'ipfs',
+        choice: 'managed',
+        endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+      },
+    ]);
+    expect(updateNodeConfig).toHaveBeenCalledWith('bee', {
+      mode: 'external',
+      externalApi: 'http://127.0.0.1:1633',
+      [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
+        choice: 'external',
+        checkedAt: '2026-05-26T00:00:00.000Z',
+        endpoints: ['http://127.0.0.1:1633'],
+      },
+    });
+    expect(updateNodeConfig).toHaveBeenCalledWith('ipfs', {
+      [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
+        choice: 'managed',
+        checkedAt: '2026-05-26T00:00:00.000Z',
+        endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+      },
+    });
+  });
+
   test('persists managed choice without changing node mode', async () => {
     const profile = createProfile();
     const dialog = {
@@ -138,5 +191,94 @@ describe('profile external candidates', () => {
     expect(shouldPromptForProtocol(createProfile({ bee: { mode: 'disabled' } }), 'bee')).toBe(
       false
     );
+  });
+
+  test('defaults invalid combined choices to managed', () => {
+    const updateNodeConfig = jest.fn();
+    const decisions = applyExternalCandidateDecisions(
+      [
+        {
+          protocol: 'bee',
+          endpoints: ['http://127.0.0.1:1633'],
+          externalConfig: {
+            mode: 'external',
+            externalApi: 'http://127.0.0.1:1633',
+          },
+        },
+      ],
+      { bee: 'surprise' },
+      {
+        logger: { info: jest.fn() },
+        now: '2026-05-26T00:00:00.000Z',
+        updateNodeConfig,
+      }
+    );
+
+    expect(decisions[0]).toMatchObject({ protocol: 'bee', choice: 'managed' });
+    expect(updateNodeConfig).toHaveBeenCalledWith('bee', {
+      [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
+        choice: 'managed',
+        checkedAt: '2026-05-26T00:00:00.000Z',
+        endpoints: ['http://127.0.0.1:1633'],
+      },
+    });
+  });
+
+  test('presents all candidates to the renderer as one request', async () => {
+    const profile = createProfile();
+    const ipcMain = new EventEmitter();
+    const webContents = new EventEmitter();
+    const window = new EventEmitter();
+    webContents.isLoading = () => false;
+    webContents.send = jest.fn((channel, payload) => {
+      setImmediate(() => {
+        ipcMain.emit(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, {}, {
+          requestId: payload.requestId,
+          choices: {
+            bee: 'external',
+            ipfs: 'managed',
+          },
+        });
+      });
+    });
+    window.webContents = webContents;
+    window.isDestroyed = () => false;
+
+    const choices = await presentExternalCandidatesInWindow(
+      profile,
+      [
+        { protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] },
+        {
+          protocol: 'ipfs',
+          label: 'IPFS',
+          endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+        },
+      ],
+      {
+        ipcMain,
+        requestId: 'req-1',
+        window,
+      }
+    );
+
+    expect(webContents.send).toHaveBeenCalledWith(IPC.PROFILE_EXTERNAL_CANDIDATES, {
+      requestId: 'req-1',
+      profile: {
+        id: 'default',
+        displayName: 'Default',
+      },
+      candidates: [
+        { protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] },
+        {
+          protocol: 'ipfs',
+          label: 'IPFS',
+          endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+        },
+      ],
+    });
+    expect(choices).toEqual({
+      bee: 'external',
+      ipfs: 'managed',
+    });
   });
 });

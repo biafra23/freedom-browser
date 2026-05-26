@@ -65,6 +65,16 @@ const electronAPI = window.electronAPI;
 initTheme();
 
 let closeProfileMenu = () => {};
+let externalNodeCandidatesHandler = null;
+const queuedExternalNodeCandidatePayloads = [];
+
+electronAPI.onExternalNodeCandidates?.((payload) => {
+  if (externalNodeCandidatesHandler) {
+    externalNodeCandidatesHandler(payload);
+  } else {
+    queuedExternalNodeCandidatePayloads.push(payload);
+  }
+});
 
 // Listen for service registry updates from main process
 window.serviceRegistry?.onUpdate?.((registry) => {
@@ -115,6 +125,137 @@ async function initPlatformUI() {
   if (platform === 'linux') {
     document.body.classList.add('platform-linux');
   }
+}
+
+function initExternalNodeCandidatesModal() {
+  const modal = document.getElementById('external-node-candidates-modal');
+  const list = document.getElementById('external-node-candidates-list');
+  const submitBtn = document.getElementById('external-node-candidates-submit');
+  const managedBtn = document.getElementById('external-node-candidates-managed');
+  const closeBtn = document.getElementById('external-node-candidates-close');
+  if (!modal || !list) return;
+
+  let currentRequestId = null;
+  let currentCandidates = [];
+  let hasResponded = false;
+
+  const closeModal = () => {
+    if (modal.open && typeof modal.close === 'function') {
+      modal.close();
+    } else {
+      modal.removeAttribute('open');
+    }
+  };
+
+  const choicesForAll = (choice) =>
+    Object.fromEntries(currentCandidates.map((candidate) => [candidate.protocol, choice]));
+
+  const sendDecision = (choices) => {
+    if (!currentRequestId || hasResponded) return;
+    hasResponded = true;
+    electronAPI.resolveExternalNodeCandidates?.({
+      requestId: currentRequestId,
+      choices,
+    });
+    closeModal();
+  };
+
+  const keepManagedForAll = () => {
+    sendDecision(choicesForAll('managed'));
+  };
+
+  const renderCandidates = (candidates) => {
+    list.textContent = '';
+    for (const candidate of candidates) {
+      const row = document.createElement('div');
+      row.className = 'external-node-row';
+      row.dataset.protocol = candidate.protocol;
+
+      const details = document.createElement('div');
+      details.className = 'external-node-details';
+
+      const name = document.createElement('p');
+      name.className = 'external-node-name';
+      name.textContent = candidate.label || candidate.protocol;
+
+      const endpoints = document.createElement('div');
+      endpoints.className = 'external-node-endpoints';
+      for (const endpoint of candidate.endpoints || []) {
+        const code = document.createElement('code');
+        code.textContent = endpoint;
+        endpoints.append(code);
+      }
+
+      const choice = document.createElement('div');
+      choice.className = 'external-node-choice';
+      choice.setAttribute('role', 'radiogroup');
+      choice.setAttribute('aria-label', `${name.textContent} node choice`);
+
+      const radioName = `external-node-${candidate.protocol}`;
+      for (const option of [
+        { value: 'managed', label: 'Keep Managed' },
+        { value: 'external', label: 'Use External' },
+      ]) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = radioName;
+        input.value = option.value;
+        input.checked = option.value === 'managed';
+        const text = document.createElement('span');
+        text.textContent = option.label;
+        label.append(input, text);
+        choice.append(label);
+      }
+
+      details.append(name, endpoints);
+      row.append(details, choice);
+      list.append(row);
+    }
+  };
+
+  const submitChoices = () => {
+    const choices = {};
+    for (const candidate of currentCandidates) {
+      const checked = list.querySelector(
+        `.external-node-row[data-protocol="${candidate.protocol}"] input:checked`
+      );
+      choices[candidate.protocol] = checked?.value === 'external' ? 'external' : 'managed';
+    }
+    sendDecision(choices);
+  };
+
+  const handleExternalNodeCandidates = (payload = {}) => {
+    currentRequestId = payload.requestId || null;
+    currentCandidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    hasResponded = false;
+    if (!currentRequestId || !currentCandidates.length) {
+      sendDecision({});
+      return;
+    }
+    renderCandidates(currentCandidates);
+    if (!modal.open && typeof modal.showModal === 'function') {
+      modal.showModal();
+    } else {
+      modal.setAttribute('open', '');
+    }
+  };
+
+  externalNodeCandidatesHandler = handleExternalNodeCandidates;
+  while (queuedExternalNodeCandidatePayloads.length) {
+    handleExternalNodeCandidates(queuedExternalNodeCandidatePayloads.shift());
+  }
+
+  submitBtn?.addEventListener('click', submitChoices);
+  managedBtn?.addEventListener('click', keepManagedForAll);
+  closeBtn?.addEventListener('click', keepManagedForAll);
+  modal.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    keepManagedForAll();
+  });
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) keepManagedForAll();
+  });
 }
 
 async function initProfileIndicator() {
@@ -502,6 +643,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initSidebar();     // Identity & wallet sidebar
   initWalletUi();    // Wallet & identity display in sidebar
   loadBookmarks();
+  initExternalNodeCandidatesModal();
   initPlatformUI();
   initProfileIndicator();
   initUpdateNotifications();

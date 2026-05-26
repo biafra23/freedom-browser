@@ -2304,6 +2304,52 @@
       </aside>
     </section>
 
+    <dialog
+      id="external-node-candidates-modal"
+      class="modal external-node-candidates-modal"
+      aria-labelledby="external-node-candidates-title"
+    >
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="external-node-candidates-title">External Nodes Detected</h2>
+          <button
+            id="external-node-candidates-close"
+            class="icon-btn close-modal"
+            type="button"
+            aria-label="Close"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="M6 6 18 18" />
+            </svg>
+          </button>
+        </div>
+        <p class="external-node-candidates-copy">
+          Freedom found existing nodes on standard local ports. Choose whether this profile
+          should use them, or keep its own managed nodes.
+        </p>
+        <div id="external-node-candidates-list" class="external-node-candidates-list"></div>
+        <div class="modal-actions">
+          <button type="button" id="external-node-candidates-managed" class="secondary-btn">
+            Keep Managed for All
+          </button>
+          <button type="button" id="external-node-candidates-submit" class="primary-btn">
+            Continue
+          </button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="profile-create-modal" class="modal profile-create-modal" aria-labelledby="profile-create-title">
       <div class="modal-content">
         <div class="modal-header">

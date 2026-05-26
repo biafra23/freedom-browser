@@ -77,6 +77,8 @@ module.exports = {
   PROFILE_OPEN: 'profile:open',
   PROFILE_DELETE: 'profile:delete',
   PROFILE_UPDATE_NODE_CONFIG: 'profile:update-node-config',
+  PROFILE_EXTERNAL_CANDIDATES: 'profile:external-candidates',
+  PROFILE_EXTERNAL_CANDIDATES_DECISION: 'profile:external-candidates-decision',
   PROFILE_UPDATED: 'profile:updated',
 
   // History

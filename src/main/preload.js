@@ -44,6 +44,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listProfiles: () => ipcRenderer.invoke('profile:list'),
   createProfile: (input) => ipcRenderer.invoke('profile:create', input),
   openProfile: (id) => ipcRenderer.invoke('profile:open', { id }),
+  resolveExternalNodeCandidates: (payload) =>
+    ipcRenderer.send('profile:external-candidates-decision', payload),
+  onExternalNodeCandidates: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('profile:external-candidates', handler);
+    return () => ipcRenderer.removeListener('profile:external-candidates', handler);
+  },
   onProfileUpdated: (callback) => {
     const handler = (_event, profile) => callback(profile);
     ipcRenderer.on('profile:updated', handler);

@@ -255,10 +255,11 @@ async function bootstrap() {
   }
 
   const settings = loadSettings();
+  const mainWindow = createMainWindow();
 
   if (!TEST_MODE) {
     await promptForDefaultExternalCandidates(activeProfile, {
-      dialog,
+      window: mainWindow,
       enabledProtocols: {
         bee: settings.startBeeAtLaunch !== false,
         ipfs: settings.startIpfsAtLaunch !== false,
@@ -283,8 +284,6 @@ async function bootstrap() {
       startRadicle();
     }
   }
-
-  const mainWindow = createMainWindow();
 
   // Initialize auto-updater (pass menu update callback). Skipped in
   // test mode so specs don't trigger background network checks against

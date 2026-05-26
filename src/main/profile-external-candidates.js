@@ -1,5 +1,8 @@
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
+const { ipcMain } = require('electron');
+const IPC = require('../shared/ipc-channels');
 const { updateActiveProfileNodeConfig } = require('./profile-resolver');
 
 const EXTERNAL_CANDIDATE_PROMPT_KEY = 'externalCandidatePrompt';
@@ -151,31 +154,25 @@ function buildPromptMarker(choice, candidate, now = new Date().toISOString()) {
   };
 }
 
-async function promptForDefaultExternalCandidates(profile, options = {}) {
-  if (!profile || profile.source !== 'catalog') return [];
+function serializeCandidate(candidate) {
+  return {
+    protocol: candidate.protocol,
+    label: candidate.label,
+    endpoints: candidate.endpoints,
+  };
+}
 
-  const logger = options.logger || console;
-  const dialog = options.dialog || require('electron').dialog;
+function normalizeChoice(choice) {
+  return choice === 'external' ? 'external' : 'managed';
+}
+
+function applyExternalCandidateDecisions(candidates, choices = {}, options = {}) {
   const updateNodeConfig = options.updateNodeConfig || updateActiveProfileNodeConfig;
-  const candidates = await detectDefaultExternalCandidates(profile, options);
+  const logger = options.logger || console;
   const decisions = [];
 
   for (const candidate of candidates) {
-    const profileName = profile.displayName || profile.id;
-    const endpointText = candidate.endpoints.join(' and ');
-    const result = await dialog.showMessageBox({
-      type: 'question',
-      buttons: ['Use External Node', 'Keep Managed Node'],
-      defaultId: 1,
-      cancelId: 1,
-      title: `Use existing ${candidate.label} node?`,
-      message: `Freedom found an existing ${candidate.label} node at ${endpointText}.`,
-      detail:
-        `Use it for the "${profileName}" profile, or keep this profile independent ` +
-        'with a Freedom-managed node on profile-specific ports.',
-    });
-
-    const choice = result.response === 0 ? 'external' : 'managed';
+    const choice = normalizeChoice(choices[candidate.protocol]);
     const marker = buildPromptMarker(choice, candidate, options.now);
     const updates = choice === 'external'
       ? { ...candidate.externalConfig, [EXTERNAL_CANDIDATE_PROMPT_KEY]: marker }
@@ -197,12 +194,139 @@ async function promptForDefaultExternalCandidates(profile, options = {}) {
   return decisions;
 }
 
+function managedChoicesFor(candidates) {
+  return Object.fromEntries(candidates.map((candidate) => [candidate.protocol, 'managed']));
+}
+
+function waitForWindowLoad(window) {
+  if (!window || window.isDestroyed?.()) {
+    return Promise.resolve(false);
+  }
+
+  const webContents = window.webContents;
+  if (!webContents) {
+    return Promise.resolve(false);
+  }
+
+  if (typeof webContents.isLoading === 'function' && !webContents.isLoading()) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      webContents.removeListener?.('did-finish-load', onReady);
+      webContents.removeListener?.('did-fail-load', onFailed);
+      window.removeListener?.('closed', onClosed);
+    };
+    const onReady = () => {
+      cleanup();
+      resolve(!window.isDestroyed?.());
+    };
+    const onFailed = () => {
+      cleanup();
+      resolve(false);
+    };
+    const onClosed = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    webContents.once?.('did-finish-load', onReady);
+    webContents.once?.('did-fail-load', onFailed);
+    window.once?.('closed', onClosed);
+  });
+}
+
+async function presentExternalCandidatesInWindow(profile, candidates, options = {}) {
+  const window = options.window;
+  if (!window || window.isDestroyed?.() || !window.webContents) {
+    return null;
+  }
+
+  const isLoaded = await waitForWindowLoad(window);
+  if (!isLoaded || window.isDestroyed?.()) {
+    return managedChoicesFor(candidates);
+  }
+
+  const requestId = options.requestId || crypto.randomBytes(16).toString('hex');
+  const ipc = options.ipcMain || ipcMain;
+  return new Promise((resolve) => {
+    const finish = (choices) => {
+      ipc.removeListener(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, onDecision);
+      window.removeListener?.('closed', onClosed);
+      resolve(choices || managedChoicesFor(candidates));
+    };
+    const onDecision = (_event, payload = {}) => {
+      if (payload.requestId !== requestId) return;
+      finish(payload.choices);
+    };
+    const onClosed = () => {
+      finish(managedChoicesFor(candidates));
+    };
+
+    ipc.on(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, onDecision);
+    window.once?.('closed', onClosed);
+    window.webContents.send(IPC.PROFILE_EXTERNAL_CANDIDATES, {
+      requestId,
+      profile: {
+        id: profile.id,
+        displayName: profile.displayName || profile.id,
+      },
+      candidates: candidates.map(serializeCandidate),
+    });
+  });
+}
+
+async function promptForDefaultExternalCandidates(profile, options = {}) {
+  if (!profile || profile.source !== 'catalog') return [];
+
+  const logger = options.logger || console;
+  const dialog = options.dialog || require('electron').dialog;
+  const candidates = await detectDefaultExternalCandidates(profile, options);
+  if (!candidates.length) return [];
+
+  const rendererChoices = options.presentCandidates
+    ? await options.presentCandidates(profile, candidates, options)
+    : await presentExternalCandidatesInWindow(profile, candidates, options);
+  if (rendererChoices) {
+    return applyExternalCandidateDecisions(candidates, rendererChoices, options);
+  }
+
+  const decisions = [];
+  for (const candidate of candidates) {
+    const profileName = profile.displayName || profile.id;
+    const endpointText = candidate.endpoints.join(' and ');
+    const result = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Use External Node', 'Keep Managed Node'],
+      defaultId: 1,
+      cancelId: 1,
+      title: `Use existing ${candidate.label} node?`,
+      message: `Freedom found an existing ${candidate.label} node at ${endpointText}.`,
+      detail:
+        `Use it for the "${profileName}" profile, or keep this profile independent ` +
+        'with a Freedom-managed node on profile-specific ports.',
+    });
+
+    const choice = result.response === 0 ? 'external' : 'managed';
+    decisions.push(...applyExternalCandidateDecisions(
+      [candidate],
+      { [candidate.protocol]: choice },
+      { ...options, logger }
+    ));
+  }
+
+  return decisions;
+}
+
 module.exports = {
   DEFAULT_EXTERNAL_NODE_CANDIDATES,
   EXTERNAL_CANDIDATE_PROMPT_KEY,
+  applyExternalCandidateDecisions,
   buildPromptMarker,
   detectDefaultExternalCandidates,
   probeEndpoint,
+  presentExternalCandidatesInWindow,
   promptForDefaultExternalCandidates,
   shouldPromptForProtocol,
 };

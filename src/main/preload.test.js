@@ -188,6 +188,7 @@ describe('preload', () => {
       [exposures.electronAPI, 'updateTabMenuState', [{ canGoBack: true }], 'menu:update-tab-state', [{ canGoBack: true }]],
       [exposures.electronAPI, 'setBookmarkBarToggleEnabled', [true], 'menu:set-bookmark-bar-toggle-enabled', [true]],
       [exposures.electronAPI, 'setBookmarkBarChecked', [false], 'menu:set-bookmark-bar-checked', [false]],
+      [exposures.electronAPI, 'resolveExternalNodeCandidates', [{ requestId: 'req-1', choices: { bee: 'managed' } }], IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, [{ requestId: 'req-1', choices: { bee: 'managed' } }]],
       [exposures.electronAPI, 'restartAndInstallUpdate', [], 'update:restart-and-install', []],
       [exposures.electronAPI, 'checkForUpdates', [], 'update:check', []],
     ];
@@ -207,6 +208,7 @@ describe('preload', () => {
       [exposures.electronAPI, 'onCloseTab', 'tab:close', [], []],
       [exposures.electronAPI, 'onNewTabWithUrl', 'tab:new-with-url', ['https://example.com', 'named-target'], ['https://example.com', 'named-target']],
       [exposures.electronAPI, 'onProfileUpdated', IPC.PROFILE_UPDATED, [{ id: 'work', displayName: 'Work' }], [{ id: 'work', displayName: 'Work' }]],
+      [exposures.electronAPI, 'onExternalNodeCandidates', IPC.PROFILE_EXTERNAL_CANDIDATES, [{ requestId: 'req-1' }], [{ requestId: 'req-1' }]],
       [exposures.electronAPI, 'onNavigateToUrl', 'navigate-to-url', ['bzz://hash'], ['bzz://hash']],
       [exposures.electronAPI, 'onLoadUrl', 'tab:load-url', ['https://load.example'], ['https://load.example']],
       [exposures.electronAPI, 'onToggleDevTools', 'devtools:toggle', [], []],
