@@ -194,6 +194,27 @@ describe('webview-preload', () => {
     expect(callback).not.toHaveBeenCalled();
   });
 
+  test('onProfileUpdated forwards the broadcast and unsubscribes on pagehide', () => {
+    const { exposures, ipcRenderer } = loadWebviewPreloadModule();
+
+    const callback = jest.fn();
+    const unsubscribe = exposures.freedomAPI.onProfileUpdated(callback);
+    expect(typeof unsubscribe).toBe('function');
+
+    ipcRenderer.emit(IPC.PROFILE_UPDATED, { id: 'work', displayName: 'Work' });
+    expect(callback).toHaveBeenCalledWith({ id: 'work', displayName: 'Work' });
+
+    const pagehideHandler = global.window.addEventListener.mock.calls.find(
+      ([event]) => event === 'pagehide'
+    )?.[1];
+    expect(pagehideHandler).toBeDefined();
+
+    pagehideHandler();
+    callback.mockClear();
+    ipcRenderer.emit(IPC.PROFILE_UPDATED, { id: 'personal', displayName: 'Personal' });
+    expect(callback).not.toHaveBeenCalled();
+  });
+
   test('onSettingsUpdated returns a noop on non-internal pages', () => {
     const { exposures, ipcRenderer } = loadWebviewPreloadModule({
       location: {

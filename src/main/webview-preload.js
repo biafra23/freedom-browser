@@ -211,6 +211,7 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   getActiveProfile: guardInternal('getActiveProfile', () =>
     ipcRenderer.invoke('profile:get-active')
   ),
+  onProfileUpdated: guardInternalSubscription('onProfileUpdated', 'profile:updated'),
   listProfiles: guardInternal('listProfiles', () => ipcRenderer.invoke('profile:list')),
   createProfile: guardInternal('createProfile', (profile) =>
     ipcRenderer.invoke('profile:create', profile)

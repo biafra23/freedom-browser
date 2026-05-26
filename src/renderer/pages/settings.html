@@ -1383,6 +1383,11 @@
         }
       };
       setProfileRefreshActive(resolveSection(location.hash) === 'profiles');
+      freedomAPI.onProfileUpdated?.(() => {
+        if (resolveSection(location.hash) === 'profiles') {
+          refreshProfileSection(true);
+        }
+      });
 
       profileFields.nodesCard?.addEventListener('change', (event) => {
         const modeSelect = event.target?.closest?.('[data-node-mode]');
