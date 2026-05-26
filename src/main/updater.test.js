@@ -1,7 +1,7 @@
 const EventEmitter = require('events');
 const { createAppMock, loadMainModule } = require('../../test/helpers/main-process-test-utils');
 
-function loadUpdaterModule(activeProfile) {
+function loadUpdaterModule(activeProfile, options = {}) {
   const autoUpdater = new EventEmitter();
   autoUpdater.logger = null;
   autoUpdater.autoDownload = false;
@@ -18,6 +18,10 @@ function loadUpdaterModule(activeProfile) {
     warn: jest.fn(),
     error: jest.fn(),
   };
+  const tryAcquireUpdaterOwnerLock = options.tryAcquireUpdaterOwnerLock || jest.fn(() => ({
+    released: false,
+    release: jest.fn(),
+  }));
 
   const app = {
     ...createAppMock(),
@@ -38,18 +42,19 @@ function loadUpdaterModule(activeProfile) {
       }),
       [require.resolve('./updater-owner-lock')]: () => ({
         releaseUpdaterOwnerLock: jest.fn(),
-        tryAcquireUpdaterOwnerLock: jest.fn(() => ({
-          released: false,
-          release: jest.fn(),
-        })),
+        tryAcquireUpdaterOwnerLock,
       }),
     },
   });
 
-  return { mod, autoUpdater, ipcMain };
+  return { mod, autoUpdater, ipcMain, tryAcquireUpdaterOwnerLock };
 }
 
 describe('updater profile relaunch behavior', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test('allows restart when the default catalog profile owns install', () => {
     const { mod } = loadUpdaterModule({
       id: 'default',
@@ -119,5 +124,45 @@ describe('updater profile relaunch behavior', () => {
 
     expect(autoUpdater.autoRunAppAfterInstall).toBe(false);
     expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, false);
+  });
+
+  test('non-owner profile retries and starts update checks after ownership transfers', async () => {
+    jest.useFakeTimers();
+    const transferredLock = {
+      released: false,
+      release: jest.fn(),
+    };
+    const tryAcquireUpdaterOwnerLock = jest.fn()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(transferredLock);
+    const { mod, autoUpdater } = loadUpdaterModule({
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      appRoot: '/tmp/freedom-app-root',
+    }, {
+      tryAcquireUpdaterOwnerLock,
+    });
+
+    expect(mod.initUpdater(null, null, {
+      profile: {
+        id: 'work',
+        displayName: 'Work',
+        source: 'catalog',
+        appRoot: '/tmp/freedom-app-root',
+      },
+      ownershipRetryMs: 100,
+    })).toBe(false);
+    expect(mod.hasUpdaterOwnership()).toBe(false);
+
+    jest.advanceTimersByTime(100);
+
+    expect(mod.hasUpdaterOwnership()).toBe(true);
+    expect(tryAcquireUpdaterOwnerLock).toHaveBeenCalledTimes(2);
+
+    jest.advanceTimersByTime(10000);
+    await Promise.resolve();
+
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 });

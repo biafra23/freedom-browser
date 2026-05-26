@@ -59,6 +59,13 @@ let menuUpdateCallback = null;
 let isManualCheck = false;
 let updaterOwnerLock = null;
 let releaseRegistered = false;
+let ownershipRetryInterval = null;
+let initialUpdateCheckTimeout = null;
+let periodicUpdateCheckInterval = null;
+
+const UPDATER_OWNERSHIP_RETRY_MS = 30000;
+const INITIAL_UPDATE_CHECK_DELAY_MS = 10000;
+const PERIODIC_UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
 
 function getInstallRelaunchMode(profile = getActiveProfile()) {
   // Named and explicit profile-dir launches cannot rely on Squirrel preserving profile argv.
@@ -122,6 +129,71 @@ function acquireUpdaterOwnership(options = {}) {
     appRoot: profile?.appRoot,
   });
   return true;
+}
+
+function clearUpdaterTimers() {
+  if (ownershipRetryInterval) {
+    clearInterval(ownershipRetryInterval);
+    ownershipRetryInterval = null;
+  }
+  if (initialUpdateCheckTimeout) {
+    clearTimeout(initialUpdateCheckTimeout);
+    initialUpdateCheckTimeout = null;
+  }
+  if (periodicUpdateCheckInterval) {
+    clearInterval(periodicUpdateCheckInterval);
+    periodicUpdateCheckInterval = null;
+  }
+}
+
+function ensureUpdaterCleanupRegistered() {
+  if (releaseRegistered) {
+    return;
+  }
+
+  releaseRegistered = true;
+  app.on('will-quit', () => {
+    clearUpdaterTimers();
+    releaseUpdaterOwnerLock(updaterOwnerLock, { logger: log });
+    updaterOwnerLock = null;
+  });
+}
+
+function scheduleOwnedUpdateChecks() {
+  if (initialUpdateCheckTimeout || periodicUpdateCheckInterval) {
+    return;
+  }
+
+  // Check for updates 10 seconds after this process becomes updater owner.
+  initialUpdateCheckTimeout = setTimeout(() => {
+    initialUpdateCheckTimeout = null;
+    checkForUpdates();
+  }, INITIAL_UPDATE_CHECK_DELAY_MS);
+
+  // Check for updates every 6 hours while this process owns updates.
+  periodicUpdateCheckInterval = setInterval(
+    () => {
+      checkForUpdates();
+    },
+    PERIODIC_UPDATE_CHECK_MS
+  );
+}
+
+function scheduleOwnershipRetry(options = {}) {
+  if (ownershipRetryInterval) {
+    return;
+  }
+
+  const retryMs = options.ownershipRetryMs || UPDATER_OWNERSHIP_RETRY_MS;
+  ownershipRetryInterval = setInterval(() => {
+    if (!acquireUpdaterOwnership(options)) {
+      return;
+    }
+
+    clearInterval(ownershipRetryInterval);
+    ownershipRetryInterval = null;
+    scheduleOwnedUpdateChecks();
+  }, retryMs);
 }
 
 function setMainWindow(window) {
@@ -244,24 +316,15 @@ autoUpdater.on('error', (error) => {
 function initUpdater(window, onMenuUpdate, options = {}) {
   setMainWindow(window);
   menuUpdateCallback = onMenuUpdate;
+  ensureUpdaterCleanupRegistered();
 
   if (!acquireUpdaterOwnership(options)) {
     log.info('[updater] Update checks disabled in this profile process');
+    scheduleOwnershipRetry(options);
     return false;
   }
 
-  // Check for updates 10 seconds after app start
-  setTimeout(() => {
-    checkForUpdates();
-  }, 10000);
-
-  // Check for updates every 6 hours
-  setInterval(
-    () => {
-      checkForUpdates();
-    },
-    6 * 60 * 60 * 1000
-  );
+  scheduleOwnedUpdateChecks();
   return true;
 }
 
@@ -318,4 +381,5 @@ module.exports = {
   installUpdate,
   hasUpdaterOwnership,
   getInstallRelaunchMode,
+  UPDATER_OWNERSHIP_RETRY_MS,
 };
