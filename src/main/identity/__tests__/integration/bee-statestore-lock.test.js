@@ -1,91 +1,136 @@
 /**
- * Regression test for issue #90: Windows EPERM wiping bee-data/statestore.
+ * Faithful regression test for issue #90: Windows EPERM wiping
+ * bee-data/statestore.
  *
- * When Bee is running it holds an open handle on the LevelDB `LOCK` file
- * inside `statestore` (without FILE_SHARE_DELETE). The stale-dir wipe in
- * `injectBeeIdentity()` -> `removeStaleBeeDirs()` currently calls
- * `fs.rmSync(dir, { recursive: true })` with no `force`/`maxRetries`, which
- * throws `EPERM` on Windows while that handle is held.
- *
- * This test reproduces the failure WITHOUT a Bee binary: a separate child
- * process holds the `LOCK` open and releases it a moment later (modelling
- * Bee shutting down after a stop signal). The wipe must tolerate the briefly
- * held lock and complete.
+ * A real Bee node is started, which opens the LevelDB `statestore` and holds
+ * its `LOCK` file the way it does in production. While that lock is held, the
+ * stale-dir wipe used by `injectBeeIdentity()` (`removeStaleBeeDirs()`) is
+ * invoked. A separate killer process terminates Bee shortly after, releasing
+ * the lock.
  *
  * Expected status:
- *   - Today (bare recursive remove): FAILS on Windows (EPERM thrown
- *     immediately), passes on POSIX.
- *   - After the fix ({ force: true, maxRetries, retryDelay } in
- *     removeStaleBeeDirs, so the sync remove retries until the lock is
- *     released): passes on all platforms.
+ *   - Today (bare `fs.rmSync(dir, { recursive: true })`): FAILS on Windows
+ *     because the wipe throws EPERM immediately while Bee holds the LOCK.
+ *     Passes on POSIX (the lock doesn't block unlink there).
+ *   - After the fix (`{ force: true, maxRetries, retryDelay }`, so the sync
+ *     remove retries until Bee has exited and the lock is released): passes on
+ *     all platforms.
+ *
+ * Requires the Bee binary (run `npm run bee:download`); skipped if absent.
  */
 
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const http = require('http');
+const { deriveAllKeys } = require('../../derivation');
+const { injectBeeKey, createBeeConfig } = require('../../injection');
 const { removeStaleBeeDirs } = require('../../../identity-manager');
 
-// How long the child holds the LOCK before releasing it. Must be shorter than
-// the retry budget of the fixed removeStaleBeeDirs so retries can succeed.
-const LOCK_HOLD_MS = 500;
+const TEST_MNEMONIC =
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+const TEST_PORT = 11633;
+const TEST_PASSWORD = 'test-password-for-statestore-lock';
 
-function spawnLockHolder(lockPath) {
-  const childSrc = `
-    const fs = require('fs');
-    const fd = fs.openSync(process.argv[1], 'r+');
-    process.stdout.write('LOCKED\\n');
-    setTimeout(() => { try { fs.closeSync(fd); } catch { /* gone */ } process.exit(0); }, ${LOCK_HOLD_MS});
-  `;
-  const child = spawn(process.execPath, ['-e', childSrc, lockPath], {
-    stdio: ['ignore', 'pipe', 'ignore'],
+// How long after the wipe starts before Bee is force-killed (releasing the
+// LOCK). Must be shorter than the retry budget of the fixed removeStaleBeeDirs.
+const KILL_DELAY_MS = 300;
+
+function getBeeBinaryPath() {
+  const platformMap = { darwin: 'mac', linux: 'linux', win32: 'win' };
+  const platform = platformMap[process.platform] || process.platform;
+  const binName = process.platform === 'win32' ? 'bee.exe' : 'bee';
+  const projectRoot = path.resolve(__dirname, '../../../../..');
+  const binPath = path.join(projectRoot, 'bee-bin', `${platform}-${process.arch}`, binName);
+  return fs.existsSync(binPath) ? binPath : null;
+}
+
+function waitForBeeReady(port, timeout = 90000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const check = () => {
+      const req = http.request(
+        { host: '127.0.0.1', port, path: '/health', method: 'GET', timeout: 2000 },
+        (res) => {
+          if (res.statusCode === 200) {
+            resolve(true);
+          } else if (Date.now() - start < timeout) {
+            setTimeout(check, 500);
+          } else {
+            reject(new Error(`Bee not ready after ${timeout}ms`));
+          }
+        }
+      );
+      req.on('error', () => {
+        if (Date.now() - start < timeout) {
+          setTimeout(check, 500);
+        } else {
+          reject(new Error(`Bee not ready after ${timeout}ms`));
+        }
+      });
+      req.end();
+    };
+    check();
   });
+}
 
-  const ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('lock holder did not signal LOCKED')), 5000);
-    child.stdout.on('data', (chunk) => {
-      if (chunk.toString().includes('LOCKED')) {
-        clearTimeout(timer);
-        resolve();
-      }
-    });
-    child.on('error', reject);
-  });
-
-  return { child, ready };
+// Kill a pid from a detached process. The main test thread blocks inside the
+// synchronous removeStaleBeeDirs retry loop, so the lock holder must be torn
+// down from a separate process whose event loop is unaffected.
+function scheduleKill(pid, delayMs) {
+  const src = `setTimeout(() => { try { process.kill(${pid}, 'SIGKILL'); } catch { /* gone */ } process.exit(0); }, ${delayMs});`;
+  spawn(process.execPath, ['-e', src], { detached: true, stdio: 'ignore' }).unref();
 }
 
 describe('Bee statestore wipe lock (issue #90)', () => {
+  const beeBinary = getBeeBinaryPath();
   let tempDir;
-  let statestoreDir;
-  let holder = null;
+  let beeProcess;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bee-statestore-lock-'));
-    statestoreDir = path.join(tempDir, 'statestore');
-    fs.mkdirSync(statestoreDir, { recursive: true });
-
-    // LevelDB layout: a LOCK file plus a data file.
-    fs.writeFileSync(path.join(statestoreDir, 'LOCK'), '');
-    fs.writeFileSync(path.join(statestoreDir, '000001.ldb'), 'leveldb-data');
   });
 
-  afterEach(() => {
-    if (holder && !holder.child.killed) {
-      holder.child.kill('SIGKILL');
+  afterEach(async () => {
+    if (beeProcess && !beeProcess.killed) {
+      beeProcess.kill('SIGKILL');
+      await new Promise((resolve) => {
+        beeProcess.on('exit', resolve);
+        setTimeout(resolve, 2000);
+      });
     }
-    holder = null;
+    beeProcess = null;
     if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  test('wiping statestore succeeds while a node briefly holds the LOCK', async () => {
-    holder = spawnLockHolder(path.join(statestoreDir, 'LOCK'));
-    await holder.ready;
+  const maybeTest = beeBinary ? test : test.skip;
 
-    // The lock is held right now; removeStaleBeeDirs must still complete.
-    expect(() => removeStaleBeeDirs(tempDir)).not.toThrow();
-    expect(fs.existsSync(statestoreDir)).toBe(false);
-  }, 15000);
+  maybeTest(
+    'wiping statestore succeeds while a real Bee node holds the LOCK',
+    async () => {
+      const keys = deriveAllKeys(TEST_MNEMONIC);
+      createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT);
+      await injectBeeKey(tempDir, keys.beeWallet.privateKey, TEST_PASSWORD);
+
+      const configPath = path.join(tempDir, 'config.yaml');
+      beeProcess = spawn(beeBinary, ['start', `--config=${configPath}`], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+
+      // Once Bee is healthy it has opened statestore and holds the LevelDB LOCK.
+      await waitForBeeReady(TEST_PORT);
+      expect(fs.existsSync(path.join(tempDir, 'statestore'))).toBe(true);
+
+      // Release the lock shortly after, modelling Bee shutting down.
+      scheduleKill(beeProcess.pid, KILL_DELAY_MS);
+
+      // The wipe must tolerate the briefly-held lock (issue #90).
+      expect(() => removeStaleBeeDirs(tempDir)).not.toThrow();
+      expect(fs.existsSync(path.join(tempDir, 'statestore'))).toBe(false);
+    },
+    120000
+  );
 });
