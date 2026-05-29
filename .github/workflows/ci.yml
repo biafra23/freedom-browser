@@ -44,6 +44,33 @@ jobs:
           path: coverage/
           if-no-files-found: error
 
+  # Issue #90 — Windows EPERM wiping bee-data/statestore during wallet creation.
+  # Reproduction lives in a cross-platform Jest test; the Windows leg is what
+  # actually exercises the EPERM-on-locked-handle behavior.
+  bee-statestore-lock:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run statestore-lock reproduction test
+        run: npx jest src/main/identity/__tests__/integration/bee-statestore-lock.test.js
+
   # Issue #69 — address-bar clipboard: Win/Linux menu wiring + chrome context menu (all platforms).
   e2e-address-bar-clipboard:
     strategy:
