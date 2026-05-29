@@ -140,6 +140,7 @@ describe('preload', () => {
       [exposures.electronAPI, 'getWebviewPreloadPath', [], IPC.GET_WEBVIEW_PRELOAD_PATH, []],
       [exposures.electronAPI, 'saveImage', ['https://example.com/image.png'], IPC.CONTEXT_MENU_SAVE_IMAGE, ['https://example.com/image.png']],
       [exposures.electronAPI, 'copyText', ['hello'], 'clipboard:copy-text', ['hello']],
+      [exposures.electronAPI, 'readClipboardText', [], 'clipboard:read-text', []],
       [exposures.electronAPI, 'copyImageFromUrl', ['https://example.com/image.png'], 'clipboard:copy-image', ['https://example.com/image.png']],
       [exposures.electronAPI, 'getFavicon', ['https://example.com'], IPC.FAVICON_GET, ['https://example.com']],
       [exposures.electronAPI, 'getCachedFavicon', ['https://example.com'], IPC.FAVICON_GET_CACHED, ['https://example.com']],

@@ -684,8 +684,13 @@
     <nav class="bookmarks" aria-label="Bookmarks" id="bookmarks-bar" data-test="bookmarks-bar"></nav>
     <section class="app-body">
       <main class="content">
-        <div id="webview-container" class="webview-container">
-          <!-- Webviews inserted dynamically by tabs.js -->
+        <div class="content-page">
+          <div id="webview-container" class="webview-container">
+            <!-- Webviews inserted dynamically by tabs.js -->
+          </div>
+          <div id="link-status" class="link-status" hidden aria-hidden="true">
+            <span id="link-status-url" class="link-status-url"></span>
+          </div>
         </div>
       </main>
       <aside id="sidebar" class="sidebar collapsed">
@@ -2491,6 +2496,15 @@
         </form>
       </div>
     </dialog>
+
+    <!-- Chrome text-field context menu (address bar, etc.) -->
+    <div id="chrome-input-context-menu" class="context-menu hidden" data-test="chrome-input-context-menu">
+      <button class="context-menu-item" data-action="cut">Cut</button>
+      <button class="context-menu-item" data-action="copy">Copy</button>
+      <button class="context-menu-item" data-action="paste">Paste</button>
+      <div class="context-menu-separator"></div>
+      <button class="context-menu-item" data-action="select-all">Select All</button>
+    </div>
 
     <!-- Tab Context Menu -->
     <div id="tab-context-menu" class="context-menu hidden">

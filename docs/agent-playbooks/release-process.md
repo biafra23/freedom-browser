@@ -30,7 +30,7 @@ Rationale:
 
 ## 1. Promote the dev version
 
-Between releases, `main` carries a `<next>-dev` version (see Step 9). On the release branch, strip that suffix so the build advertises the real release number.
+Between releases, `main` carries a `<next>-dev` version (see Step 11). On the release branch, strip that suffix so the build advertises the real release number.
 
 Update the version string in exactly these two files:
 
@@ -47,7 +47,68 @@ Commit style (matches prior releases):
 chore(release): bump version to <version>
 ```
 
-## 2. Finalize the changelog
+## 2. Refresh dependencies
+
+On the release branch, before finalizing the changelog, bring npm packages and bundled binaries to their current stable versions. Per `AGENTS.md` rule 9, **this requires explicit releaser approval per bump** — agents working through this step should triage and propose, not unilaterally upgrade.
+
+### npm dependencies
+
+Run `npm outdated --json` and triage:
+
+- **In-range bumps** (`wanted == latest`): patch and minor updates that semver guarantees back-compat for. Default to taking them all unless one has a known regression.
+- **Out-of-range bumps** (`wanted < latest`): a new major (or a constrained range still pointing at an older line). Default to deferring to a dedicated release cycle. Before deciding whether to defer or bundle, run these three checks:
+  1. **Own-API check**: read the release's breaking-changes notes and `grep` the codebase for each removed/deprecated API. Zero hits is necessary but **not sufficient** on its own — see #2.
+  2. **Native-module compatibility check** (mandatory for Electron majors and anything else that brings a new V8 / Node major): run `npm install --save-dev <pkg>@<target>` followed by `npm ci` and watch `electron-builder install-app-deps` rebuild every native module against the new headers. If **any** rebuild fails, the bump is **blocked by upstream**, regardless of how clean #1 came out. Check the failing module's GitHub issues for a `<bump>` compatibility tracker — there is usually a public one. **The 0.7.2 cycle hit this**: `better-sqlite3@12.10.0` could not compile against Electron 42's V8 14.8 because V8 removed `PropertyCallbackInfo::Holder()`; upstream had explicitly rolled back Electron 42 prebuilds ([WiseLibs/better-sqlite3#1470](https://github.com/WiseLibs/better-sqlite3/pull/1470)). The Electron 41 `grep` audit showed zero affected APIs in our own code — the breakage surface was entirely in the native-module ecosystem.
+  3. **Build-pipeline check**: for changes that alter install behavior (e.g. Electron 42 removed its own `postinstall` in favor of lazy download), verify the docker linux build pipeline still produces working artifacts. `npm ci` inside a container can behave differently from a local install.
+
+  Only bundle the bump if all three checks pass **and** the verification budget for manual cross-platform smoke testing (mandatory for Chromium-level changes, since `npm test` will not catch web-platform behavior shifts) is available. Otherwise defer to a dedicated release cycle — Electron majors in particular are usually large enough to lead their own release ("`Upgraded Electron 41 to 42 (Chromium 148, Node 24.15)`" as a top-line `Changed` entry, matching `0.7.0`'s "Upgraded Electron to 41").
+
+Apply approved bumps with `npm update` (matches `0.7.1`'s `chore(deps): refresh in-range bumps` commit). This updates `package-lock.json` to the resolved versions without touching the declared `^` ranges in `package.json`, because the ranges already permit those versions. Use `npm install <pkg>@<version>` only when you need to widen a `^` range or pin an exact version. Re-run `npm ci && npm run lint && npm test` before committing to catch regressions.
+
+### Audit warnings
+
+After updating, run `npm audit` and decide per advisory:
+
+- **Auto-fixable, non-breaking**: take `npm audit fix`.
+- **Auto-fixable but `--force` required** (downgrades a top-level dep across a major): do **not** take the auto-fix. Add an `overrides` block in `package.json` pinning just the transitive to a non-vulnerable version. `0.7.1` did exactly this for `uuid` under `@metamask/utils`; the same pattern applies to anything where the auto-fix would regress a direct dependency.
+- **Not exploitable in our usage**: document why in the commit body (`0.7.1`'s commit explains the `uuid.v3/v5/v6` advisory is unreachable from our import graph).
+
+### Bundled binaries (Bee, Kubo / IPFS, Radicle)
+
+Each fetch script resolves the latest from a **vendor-specific** upstream — do **not** use GitHub tags as a stand-in, they can lag the actual release pointer (Radicle in particular publishes new releases to `files.radicle.xyz` first; GitHub `/tags` showed `1.7.1` as the latest stable while `1.9.1` was already shipping).
+
+| Binary | Authoritative source the fetch script reads |
+|---|---|
+| Bee (`scripts/fetch-bee.js`) | `https://api.github.com/repos/ethersphere/bee/releases/latest` |
+| Kubo (`scripts/fetch-ipfs.js`) | `https://dist.ipfs.tech/kubo/versions` |
+| Radicle main (`scripts/fetch-radicle.js`) | `https://files.radicle.xyz/releases/latest` |
+| Radicle httpd (same script) | `https://files.radicle.xyz/releases/radicle-httpd/latest` |
+
+To check whether the bundled binary is stale, compare its self-reported version against the source above:
+
+```
+./bee-bin/<arch>/bee version
+./ipfs-bin/<arch>/ipfs --version
+./radicle-bin/<arch>/rad --version
+./radicle-bin/<arch>/radicle-httpd --version
+```
+
+For each binary that's behind, re-run its fetch script (`npm run bee:download` / `ipfs:download` / `radicle:download` — each fetches every supported arch) and verify the result still passes `npm run check-binaries`. Note: `*-bin/` directories are gitignored, so the binary refresh produces no file-tree change. The build pipeline (§5) re-fetches at artifact-build time, so what ends up shipping is whatever upstream `latest` resolves to then — document the version in the changelog and in the `chore(build): update bundled <name> to <version>` commit body.
+
+### Commit style
+
+Match `0.7.1`'s grouping: one commit for npm refresh (lockfile + any `overrides`), a separate commit per bundled-binary group only if the upstream version changed. Body lists the bumps as `name old -> new` lines (no decorative arrows) and documents any audit decisions taken (see Audit warnings above).
+
+```
+chore(deps): refresh in-range bumps[ and clear <advisory> audit advisory]
+chore(build): update bundled <binary> to <version>
+```
+
+### Changelog placement
+
+Per `changelog-process.md` § Categorising dependency updates, dependency updates inside an active major series default to `Security` (they almost always carry upstream security fixes). The next step (§3 Finalize the changelog) is where this lands.
+
+## 3. Finalize the changelog
 
 Follow `changelog-process.md` in full. Key points for release branches:
 
@@ -61,9 +122,11 @@ Commit style:
 docs(changelog): add user-facing <version> release notes
 ```
 
-**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — the releaser must read through the diff on the release branch and amend the `docs(changelog): …` commit with any wording, scope, or categorisation corrections. `CHANGELOG.md` is not read by §3 (verify) or §4 (build distributables), so those steps can run in parallel with the review. §5 (upload + website) and §6 (tag) freeze the changelog state visible to end users and must wait until review is complete.
+**Review gate (when drafted by an agent).** If the changelog entries were drafted by an agent — or by anyone other than the releaser — **do not create the `docs(changelog): …` commit yet**. Leave the `CHANGELOG.md` edits unstaged (or staged, but uncommitted) on the release branch, present the diff to the releaser, and wait for explicit approval before committing. Iterating in the working tree is cheaper than amending a commit, and avoids the `git commit --amend` ambiguity for agents whose tooling discourages amending without an explicit user request. `CHANGELOG.md` is not read by §4 (verify), §5 (build distributables), or §6 (manual cross-platform smoke testing), so those steps can run in parallel with the review. §7 (upload + website) and §8 (tag) freeze the changelog state visible to end users and must wait until the commit lands.
 
-## 3. Verify before building
+If the changelog is already committed when a correction is requested (e.g. the releaser drafted it themselves, or this gate was missed), amend the existing `docs(changelog): …` commit rather than stacking a second changelog commit.
+
+## 4. Verify before building
 
 On the release branch, with a clean working tree:
 
@@ -76,7 +139,7 @@ npm run check-binaries
 
 Spot-check the app once (`npm start`) and confirm the About/version surface reflects the new number.
 
-## 4. Build distributables
+## 5. Build distributables
 
 Run from the release branch. All builds read the version from `package.json`.
 
@@ -117,7 +180,74 @@ npm run dist -- --win --x64
 
 `electron-builder` cross-builds the Windows NSIS installer and zip from the mac host — no Windows machine required. Windows builds intentionally ship without Radicle (see `README.md`).
 
-## 5. Upload binaries and update the website
+## 6. Manual cross-platform smoke testing
+
+Cross-built artifacts have **never been run** by the time §5 finishes. The Linux container can package the AppImage and `.deb`, and the mac host can cross-build the Windows NSIS installer, but neither can execute the result on its actual target platform. Smoke testing each artifact on a real instance of its target OS catches packaging-class bugs that `npm test` and the on-host `npm start` smoke (§4) cannot:
+
+- Wrong native-module ABI for the target arch (e.g. `better-sqlite3.node` linked for the wrong NODE_MODULE_VERSION, or a x64 binary in an arm64 package)
+- Missing or wrong-arch bundled binary in `extraResources` (`bee.exe`, `ipfs`, `rad`, `radicle-httpd`)
+- `electron-builder` configuration mistakes (asar unpack rules, `extraResources` paths, NSIS installer flags, Gatekeeper / SmartScreen interaction)
+- Platform-specific code paths (file system paths, native menus, IPC permissions, system trust store, default-browser hooks)
+
+### Test environments
+
+- **Linux**: a VM or bare-metal Linux machine matching the target arch — **not the build host**. `Freedom-<version>.AppImage` runs without install (`chmod +x` then double-click or launch from a terminal); `freedom-browser_<version>_amd64.deb` installs via `sudo apt install ./freedom-browser_<version>_amd64.deb`. Repeat for the arm64 artifacts on an arm64 Linux instance (e.g. a Raspberry Pi or a UTM arm64 VM on Apple Silicon).
+- **Windows**: a Windows VM (UTM, Parallels, VMware Fusion) or a separate Windows host. The NSIS installer (`Freedom Setup <version>.exe`) runs unprivileged; the portable `Freedom-<version>-win.zip` extracts and runs without install. Confirm Windows SmartScreen prompts behave as expected for the signed installer (a "Don't run" with an unblock-on-second-prompt is normal for newly-signed builds; outright "blocked by your administrator" is not).
+- **macOS**: the dev host is fine — install the `.dmg` locally (or open the staged `.app` from `dist/mac-arm64/`) and run the same checklist. Confirm Gatekeeper accepts the artifact (`spctl --assess --type execute --verbose dist/mac-arm64/Freedom.app` should print `accepted, source=Notarized Developer ID`).
+
+### Transferring artifacts to test machines
+
+For a one-off transfer across the local network, the lowest-friction path is Python's built-in HTTP server on the build host — zero setup on the test side, no SSH server required, doesn't bounce the unreleased build off any third party:
+
+```
+python3 -m http.server 8000 --directory dist/
+```
+
+Get the build host's LAN IP with `ipconfig getifaddr en0` (macOS, primary interface) or `ip -4 addr show scope global | awk '/inet / { print $2 }'` (Linux). Then download from the test machine:
+
+| Test OS | Command |
+|---|---|
+| Linux | `wget http://<build-host-ip>:8000/<filename>` |
+| Windows (PowerShell) | `iwr http://<build-host-ip>:8000/<filename> -OutFile <filename>` |
+| Any (GUI) | Browse to `http://<build-host-ip>:8000/` and click the file |
+
+Filenames with spaces (e.g. `Freedom Setup <version>.exe`) need URL-encoding when used in `wget` / `iwr` (`%20` for each space). The GUI browser path handles encoding automatically.
+
+Verify the transfer matches the manifest in `dist/latest-<platform>*.yml` (each file's `sha512:` field is base64):
+
+- Linux / macOS test host: `openssl dgst -sha512 -binary <file> | base64 -w0` — should print the base64 hash from the manifest verbatim
+- Windows test host: `(Get-FileHash -Algorithm SHA512 <file>).Hash` returns hex; either compare against `shasum -a 512 <file>` run on the build host (also hex), or decode the manifest's base64 once with `echo "<base64>" | base64 -d | xxd -p -c 256` on the build host
+
+Kill the HTTP server (`Ctrl+C`, or `pkill -f "http.server"` if backgrounded) once transfers are done — it serves everything in `dist/` to anything on the LAN with no auth.
+
+Alternatives if the HTTP server doesn't fit:
+
+- **USB stick** — air-gapped, no network involved. Best when the test machine is offline or on a hostile network
+- **scp** — `scp dist/<file> user@test-host:` (needs `openssh-server` on the test host)
+- **KDE Connect / LocalSend / Snapdrop** — GUI options if both ends have the app
+- Cloud storage and the `freedom.baby/downloads` URL itself both work, but bounce the file off a third party — slower, exposes the unreleased build outside your LAN, and (for `freedom.baby`) inverts the playbook order by uploading before §6 testing has signed off
+
+### Per-platform smoke checklist
+
+For each platform, run through:
+
+1. **Launch**: the app opens cleanly — no crash dialog, main window appears
+2. **Version**: About / `freedom://settings` shows `<version>` from `package.json`
+3. **Navigation**: type `https://example.com`, confirm a basic HTTPS page renders and the address-bar shield is in its default state
+4. **Headline feature**: spot-check whatever the release leads with. For releases that touch ENS / Swarm / IPFS / Radicle, that means opening an `ens://`, `bzz://`, `ipfs://`, or `rad://` URI and confirming the documented behaviour (e.g. for `0.7.2`: Colibri verification surfaces in the address-bar shield popover)
+5. **Bundled nodes**: confirm Bee, IPFS / Kubo, and (Linux only) Radicle start cleanly. The nodes manager or the relevant `freedom://` settings page surfaces this — a "node failed to start" red badge or a missing local API port is the failure mode
+6. **Persistence**: change one trivial setting (e.g. theme), close the app fully, reopen, confirm the change stuck
+
+If any platform fails:
+
+- Fix on the release branch. The other platforms' artifacts in `dist/` are not invalidated by a fix that only changes that platform's build.
+- Re-run only the affected `npm run dist:<platform>:...`.
+- Re-test the regenerated artifact.
+- Proceed to §7 only when every platform you intend to ship passes.
+
+This step is intentionally separate from §4 — §4 verifies the source tree (`npm test`, `npm start` from source); §6 verifies the **packaged artifact** that end users will install. They catch different classes of bugs.
+
+## 7. Upload binaries and update the website
 
 1. Upload the generated artifacts from `dist/` to `https://freedom.baby/downloads`, including the `latest*.yml` manifests so existing installs pick up the update via `electron-updater` (which is configured with `publish.provider = generic` pointing at that URL).
 2. Update the Freedom website to point at the new version:
@@ -127,7 +257,7 @@ npm run dist -- --win --x64
 
 Do this **before** tagging — if an upload reveals a broken artifact, you want to be able to fix it on the release branch without already having a tag pointing at a broken commit.
 
-## 6. Tag the release
+## 8. Tag the release
 
 On the release branch, from the commit you actually built and shipped:
 
@@ -137,7 +267,7 @@ git tag -a v<version> -m "Release <version>"
 
 Tag format is `v<version>` (lowercase `v`), matching `v0.6.2`. Do not push the tag yet — push it together with the merge in the next step so `main` and the tag move as one.
 
-## 7. Merge the release branch into main
+## 9. Merge the release branch into main
 
 Optionally open a PR from `release/<version>` into `main` for review. Otherwise merge directly:
 
@@ -151,13 +281,13 @@ git push origin v<version>
 
 The `--no-ff` is deliberate — it preserves the release branch as a visible bubble in `main`'s history, which matches how earlier releases landed.
 
-## 8. Post-release housekeeping
+## 10. Post-release housekeeping
 
 - Confirm the GitHub release page lists the correct artifacts and release notes.
 - Keep the `release/<version>` branch around (do not delete) — it matches the historical pattern and is the natural base for a `hotfix/<version>.<patch>` branch later if needed.
 - Any build-only fixes that land after the version bump should be committed on the release branch with `fix(build): ...` messages, same as the `0.6.2` cycle did.
 
-## 9. Open the next dev cycle on `main`
+## 11. Open the next dev cycle on `main`
 
 Immediately after the merge, bump `main` to the next dev version so local/CI builds and the About dialog stop advertising the just-shipped release.
 
