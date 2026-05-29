@@ -5,12 +5,23 @@ const { execSync } = require('child_process');
 
 const OUTPUT_DIR = path.join(__dirname, '..', 'bee-bin');
 
-async function fetchLatestRelease() {
+function fetchReleaseOnce() {
   return new Promise((resolve, reject) => {
+    // Authenticate when a token is available (e.g. GITHUB_TOKEN in CI) to lift
+    // the 60 req/hour unauthenticated limit that shared runner IPs often hit.
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const headers = {
+      'User-Agent': 'Freedom-Updater',
+      Accept: 'application/vnd.github+json',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
     const options = {
       hostname: 'api.github.com',
       path: '/repos/ethersphere/bee/releases/latest',
-      headers: { 'User-Agent': 'Freedom-Updater' },
+      headers,
     };
 
     https
@@ -27,6 +38,26 @@ async function fetchLatestRelease() {
       })
       .on('error', reject);
   });
+}
+
+async function fetchLatestRelease() {
+  const maxAttempts = 4;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetchReleaseOnce();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * attempt;
+        console.warn(
+          `Release fetch attempt ${attempt} failed (${err.message}); retrying in ${delayMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 async function downloadFile(url, dest) {
