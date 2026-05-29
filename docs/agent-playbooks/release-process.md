@@ -73,27 +73,28 @@ After updating, run `npm audit` and decide per advisory:
 - **Auto-fixable but `--force` required** (downgrades a top-level dep across a major): do **not** take the auto-fix. Add an `overrides` block in `package.json` pinning just the transitive to a non-vulnerable version. `0.7.1` did exactly this for `uuid` under `@metamask/utils`; the same pattern applies to anything where the auto-fix would regress a direct dependency.
 - **Not exploitable in our usage**: document why in the commit body (`0.7.1`'s commit explains the `uuid.v3/v5/v6` advisory is unreachable from our import graph).
 
-### Bundled binaries (Bee, Kubo / IPFS, Radicle)
+### Bundled binaries (Bee, freedom-ipfs, Radicle)
 
-Each fetch script resolves the latest from a **vendor-specific** upstream — do **not** use GitHub tags as a stand-in, they can lag the actual release pointer (Radicle in particular publishes new releases to `files.radicle.xyz` first; GitHub `/tags` showed `1.7.1` as the latest stable while `1.9.1` was already shipping).
+Each fetch script resolves from a **vendor-specific** upstream — do **not** use GitHub tags as a stand-in for vendors where a different release pointer exists (Radicle in particular publishes new releases to `files.radicle.xyz` first; GitHub `/tags` showed `1.7.1` as the latest stable while `1.9.1` was already shipping). `freedom-ipfs` is different: desktop intentionally consumes a pinned GitHub release asset with a checked checksum, so updating it means changing the pinned release metadata in the fetch script.
 
-| Binary | Authoritative source the fetch script reads |
-|---|---|
-| Bee (`scripts/fetch-bee.js`) | `https://api.github.com/repos/ethersphere/bee/releases/latest` |
-| Kubo (`scripts/fetch-ipfs.js`) | `https://dist.ipfs.tech/kubo/versions` |
-| Radicle main (`scripts/fetch-radicle.js`) | `https://files.radicle.xyz/releases/latest` |
-| Radicle httpd (same script) | `https://files.radicle.xyz/releases/radicle-httpd/latest` |
+| Binary                                                | Authoritative source the fetch script reads                    |
+| ----------------------------------------------------- | -------------------------------------------------------------- |
+| Bee (`scripts/fetch-bee.js`)                          | `https://api.github.com/repos/ethersphere/bee/releases/latest` |
+| freedom-ipfs (`scripts/fetch-freedom-ipfs-native.js`) | pinned GitHub release in the fetch script                      |
+| Radicle main (`scripts/fetch-radicle.js`)             | `https://files.radicle.xyz/releases/latest`                    |
+| Radicle httpd (same script)                           | `https://files.radicle.xyz/releases/radicle-httpd/latest`      |
 
 To check whether the bundled binary is stale, compare its self-reported version against the source above:
 
 ```
 ./bee-bin/<arch>/bee version
-./ipfs-bin/<arch>/ipfs --version
 ./radicle-bin/<arch>/rad --version
 ./radicle-bin/<arch>/radicle-httpd --version
 ```
 
-For each binary that's behind, re-run its fetch script (`npm run bee:download` / `ipfs:download` / `radicle:download` — each fetches every supported arch) and verify the result still passes `npm run check-binaries`. Note: `*-bin/` directories are gitignored, so the binary refresh produces no file-tree change. The build pipeline (§5) re-fetches at artifact-build time, so what ends up shipping is whatever upstream `latest` resolves to then — document the version in the changelog and in the `chore(build): update bundled <name> to <version>` commit body.
+For `freedom-ipfs`, compare the pinned release in `scripts/fetch-freedom-ipfs-native.js` against the release you intend to ship, then update the asset name/checksum together.
+
+For each binary that's behind, re-run its fetch script (`npm run bee:download` / `npm run ipfs:download` / `npm run radicle:download`) and verify the result still passes `npm run check-binaries`. Note: downloaded binary directories are gitignored, so the binary refresh usually produces no file-tree change. The build pipeline (§5) re-fetches at artifact-build time; document the version in the changelog and in the `chore(build): update bundled <name> to <version>` commit body.
 
 ### Commit style
 

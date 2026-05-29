@@ -121,7 +121,7 @@ function main() {
     missing.forEach((m) => console.error(`  - ${m}`));
     console.error('\nRun the following commands to download binaries:');
     console.error('  npm run bee:download');
-    console.error('  npm run ipfs:native:build');
+    console.error('  npm run ipfs:download');
     console.error('  npm run radicle:download\n');
     process.exit(1);
   }

@@ -412,26 +412,27 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 
 ## NPM Scripts
 
-| Script                                                            | Description                                  |
-| ----------------------------------------------------------------- | -------------------------------------------- |
-| `npm start`                                                       | Launch the Electron app                      |
-| `npm test`                                                        | Run unit tests (Jest)                        |
-| `npm run test:e2e`                                                | Run the harness E2E suite (stubbed nodes; fast, no network) |
-| `npm run test:e2e:live`                                           | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
-| `npm run bee:download`                                            | Download the Bee binary for your platform    |
-| `npm run ipfs:download`                                           | Download the Kubo binary for your platform   |
-| `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset`     | Manage Bee outside the app                   |
-| `npm run ipfs:start` / `ipfs:stop` / `ipfs:status` / `ipfs:reset` | Manage IPFS outside the app                  |
-| `npm run build -- --mac --unsigned`                               | Build unsigned macOS app (for local testing) |
-| `npm run dist -- --mac`                                           | Build signed macOS distributable (DMG + ZIP) |
-| `npm run dist:mac:prepare-notary`                                 | Build signed macOS artifacts without notarization wait |
-| `npm run dist:mac:submit-notary`                                  | Submit macOS artifacts to Apple asynchronously |
-| `npm run dist:mac:notary-status`                                  | Check notarization status from saved receipts |
-| `npm run dist:mac:notary-log -- <submission-id>`                  | Fetch notarization log JSON for a submission ID |
-| `npm run dist:mac:staple-notary`                                  | Staple and validate accepted notarized artifacts |
-| `npm run dist:linux:arm64:docker`                                 | Build Linux ARM64 via Docker (recommended)   |
-| `npm run dist:linux:x64:docker`                                   | Build Linux x64 via Docker                   |
-| `npm run dist -- --win`                                           | Build Windows x64 distributable (NSIS + ZIP) |
+| Script                                                        | Description                                                 |
+| ------------------------------------------------------------- | ----------------------------------------------------------- |
+| `npm start`                                                   | Launch the Electron app                                     |
+| `npm test`                                                    | Run unit tests (Jest)                                       |
+| `npm run test:e2e`                                            | Run the harness E2E suite (stubbed nodes; fast, no network) |
+| `npm run test:e2e:live`                                       | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
+| `npm run bee:download`                                        | Download the Bee binary for your platform                   |
+| `npm run ipfs:download`                                       | Download the pinned freedom-ipfs native addon               |
+| `npm run ipfs:build`                                          | Build the freedom-ipfs native addon from source             |
+| `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset` | Manage Bee outside the app                                  |
+| `npm run ipfs:reset`                                          | Reset IPFS data used by the bundled node                    |
+| `npm run build -- --mac --unsigned`                           | Build unsigned macOS app (for local testing)                |
+| `npm run dist -- --mac`                                       | Build signed macOS distributable (DMG + ZIP)                |
+| `npm run dist:mac:prepare-notary`                             | Build signed macOS artifacts without notarization wait      |
+| `npm run dist:mac:submit-notary`                              | Submit macOS artifacts to Apple asynchronously              |
+| `npm run dist:mac:notary-status`                              | Check notarization status from saved receipts               |
+| `npm run dist:mac:notary-log -- <submission-id>`              | Fetch notarization log JSON for a submission ID             |
+| `npm run dist:mac:staple-notary`                              | Staple and validate accepted notarized artifacts            |
+| `npm run dist:linux:arm64:docker`                             | Build Linux ARM64 via Docker (recommended)                  |
+| `npm run dist:linux:x64:docker`                               | Build Linux x64 via Docker                                  |
+| `npm run dist -- --win`                                       | Build Windows x64 distributable (NSIS + ZIP)                |
 
 The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with optional `--arm64`, `--x64`, `--unsigned`, `--no-notarize`, and `--verbose` flags. See `scripts/build.js` for details.
 

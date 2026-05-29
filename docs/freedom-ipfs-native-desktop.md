@@ -23,7 +23,7 @@ third-party users. The desktop browser branch does not start it.
 Install the pinned `freedom-ipfs` native addon:
 
 ```sh
-npm run ipfs:native:build
+npm run ipfs:download
 ```
 
 By default this downloads and verifies the macOS arm64 / Electron 41 addon from
@@ -40,13 +40,13 @@ The output is:
 To build from a local Rust checkout instead, use:
 
 ```sh
-FREEDOM_IPFS_NATIVE_FROM_SOURCE=1 npm run ipfs:native:build
+npm run ipfs:build
 ```
 
 Or point at a specific checkout:
 
 ```sh
-FREEDOM_IPFS_RUST_REPO=/path/to/freedom-ipfs npm run ipfs:native:build
+FREEDOM_IPFS_RUST_REPO=/path/to/freedom-ipfs npm run ipfs:build
 ```
 
 The packaged app includes the `.node` addon via Electron Builder
@@ -67,7 +67,7 @@ The packaged app includes the `.node` addon via Electron Builder
 Useful checks:
 
 ```sh
-npm run ipfs:native:build
+npm run ipfs:download
 npm test
 ```
 

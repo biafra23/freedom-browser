@@ -36,7 +36,9 @@ function run(command, args, options = {}) {
 
 function shouldBuildFromSource() {
   return (
-    process.env.FREEDOM_IPFS_NATIVE_FROM_SOURCE === '1' || !!process.env.FREEDOM_IPFS_RUST_REPO
+    process.argv.includes('--from-source') ||
+    process.env.FREEDOM_IPFS_NATIVE_FROM_SOURCE === '1' ||
+    !!process.env.FREEDOM_IPFS_RUST_REPO
   );
 }
 
