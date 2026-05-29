@@ -43,11 +43,7 @@
     "bee:stop": "pkill -SIGTERM bee || echo 'Bee not running or failed to stop'",
     "bee:status": "echo '--- HEALTH ---'; curl -s http://127.0.0.1:1633/health; echo '\n\n--- READINESS ---'; curl -s http://127.0.0.1:1633/readiness; echo '\n\n--- STATUS ---'; curl -s http://127.0.0.1:1633/status; echo '\n\n--- PEERS ---'; curl -s http://127.0.0.1:1633/peers | grep -o '\"address\":' | wc -l | xargs echo 'Peer Count:'; echo '\n--- ADDRESSES ---'; curl -s http://127.0.0.1:1633/addresses",
     "bee:reset": "rm -rf bee-data && echo 'Bee data reset.'",
-    "ipfs:download": "node scripts/fetch-ipfs.js",
-    "ipfs:init": "node scripts/init-ipfs.js",
-    "ipfs:start": "test -d ipfs-data || npm run ipfs:init; IPFS_PATH=./ipfs-data ./ipfs-bin/mac-arm64/ipfs daemon",
-    "ipfs:stop": "pkill -SIGTERM ipfs || echo 'IPFS not running or failed to stop'",
-    "ipfs:status": "echo '--- ID ---'; IPFS_PATH=./ipfs-data curl -s -X POST http://127.0.0.1:5001/api/v0/id | head -c 500; echo '\n\n--- PEERS ---'; curl -s -X POST http://127.0.0.1:5001/api/v0/swarm/peers | grep -o '\"Peer\":' | wc -l | xargs echo 'Peer Count:'",
+    "ipfs:native:build": "node scripts/build-freedom-ipfs-native.js",
     "ipfs:reset": "rm -rf ipfs-data && echo 'IPFS data reset.'",
     "radicle:download": "node scripts/fetch-radicle.js",
     "radicle:init": "node scripts/init-radicle.js",
@@ -129,7 +125,8 @@
       "!**/coverage/**"
     ],
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**"
+      "**/node_modules/better-sqlite3/**",
+      "**/*.node"
     ],
     "extraResources": [
       {
@@ -140,10 +137,10 @@
         ]
       },
       {
-        "from": "ipfs-bin/${os}-${arch}/",
-        "to": "ipfs-bin",
+        "from": "native/freedom-ipfs-node/build/Release/",
+        "to": "freedom-ipfs-node",
         "filter": [
-          "**/*"
+          "freedom_ipfs_native.node"
         ]
       },
       {
@@ -189,10 +186,12 @@
     "@x402/core": "^2.12.0",
     "@x402/evm": "^2.12.0",
     "better-sqlite3": "^12.10.0",
+    "bindings": "^1.5.0",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "ethers": "^6.16.0",
     "micro-key-producer": "^0.8.6",
+    "node-addon-api": "^1.7.2",
     "qrcode": "^1.5.4"
   },
   "overrides": {

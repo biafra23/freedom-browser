@@ -2,7 +2,15 @@ const fs = require('fs');
 const path = require('path');
 
 const BEE_BIN_DIR = path.join(__dirname, '..', 'bee-bin');
-const IPFS_BIN_DIR = path.join(__dirname, '..', 'ipfs-bin');
+const FREEDOM_IPFS_NATIVE_ADDON = path.join(
+  __dirname,
+  '..',
+  'native',
+  'freedom-ipfs-node',
+  'build',
+  'Release',
+  'freedom_ipfs_native.node'
+);
 const RADICLE_BIN_DIR = path.join(__dirname, '..', 'radicle-bin');
 
 function getPlatformArch() {
@@ -74,16 +82,11 @@ function checkBinaries(platforms) {
   for (const { os, arch } of platforms) {
     const platformDir = `${os}-${arch}`;
     const beeExt = os === 'win' ? '.exe' : '';
-    const ipfsExt = os === 'win' ? '.exe' : '';
 
     const beePath = path.join(BEE_BIN_DIR, platformDir, `bee${beeExt}`);
-    const ipfsPath = path.join(IPFS_BIN_DIR, platformDir, `ipfs${ipfsExt}`);
 
     if (!fs.existsSync(beePath)) {
       missing.push(`bee binary for ${platformDir}: ${beePath}`);
-    }
-    if (!fs.existsSync(ipfsPath)) {
-      missing.push(`ipfs binary for ${platformDir}: ${ipfsPath}`);
     }
 
     // Radicle: no official Windows binaries yet — skip check for win targets
@@ -100,6 +103,10 @@ function checkBinaries(platforms) {
     }
   }
 
+  if (!fs.existsSync(FREEDOM_IPFS_NATIVE_ADDON)) {
+    missing.push(`freedom-ipfs native addon: ${FREEDOM_IPFS_NATIVE_ADDON}`);
+  }
+
   return missing;
 }
 
@@ -114,7 +121,7 @@ function main() {
     missing.forEach((m) => console.error(`  - ${m}`));
     console.error('\nRun the following commands to download binaries:');
     console.error('  npm run bee:download');
-    console.error('  npm run ipfs:download');
+    console.error('  npm run ipfs:native:build');
     console.error('  npm run radicle:download\n');
     process.exit(1);
   }

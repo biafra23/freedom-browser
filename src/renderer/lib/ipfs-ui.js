@@ -1,5 +1,5 @@
 // IPFS node UI controls
-import { state, buildIpfsApiUrl, getDisplayMessage } from './state.js';
+import { state, getDisplayMessage } from './state.js';
 import { pushDebug } from './debug.js';
 
 // DOM elements (initialized in initIpfsUi)
@@ -30,10 +30,10 @@ export const stopIpfsInfoPolling = () => {
     ipfsVersionText.textContent = state.ipfsVersionFetched ? state.ipfsVersionValue : '';
 };
 
-const formatBandwidth = (bytesPerSec) => {
-  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+const formatBytes = (bytes) => {
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const fetchPeersAndBandwidth = async () => {
@@ -47,36 +47,19 @@ const fetchPeersAndBandwidth = async () => {
   // Fetch version if not yet fetched
   if (!state.ipfsVersionFetched) fetchVersionOnce();
 
-  // Fetch peers
   try {
-    const response = await fetch(buildIpfsApiUrl('/api/v0/swarm/peers'), { method: 'POST' });
+    const status = await window.ipfs?.getStatus?.();
     if (!ipfsInfoPanel?.classList.contains('visible')) return;
-    if (response.ok) {
-      const data = await response.json();
-      const peers = data?.Peers || [];
-      if (ipfsPeersCount) ipfsPeersCount.textContent = String(peers.length ?? 0);
-    } else if (ipfsPeersCount) {
-      ipfsPeersCount.textContent = '0';
+    const stats = JSON.parse(status?.diagnostics?.nativeGatewayStats || '{}');
+    if (ipfsPeersCount) {
+      ipfsPeersCount.textContent = String(stats.active_native_handles ?? 0);
     }
+    if (ipfsBandwidthDown) {
+      ipfsBandwidthDown.textContent = `read ${formatBytes(stats.bytes_read || 0)}`;
+    }
+    if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
   } catch {
     if (ipfsPeersCount) ipfsPeersCount.textContent = '0';
-  }
-
-  // Fetch bandwidth stats
-  try {
-    const bwResponse = await fetch(buildIpfsApiUrl('/api/v0/stats/bw'), { method: 'POST' });
-    if (!ipfsInfoPanel?.classList.contains('visible')) return;
-    if (bwResponse.ok) {
-      const bwData = await bwResponse.json();
-      const rateIn = bwData?.RateIn || 0;
-      const rateOut = bwData?.RateOut || 0;
-      if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = `↓${formatBandwidth(rateIn)}`;
-      if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = `↑${formatBandwidth(rateOut)}`;
-    } else {
-      if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = '';
-      if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
-    }
-  } catch {
     if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = '';
     if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
   }
@@ -84,19 +67,9 @@ const fetchPeersAndBandwidth = async () => {
 
 const fetchVersionOnce = async () => {
   if (state.ipfsVersionFetched) return;
-  try {
-    const response = await fetch(buildIpfsApiUrl('/api/v0/id'), { method: 'POST' });
-    if (response.ok) {
-      const data = await response.json();
-      state.ipfsVersionValue = data?.AgentVersion?.split('/')[1]?.split('-')[0] || '';
-      state.ipfsVersionFetched = true;
-      if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
-    } else {
-      if (ipfsVersionText) ipfsVersionText.textContent = '';
-    }
-  } catch {
-    if (ipfsVersionText) ipfsVersionText.textContent = '';
-  }
+  state.ipfsVersionValue = 'freedom-ipfs';
+  state.ipfsVersionFetched = true;
+  if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 
 export const startIpfsInfoPolling = () => {

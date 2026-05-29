@@ -68,9 +68,7 @@ const loadIpfsModule = async (options = {}) => {
     options.windowIpfs === false
       ? undefined
       : {
-          checkBinary: jest
-            .fn()
-            .mockResolvedValue({ available: options.binaryAvailable ?? true }),
+          checkBinary: jest.fn().mockResolvedValue({ available: options.binaryAvailable ?? true }),
           start: jest
             .fn()
             .mockResolvedValue(options.startResult || { status: 'running', error: null }),
@@ -163,7 +161,16 @@ describe('ipfs-ui', () => {
     const ctx = await loadIpfsModule({
       beeMenuOpen: true,
       currentIpfsStatus: 'running',
-      windowIpfs: false,
+      statusResult: {
+        status: 'running',
+        error: null,
+        diagnostics: {
+          nativeGatewayStats: JSON.stringify({
+            active_native_handles: 3,
+            bytes_read: 1536,
+          }),
+        },
+      },
     });
 
     ctx.mod.initIpfsUi();
@@ -171,27 +178,25 @@ describe('ipfs-ui', () => {
     await flushMicrotasks();
     await flushMicrotasks();
 
-    expect(ctx.buildIpfsApiUrl).toHaveBeenCalledWith('/api/v0/swarm/peers');
-    expect(ctx.buildIpfsApiUrl).toHaveBeenCalledWith('/api/v0/stats/bw');
-    expect(ctx.buildIpfsApiUrl).toHaveBeenCalledWith('/api/v0/id');
+    expect(ctx.buildIpfsApiUrl).not.toHaveBeenCalled();
     expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(true);
     expect(ctx.elements.ipfsPeersCount.textContent).toBe('3');
-    expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('↓1.5 KB/s');
-    expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('↑1.0 MB/s');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('0.28.0');
+    expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('read 1.5 KB');
+    expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs');
     expect(ctx.state.ipfsVersionFetched).toBe(true);
-    expect(ctx.state.ipfsPeersInterval).toBe(1);
+    expect(ctx.state.ipfsPeersInterval).toBe(2);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 1000);
 
     ctx.mod.stopIpfsInfoPolling();
 
-    expect(ctx.clearIntervalMock).toHaveBeenCalledWith(1);
+    expect(ctx.clearIntervalMock).toHaveBeenCalledWith(2);
     expect(ctx.state.ipfsPeersInterval).toBeNull();
     expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(false);
     expect(ctx.elements.ipfsPeersCount.textContent).toBe('0');
     expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('');
     expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('0.28.0');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs');
 
     ctx.mod.resetIpfsVersion();
     expect(ctx.state.ipfsVersionFetched).toBe(false);
@@ -256,7 +261,9 @@ describe('ipfs-ui', () => {
     expect(ctx.ipfsApi.checkBinary).toHaveBeenCalled();
     expect(ctx.elements.ipfsToggleBtn.classList.contains('disabled')).toBe(true);
     expect(ctx.elements.ipfsToggleBtn.getAttribute('disabled')).toBe('true');
-    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('IPFS binary not found - toggle disabled');
+    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith(
+      'IPFS binary not found - toggle disabled'
+    );
     expect(ctx.ipfsApi.onStatusUpdate).toHaveBeenCalledWith(expect.any(Function));
     expect(ctx.ipfsApi.getStatus).toHaveBeenCalled();
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 5000);

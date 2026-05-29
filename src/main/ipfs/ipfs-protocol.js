@@ -7,11 +7,11 @@
  * `ipfs://<cid|name>/<path>` and `ipns://<key|name>/<path>` request —
  * top-level navigation, sub-resource, `fetch`, media `Range`, CSS `url(...)`,
  * service worker — flows through one of these handlers instead of Chromium
- * going directly to the Kubo gateway.
+ * going directly to an HTTP gateway.
  *
  * Why this lives in the main process and not the renderer's URL pipeline:
  *
- * Without a privileged scheme, `ipfs://` URLs were translated to the Kubo
+ * Without a privileged scheme, `ipfs://` URLs were translated to the IPFS
  * path-gateway (`http://localhost:8080/ipfs/<cid>/`), Chromium followed
  * Kubo's built-in subdomain redirect to `<cidv1>.ipfs.localhost:8080`,
  * and the page origin became the gateway subdomain. DevTools, `window.location`,
@@ -20,15 +20,20 @@
  * for ENS-backed sites) requires Chromium to never see the gateway URL,
  * which means the transport hop has to happen in the main process.
  *
- * Kubo subdomain redirect contract (load-bearing):
+ * Historical Kubo subdomain redirect contract:
  *
- * The gateway URL is built with `localhost` (not `127.0.0.1`) on purpose —
+ * The old gateway URL was built with `localhost` (not `127.0.0.1`) on purpose —
  * Kubo only emits its built-in subdomain-gateway redirect for the
  * `localhost` hostname. That redirect is what creates a per-CID origin
  * inside Kubo, and `_redirects` SPA fallbacks only work in that mode (see
  * the integration guard in `src/main/__tests__/integration/ipfs-subdomain-gateway.test.js`).
  *
- * So the request flow is:
+ * The native freedom-ipfs path keeps the `ipfs://` origin and calls the Rust
+ * request API directly. `buildGatewayUrl` still returns a Kubo-shaped URL for
+ * the existing canonicalisation tests, but production request handling derives
+ * the `/ipfs/...` or `/ipns/...` path from it and never fetches that URL.
+ *
+ * The old request flow was:
  *   ipfs://name.eth/path
  *     → resolve ENS → fetch http://localhost:8080/ipfs/<cid>/path
  *     → Kubo replies 301 Location: http://<cidv1>.ipfs.localhost:8080/path
@@ -72,10 +77,10 @@
  * `fetchImpl` for stubs; production uses `net.fetch`.
  */
 
-const { net } = require('electron');
 const log = require('../logger');
 const { getIpfsGatewayUrl } = require('../service-registry');
 const { resolveEnsContent } = require('../ens-resolver');
+const { serveNativeGatewayRequest } = require('../ipfs-manager');
 const { isEnsHost } = require('../../shared/origin-utils');
 const {
   cidV0ToV1Base32,
@@ -206,8 +211,7 @@ async function buildGatewayUrl(namespace, sourceUrl) {
       // `ipns://docs.ipfs.tech/install`. ENS-style names (`*.eth`,
       // `*.box`) are valid DNSLink targets too and route through the
       // resolver branch below.
-      const refOk =
-        looksLikeContentKey(ref) || (innerNs === 'ipns' && isLikelyDnsLinkName(ref));
+      const refOk = looksLikeContentKey(ref) || (innerNs === 'ipns' && isLikelyDnsLinkName(ref));
       if (refOk) {
         effectiveNs = innerNs;
         let embeddedRef = ref;
@@ -218,8 +222,7 @@ async function buildGatewayUrl(namespace, sourceUrl) {
         } else if (looksLikeContentKey(embeddedRef)) {
           // Base58 peer ID → libp2p-key base36, or CIDv1 base58btc → base32.
           // DNSLink-shaped names skip canonicalisation and pass through.
-          const canonical =
-            ipnsMhToCidV1Base36(embeddedRef) || cidV1B58btcToBase32(embeddedRef);
+          const canonical = ipnsMhToCidV1Base36(embeddedRef) || cidV1B58btcToBase32(embeddedRef);
           if (canonical) embeddedRef = canonical;
         }
         host = embeddedRef;
@@ -477,17 +480,19 @@ function jsonErrorResponse(status, message) {
 }
 
 /**
- * Core handler, exported for testability. `fetchImpl` defaults to
- * Electron's `net.fetch` (Chromium network stack — RFC 6761 *.localhost
- * resolution, mandatory for the Kubo subdomain-redirect contract on
- * macOS where the OS resolver returns ENOTFOUND for `*.localhost`); tests
- * inject a stub. `attemptTimeoutMs` is exposed so tests can exercise
- * the stalled-fetch path without burning a real 30-second deadline.
+ * Core handler, exported for testability. Production calls the native
+ * freedom-ipfs request API. Tests may still inject `fetchImpl` to exercise
+ * the long-standing URL canonicalisation and timeout behavior without
+ * constructing a native node.
  */
 async function handleRequest(
   namespace,
   request,
-  { fetchImpl = net.fetch, attemptTimeoutMs = ATTEMPT_TIMEOUT_MS } = {}
+  {
+    fetchImpl = null,
+    requestImpl = serveNativeGatewayRequest,
+    attemptTimeoutMs = ATTEMPT_TIMEOUT_MS,
+  } = {}
 ) {
   const built = await buildGatewayUrl(namespace, request.url);
   if (!built) {
@@ -501,6 +506,29 @@ async function handleRequest(
   const headers = sanitizeRequestHeaders(request.headers);
   const method = request.method || 'GET';
   const body = method === 'GET' || method === 'HEAD' ? undefined : request.body;
+
+  if (!fetchImpl) {
+    if (body) {
+      return jsonErrorResponse(405, 'freedom-ipfs native gateway supports GET and HEAD');
+    }
+    const gatewayPath = gatewayPathFromUrl(built.url);
+    if (!gatewayPath) {
+      return jsonErrorResponse(400, `invalid ${namespace} reference`);
+    }
+    try {
+      return await requestImpl({
+        path: gatewayPath,
+        method,
+        headers,
+        signal: request.signal,
+      });
+    } catch (err) {
+      log.warn(
+        `[${namespace}-protocol] native request failed for ${gatewayPath}: ${err?.message || err}`
+      );
+      return jsonErrorResponse(502, err?.message || 'freedom-ipfs native gateway error');
+    }
+  }
 
   // Per-attempt AbortController, linked to the upstream request signal so
   // a webview cancellation still aborts the in-flight fetch, but with its
@@ -535,22 +563,30 @@ async function handleRequest(
       log.warn(
         `[${namespace}-protocol] fetch timed out after ${attemptTimeoutMs}ms for ${built.url}`
       );
-      return jsonErrorResponse(504, 'kubo gateway timeout');
+      return jsonErrorResponse(504, 'freedom-ipfs gateway timeout');
     }
     const code = err?.cause?.code || err?.code || '';
-    const isConnRefused =
-      code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ENOTFOUND';
+    const isConnRefused = code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ENOTFOUND';
     log.warn(
       `[${namespace}-protocol] fetch failed for ${built.url}: ${err?.message || err}` +
         (code ? ` (${code})` : '')
     );
     return jsonErrorResponse(
       isConnRefused ? 503 : 502,
-      isConnRefused ? 'kubo gateway unreachable' : 'kubo gateway error'
+      isConnRefused ? 'freedom-ipfs gateway unreachable' : 'freedom-ipfs gateway error'
     );
   } finally {
     clearTimeout(timer);
     if (upstream) upstream.removeEventListener('abort', relayAbort);
+  }
+}
+
+function gatewayPathFromUrl(gatewayUrl) {
+  try {
+    const parsed = new URL(gatewayUrl);
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return null;
   }
 }
 
@@ -586,6 +622,7 @@ module.exports = {
   registerIpnsProtocol,
   handleRequest,
   buildGatewayUrl,
+  gatewayPathFromUrl,
   sanitizeRequestHeaders,
   ATTEMPT_TIMEOUT_MS,
 };
