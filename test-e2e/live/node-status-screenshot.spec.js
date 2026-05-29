@@ -19,9 +19,14 @@ const {
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 
-// The ask is "some" peers within ~30s — we don't fail if a network is slow,
-// the screenshot of the current status is the deliverable.
-const PEER_WAIT_MS = 30_000;
+// Wait until both networks have connected to more than this many peers
+// before capturing, so the screenshot shows a well-connected node.
+const PEER_TARGET = 20;
+// Fresh per-run data dirs mean peerstores start empty, so gossip bootstraps
+// from scratch every time. Bee typically crosses 20 connected peers in
+// 30-180s and Kubo faster; 6 min keeps headroom under the 10 min live-test
+// timeout without inviting infinite hangs.
+const PEER_TIMEOUT_MS = 6 * 60_000;
 
 const readCount = async (locator) => {
   const raw = (await locator.textContent()) || '';
@@ -48,14 +53,19 @@ test.describe('live node-status screenshot', () => {
     await beeMenuButton.click();
     await expect(beeDropdown).toHaveClass(/open/);
 
-    // Wait up to ~30s for both networks to connect to some peers.
-    const deadline = Date.now() + PEER_WAIT_MS;
+    // Wait for both networks to cross PEER_TARGET connected peers. The menu
+    // stays open the whole time so the polling loops keep running.
+    const deadline = Date.now() + PEER_TIMEOUT_MS;
+    let bee = -1;
+    let ipfs = -1;
     while (Date.now() < deadline) {
-      const [bee, ipfs] = await Promise.all([readCount(beePeers), readCount(ipfsPeers)]);
-      if (bee > 0 && ipfs > 0) break;
+      [bee, ipfs] = await Promise.all([readCount(beePeers), readCount(ipfsPeers)]);
+      if (bee > PEER_TARGET && ipfs > PEER_TARGET) break;
       await window.waitForTimeout(1000);
     }
 
+    // Capture before asserting so the artifact exists even if a network was
+    // slow to reach the target.
     const outPath = path.join(
       repoRoot,
       'playwright-screenshots',
@@ -63,5 +73,8 @@ test.describe('live node-status screenshot', () => {
     );
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     await window.screenshot({ path: outPath });
+
+    expect(bee, 'Swarm connected peers').toBeGreaterThan(PEER_TARGET);
+    expect(ipfs, 'IPFS connected peers').toBeGreaterThan(PEER_TARGET);
   });
 });
