@@ -18,18 +18,36 @@ Electron protocol handler
 The Rust HTTP gateway still exists in the `freedom-ipfs` repo for CLI/debug and
 third-party users. The desktop browser branch does not start it.
 
-## Local Build
+## Native Addon
 
-Build the Rust static library and Node addon:
+Install the pinned `freedom-ipfs` native addon:
 
 ```sh
 npm run ipfs:native:build
 ```
 
-This compiles:
+By default this downloads and verifies the macOS arm64 / Electron 41 addon from
+the `freedom-ipfs` `v0.4.0` GitHub release:
 
-- `../nodes/freedom-ipfs/target/release/libfreedom_ipfs_mobile.a`
+```text
+https://github.com/solardev-xyz/freedom-ipfs/releases/tag/v0.4.0
+```
+
+The output is:
+
 - `native/freedom-ipfs-node/build/Release/freedom_ipfs_native.node`
+
+To build from a local Rust checkout instead, use:
+
+```sh
+FREEDOM_IPFS_NATIVE_FROM_SOURCE=1 npm run ipfs:native:build
+```
+
+Or point at a specific checkout:
+
+```sh
+FREEDOM_IPFS_RUST_REPO=/path/to/freedom-ipfs npm run ipfs:native:build
+```
 
 The packaged app includes the `.node` addon via Electron Builder
 `extraResources`.
