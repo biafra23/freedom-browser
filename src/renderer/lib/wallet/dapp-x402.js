@@ -23,8 +23,14 @@ import { walletState, registerScreenHider, hideAllSubscreens } from './wallet-st
 import { open as openSidebarPanel, isVisible as isSidebarVisible } from '../sidebar.js';
 import { escapeHtml, formatRawTokenBalance, truncateAddress, toAtomicUnits, X402_WINDOW_OPTIONS } from './wallet-utils.js';
 import { getPermissionKey } from '../origin-utils.js';
+import { refreshBalances } from './balance-display.js';
 import { showX402Permissions } from './permission-manage.js';
 import { showVaultUnlock } from './vault-unlock.js';
+import {
+  normalizeX402BannerOrigin,
+  selectedAcceptChanged,
+  shouldShowChooserForSelection,
+} from './dapp-x402-utils.js';
 
 // Defaults from the WP0 consent decision. The interstitial offers
 // these via the grant toggle; main signs+stores the cap if the toggle
@@ -64,6 +70,7 @@ let grantCapSymbol;
 let grantWindowSelect;
 let rejectBtn;
 let approveBtn;
+let lastValidGrantCap = String(DEFAULT_GRANT_CAP_USDC);
 
 // Approval state for the currently-displayed card. `null` when idle.
 let pending = null;
@@ -116,7 +123,14 @@ export function initDappX402() {
   bannerRemainingEl = document.getElementById('x402-connection-remaining');
   bannerDisconnectBtn = document.getElementById('x402-connection-disconnect');
 
-  registerScreenHider(() => screen?.classList.add('hidden'));
+  registerScreenHider(() => {
+    if (pending) {
+      reject().catch((err) => console.error('[x402] hide reject failed:', err));
+    } else {
+      screen?.classList.add('hidden');
+      resetGrantEditor();
+    }
+  });
   wireButtons();
   wireBanner();
   wireChooser();
@@ -153,8 +167,9 @@ export function initDappX402() {
   // origin so multi-tab pays on other origins don't trigger a
   // full x402GetAllPermissions round-trip we'd just throw away.
   window.electronAPI?.onX402CapConsumed?.(({ origin } = {}) => {
-    if (!isSidebarVisible() || origin !== currentBannerKey) return;
-    updateX402ConnectionBanner().catch((err) => {
+    const key = normalizeX402BannerOrigin(origin);
+    if (!isSidebarVisible() || key !== currentBannerKey) return;
+    updateX402ConnectionBanner(key).catch((err) => {
       console.error('[x402] banner refresh after cap-consumed failed:', err);
     });
   });
@@ -168,6 +183,13 @@ export function initDappX402() {
   window.electronAPI?.onX402BalancesUpdated?.(({ balances, webContentsId } = {}) => {
     if (!pending || pending.webContentsId !== webContentsId) return;
     applyFreshBalances(balances || {});
+  });
+
+  window.addEventListener('payments:tx-recorded', (event) => {
+    if (event.detail?.kind !== 'x402') return;
+    refreshAfterX402Payment().catch((err) => {
+      console.error('[x402] balance refresh after payment failed:', err);
+    });
   });
 }
 
@@ -194,7 +216,7 @@ async function handleAutoPayUnlock(webContentsId, origin) {
 // state is always meaningful. Avoids the "silent fallback at Pay
 // click" anti-pattern.
 function wireGrantEditor() {
-  if (grantCapInput) grantCapInput.value = String(DEFAULT_GRANT_CAP_USDC);
+  resetGrantEditor();
   if (grantWindowSelect) {
     grantWindowSelect.innerHTML = '';
     for (const opt of X402_WINDOW_OPTIONS) {
@@ -205,15 +227,21 @@ function wireGrantEditor() {
       grantWindowSelect.appendChild(o);
     }
   }
-  let lastValidCap = String(DEFAULT_GRANT_CAP_USDC);
   grantCapInput?.addEventListener('change', () => {
     const whole = grantCapInput.value.trim();
     if (/^\d+$/.test(whole) && whole !== '0') {
-      lastValidCap = whole;
+      lastValidGrantCap = whole;
     } else {
-      grantCapInput.value = lastValidCap;
+      grantCapInput.value = lastValidGrantCap;
     }
   });
+}
+
+function resetGrantEditor() {
+  lastValidGrantCap = String(DEFAULT_GRANT_CAP_USDC);
+  if (grantToggle) grantToggle.checked = false;
+  if (grantCapInput) grantCapInput.value = lastValidGrantCap;
+  if (grantWindowSelect) grantWindowSelect.value = String(DEFAULT_GRANT_WINDOW_SECONDS);
 }
 
 function wireChooser() {
@@ -288,6 +316,9 @@ async function showApproval({ webContentsId, detectionId, url, resourceType }) {
     return;
   }
 
+  hideAllSubscreens();
+  resetGrantEditor();
+
   pending = {
     webContentsId,
     detectionId: details.detectionId ?? detectionId ?? null,
@@ -304,7 +335,6 @@ async function showApproval({ webContentsId, detectionId, url, resourceType }) {
   renderCard();
   await checkUnlockState();
 
-  hideAllSubscreens();
   walletState.identityView?.classList.add('hidden');
   screen?.classList.remove('hidden');
   openSidebarPanel();
@@ -313,7 +343,7 @@ async function showApproval({ webContentsId, detectionId, url, resourceType }) {
 // Render the card from `pending.accepts` + `pending.selectedAcceptIndex`.
 // Branches on the count of fundable entries (locked decisions §2 + §3):
 // 0 → insufficient-funds state, Pay disabled
-// 1 → single-entry detail rows (no chooser)
+// 1 → single-entry detail rows when the selected entry is fundable
 // 2+ → chooser dropdown + the selected entry's detail rows
 //
 // Pinned-selection rule: the user's `selectedAcceptIndex` is never
@@ -351,15 +381,15 @@ function renderCard() {
     return;
   }
 
-  // 1+ fundable: render the selected entry's detail rows. Chooser
-  // appears only when ≥2 fundable so single-fundable multi-accept
-  // collapses to the same UX as a regular single-accept quote.
+  // 1+ fundable: render the selected entry's detail rows. Chooser appears
+  // when there are multiple fundable rows, or when the pinned selection
+  // has gone unfundable and the user needs a visible path to re-pick.
   pending.selectedAcceptIndex = clampSelectionIndex(accepts, pending.selectedAcceptIndex);
   const selectedIndex = pending.selectedAcceptIndex;
   const entry = accepts[selectedIndex];
   const selectedFundable = !!entry?.fundable;
 
-  if (fundableCount >= 2) {
+  if (shouldShowChooserForSelection(fundableCount, selectedFundable)) {
     showChooser(accepts, selectedIndex);
   } else {
     hideChooser();
@@ -489,7 +519,9 @@ function showInsufficientState(accepts) {
 // stuck in "Signing…" would flicker the UI for no gain.
 function applyFreshBalances(balances) {
   if (!pending?.accepts?.length || pending.signing) return;
+  const prevAccepts = pending.accepts;
   const prevMode = computeMode(pending.accepts);
+  const selectedIndex = pending.selectedAcceptIndex ?? 0;
   let changed = false;
   pending.accepts = pending.accepts.map((entry) => {
     if (!entry.tuple || !entry.balanceKey) return entry;
@@ -499,7 +531,8 @@ function applyFreshBalances(balances) {
     return { ...entry, balance: raw, fundable };
   });
   if (!changed) return;
-  if (computeMode(pending.accepts) !== prevMode) {
+  if (computeMode(pending.accepts) !== prevMode ||
+      selectedAcceptChanged(prevAccepts, pending.accepts, selectedIndex)) {
     renderCard();
   } else if (!chooserEl.classList.contains('hidden')) {
     showChooser(pending.accepts, pending.selectedAcceptIndex ?? 0);
@@ -708,12 +741,18 @@ async function approve() {
   hideError();
 
   const grant = buildGrantPayloadFromInputs();
-  const result = await window.electronAPI.x402Approve({
-    webContentsId: pending.webContentsId,
-    detectionId: pending.detectionId,
-    grant,
-    selectedAcceptIndex: pending.selectedAcceptIndex,
-  });
+  let result;
+  try {
+    result = await window.electronAPI.x402Approve({
+      webContentsId: pending.webContentsId,
+      detectionId: pending.detectionId,
+      grant,
+      selectedAcceptIndex: pending.selectedAcceptIndex,
+    });
+  } catch (err) {
+    restoreCardWithError(err?.message || 'Payment approval failed.');
+    return;
+  }
 
   if (result?.success) {
     // Subresource path returns pending:true; card stays in "Signing..."
@@ -788,12 +827,24 @@ function closeAndReset() {
   screen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   pending = null;
+  resetGrantEditor();
   approveBtn.textContent = 'Pay';
   approveBtn.disabled = false;
   rejectBtn.disabled = false;
   hideError();
   hideUnlockError();
   if (passwordInput) passwordInput.value = '';
+}
+
+async function refreshAfterX402Payment() {
+  await refreshBalances(true);
+  if (!pending?.webContentsId) return;
+  const result = await window.electronAPI.x402RefreshBalances({
+    webContentsId: pending.webContentsId,
+  });
+  if (!result?.success) {
+    console.warn('[x402] open-card balance refresh failed:', result?.error);
+  }
 }
 
 function showError(message) {

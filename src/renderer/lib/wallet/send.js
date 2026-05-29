@@ -1190,6 +1190,9 @@ async function handleSendConfirm() {
     if (!result.success) {
       throw new Error(result.error || 'Transaction failed');
     }
+    if (result.recorded === false) {
+      console.warn('[WalletUI] Transaction broadcast but payment history did not record:', result.recordError);
+    }
 
     console.log('[WalletUI] Transaction sent:', result.hash);
     showSendSuccessView(result.explorerUrl);

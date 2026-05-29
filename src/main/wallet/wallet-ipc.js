@@ -53,6 +53,10 @@ function isAllowedRpcUrl(rpcUrl) {
 // Shared body of the two send-transaction IPC handlers. They differ only
 // in which wallet index signs and which payment-history kind tags the
 // resulting row.
+function buildTxRecordContext(kind, context = {}) {
+  return { ...context, kind };
+}
+
 async function handleSendTransaction(walletIndex, params, kind, context = {}) {
   try {
     const { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId } = params;
@@ -63,7 +67,7 @@ async function handleSendTransaction(walletIndex, params, kind, context = {}) {
       signAndRecord(
         { to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, gasPrice, chainId },
         privateKey,
-        { kind, ...context },
+        buildTxRecordContext(kind, context),
       )
     );
     return { success: true, ...result };
@@ -345,5 +349,6 @@ function registerWalletIpc() {
 }
 
 module.exports = {
+  buildTxRecordContext,
   registerWalletIpc,
 };

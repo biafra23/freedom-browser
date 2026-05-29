@@ -34,6 +34,7 @@ let swarmPermsKey = null;
 let x402PermsScreen;
 let x402PermsBack;
 let x402PermsSite;
+let x402PermsError;
 let x402PermsList;
 let x402PermsRevokeAll;
 let x402PermsKey = null;
@@ -87,6 +88,7 @@ export function initPermissionManage() {
   x402PermsScreen = document.getElementById('sidebar-x402-permissions');
   x402PermsBack = document.getElementById('x402-perms-back');
   x402PermsSite = document.getElementById('x402-perms-site');
+  x402PermsError = document.getElementById('x402-perms-error');
   x402PermsList = document.getElementById('x402-perms-list');
   x402PermsRevokeAll = document.getElementById('x402-perms-revoke-all');
 
@@ -211,6 +213,7 @@ async function handleSwarmDisconnect() {
 export async function showX402Permissions(originKey) {
   x402PermsKey = originKey;
   if (x402PermsSite) x402PermsSite.textContent = originKey;
+  setX402PermsError('');
 
   await renderX402Permissions();
 
@@ -420,18 +423,41 @@ function formatRelativeFuture(seconds) {
 }
 
 async function saveX402Patch(perm, patch) {
-  await window.electronAPI.x402UpdatePermission({
-    origin: perm.origin,
-    chainId: perm.chainId,
-    asset: perm.asset,
-    ...patch,
-  });
+  setX402PermsError('');
+  try {
+    const result = await window.electronAPI.x402UpdatePermission({
+      origin: perm.origin,
+      chainId: perm.chainId,
+      asset: perm.asset,
+      ...patch,
+    });
+    if (!result?.success) {
+      throw new Error(result?.error || 'Could not update this auto-pay cap.');
+    }
+  } catch (err) {
+    const message = err?.message || 'Could not update this auto-pay cap.';
+    console.error('[x402] permission update failed:', err);
+    setX402PermsError(message);
+    await refreshX402PermissionViews();
+    return false;
+  }
   // The detail subscreen and the wallet-tab banner both need a refreshed
   // view; fire them concurrently rather than awaiting sequentially.
+  await refreshX402PermissionViews();
+  return true;
+}
+
+async function refreshX402PermissionViews() {
   await Promise.all([
     renderX402Permissions(),
     updateX402ConnectionBanner(x402PermsKey),
   ]);
+}
+
+function setX402PermsError(message) {
+  if (!x402PermsError) return;
+  x402PermsError.textContent = message || '';
+  x402PermsError.classList.toggle('hidden', !message);
 }
 
 function closeX402Perms() {

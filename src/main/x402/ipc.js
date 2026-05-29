@@ -53,6 +53,7 @@ const { signAndQueueRetry } = require('./sign-flow');
 const { tupleFromAccept, coverageForAccept } = require('./payment-utils');
 const { getActiveWalletAddress } = require('../identity-manager');
 const { getBalancesWithCache, getAllBalances, clearBalanceCache } = require('../wallet/balance-service');
+const { normalizeOrigin } = require('../../shared/origin-utils');
 
 // Cancel fallback when the webview has no back history. `about:blank` is
 // safe everywhere — the user gets an empty page and the address bar so
@@ -139,6 +140,15 @@ function broadcastBalances(webContentsId, address, balances) {
   });
 }
 
+function originKeyForUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return normalizeOrigin(parsed.origin === 'null' ? url : parsed.origin);
+  } catch {
+    return null;
+  }
+}
+
 // Background-refresh broadcast: fire a balance refresh after
 // x402:get-details serves the (cached) approval card data; when it
 // lands, push to the host renderer so the chooser rows update
@@ -148,9 +158,9 @@ function broadcastBalances(webContentsId, address, balances) {
 // insufficient-funds card if they need explicit re-fetch.
 function refreshAndBroadcastBalances(webContentsId, address) {
   if (!address) return;
-  getBalancesWithCache(address, true)
-    .then((result) => {
-      broadcastBalances(webContentsId, address, result?.balances);
+  getAllBalances(address)
+    .then((balances) => {
+      broadcastBalances(webContentsId, address, balances);
     })
     .catch((err) => {
       log.warn(`[x402:get-details] background balance refresh failed: ${err.message}`);
@@ -198,8 +208,7 @@ function registerX402Ipc() {
     // pass. Vault-locked / no-active-wallet → null address → balance
     // fields come back as null and the renderer paints a "balance
     // unknown" state until the post-paint refresh lands.
-    let origin = null;
-    try { origin = new URL(detected.url).origin; } catch { /* leave null */ }
+    const origin = originKeyForUrl(detected.url);
     let address = null;
     try { address = await getActiveWalletAddress(); }
     catch (err) { log.warn(`[x402:get-details] active address lookup failed: ${err.message}`); }

@@ -2613,6 +2613,17 @@
   border-color: rgba(39, 117, 202, 0.25);
 }
 
+.x402-perms-error {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* x402 permissions subscreen — per-allowance card */
 .x402-perm-block {
   padding: 14px;

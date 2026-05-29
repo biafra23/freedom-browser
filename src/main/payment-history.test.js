@@ -298,6 +298,35 @@ describe('payment-history (sqlite)', () => {
       expect(mod.getCount({})).toBe(0);
     });
 
+    test('a failed rename does not duplicate entries if migration runs again', () => {
+      const legacyPath = seedLegacy([
+        {
+          chainId: BASE_CHAIN,
+          asset: USDC_BASE,
+          amount: TEN_USDC,
+          txHash: '0xabc',
+          status: 'settled',
+          settledAt: 1700000000,
+          url: URL_FULL,
+          origin: ORIGIN,
+        },
+      ]);
+      const renameSpy = jest.spyOn(fs, 'renameSync').mockImplementation(() => {
+        throw new Error('rename denied');
+      });
+
+      try {
+        mod.getDb();
+        expect(fs.existsSync(legacyPath)).toBe(true);
+        expect(mod.getCount({})).toBe(1);
+
+        mod._migrateFromJsonForTest();
+        expect(mod.getCount({})).toBe(1);
+      } finally {
+        renameSpy.mockRestore();
+      }
+    });
+
     test('a malformed legacy file does not abort startup; the file stays as a breadcrumb', () => {
       const legacyPath = path.join(userDataDir, 'x402-receipts.json');
       fs.writeFileSync(legacyPath, 'not valid json {{{');

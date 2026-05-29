@@ -113,6 +113,9 @@ beforeEach(() => {
   mockCreateClient.mockReset().mockResolvedValue(mockClient);
   mockGetActiveWalletIndex.mockReturnValue(0);
   webContents.fromId.mockReset();
+  mockGetBalancesWithCache.mockReset().mockResolvedValue({ balances: {}, fromCache: true });
+  mockGetAllBalances.mockReset().mockResolvedValue({});
+  mockClearBalanceCache.mockReset();
   mockGetToken.mockReset();
   mockGrant.mockReset();
   mockGetPermission.mockReset().mockReturnValue(null);
@@ -322,6 +325,38 @@ describe('x402:get-details', () => {
     const result = await ipcHandlers['x402:get-details'](senderEvent(42));
     expect(result.accepts[0].fundable).toBe(false);
     expect(result.initialSelectionIndex).toBe(0);
+  });
+
+  test('kicks a fresh balance fetch after serving cached approval-card details', async () => {
+    require('./intercept').detectPaymentRequiredHandler({
+      webContentsId: 42,
+      url: 'https://api.example/article',
+      statusLine: 'HTTP/1.1 402 Payment Required',
+      resourceType: 'mainFrame',
+      responseHeaders: {
+        'PAYMENT-REQUIRED': [
+          Buffer.from(JSON.stringify(v2Detected().requirements)).toString('base64'),
+        ],
+      },
+    });
+    const fresh = {
+      '8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': balanceEntry('90000'),
+    };
+    mockGetBalancesWithCache.mockResolvedValueOnce({ balances: {}, fromCache: true });
+    mockGetAllBalances.mockResolvedValueOnce(fresh);
+    const sidebarSend = jest.fn();
+    webContents.fromId.mockReturnValue({ hostWebContents: { send: sidebarSend } });
+
+    const result = await ipcHandlers['x402:get-details'](senderEvent(42));
+    await Promise.resolve();
+
+    expect(result.success).toBe(true);
+    expect(mockGetBalancesWithCache).toHaveBeenCalledWith(expect.any(String), false);
+    expect(mockGetAllBalances).toHaveBeenCalledWith(expect.any(String));
+    expect(sidebarSend).toHaveBeenCalledWith('x402:balances-updated', expect.objectContaining({
+      webContentsId: 42,
+      balances: fresh,
+    }));
   });
 });
 

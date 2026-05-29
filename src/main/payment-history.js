@@ -123,33 +123,81 @@ function migrateFromJson() {
     const entries = Array.isArray(raw) ? raw : [];
 
     if (entries.length > 0) {
+      let imported = 0;
       const insertOne = (e) => {
         // settledAt was stored in seconds; the new store uses ms.
-        const settledMs = Number.isFinite(e.settledAt) ? e.settledAt * 1000 : Date.now();
+        const hasSettledAt = Number.isFinite(e.settledAt);
+        const settledMs = hasSettledAt ? e.settledAt * 1000 : Date.now();
         const status = typeof e.status === 'string' ? e.status : STATUSES.NO_RECEIPT;
+        const metadata = legacyMetadataFor(e, status);
+        const row = legacyRowFor(e, settledMs, status, hasSettledAt);
+        if (legacyAlreadyImported(row, metadata)) return;
         insertRow({
+          ...row,
           kind: KINDS.X402,
-          chainId: Number.isFinite(e.chainId) ? e.chainId : 0,
-          txHash: typeof e.txHash === 'string' ? e.txHash : null,
-          asset: typeof e.asset === 'string' ? e.asset : null,
-          amount: typeof e.amount === 'string' ? e.amount : '0',
-          origin: typeof e.origin === 'string' ? e.origin : null,
-          url: typeof e.url === 'string' ? e.url : null,
-          status,
-          createdAt: settledMs,
-          confirmedAt: isFinalStatus(status) ? settledMs : null,
-          metadata: e.id ? JSON.stringify({ legacyId: e.id }) : null,
+          metadata,
         });
+        imported++;
       };
 
       db.transaction((items) => { for (const e of items) insertOne(e); })(entries);
-      log.info(`[PaymentHistory] Migrated ${entries.length} entries from x402-receipts.json`);
+      log.info(`[PaymentHistory] Migrated ${imported} entries from x402-receipts.json`);
     }
 
     fs.renameSync(jsonPath, migratedPath);
   } catch (err) {
     log.error('[PaymentHistory] Failed to migrate from JSON:', err.message);
   }
+}
+
+function legacyMetadataFor(entry, status) {
+  const legacyId = typeof entry.id === 'string' && entry.id
+    ? entry.id
+    : [
+      'legacy',
+      Number.isFinite(entry.settledAt) ? entry.settledAt : '',
+      status,
+      entry.chainId ?? '',
+      entry.txHash ?? '',
+      entry.url ?? '',
+      entry.amount ?? '',
+    ].join(':');
+  return JSON.stringify({ legacyId });
+}
+
+function legacyRowFor(entry, settledMs, status, hasSettledAt) {
+  return {
+    chainId: Number.isFinite(entry.chainId) ? entry.chainId : 0,
+    txHash: typeof entry.txHash === 'string' ? entry.txHash : null,
+    asset: typeof entry.asset === 'string' ? entry.asset : null,
+    amount: typeof entry.amount === 'string' ? entry.amount : '0',
+    origin: typeof entry.origin === 'string' ? entry.origin : null,
+    url: typeof entry.url === 'string' ? entry.url : null,
+    status,
+    createdAt: settledMs,
+    confirmedAt: isFinalStatus(status) ? settledMs : null,
+    hasSettledAt,
+  };
+}
+
+function legacyAlreadyImported(legacy, metadata) {
+  return getDb()
+    .prepare('SELECT * FROM payments WHERE kind = ? ORDER BY created_at DESC LIMIT ? OFFSET ?')
+    .all(KINDS.X402, 100_000, 0)
+    .some((row) => row.metadata === metadata || legacyRowMatches(row, legacy));
+}
+
+function legacyRowMatches(row, legacy) {
+  return (
+    row.chain_id === legacy.chainId &&
+    (row.tx_hash ?? null) === legacy.txHash &&
+    (row.asset ?? null) === legacy.asset &&
+    row.amount === legacy.amount &&
+    (row.origin ?? null) === legacy.origin &&
+    (row.url ?? null) === legacy.url &&
+    row.status === legacy.status &&
+    (!legacy.hasSettledAt || row.created_at === legacy.createdAt)
+  );
 }
 
 // Shared row builder so the migration path doesn't need a bespoke INSERT
@@ -511,4 +559,5 @@ module.exports = {
   removeById,
   repollPending,
   registerPaymentHistoryIpc,
+  _migrateFromJsonForTest: migrateFromJson,
 };

@@ -422,7 +422,6 @@ contextBridge.exposeInMainWorld('payments', {
   getRecent: (filters) => ipcRenderer.invoke('payments:get-recent', filters),
   getById: (id) => ipcRenderer.invoke('payments:get-by-id', id),
   getCount: (filters) => ipcRenderer.invoke('payments:get-count', filters),
-  clear: () => ipcRenderer.invoke('payments:clear'),
 });
 
 contextBridge.exposeInMainWorld('tokens', {

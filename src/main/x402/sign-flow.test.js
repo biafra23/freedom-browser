@@ -41,6 +41,7 @@ jest.mock('./permissions', () => ({
 }));
 
 const intercept = require('./intercept');
+const permissions = require('./permissions');
 const { signAndQueueRetry } = require('./sign-flow');
 
 // Lowercase canonical — matches what `tupleFromAccept` emits.
@@ -70,6 +71,8 @@ beforeEach(() => {
   });
   mockCreateClient.mockClear();
   mockLoadURL.mockClear();
+  permissions.grant.mockClear();
+  permissions.tryConsume.mockClear().mockReturnValue(true);
 });
 
 // Inspect the pending-payment slot the way the injector does, to
@@ -139,5 +142,25 @@ describe('signAndQueueRetry — selectedAccept resolution', () => {
         resourceType: 'xhr',
       },
     })).rejects.toThrow(/No accepts\[\] entry to sign/);
+  });
+
+  test('normalizes dweb ENS origins before cap accounting and banner refresh', async () => {
+    await signAndQueueRetry(7, {
+      detection: {
+        url: 'bzz://Paywall.eth/segment',
+        requirements: requirementsWith(baseAccept),
+        resourceType: 'xhr',
+      },
+      authorizedBy: 'cap',
+    });
+
+    consumePending(7, 'bzz://Paywall.eth/segment');
+
+    expect(permissions.tryConsume).toHaveBeenCalledWith(
+      'paywall.eth',
+      8453,
+      BASE_USDC,
+      '10000'
+    );
   });
 });

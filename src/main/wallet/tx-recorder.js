@@ -54,7 +54,7 @@ async function signAndRecord(params, privateKey, context) {
     });
   } catch (err) {
     log.error('[TxRecorder] failed to record pending row:', err.message);
-    return response;
+    return { ...response, recorded: false, recordError: err.message };
   }
 
   waitForTransaction(response.hash, params.chainId)
@@ -78,7 +78,7 @@ async function signAndRecord(params, privateKey, context) {
       log.warn(`[TxRecorder] waitForTransaction failed for row ${row.id}: ${err.message}`);
     });
 
-  return response;
+  return { ...response, recorded: true, paymentId: row.id };
 }
 
 module.exports = { signAndRecord, KINDS };

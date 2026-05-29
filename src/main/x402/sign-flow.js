@@ -20,6 +20,7 @@ const { webContents } = require('electron');
 const log = require('../logger');
 const { createVaultBackedX402Client } = require('./client');
 const { getActiveWalletIndex } = require('../identity-manager');
+const { normalizeOrigin } = require('../../shared/origin-utils');
 const {
   X402_HEADERS,
   AUTHORIZED_BY,
@@ -82,8 +83,12 @@ async function signAndQueueRetry(webContentsId, opts = {}) {
   if (!selectedAccept) throw new Error('No accepts[] entry to sign');
 
   let origin;
-  try { origin = new URL(detected.url).origin; }
+  try {
+    const parsed = new URL(detected.url);
+    origin = normalizeOrigin(parsed.origin === 'null' ? detected.url : parsed.origin);
+  }
   catch { throw new Error('Refusing to pay: unparseable URL'); }
+  if (!origin) throw new Error('Refusing to pay: unnormalisable origin');
 
   const client = await createVaultBackedX402Client(getActiveWalletIndex());
   // Pre-filter `accepts[]` down to the chosen entry so the SDK's default

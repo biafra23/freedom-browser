@@ -164,6 +164,9 @@ describe('preload', () => {
       [exposures.githubBridge, 'validateUrl', ['https://github.com/openai/project'], IPC.GITHUB_BRIDGE_VALIDATE_URL, ['https://github.com/openai/project']],
       [exposures.githubBridge, 'checkExisting', ['https://github.com/openai/project'], IPC.GITHUB_BRIDGE_CHECK_EXISTING, ['https://github.com/openai/project']],
       [exposures.serviceRegistry, 'getRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
+      [exposures.payments, 'getRecent', [{ limit: 10 }], IPC.PAYMENTS_GET_RECENT, [{ limit: 10 }]],
+      [exposures.payments, 'getById', [7], IPC.PAYMENTS_GET_BY_ID, [7]],
+      [exposures.payments, 'getCount', [{ kind: 'x402' }], IPC.PAYMENTS_GET_COUNT, [{ kind: 'x402' }]],
     ];
 
     for (const [target, method, args, channel, expectedArgs] of invokeCases) {
@@ -171,6 +174,7 @@ describe('preload', () => {
       await target[method](...args);
       expect(ipcRenderer.invoke).toHaveBeenCalledWith(channel, ...expectedArgs);
     }
+    expect(exposures.payments.clear).toBeUndefined();
 
     const sendCases = [
       [exposures.electronAPI, 'setWindowTitle', ['Title'], IPC.WINDOW_SET_TITLE, ['Title']],

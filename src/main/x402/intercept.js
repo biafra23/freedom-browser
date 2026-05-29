@@ -43,6 +43,7 @@ const { KINDS: PAYMENT_KINDS, STATUSES: PAYMENT_STATUSES } = paymentHistory;
 const { findCoveringPermission } = require('./payment-utils');
 const { tryConsume } = require('./permissions');
 const { isVaultLockedError } = require('../wallet/vault-errors');
+const { normalizeOrigin } = require('../../shared/origin-utils');
 
 // Header names used on the wire. V2 uses the un-prefixed names; V1 (Coinbase
 // original) ships with the `X-` prefix. Centralised so WP4 callers reference
@@ -157,9 +158,10 @@ const UNLOCK_RESUME_TTL_MS = 5 * 60 * 1000;
 // supersedes any older entries for the same webContents.
 //
 // Each value: { resolve, reject, webContentsId, url, requirements,
-// resourceType, createdAt }. resolve/reject are the Promise handles the
-// detector awaits.
+// resourceType, createdAt, timer }. resolve/reject are the Promise
+// handles the detector awaits.
 const pendingApprovals = new Map();
+const PENDING_APPROVAL_TTL_MS = 5 * 60 * 1000;
 
 // "Cap-covered subresource detector hit `Vault is locked`; the original
 // page fetch is being held open while the sidebar prompts the user to
@@ -309,6 +311,7 @@ function captureRequestContextHandler(details) {
 
 function clearRequestContextHandler(details) {
   if (typeof details?.id === 'number') {
+    awaitingResponse.delete(details.id);
     requestContext.delete(details.id);
   }
   return null;
@@ -411,6 +414,8 @@ function mintDetectionId(details) {
  */
 function setPendingApproval(detectionId, ctx) {
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => expirePendingApproval(detectionId), PENDING_APPROVAL_TTL_MS);
+    timer.unref?.();
     pendingApprovals.set(detectionId, {
       resolve,
       reject,
@@ -418,6 +423,7 @@ function setPendingApproval(detectionId, ctx) {
       webContentsId: ctx.webContentsId,
       url: ctx.url,
       requirements: ctx.requirements,
+      timer,
     });
   });
 }
@@ -430,19 +436,42 @@ function getPendingApproval(detectionId) {
   return pendingApprovals.get(detectionId) ?? null;
 }
 
-function settlePendingApproval(detectionId, decision) {
+function deletePendingApprovalEntry(detectionId) {
   const entry = pendingApprovals.get(detectionId);
-  if (!entry) return false;
+  if (!entry) return null;
   pendingApprovals.delete(detectionId);
+  clearTimeout(entry.timer);
+  return entry;
+}
+
+function settlePendingApproval(detectionId, decision) {
+  const entry = deletePendingApprovalEntry(detectionId);
+  if (!entry) return false;
   entry.resolve(decision);
   return true;
 }
 
 function abortPendingApproval(detectionId, reason) {
-  const entry = pendingApprovals.get(detectionId);
+  const entry = deletePendingApprovalEntry(detectionId);
   if (!entry) return false;
-  pendingApprovals.delete(detectionId);
   entry.reject(reason);
+  return true;
+}
+
+function expirePendingApproval(detectionId) {
+  const entry = deletePendingApprovalEntry(detectionId);
+  if (!entry) return false;
+  const current = detectedPayments.get(entry.webContentsId);
+  if (current?.detectionId === detectionId) {
+    detectedPayments.delete(entry.webContentsId);
+  }
+  const reason = new Error('approval expired');
+  entry.reject(reason);
+  sendToHost(entry.webContentsId, 'x402:approval-result', {
+    detectionId,
+    success: false,
+    error: 'Approval expired. Reload the resource to retry.',
+  });
   return true;
 }
 
@@ -456,6 +485,7 @@ function abortPendingApprovalsForTab(webContentsId, reason) {
 
 function clearAllPendingApprovals() {
   for (const [, entry] of pendingApprovals) {
+    clearTimeout(entry.timer);
     entry.reject(new Error('cleared'));
   }
   pendingApprovals.clear();
@@ -477,6 +507,36 @@ function deleteByWebContents(map, webContentsId) {
   }
 }
 
+function appendX402PaymentRecord(expected, status, { txHash = null, metadata = undefined } = {}) {
+  paymentHistory.append({
+    kind: PAYMENT_KINDS.X402,
+    url: expected.url,
+    origin: expected.origin,
+    chainId: expected.chainId,
+    asset: expected.asset,
+    amount: expected.amount,
+    fromAddress: expected.fromAddress,
+    toAddress: expected.payTo,
+    txHash,
+    status,
+    metadata,
+  });
+}
+
+function finalizeAwaitingResponsesForWebContents(webContentsId, cleanupReason) {
+  for (const [requestId, entry] of [...awaitingResponse]) {
+    if (entry?.webContentsId !== webContentsId) continue;
+    awaitingResponse.delete(requestId);
+    try {
+      appendX402PaymentRecord(entry, PAYMENT_STATUSES.NO_RECEIPT, {
+        metadata: { cleanupReason },
+      });
+    } catch (err) {
+      log.error(`[x402:settled] cleanup receipt append failed: ${err.message}`);
+    }
+  }
+}
+
 function cleanupWebContents(webContentsId) {
   detectedPayments.delete(webContentsId);
   pendingUnlockResume.delete(webContentsId);
@@ -490,7 +550,7 @@ function cleanupWebContents(webContentsId) {
   for (const key of [...pendingPayments.keys()]) {
     if (key.startsWith(prefix)) pendingPayments.delete(key);
   }
-  deleteByWebContents(awaitingResponse, webContentsId);
+  finalizeAwaitingResponsesForWebContents(webContentsId, 'tab destroyed');
   deleteByWebContents(requestContext, webContentsId);
 }
 
@@ -509,6 +569,15 @@ function getHeaderValue(headers, name) {
     }
   }
   return null;
+}
+
+function originKeyForUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return normalizeOrigin(parsed.origin === 'null' ? url : parsed.origin);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -592,7 +661,7 @@ function sendToHost(webviewWebContentsId, channel, payload) {
 function notifyVaultUnlockNeeded(webContentsId, url) {
   sendToHost(webContentsId, 'x402:unlock-needed', {
     webContentsId,
-    origin: new URL(url).origin,
+    origin: originKeyForUrl(url) ?? url,
   });
 }
 
@@ -704,8 +773,7 @@ async function detectPaymentRequiredHandler(details) {
   // this reduces to the legacy `accepts[0]` behavior; with multi-accept
   // it picks the auto-pay-covered entry even if it's not first in the
   // array. See `research/x402-multi-accept-ux.md` §3 for the policy.
-  let origin;
-  try { origin = new URL(details.url).origin; } catch { origin = null; }
+  const origin = originKeyForUrl(details.url);
   const covering = origin ? findCoveringPermission(origin, requirements.accepts) : null;
   if (covering) {
     log.info(`[x402:detect] active cap covers ${sanitizeUrlForLog(details.url)} — auto-paying`);
@@ -882,7 +950,7 @@ async function detectPaymentRequiredHandler(details) {
       // was stale and signing succeeds against insufficient funds,
       // the response logger writes a `failed` payment-history row.
       await signAndQueueRetry(details.webContentsId, {
-        detection: { url: details.url, requirements, resourceType: details.resourceType },
+        detection: { url: details.url, requirements, resourceType: details.resourceType, requestShape },
         selectedAccept,
         authorizedBy: AUTHORIZED_BY.MANUAL,
         grant: decision.grant,
@@ -961,18 +1029,7 @@ function paymentResponseLoggingHandler(details) {
   else status = PAYMENT_STATUSES.NO_RECEIPT;
 
   try {
-    paymentHistory.append({
-      kind: PAYMENT_KINDS.X402,
-      url: expected.url,
-      origin: expected.origin,
-      chainId: expected.chainId,
-      asset: expected.asset,
-      amount: expected.amount,
-      fromAddress: expected.fromAddress,
-      toAddress: expected.payTo,
-      txHash,
-      status,
-    });
+    appendX402PaymentRecord(expected, status, { txHash });
   } catch (err) {
     log.error(`[x402:settled] receipt append failed: ${err.message}`);
   }
@@ -992,7 +1049,20 @@ function paymentResponseLoggingHandler(details) {
 // is intentionally treated as `MANUAL` — backward-compat with callers
 // that predate the field.
 function consumeOrWithhold(signed, urlForLog) {
-  if (!signed.origin || !signed.chainId || !signed.asset || !signed.amount) {
+  const hasCapMetadata = !!(
+    signed.origin &&
+    signed.chainId != null &&
+    signed.asset &&
+    signed.amount != null
+  );
+  if (!hasCapMetadata) {
+    if (signed.authorizedBy === AUTHORIZED_BY.CAP) {
+      log.warn(
+        `[x402:inject] cap-authorized signature for ${urlForLog} is missing cap metadata; ` +
+        'withholding signature so cap accounting cannot be bypassed'
+      );
+      return { withhold: true, consumed: false };
+    }
     return { withhold: false, consumed: false };
   }
   const consumed = tryConsume(signed.origin, signed.chainId, signed.asset, signed.amount);

@@ -649,6 +649,56 @@ describe('approval-card subresource path (await user decision, then 307)', () =>
     });
   });
 
+  test('manual approval preserves captured Range requestShape for the signed retry key', async () => {
+    captureRequestContextHandler({
+      id: 1001,
+      webContentsId: 7,
+      method: 'GET',
+      url: 'https://api.example/segment/0',
+      requestHeaders: { Range: 'bytes=0-99' },
+      resourceType: 'xhr',
+    });
+    const handlerPromise = detectPaymentRequiredHandler(detail());
+    await Promise.resolve();
+
+    settlePendingApproval('req-1001', { approved: true });
+
+    await handlerPromise;
+    expect(mockSignAndQueueRetry).toHaveBeenCalledWith(7, expect.objectContaining({
+      detection: expect.objectContaining({
+        url: 'https://api.example/segment/0',
+        requestShape: {
+          method: 'GET',
+          range: 'bytes=0-99',
+        },
+      }),
+      authorizedBy: 'manual',
+    }));
+  });
+
+  test('pending subresource approvals expire so held response callbacks cannot hang forever', async () => {
+    jest.useFakeTimers();
+    try {
+      const handlerPromise = detectPaymentRequiredHandler(detail());
+      await Promise.resolve();
+      expect(hasPendingApproval('req-1001')).toBe(true);
+
+      jest.advanceTimersByTime(6 * 60 * 1000);
+      await flushRetryMicrotasks();
+
+      expect(hasPendingApproval('req-1001')).toBe(false);
+      expect(getDetectedPayment(7)).toBeNull();
+      expect(mockHostSend).toHaveBeenCalledWith('x402:approval-result', {
+        detectionId: 'req-1001',
+        success: false,
+        error: 'Approval expired. Reload the resource to retry.',
+      });
+      await expect(handlerPromise).resolves.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('on sign failure AFTER approve: fires approval-result error event AND keeps the held response open (retry loop)', async () => {
     // Detector loops on sign failure — re-arms pendingApproval so the
     // renderer's restored card can submit again after the user fixes
@@ -982,6 +1032,19 @@ describe('injectPaymentSignatureHandler', () => {
     });
 
     expect(injectPaymentSignatureHandler(detail())).toBeNull();
+    // One-shot drop even on withhold — a second inject attempt finds nothing.
+    expect(injectPaymentSignatureHandler(detail())).toBeNull();
+  });
+
+  test('cap authorization with missing cap metadata withholds the signature', () => {
+    setPendingPayment(7, 'https://api.example/article', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      authorizedBy: 'cap',
+    });
+
+    expect(injectPaymentSignatureHandler(detail())).toBeNull();
+    expect(mockTryConsume).not.toHaveBeenCalled();
     // One-shot drop even on withhold — a second inject attempt finds nothing.
     expect(injectPaymentSignatureHandler(detail())).toBeNull();
   });
@@ -1475,6 +1538,35 @@ describe('clearRequestContextHandler', () => {
     });
   });
 
+  test('drops awaitingResponse for signed retries that error before response headers', () => {
+    setPendingPayment(7, 'https://x.example/m', {
+      header: X402_HEADERS.SIGNATURE_V2,
+      value: 'sig',
+      origin: 'https://x.example',
+      chainId: 8453,
+      asset: '0xa',
+      amount: '1',
+    });
+    injectPaymentSignatureHandler({
+      id: 1010,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      requestHeaders: {},
+    });
+
+    clearRequestContextHandler({ id: 1010 });
+
+    const responseB64 = Buffer.from(JSON.stringify({ txHash: '0xtx' })).toString('base64');
+    paymentResponseLoggingHandler({
+      id: 1010,
+      webContentsId: 7,
+      url: 'https://x.example/m',
+      statusLine: 'HTTP/1.1 200 OK',
+      responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
+    });
+    expect(mockAppendReceipt).not.toHaveBeenCalled();
+  });
+
   test('TTL backstop: capture sweeps entries past TTL on each set()', () => {
     captureRequestContextHandler({
       id: 1100,
@@ -1618,14 +1710,25 @@ describe('cleanupWebContents', () => {
 
     cleanupWebContents(7);
 
-    // Tab 7's response no longer attributes (entry was dropped).
+    // Tab 7's in-flight signed request is recorded as no-receipt on cleanup.
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
+    expect(mockAppendReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      origin: 'https://x.example',
+      chainId: 8453,
+      asset: '0xa',
+      amount: '1',
+      status: 'no-receipt',
+      metadata: { cleanupReason: 'tab destroyed' },
+    }));
+
+    // Tab 7's later response no longer attributes a second time.
     const responseB64 = Buffer.from(JSON.stringify({ txHash: '0xtx' })).toString('base64');
     paymentResponseLoggingHandler({
       id: 1300, webContentsId: 7, url: 'https://x.example/a',
       statusLine: 'HTTP/1.1 200 OK',
       responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
     });
-    expect(mockAppendReceipt).not.toHaveBeenCalled();
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
 
     // Tab 8's response still attributes.
     paymentResponseLoggingHandler({
@@ -1633,7 +1736,7 @@ describe('cleanupWebContents', () => {
       statusLine: 'HTTP/1.1 200 OK',
       responseHeaders: { 'PAYMENT-RESPONSE': [responseB64] },
     });
-    expect(mockAppendReceipt).toHaveBeenCalledTimes(1);
+    expect(mockAppendReceipt).toHaveBeenCalledTimes(2);
   });
 });
 

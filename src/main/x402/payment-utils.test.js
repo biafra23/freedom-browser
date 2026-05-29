@@ -224,4 +224,3 @@ describe('findCoveringPermission', () => {
     expect(findCoveringPermission(ORIGIN, [baseAccept])).toBeNull();
   });
 });
-
