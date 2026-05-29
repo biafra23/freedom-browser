@@ -399,6 +399,22 @@ function generateBeeKeystorePassword() {
 }
 
 /**
+ * Remove Bee's persisted state directories so a freshly injected identity
+ * isn't mixed with state derived from the previous key.
+ * @param {string} dataDir - Bee data directory
+ */
+function removeStaleBeeDirs(dataDir) {
+  const staleDirs = ['statestore', 'localstore', 'kademlia-metrics', 'stamperstore'];
+  for (const dir of staleDirs) {
+    const dirPath = path.join(dataDir, dir);
+    if (fs.existsSync(dirPath)) {
+      fs.rmSync(dirPath, { recursive: true });
+      console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
+    }
+  }
+}
+
+/**
  * Inject Bee identity
  * Generates its own random password for the keystore (stored in config.yaml)
  * This is intentionally different from the vault password
@@ -420,14 +436,7 @@ async function injectBeeIdentity() {
   // When re-injecting with a new key, Bee's persisted state (overlay address,
   // auxiliary keys) becomes invalid. Remove everything except the directories
   // we're about to write fresh (keys/ and config.yaml).
-  const staleDirs = ['statestore', 'localstore', 'kademlia-metrics', 'stamperstore'];
-  for (const dir of staleDirs) {
-    const dirPath = path.join(dataDir, dir);
-    if (fs.existsSync(dirPath)) {
-      fs.rmSync(dirPath, { recursive: true });
-      console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
-    }
-  }
+  removeStaleBeeDirs(dataDir);
   for (const keyFile of ['libp2p_v2.key', 'pss.key']) {
     const keyPath = path.join(dataDir, 'keys', keyFile);
     if (fs.existsSync(keyPath)) {
@@ -1242,6 +1251,7 @@ module.exports = {
   getActiveWalletAddress,
 
   // Identity injection
+  removeStaleBeeDirs,
   injectBeeIdentity,
   injectIpfsIdentity,
   injectRadicleIdentity,

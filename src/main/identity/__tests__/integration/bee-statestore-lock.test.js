@@ -1,27 +1,64 @@
 /**
- * Reproduction: Windows EPERM wiping bee-data/statestore (issue #90)
+ * Regression test for issue #90: Windows EPERM wiping bee-data/statestore.
  *
  * When Bee is running it holds an open handle on the LevelDB `LOCK` file
- * inside `statestore`. The stale-dir wipe in `injectBeeIdentity()`
- * (src/main/identity-manager.js) calls `fs.rmSync(dir, { recursive: true })`
- * without `force`/`maxRetries`. On Windows that throws `EPERM` while the
- * handle is held; on POSIX the same call succeeds.
+ * inside `statestore` (without FILE_SHARE_DELETE). The stale-dir wipe in
+ * `injectBeeIdentity()` -> `removeStaleBeeDirs()` currently calls
+ * `fs.rmSync(dir, { recursive: true })` with no `force`/`maxRetries`, which
+ * throws `EPERM` on Windows while that handle is held.
  *
- * This test simulates the held LevelDB lock with a plain open file handle
- * (no Bee binary required, so it runs on every platform/runner) and:
- *   1. Reproduces the failure: on Windows the bare recursive remove throws.
- *   2. Documents the safe behavior: once the lock is released (Bee stopped),
- *      a `force`/`maxRetries` remove succeeds.
+ * This test reproduces the failure WITHOUT a Bee binary: a separate child
+ * process holds the `LOCK` open and releases it a moment later (modelling
+ * Bee shutting down after a stop signal). The wipe must tolerate the briefly
+ * held lock and complete.
+ *
+ * Expected status:
+ *   - Today (bare recursive remove): FAILS on Windows (EPERM thrown
+ *     immediately), passes on POSIX.
+ *   - After the fix ({ force: true, maxRetries, retryDelay } in
+ *     removeStaleBeeDirs, so the sync remove retries until the lock is
+ *     released): passes on all platforms.
  */
 
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { removeStaleBeeDirs } = require('../../../identity-manager');
+
+// How long the child holds the LOCK before releasing it. Must be shorter than
+// the retry budget of the fixed removeStaleBeeDirs so retries can succeed.
+const LOCK_HOLD_MS = 500;
+
+function spawnLockHolder(lockPath) {
+  const childSrc = `
+    const fs = require('fs');
+    const fd = fs.openSync(process.argv[1], 'r+');
+    process.stdout.write('LOCKED\\n');
+    setTimeout(() => { try { fs.closeSync(fd); } catch { /* gone */ } process.exit(0); }, ${LOCK_HOLD_MS});
+  `;
+  const child = spawn(process.execPath, ['-e', childSrc, lockPath], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+
+  const ready = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('lock holder did not signal LOCKED')), 5000);
+    child.stdout.on('data', (chunk) => {
+      if (chunk.toString().includes('LOCKED')) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    child.on('error', reject);
+  });
+
+  return { child, ready };
+}
 
 describe('Bee statestore wipe lock (issue #90)', () => {
   let tempDir;
   let statestoreDir;
-  let lockFd = null;
+  let holder = null;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bee-statestore-lock-'));
@@ -31,48 +68,24 @@ describe('Bee statestore wipe lock (issue #90)', () => {
     // LevelDB layout: a LOCK file plus a data file.
     fs.writeFileSync(path.join(statestoreDir, 'LOCK'), '');
     fs.writeFileSync(path.join(statestoreDir, '000001.ldb'), 'leveldb-data');
-
-    // Hold an open handle on LOCK to mimic a running Bee node.
-    lockFd = fs.openSync(path.join(statestoreDir, 'LOCK'), 'r+');
   });
 
   afterEach(() => {
-    if (lockFd !== null) {
-      try {
-        fs.closeSync(lockFd);
-      } catch {
-        // already closed
-      }
-      lockFd = null;
+    if (holder && !holder.child.killed) {
+      holder.child.kill('SIGKILL');
     }
+    holder = null;
     if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  // The unguarded recursive remove (current injectBeeIdentity behavior) fails
-  // on Windows while the LOCK handle is held — this is issue #90.
-  const itReproduces = process.platform === 'win32' ? test : test.skip;
-  itReproduces('bare recursive remove throws while the LOCK is held (Windows)', () => {
-    expect(() => fs.rmSync(statestoreDir, { recursive: true })).toThrow(
-      /EPERM|EBUSY|ENOTEMPTY/
-    );
-  });
+  test('wiping statestore succeeds while a node briefly holds the LOCK', async () => {
+    holder = spawnLockHolder(path.join(statestoreDir, 'LOCK'));
+    await holder.ready;
 
-  test('remove succeeds once the lock is released (Bee stopped)', () => {
-    // Releasing the handle models Bee having fully exited before the wipe.
-    fs.closeSync(lockFd);
-    lockFd = null;
-
-    expect(() =>
-      fs.rmSync(statestoreDir, {
-        recursive: true,
-        force: true,
-        maxRetries: 10,
-        retryDelay: 100,
-      })
-    ).not.toThrow();
-
+    // The lock is held right now; removeStaleBeeDirs must still complete.
+    expect(() => removeStaleBeeDirs(tempDir)).not.toThrow();
     expect(fs.existsSync(statestoreDir)).toBe(false);
-  });
+  }, 15000);
 });
