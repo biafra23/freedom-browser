@@ -57,6 +57,7 @@ import { parseEthereumUri } from './ethereum-uri.js';
 import { openSendFlow } from './wallet-ui.js';
 import { walletState } from './wallet/wallet-state.js';
 import { formatWeiToDecimal } from './wallet/send.js';
+import { startIpfsProgressStatus, stopIpfsProgressStatus } from './ipfs-progress-status.js';
 
 // Helper to get active tab's navigation state (with fallback to empty object)
 const getNavState = () => getActiveTabState() || {};
@@ -1857,6 +1858,7 @@ export const initNavigation = () => {
     switch (eventName) {
       case 'did-start-loading':
         setLoading(true);
+        startIpfsProgressStatus();
         navState.isWebviewLoading = true;
         reloadBtn.dataset.state = 'stop';
         pushDebug('Webview started loading.');
@@ -1864,6 +1866,7 @@ export const initNavigation = () => {
 
       case 'did-stop-loading':
         setLoading(false);
+        stopIpfsProgressStatus({ immediate: true });
         navState.isWebviewLoading = false;
         navState.hasNavigatedDuringCurrentLoad = false;
         navState.pendingNavigationUrl = '';
@@ -1949,6 +1952,7 @@ export const initNavigation = () => {
         }
         if (webview) webview.classList.remove('hidden');
         setLoading(false);
+        stopIpfsProgressStatus({ immediate: true });
         navState.isWebviewLoading = false;
         navState.hasNavigatedDuringCurrentLoad = false;
         reloadBtn.dataset.state = 'reload';
@@ -2109,6 +2113,11 @@ export const initNavigation = () => {
           }
           // Sync loading state - use tab.isLoading as source of truth
           setLoading(isLoading);
+          if (isLoading) {
+            startIpfsProgressStatus();
+          } else {
+            stopIpfsProgressStatus({ immediate: true });
+          }
           tabNavState.isWebviewLoading = isLoading;
           reloadBtn.dataset.state = isLoading ? 'stop' : 'reload';
           // Focus address bar only for new empty tabs (home page)

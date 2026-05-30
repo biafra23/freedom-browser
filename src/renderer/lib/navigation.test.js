@@ -93,6 +93,10 @@ const loadNavigationModule = async (options = {}) => {
   const githubBridgeUiMocks = {
     updateGithubBridgeIcon: jest.fn(),
   };
+  const ipfsProgressMocks = {
+    startIpfsProgressStatus: jest.fn(),
+    stopIpfsProgressStatus: jest.fn(),
+  };
   const activeRef = {};
   const tabsRef = { list: [] };
   const tabsMocks = {
@@ -384,6 +388,7 @@ const loadNavigationModule = async (options = {}) => {
   jest.doMock('./navigation-utils.js', () => navigationUtilsMocks);
   jest.doMock('./url-utils.js', () => urlUtilsMocks);
   jest.doMock('./page-urls.js', () => pageUrlsMocks);
+  jest.doMock('./ipfs-progress-status.js', () => ipfsProgressMocks);
 
   const mod = await import('./navigation.js');
 
@@ -393,6 +398,7 @@ const loadNavigationModule = async (options = {}) => {
     debugMocks,
     bookmarksUiMocks,
     githubBridgeUiMocks,
+    ipfsProgressMocks,
     tabsMocks,
     navigationUtilsMocks,
     urlUtilsMocks,
@@ -553,6 +559,7 @@ describe('navigation', () => {
     ctx.tabsMocks.webviewEventHandler('did-start-loading', { tabId: ctx.activeRef.tab.id });
 
     expect(ctx.tabsMocks.setTabLoading).toHaveBeenCalledWith(true);
+    expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).toHaveBeenCalled();
     expect(ctx.elements.reloadBtn.dataset.state).toBe('stop');
 
     ctx.elements.addressInput.value = 'https://recorded.example';
@@ -564,6 +571,9 @@ describe('navigation', () => {
     await flushMicrotasks();
 
     expect(ctx.tabsMocks.setTabLoading).toHaveBeenLastCalledWith(false);
+    expect(ctx.ipfsProgressMocks.stopIpfsProgressStatus).toHaveBeenLastCalledWith({
+      immediate: true,
+    });
     expect(ctx.elements.reloadBtn.dataset.state).toBe('reload');
     expect(ctx.electronAPI.fetchFaviconWithKey).toHaveBeenCalledWith(
       'https://loaded.example',
@@ -590,6 +600,9 @@ describe('navigation', () => {
     expect(ctx.activeRef.tab.webview.loadURL).toHaveBeenCalledWith(
       'file:///app/pages/error.html?error=ERR_NAME_NOT_RESOLVED&url=https%3A%2F%2Fbad.example'
     );
+    expect(ctx.ipfsProgressMocks.stopIpfsProgressStatus).toHaveBeenLastCalledWith({
+      immediate: true,
+    });
 
     // Defensive twin of the per-tab gate in `tabs.js`: a sub-frame
     // failure (third-party iframe, ad-tech pixel, etc.) must NOT

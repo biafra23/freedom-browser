@@ -9,6 +9,7 @@ import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
 import {
   clearLinkStatus,
+  clearHoverStatus,
   showLinkStatus,
   setLinkStatusSide,
 } from './link-status.js';
@@ -562,7 +563,7 @@ const createWebview = (tabId, initialUrl) => {
       if (url) {
         showLinkStatus(url);
       } else {
-        clearLinkStatus();
+        clearHoverStatus();
       }
     },
   };
