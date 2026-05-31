@@ -1,10 +1,25 @@
+// The dispatcher's a singleton — wipe its registry before each test so the
+// rewriter-install assertions don't trip over residue from earlier tests.
+jest.mock('./webrequest-dispatcher', () => {
+  const handlers = [];
+  return {
+    registerWebRequestHandler: jest.fn((event, name, handler) => {
+      handlers.push({ event, name, handler });
+    }),
+    _getHandlers: () => handlers,
+    _reset: () => handlers.splice(0),
+  };
+});
+
 const {
   shouldRewriteRequest,
   buildRewriteTarget,
   convertProtocolUrl,
   shouldBlockInvalidBzzRequest,
-  registerRequestRewriter,
+  rewriteRequestForDispatch,
+  installRequestRewriter,
 } = require('./request-rewriter');
+const dispatcherMock = require('./webrequest-dispatcher');
 const { activeRadBases } = require('./state');
 const { formatRadicleUrl, deriveRadBaseFromUrl, deriveDisplayValue } = require('../renderer/lib/url-utils.js');
 
@@ -423,30 +438,16 @@ describe('request-rewriter', () => {
       }
     });
 
-    test('rewrites same-origin Radicle requests via registered session handler', () => {
+    test('rewrites same-origin Radicle requests', () => {
       const webContentsId = 42;
-      const sessionMock = {
-        webRequest: {
-          onBeforeRequest: jest.fn(),
-        },
-      };
-
       activeRadBases.set(webContentsId, `${RADICLE_API_PREFIX}${SAMPLE_RID}/`);
-      registerRequestRewriter(sessionMock);
 
-      expect(sessionMock.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
-      const [handler] = sessionMock.webRequest.onBeforeRequest.mock.calls[0];
-      const callback = jest.fn();
+      const result = rewriteRequestForDispatch({
+        webContentsId,
+        url: `${RADICLE_BASE}/blob/main/src/index.js`,
+      });
 
-      handler(
-        {
-          webContentsId,
-          url: `${RADICLE_BASE}/blob/main/src/index.js`,
-        },
-        callback
-      );
-
-      expect(callback).toHaveBeenCalledWith({
+      expect(result).toEqual({
         redirectURL: `${RADICLE_API_PREFIX}${SAMPLE_RID}/blob/main/src/index.js`,
       });
     });
@@ -454,27 +455,27 @@ describe('request-rewriter', () => {
     test('does not rewrite Radicle requests when integration is disabled', () => {
       loadSettings.mockReturnValue({ enableRadicleIntegration: false });
       const webContentsId = 42;
-      const sessionMock = {
-        webRequest: {
-          onBeforeRequest: jest.fn(),
-        },
-      };
-
       activeRadBases.set(webContentsId, `${RADICLE_API_PREFIX}${SAMPLE_RID}/`);
-      registerRequestRewriter(sessionMock);
 
-      const [handler] = sessionMock.webRequest.onBeforeRequest.mock.calls[0];
-      const callback = jest.fn();
+      const result = rewriteRequestForDispatch({
+        webContentsId,
+        url: `${RADICLE_BASE}/blob/main/src/index.js`,
+      });
 
-      handler(
-        {
-          webContentsId,
-          url: `${RADICLE_BASE}/blob/main/src/index.js`,
-        },
-        callback
-      );
+      expect(result).toBeNull();
+    });
 
-      expect(callback).toHaveBeenCalledWith({});
+    test('installRequestRewriter registers a single onBeforeRequest handler in the dispatcher', () => {
+      dispatcherMock._reset();
+      installRequestRewriter();
+
+      const registered = dispatcherMock._getHandlers();
+      expect(registered).toHaveLength(1);
+      expect(registered[0]).toMatchObject({
+        event: 'onBeforeRequest',
+        name: 'request-rewriter',
+      });
+      expect(registered[0].handler).toBe(rewriteRequestForDispatch);
     });
   });
 });

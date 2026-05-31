@@ -1,8 +1,9 @@
 const log = require('./logger');
-const { app, ipcMain, nativeTheme, webContents } = require('electron');
+const { app, ipcMain, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const IPC = require('../shared/ipc-channels');
+const { broadcastToAllWebContents } = require('./lib/broadcast-to-all-webcontents');
 
 // Apply theme to nativeTheme so webviews get correct prefers-color-scheme
 function applyNativeTheme(theme) {
@@ -69,14 +70,7 @@ function loadSettings() {
 }
 
 function broadcastSettingsUpdated(merged) {
-  if (!webContents?.getAllWebContents) return;
-  for (const wc of webContents.getAllWebContents()) {
-    try {
-      wc.send(IPC.SETTINGS_UPDATED, merged);
-    } catch {
-      // webContents may be destroyed
-    }
-  }
+  broadcastToAllWebContents(IPC.SETTINGS_UPDATED, merged);
 }
 
 // Walks DEFAULT_SETTINGS keys in one pass: drops unknown input keys (defense
