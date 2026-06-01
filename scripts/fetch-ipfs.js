@@ -12,7 +12,7 @@ const REQUEST_TIMEOUT_MS = 60000;
 // Kubo releases are hosted at dist.ipfs.tech
 const DIST_URL = 'https://dist.ipfs.tech/kubo/versions';
 
-async function fetchVersionsList() {
+function fetchVersionsListOnce() {
   return new Promise((resolve, reject) => {
     const req = https
       .get(DIST_URL, (res) => {
@@ -45,6 +45,26 @@ async function fetchVersionsList() {
       req.destroy(new Error(`Versions fetch timed out after ${REQUEST_TIMEOUT_MS}ms`));
     });
   });
+}
+
+async function fetchVersionsList() {
+  const maxAttempts = 4;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetchVersionsListOnce();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * attempt;
+        console.warn(
+          `Versions fetch attempt ${attempt} failed (${err.message}); retrying in ${delayMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 function downloadFileOnce(url, dest) {
