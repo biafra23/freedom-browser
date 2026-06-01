@@ -648,6 +648,10 @@ function getActivePort() {
   return currentApiPort;
 }
 
+function getStatus() {
+  return { status: currentState, error: lastError };
+}
+
 function registerBeeIpc() {
   ipcMain.handle(IPC.BEE_START, async () => {
     await startBee();
@@ -673,6 +677,7 @@ module.exports = {
   startBee,
   stopBee,
   getActivePort,
+  getStatus,
   getBeeDataPath,
   setUseInjectedIdentity,
   hasInjectedKeys,

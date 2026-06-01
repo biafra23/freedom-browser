@@ -18,6 +18,24 @@ const { VAULT_LOCKED_MESSAGE } = require('./wallet/vault-errors');
 // Identity module - loaded lazily
 let identityModule = null;
 
+// Optional Bee node lifecycle hooks, wired by the main process (see index.js).
+// Bee holds an exclusive LevelDB lock on statestore while running, so it must be
+// stopped before its stale state is wiped during (re)injection — otherwise the
+// wipe fails with EPERM on Windows (issue #90). `stop` resolves to whether Bee
+// was running; `start` brings it back up with the freshly injected identity.
+let beeLifecycle = { stop: null, start: null };
+
+/**
+ * Register Bee node lifecycle hooks used around identity (re)injection.
+ * @param {{stop?: () => Promise<boolean>, start?: () => Promise<void>}} hooks
+ */
+function setBeeLifecycle(hooks = {}) {
+  beeLifecycle = {
+    stop: typeof hooks.stop === 'function' ? hooks.stop : null,
+    start: typeof hooks.start === 'function' ? hooks.start : null,
+  };
+}
+
 // Cached derived keys (only available when unlocked)
 let derivedKeys = null;
 
@@ -459,22 +477,24 @@ function removeStaleBeeDirs(dataDir) {
 }
 
 /**
- * Inject Bee identity
- * Generates its own random password for the keystore (stored in config.yaml)
- * This is intentionally different from the vault password
- * @returns {Promise<{address: string}>}
+ * Wipe Bee's stale persisted state ahead of a fresh key injection.
+ *
+ * A running Bee node holds an exclusive LevelDB lock on `statestore`; on Windows
+ * deleting it then fails with EPERM (issue #90). The synchronous retry loop in
+ * removePathWithRetry only helps if the holder exits, so we first stop the node
+ * via the registered lifecycle hook and wait for it to exit, releasing the lock.
+ *
+ * @param {string} dataDir - Bee data directory
+ * @returns {Promise<boolean>} whether Bee was running and was stopped
  */
-async function injectBeeIdentity() {
-  if (!derivedKeys) {
-    throw new Error(VAULT_LOCKED_MESSAGE);
-  }
-
-  const identity = await loadIdentityModule();
-  const dataDir = getBeeDataDir();
-
-  // Ensure directory exists
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+async function wipeStaleBeeState(dataDir) {
+  let beeWasRunning = false;
+  if (beeLifecycle.stop) {
+    try {
+      beeWasRunning = (await beeLifecycle.stop()) === true;
+    } catch (err) {
+      console.warn('[IdentityManager] Bee stop hook failed before wipe:', err.message);
+    }
   }
 
   // When re-injecting with a new key, Bee's persisted state (overlay address,
@@ -498,6 +518,31 @@ async function injectBeeIdentity() {
     }
   }
 
+  return beeWasRunning;
+}
+
+/**
+ * Inject Bee identity
+ * Generates its own random password for the keystore (stored in config.yaml)
+ * This is intentionally different from the vault password
+ * @returns {Promise<{address: string}>}
+ */
+async function injectBeeIdentity() {
+  if (!derivedKeys) {
+    throw new Error(VAULT_LOCKED_MESSAGE);
+  }
+
+  const identity = await loadIdentityModule();
+  const dataDir = getBeeDataDir();
+
+  // Ensure directory exists
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+
+  // Stop Bee (if running) and wipe its stale state before writing fresh keys.
+  const beeWasRunning = await wipeStaleBeeState(dataDir);
+
   // Generate a random password for the Bee keystore
   // This is separate from the vault password - defense in depth
   const beePassword = generateBeeKeystorePassword();
@@ -509,6 +554,16 @@ async function injectBeeIdentity() {
   identity.createBeeConfig(dataDir, beePassword);
 
   injectedNodes.bee = true;
+
+  // If we stopped a running node to wipe it, bring it back up with the new
+  // identity so the user isn't left with a silently-stopped node.
+  if (beeWasRunning && beeLifecycle.start) {
+    try {
+      await beeLifecycle.start();
+    } catch (err) {
+      console.warn('[IdentityManager] Bee start hook failed after injection:', err.message);
+    }
+  }
 
   console.log(`[IdentityManager] Bee identity injected: ${derivedKeys.beeWallet.address}`);
   return { address: derivedKeys.beeWallet.address };
@@ -1302,7 +1357,9 @@ module.exports = {
   getActiveWalletAddress,
 
   // Identity injection
+  setBeeLifecycle,
   removeStaleBeeDirs,
+  wipeStaleBeeState,
   injectBeeIdentity,
   injectIpfsIdentity,
   injectRadicleIdentity,

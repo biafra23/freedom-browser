@@ -82,10 +82,10 @@ const { registerBookmarksIpc } = require('./bookmarks-store');
 const { registerHistoryIpc, closeDb: closeHistoryDb } = require('./history');
 const { registerFaviconsIpc } = require('./favicons');
 const { registerEnsIpc } = require('./ens-resolver');
-const { registerBeeIpc, stopBee, startBee, setUseInjectedIdentity: setBeeInjectedIdentity } = require('./bee-manager');
+const { registerBeeIpc, stopBee, startBee, getStatus: getBeeStatus, STATUS: BEE_STATUS, setUseInjectedIdentity: setBeeInjectedIdentity } = require('./bee-manager');
 const { registerIpfsIpc, stopIpfs, startIpfs, setUseInjectedIdentity: setIpfsInjectedIdentity } = require('./ipfs-manager');
 const { registerRadicleIpc, stopRadicle, startRadicle, setUseInjectedIdentity: setRadicleInjectedIdentity } = require('./radicle-manager');
-const { registerIdentityIpc, hasVault } = require('./identity-manager');
+const { registerIdentityIpc, hasVault, setBeeLifecycle } = require('./identity-manager');
 const { registerQuickUnlockIpc } = require('./quick-unlock');
 const { registerWalletIpc } = require('./wallet/wallet-ipc');
 const { registerTokenRegistryIpc } = require('./token-registry');
@@ -152,6 +152,21 @@ async function bootstrap() {
   registerIdentityIpc();
   registerQuickUnlockIpc();
   registerWalletIpc();
+
+  // Let identity (re)injection stop the Bee node before wiping its statestore
+  // (which it holds a LevelDB lock on) and restart it with the new key. Without
+  // this, the wipe fails with EPERM on Windows during onboarding (issue #90).
+  setBeeLifecycle({
+    stop: async () => {
+      const running = getBeeStatus().status === BEE_STATUS.RUNNING;
+      if (running) await stopBee();
+      return running;
+    },
+    start: async () => {
+      setBeeInjectedIdentity(true);
+      await startBee();
+    },
+  });
   registerTokenRegistryIpc();
   registerRpcManagerIpc();
   registerNetworkConfigIpc();
