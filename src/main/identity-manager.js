@@ -734,8 +734,11 @@ async function injectAllIdentities(radicleAlias = 'FreedomBrowser', force = fals
     const wasInjected = isBeeIdentityInjected();
     results.bee = await injectBeeIdentity();
     if (wasInjected && force) {
+      // Bee's restart is owned by injectBeeIdentity (via the lifecycle hook),
+      // which stops the lock-holding node before the wipe and starts it again
+      // with the new key. Deliberately NOT added to needsRestart so the
+      // renderer doesn't restart Bee a second time (issue #90).
       results.bee.reinjected = true;
-      results.needsRestart.push('bee');
     }
   } else {
     results.bee = { address: derivedKeys.beeWallet.address, alreadyInjected: true };
