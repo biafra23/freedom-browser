@@ -58,12 +58,15 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     await continueBtn.click();
 
     // 5) On machines with Touch ID the wizard offers it next — skip it so the
-    //    flow is identical to CI runners (which have no Touch ID).
-    await win
-      .locator('[data-step="touch-id"], [data-step="backup"]')
-      .first()
-      .waitFor({ state: 'visible' });
+    //    flow is identical to CI runners (which have no Touch ID). Check
+    //    visibility (not DOM order): the touch-id step precedes backup in the
+    //    markup, so a positional `.first()` would wrongly latch onto the hidden
+    //    touch-id step on platforms that skip straight to backup.
     const touchIdStep = win.locator('[data-step="touch-id"]');
+    const backupStep = win.locator('[data-step="backup"]');
+    await expect
+      .poll(async () => (await touchIdStep.isVisible()) || (await backupStep.isVisible()))
+      .toBe(true);
     if (await touchIdStep.isVisible()) {
       await touchIdStep.locator('[data-action="skip-touch-id"]').click();
     }
@@ -71,7 +74,7 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     // 6) Acknowledge the recovery phrase and finish. This is what triggers
     //    saveVault + injectAll(force) → injectBeeIdentity, which stops the
     //    running Bee, wipes statestore, reinjects, and restarts it.
-    await win.locator('[data-step="backup"]').waitFor({ state: 'visible' });
+    await backupStep.waitFor({ state: 'visible' });
     await win.check('#backup-confirmed');
     const finishBtn = win.locator('[data-step="backup"] [data-action="continue-to-verify"]');
     await expect(finishBtn).toBeEnabled();
