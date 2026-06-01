@@ -31,6 +31,9 @@ const { removeStaleBeeDirs } = require('../../../identity-manager');
 const TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const TEST_PORT = 11633;
+// Pin a non-default p2p port so this node never clashes with a Bee already
+// running on the host's default 1634 (e.g. a developer's dev node).
+const TEST_P2P_PORT = 11634;
 const TEST_PASSWORD = 'test-password-for-statestore-lock';
 
 // How long after the wipe starts before Bee is force-killed (releasing the
@@ -119,6 +122,7 @@ describe('Bee statestore wipe lock (issue #90)', () => {
     async () => {
       const keys = deriveAllKeys(TEST_MNEMONIC);
       const configPath = createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT);
+      fs.appendFileSync(configPath, `p2p-addr: 127.0.0.1:${TEST_P2P_PORT}\n`);
       // Pin a neighborhood so Bee doesn't query the external Swarmscan
       // suggester before going healthy — that lookup would make this required
       // CI job flaky on any DNS/service hiccup.
