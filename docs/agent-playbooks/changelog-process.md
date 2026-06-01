@@ -46,7 +46,7 @@ Mechanical sanity checks:
 
 - Top-level bullets: aim ≤ 25 words.
 - Sub-bullets: aim ≤ 15 words.
-- Sub-bullets across the whole release: aim ≤ 10 total. If you're over, fold related surfaces into the parent or drop them.
+- Sub-bullets across the whole release: aim ≤ 10 total, excluding the per-package dependency sub-bullets (see Structure rules). If you're over, fold related surfaces into the parent or drop them.
 
 Drift patterns to cut on sight (every one of these has shipped into a draft and had to be trimmed later):
 
@@ -83,7 +83,15 @@ If a sub-bullet runs past 20 words, opens with the same noun phrase as a sibling
 ### Structure rules
 
 - **Multi-surface features = one parent bullet + sub-bullets**, not multiple top-level entries. The `0.7.0` `Experimental Identity & Wallet system:` block is the model.
-- **Dependency lists are flat comma lists**, not nested semicolons or sub-bullets. Match `0.7.0`'s `Updated bundled nodes: Bee 2.7.0 to 2.7.1, Kubo 0.39.0 to 0.40.1, Radicle 1.6.1 to 1.8.0`.
+- **Dependency updates are one-per-line sub-bullets under a category lead.** Group by category (`Updated runtime dependencies:`, `Updated dev dependencies:`, `Updated bundled nodes:`) as the top-level bullet, then list each package on its own sub-bullet as `name old to new`. This keeps long Electron version strings (with their Chromium/Node detail) readable instead of buried mid-line. Example:
+
+```
+- Updated runtime dependencies:
+  - Electron 41.7.0 to 41.7.1 (Chromium 146.0.7680.216, Node 24.15.0 — same as 41.7.0; Electron-side patches only)
+  - `@corpus-core/colibri-stateless` 1.1.26 to 1.1.28
+- Updated dev dependencies:
+  - `eslint` 10.4.0 to 10.4.1
+```
 
 ### Section choice and deduplication
 

@@ -249,8 +249,15 @@ This step is intentionally separate from §4 — §4 verifies the source tree (`
 
 ## 7. Upload binaries and update the website
 
-1. Upload the generated artifacts from `dist/` to `https://freedom.baby/downloads`, including the `latest*.yml` manifests so existing installs pick up the update via `electron-updater` (which is configured with `publish.provider = generic` pointing at that URL).
-2. Update the Freedom website to point at the new version:
+1. Push the release branch to GitHub so the pinned changelog link (step 3) resolves — the `release/<version>` blob URL 404s until the branch exists on the remote:
+
+   ```
+   git push -u origin release/<version>
+   ```
+
+   This is a plain branch push, not the `main` merge (that stays in §9). The branch is meant to live on after the release anyway (§10), so publishing it now costs nothing and unblocks the website update.
+2. Upload the generated artifacts from `dist/` to `https://freedom.baby/downloads`, including the `latest*.yml` manifests so existing installs pick up the update via `electron-updater` (which is configured with `publish.provider = generic` pointing at that URL).
+3. Update the Freedom website to point at the new version:
    - Download links and per-platform file-size metadata.
    - Version string in the downloads intro (e.g. `Alpha release (<version>)`).
    - `Changelog` link — pin to the release branch so the page shows the CHANGELOG state that matches the binaries being served: `https://github.com/solardev-xyz/freedom-browser/blob/release/<version>/CHANGELOG.md`. Do not link to `main`, which will absorb future releases' in-progress notes.
