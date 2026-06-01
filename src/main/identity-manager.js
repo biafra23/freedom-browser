@@ -280,8 +280,16 @@ async function getPublisherKey(originIndex) {
 
 /**
  * Get the Bee data directory
+ *
+ * Must resolve to the same directory bee-manager uses, so the keys we inject
+ * land where the running node reads them. The FREEDOM_BEE_DATA override
+ * mirrors bee-manager.getBeeDataPath() and keeps a live E2E run isolated in a
+ * temp dir instead of the developer's persistent `bee-data/`.
  */
 function getBeeDataDir() {
+  if (process.env.FREEDOM_BEE_DATA) {
+    return process.env.FREEDOM_BEE_DATA;
+  }
   if (!app.isPackaged) {
     return path.join(__dirname, '..', '..', 'bee-data');
   }
@@ -290,8 +298,14 @@ function getBeeDataDir() {
 
 /**
  * Get the IPFS data directory
+ *
+ * Mirrors ipfs-manager.getIpfsDataPath()'s FREEDOM_IPFS_DATA override so
+ * injection targets the same repo the node uses (and stays isolated in E2E).
  */
 function getIpfsDataDir() {
+  if (process.env.FREEDOM_IPFS_DATA) {
+    return process.env.FREEDOM_IPFS_DATA;
+  }
   if (!app.isPackaged) {
     return path.join(__dirname, '..', '..', 'ipfs-data');
   }
@@ -300,8 +314,15 @@ function getIpfsDataDir() {
 
 /**
  * Get the Radicle data directory
+ *
+ * Mirrors radicle-manager.getRadicleDataPath()'s FREEDOM_RADICLE_DATA override
+ * so injection targets the same RAD_HOME the node uses (and stays isolated in
+ * E2E).
  */
 function getRadicleDataDir() {
+  if (process.env.FREEDOM_RADICLE_DATA) {
+    return process.env.FREEDOM_RADICLE_DATA;
+  }
   if (!app.isPackaged) {
     return path.join(__dirname, '..', '..', 'radicle-data');
   }

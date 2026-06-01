@@ -78,6 +78,65 @@ jobs:
       - name: Run statestore-lock reproduction tests
         run: npx jest --forceExit --runInBand src/main/identity/__tests__/integration/bee-statestore-lock.test.js src/main/identity/__tests__/integration/bee-injection-stops-node.test.js
 
+  # Issue #90 follow-up — onboarding wizard must create node identities while a
+  # real Bee node is running (its locked statestore is what triggered the EPERM
+  # wipe failure). Drives the full password wizard end-to-end against a real Bee
+  # spawn; the Windows leg is the meaningful regression guard.
+  e2e-onboarding-identity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright system dependencies
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps
+
+      - name: Download Bee binary
+        run: npm run bee:download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Download IPFS binary
+        run: npm run ipfs:download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Run onboarding identity E2E
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run test:e2e:onboarding
+          else
+            npm run test:e2e:onboarding
+          fi
+
+      - name: Upload Playwright traces and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-onboarding-identity-${{ matrix.os }}-traces
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Issue #69 — address-bar clipboard: Win/Linux menu wiring + chrome context menu (all platforms).
   e2e-address-bar-clipboard:
     strategy:
