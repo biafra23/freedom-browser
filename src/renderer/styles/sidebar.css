@@ -1321,6 +1321,132 @@
   color: var(--text-inverse);
 }
 
+/* Recent payments mini-section (5 rows; "View all" opens freedom://payments) */
+.recent-payments {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.recent-payments-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.recent-payments-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.recent-payments-link {
+  font-size: 12px;
+  color: #2775ca;
+  text-decoration: none;
+}
+
+.recent-payments-link:hover {
+  text-decoration: underline;
+}
+
+.recent-payments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-payment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.recent-payment-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.recent-payment-amount {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-payment-counterparty {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-payment-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.recent-payment-when {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.recent-payment-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.recent-payment-status::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.recent-payment-status.settled,
+.recent-payment-status.confirmed { color: #56d364; }
+.recent-payment-status.pending   { color: #d29922; }
+.recent-payment-status.failed    { color: #f85149; }
+.recent-payment-status.no-receipt { color: #8b949e; }
+
+.recent-payments-empty {
+  padding: 16px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+[data-theme="light"] .recent-payment-row {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .recent-payment-status.settled,
+[data-theme="light"] .recent-payment-status.confirmed { color: #1f7a34; }
+[data-theme="light"] .recent-payment-status.pending   { color: #8a5a07; }
+[data-theme="light"] .recent-payment-status.failed    { color: #b3261e; }
+
 /* ============================================
    Node Cards (Collapsible)
    ============================================ */
@@ -2392,6 +2518,378 @@
 [data-theme="light"] .swarm-connection-banner {
   background: rgba(245, 158, 11, 0.08);
   border-color: rgba(245, 158, 11, 0.25);
+}
+
+/* ============================================
+   x402 Auto-Pay Banner
+   ============================================ */
+
+.x402-connection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: rgba(39, 117, 202, 0.1);
+  border: 1px solid rgba(39, 117, 202, 0.3);
+  border-radius: 8px;
+}
+
+.x402-connection-banner.hidden {
+  display: none;
+}
+
+.x402-connection-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+
+.x402-connection-indicator {
+  width: 8px;
+  height: 8px;
+  background: #2775ca;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.x402-connection-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.x402-connection-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.x402-connection-site {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.x402-connection-remaining {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.x402-connection-disconnect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.x402-connection-disconnect:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.x402-connection-disconnect svg {
+  width: 14px;
+  height: 14px;
+}
+
+[data-theme="light"] .x402-connection-banner {
+  background: rgba(39, 117, 202, 0.08);
+  border-color: rgba(39, 117, 202, 0.25);
+}
+
+.x402-perms-error {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* x402 permissions subscreen — per-allowance card */
+.x402-perm-block {
+  padding: 14px;
+  margin-bottom: 12px;
+  background: rgba(39, 117, 202, 0.05);
+  border: 1px solid rgba(39, 117, 202, 0.18);
+  border-radius: 10px;
+}
+
+.x402-perm-block:last-child {
+  margin-bottom: 0;
+}
+
+.x402-perm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.x402-perm-asset-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: 0.01em;
+}
+
+.x402-perm-chain-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: #2775ca;
+  background: rgba(39, 117, 202, 0.12);
+  padding: 3px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.x402-perm-usage {
+  margin-bottom: 8px;
+}
+
+.x402-perm-usage-summary {
+  font-size: 12px;
+  color: var(--foreground);
+  margin-bottom: 6px;
+}
+
+.x402-perm-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.x402-perm-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2775ca, #5a9eee);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.x402-perm-expiry {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.x402-perm-divider {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 8px 0 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: 4px;
+}
+
+.x402-perm-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.x402-perm-field label {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+}
+
+.x402-perm-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.x402-perm-input,
+.x402-perm-select {
+  background: var(--input-background, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+  color: var(--foreground);
+  font-family: inherit;
+  min-width: 0;
+}
+
+.x402-perm-input {
+  width: 90px;
+  padding-right: 50px;
+  text-align: right;
+}
+
+.x402-perm-select {
+  width: 130px;
+}
+
+.x402-perm-input::-webkit-outer-spin-button,
+.x402-perm-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.x402-perm-input-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.x402-perm-input:focus,
+.x402-perm-select:focus {
+  outline: none;
+  border-color: #2775ca;
+}
+
+/* --- x402 grant editor on the approval card ----------------------- */
+/* Checkbox + inline editors for cap amount + reset window. Shares
+   visual language with the perm-manage subscreen so users see the
+   same controls in both surfaces. Inputs stay enabled when the
+   toggle is off — the user can pre-tune before opting in. */
+.x402-grant {
+  background: var(--toolbar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 16px;
+}
+
+.x402-grant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.x402-grant-toggle input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.x402-grant-toggle-label {
+  font-weight: 500;
+}
+
+.x402-grant-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.x402-grant-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.x402-grant-field-label {
+  font-size: 12px;
+  color: var(--foreground-muted);
+  flex: 1;
+}
+
+.x402-grant-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.x402-grant input[type="number"],
+.x402-grant-select {
+  background: var(--input-background, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+  color: var(--foreground);
+  font-family: inherit;
+}
+
+.x402-grant input[type="number"] {
+  width: 100px;
+  padding-right: 56px;
+  text-align: right;
+}
+
+.x402-grant-select {
+  width: 130px;
+}
+
+.x402-grant input[type="number"]::-webkit-outer-spin-button,
+.x402-grant input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.x402-grant-input-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground-muted);
+  pointer-events: none;
+}
+
+.x402-grant input[type="number"]:focus,
+.x402-grant-select:focus {
+  outline: none;
+  border-color: #2775ca;
+}
+
+/* Visual hint that the inputs are inert when the toggle is off —
+   keep them clickable (`:has` works fine on Electron Chromium) so
+   the user can pre-tune values before deciding to opt in. */
+.x402-grant:not(:has(input[type="checkbox"]:checked)) .x402-grant-fields {
+  opacity: 0.6;
+}
+
+.x402-perm-meta {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+[data-theme="light"] .x402-perm-block {
+  background: rgba(39, 117, 202, 0.04);
+  border-color: rgba(39, 117, 202, 0.18);
+}
+
+[data-theme="light"] .x402-perm-bar {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .x402-perm-divider {
+  border-top-color: rgba(0, 0, 0, 0.06);
 }
 
 /* ============================================
@@ -4933,6 +5431,198 @@
   white-space: nowrap;
 }
 
+/* --- x402 approval card locked state ----------------------------- */
+/* When the vault is locked, collapse the card to: site origin +
+   unlock block + Reject. Hide payment details, chooser, warnings,
+   grant editor, Pay button — none of it is actionable yet, and
+   biometric-unlock isn't the authorisation moment (the Pay click
+   post-unlock is). The user reviews + decides AFTER unlock; the
+   locked screen just gets them past the gate. Toggled from
+   `checkUnlockState` in dapp-x402.js. */
+#sidebar-x402-approval.is-locked .x402-chooser,
+#sidebar-x402-approval.is-locked .dapp-tx-details,
+#sidebar-x402-approval.is-locked .x402-insufficient,
+#sidebar-x402-approval.is-locked .dapp-tx-warning,
+#sidebar-x402-approval.is-locked .x402-grant,
+#sidebar-x402-approval.is-locked #x402-approval-approve {
+  display: none;
+}
+
+/* --- x402 multi-accept chooser ------------------------------------ */
+/* Visible only when 2+ accepts[] entries are fundable from the
+   active wallet. Sits above the standard detail rows; selecting a
+   row updates pending.selectedAcceptIndex and re-renders the rows
+   below to show the chosen entry's amount / payTo / network. */
+.x402-chooser {
+  background: var(--toolbar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.x402-chooser-label {
+  font-size: 13px;
+  color: var(--foreground-muted);
+  margin-bottom: 8px;
+}
+
+.x402-chooser-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.x402-chooser-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.x402-chooser-row:hover:not(.is-unfundable) {
+  background: var(--toolbar);
+}
+
+/* Selected-row treatment. `:has(input:checked)` works on Chromium 105+;
+   Electron Chromium is always newer. `.is-selected` is a redundant
+   class kept as a fallback for tooling that strips :has. */
+.x402-chooser-row:has(input:checked),
+.x402-chooser-row.is-selected {
+  background: var(--toolbar);
+  border-color: var(--accent, var(--foreground));
+}
+
+.x402-chooser-row input[type="radio"] {
+  accent-color: var(--accent, currentColor);
+  flex-shrink: 0;
+}
+
+.x402-chooser-row-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.x402-chooser-row-amount {
+  font-size: 13px;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.x402-chooser-row-network {
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+.x402-chooser-row-balance {
+  font-size: 11px;
+  color: var(--foreground-muted);
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.x402-chooser-row-balance.is-low {
+  color: rgb(245, 158, 11);
+}
+
+.x402-chooser-row.is-unfundable {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* --- x402 insufficient-funds state -------------------------------- */
+/* Replaces the detail rows when no accepts[] entry is fundable. Pay
+   button stays disabled (locked decision §2 — no "Pay anyway"). */
+.x402-insufficient {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.x402-insufficient-title {
+  margin: 0 0 6px 0;
+  font-weight: 600;
+  color: rgb(245, 158, 11);
+}
+
+.x402-insufficient-help,
+.x402-insufficient-footer {
+  margin: 0 0 6px 0;
+  color: var(--foreground-muted);
+  font-size: 12px;
+}
+
+.x402-insufficient-footer {
+  margin: 6px 0 0 0;
+}
+
+.x402-insufficient-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+}
+
+.x402-insufficient-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.x402-insufficient-need {
+  color: var(--foreground);
+}
+
+.x402-insufficient-have {
+  color: var(--foreground-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.x402-insufficient-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.x402-insufficient-refresh:hover:not(:disabled) {
+  background: var(--toolbar);
+}
+
+.x402-insufficient-refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.x402-insufficient-refresh svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 .dapp-tx-warning {
   display: flex;
   align-items: flex-start;
@@ -5055,6 +5745,10 @@
 .dapp-tx-actions {
   display: flex;
   gap: 12px;
+  /* Breathing room above the Reject/Confirm buttons — without this
+     they sit flush against whatever was rendered above (auto-approve
+     checkbox, x402 grant editor, etc.) and read as a layout bug. */
+  margin-top: 16px;
 }
 
 .dapp-tx-reject-btn {

@@ -40,11 +40,29 @@ function loadJsonFile(filePath, fallback = {}) {
   }
 }
 
+// Lowercase the address part of a token key on load + on lookup so
+// EIP-55 checksum-cased keys in tokens.json match the lowercase asset
+// addresses that `tupleFromAccept` (and any other normalized lookup
+// path) emits. Ethereum addresses are case-insensitive on the wire;
+// EIP-55 is a hex-only display convention and shouldn't drive
+// downstream string compares.
+function normalizeTokenKey(rawKey) {
+  const colon = rawKey.indexOf(':');
+  if (colon < 0) return rawKey;
+  const chain = rawKey.slice(0, colon);
+  const addr = rawKey.slice(colon + 1);
+  return `${chain}:${addr.toLowerCase()}`;
+}
+
 function initRegistry() {
   if (initialized) return;
   const builtinTokens = loadJsonFile(getBuiltinTokensPath(), {});
   const customTokens = loadJsonFile(getCustomTokensPath(), {});
-  tokens = { ...builtinTokens, ...customTokens };
+  const merged = { ...builtinTokens, ...customTokens };
+  tokens = {};
+  for (const [rawKey, value] of Object.entries(merged)) {
+    tokens[normalizeTokenKey(rawKey)] = value;
+  }
   initialized = true;
   console.log(`[TokenRegistry] Initialized with ${Object.keys(tokens).length} tokens`);
 }
@@ -76,7 +94,7 @@ function getToken(key) {
 }
 
 function getTokenKey(chainId, address) {
-  return address ? `${chainId}:${address}` : `${chainId}:native`;
+  return address ? `${chainId}:${address.toLowerCase()}` : `${chainId}:native`;
 }
 
 function addCustomToken(token) {

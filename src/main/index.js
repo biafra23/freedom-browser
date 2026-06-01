@@ -98,7 +98,10 @@ const { registerShutdownSignalHandlers } = require('./shutdown-signals');
 const unregisterShutdownSignalHandlers = registerShutdownSignalHandlers({ app, logger: log });
 const { BrowserWindow, protocol, session } = require('electron');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
-const { registerRequestRewriter } = require('./request-rewriter');
+const { installRequestRewriter } = require('./request-rewriter');
+const { attachWebRequestDispatcher } = require('./webrequest-dispatcher');
+const { installX402Interception } = require('./x402/intercept');
+const { registerX402Ipc } = require('./x402/ipc');
 const { registerBzzProtocol } = require('./swarm/bzz-protocol');
 const { registerIpfsProtocol, registerIpnsProtocol } = require('./ipfs/ipfs-protocol');
 
@@ -138,6 +141,8 @@ const { registerDappPermissionsIpc } = require('./wallet/dapp-permissions');
 const { registerSwarmIpc } = require('./swarm/stamp-service');
 const { registerPublishIpc } = require('./swarm/publish-service');
 const { registerPublishHistoryIpc, closeDb: closePublishHistoryDb } = require('./swarm/publish-history');
+const paymentHistory = require('./payment-history');
+const { getTransactionStatus: getTxStatus } = require('./wallet/transaction-service');
 const { registerSwarmPermissionsIpc } = require('./swarm/swarm-permissions');
 const { registerSwarmProviderIpc } = require('./swarm/swarm-provider-ipc');
 const { registerFeedStoreIpc } = require('./swarm/feed-store');
@@ -215,12 +220,23 @@ async function bootstrap() {
   registerRpcManagerIpc();
   registerNetworkConfigIpc();
   registerDappPermissionsIpc();
+  registerX402Ipc();
+  paymentHistory.registerPaymentHistoryIpc();
   registerSwarmIpc();
   registerPublishIpc();
   registerPublishHistoryIpc();
   registerSwarmPermissionsIpc();
   registerSwarmProviderIpc();
   registerFeedStoreIpc();
+
+  // Resolve any pending broadcast txs that didn't get a final receipt
+  // before the previous run exited. Fire-and-forget — the wallet stack
+  // is up by now (registerWalletIpc above wires the provider pool) and
+  // the sweep updates rows in place.
+  paymentHistory.repollPending(getTxStatus).catch((err) => {
+    log.warn(`[App] payment-history repoll failed: ${err.message}`);
+  });
+
   if (!TEST_MODE) {
     // Skip registering the real bzz/ipfs/ipns handlers in test mode —
     // installTestHarness() registers fixture-driven stubs on the same
@@ -230,7 +246,11 @@ async function bootstrap() {
     registerIpfsProtocol(defaultSession);
     registerIpnsProtocol(defaultSession);
   }
-  registerRequestRewriter(defaultSession);
+  // All consumers register their handlers first, then the dispatcher
+  // attaches exactly one Electron listener per event to the session.
+  installRequestRewriter();
+  installX402Interception();
+  attachWebRequestDispatcher(defaultSession);
   allowInteractivePermissions(defaultSession);
   registerWebContentsHandlers();
   setupApplicationMenu();
@@ -357,6 +377,7 @@ app.on('before-quit', async (event) => {
   log.info('[App] Closing history databases...');
   closeHistoryDb();
   closePublishHistoryDb();
+  paymentHistory.closeDb();
 
   // Clean up any GitHub bridge temp directories
   cleanupTempDirs();

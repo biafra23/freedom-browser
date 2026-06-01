@@ -72,6 +72,70 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addHistory: (entry) => ipcRenderer.invoke('history:add', entry),
   removeHistory: (id) => ipcRenderer.invoke('history:remove', id),
   clearHistory: () => ipcRenderer.invoke('history:clear'),
+  // x402 payments. All tab-scoped calls take webContentsId explicitly —
+  // the sidebar is the host webContents, not the paying webview.
+  x402GetDetails: (args) => ipcRenderer.invoke('x402:get-details', args),
+  x402Approve: (args) => ipcRenderer.invoke('x402:approve', args),
+  // Subresource approval-card reject (sign-on-click flow). For
+  // mainFrame paywall cancel, use x402Cancel (which also navigates the
+  // webview).
+  x402Reject: (args) => ipcRenderer.invoke('x402:reject', args),
+  // Dedicated resume channel for the locked-vault auto-pay flow. Manual
+  // approve clicks must use x402Approve and not this — the resume token
+  // is consent-source-specific.
+  x402ResumeUnlock: (args) => ipcRenderer.invoke('x402:resume-unlock', args),
+  // User-initiated balance refresh from the insufficient-funds card.
+  x402RefreshBalances: (args) => ipcRenderer.invoke('x402:refresh-balances', args),
+  x402Cancel: (args) => ipcRenderer.invoke('x402:cancel', args),
+  x402GetReceipts: (options) => ipcRenderer.invoke('x402:get-receipts', options),
+  x402GetAllPermissions: () => ipcRenderer.invoke('x402:get-all-permissions'),
+  x402RevokePermission: (args) => ipcRenderer.invoke('x402:revoke-permission', args),
+  x402RevokeAllForOrigin: (args) => ipcRenderer.invoke('x402:revoke-all-for-origin', args),
+  x402UpdatePermission: (args) => ipcRenderer.invoke('x402:update-permission', args),
+  // Main fires this when an unsupervised 402 needs approval (no active
+  // cap covers the charge). Returns a disposer.
+  onX402ApprovalNeeded: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:approval-needed', handler);
+    return () => ipcRenderer.removeListener('x402:approval-needed', handler);
+  },
+  // Main fires this AFTER a subresource sign-after-approve completes
+  // (success or failure). x402:approve for the subresource path returns
+  // `{ pending: true }` synchronously; the renderer keeps the card in
+  // "Signing..." state and listens here for the final outcome.
+  onX402ApprovalResult: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:approval-result', handler);
+    return () => ipcRenderer.removeListener('x402:approval-result', handler);
+  },
+  // Main fires this when auto-pay would have fired but the vault is
+  // locked. The cap is already authorised; we just need the user to
+  // unlock so sign-flow can resume.
+  onX402UnlockNeeded: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:unlock-needed', handler);
+    return () => ipcRenderer.removeListener('x402:unlock-needed', handler);
+  },
+  // Main fires this after the inject handler actually decremented a
+  // per-origin cap. Silent auto-pay (video segments, lazy paragraphs)
+  // never round-trips through the renderer otherwise, so the auto-pay
+  // banner's spend counter would stay stale until the next navigation.
+  onX402CapConsumed: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:cap-consumed', handler);
+    return () => ipcRenderer.removeListener('x402:cap-consumed', handler);
+  },
+  // Background fresh-balance refresh result for the approval card's
+  // chooser rows. Main kicks the refresh on x402:get-details and
+  // broadcasts here when it lands. Pinned-selection semantics live on
+  // the renderer side: balances + fundability indicators update in
+  // place, but the user's current selection is never changed
+  // implicitly.
+  onX402BalancesUpdated: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('x402:balances-updated', handler);
+    return () => ipcRenderer.removeListener('x402:balances-updated', handler);
+  },
   // Internal
   getWebviewPreloadPath: () => ipcRenderer.invoke('internal:get-webview-preload-path'),
   // Context menu
@@ -197,16 +261,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdates: () => ipcRenderer.send('update:check'),
 });
 
-// Re-dispatch main-process settings:updated broadcasts as a window CustomEvent
-// so existing renderer listeners (theme, radicle, sidebar, wallet, etc.) work
-// regardless of which UI surface triggered the save.
-ipcRenderer.on('settings:updated', (_event, settings) => {
-  try {
-    window.dispatchEvent(new CustomEvent('settings:updated', { detail: settings }));
-  } catch {
-    // Window may be closing
-  }
-});
+// Re-dispatch main-process broadcasts as window CustomEvents so existing
+// renderer listeners can subscribe via plain DOM `addEventListener` —
+// no need to thread an unsubscribe through preload.
+function reDispatchAsWindowEvent(channel) {
+  ipcRenderer.on(channel, (_event, detail) => {
+    try {
+      window.dispatchEvent(new CustomEvent(channel, { detail }));
+    } catch {
+      // Window may be closing
+    }
+  });
+}
+reDispatchAsWindowEvent('settings:updated');
+reDispatchAsWindowEvent('payments:tx-recorded');
 
 contextBridge.exposeInMainWorld('bee', {
   start: () => ipcRenderer.invoke('bee:start'),
@@ -326,12 +394,12 @@ contextBridge.exposeInMainWorld('wallet', {
   getGasPrice: (chainId) => ipcRenderer.invoke('wallet:get-gas-price', chainId),
   buildErc20Data: (to, amount) => ipcRenderer.invoke('wallet:build-erc20-data', to, amount),
   parseAmount: (amount, decimals) => ipcRenderer.invoke('wallet:parse-amount', amount, decimals),
-  sendTransaction: (params) => ipcRenderer.invoke('wallet:send-transaction', params),
+  sendTransaction: (params, context) => ipcRenderer.invoke('wallet:send-transaction', params, context),
   getTransactionStatus: (txHash, chainId) => ipcRenderer.invoke('wallet:get-transaction-status', txHash, chainId),
   waitForTransaction: (txHash, chainId, confirmations) => ipcRenderer.invoke('wallet:wait-for-transaction', txHash, chainId, confirmations),
 
   // dApp-specific operations (use specific wallet index)
-  dappSendTransaction: (params, walletIndex) => ipcRenderer.invoke('wallet:dapp-send-transaction', params, walletIndex),
+  dappSendTransaction: (params, walletIndex, context) => ipcRenderer.invoke('wallet:dapp-send-transaction', params, walletIndex, context),
   signMessage: (message, walletIndex) => ipcRenderer.invoke('wallet:sign-message', message, walletIndex),
   signTypedData: (typedData, walletIndex) => ipcRenderer.invoke('wallet:sign-typed-data', typedData, walletIndex),
 
@@ -362,6 +430,15 @@ contextBridge.exposeInMainWorld('networks', {
   isChainAvailable: (chainId) => ipcRenderer.invoke('networks:is-chain-available', chainId),
   addChain: (chain, rpcUrls) => ipcRenderer.invoke('networks:add-chain', chain, rpcUrls),
   removeChain: (chainId) => ipcRenderer.invoke('networks:remove-chain', chainId),
+});
+
+// Unified payment history. The renderer (Wallet sidebar mini-section,
+// future freedom://payments page) reads from this — never writes.
+// Producers (x402 intercept, wallet/dapp sends) record in main directly.
+contextBridge.exposeInMainWorld('payments', {
+  getRecent: (filters) => ipcRenderer.invoke('payments:get-recent', filters),
+  getById: (id) => ipcRenderer.invoke('payments:get-by-id', id),
+  getCount: (filters) => ipcRenderer.invoke('payments:get-count', filters),
 });
 
 contextBridge.exposeInMainWorld('tokens', {

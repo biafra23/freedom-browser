@@ -114,6 +114,62 @@ function headRequest(host, port, urlPath) {
   });
 }
 
+function responseFromHttp(res, body) {
+  return new Response(body, {
+    status: res.statusCode,
+    headers: res.headers,
+  });
+}
+
+function requestViaHttp(url, init = {}) {
+  const parsed = new URL(url);
+  const headers = {};
+  for (const [name, value] of (init.headers || new Headers()).entries()) {
+    headers[name] = value;
+  }
+  const hostHeader = parsed.host;
+  const dialHost = parsed.hostname.endsWith('.localhost') ? '127.0.0.1' : parsed.hostname;
+  headers.host = hostHeader;
+
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: dialHost,
+        port: parsed.port || 80,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: init.method || 'GET',
+        headers,
+        timeout: 5000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve(responseFromHttp(res, Buffer.concat(chunks))));
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error(`HTTP timeout for ${url}`)));
+    if (init.signal) {
+      init.signal.addEventListener('abort', () => req.destroy(new Error('aborted')), { once: true });
+    }
+    if (init.body) req.write(init.body);
+    req.end();
+  });
+}
+
+async function fetchFollowingLocalhostRedirects(url, init = {}) {
+  expect(init.redirect).toBe('follow');
+  let currentUrl = url;
+  for (let redirects = 0; redirects < 5; redirects++) {
+    const res = await requestViaHttp(currentUrl, init);
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get('location');
+    if (!location) return res;
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+  throw new Error(`Too many redirects while fetching ${url}`);
+}
+
 describe('Kubo subdomain gateway redirect', () => {
   const ipfsBinary = getIpfsBinaryPath();
   let tempDir;
@@ -129,9 +185,14 @@ describe('Kubo subdomain gateway redirect', () => {
     if (ipfsProcess && !ipfsProcess.killed) {
       ipfsProcess.kill('SIGTERM');
       await new Promise((resolve) => {
-        ipfsProcess.on('exit', resolve);
-        setTimeout(resolve, 3000);
+        const timer = setTimeout(resolve, 3000);
+        timer.unref?.();
+        ipfsProcess.on('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
+      ipfsProcess = null;
     }
     if (tempDir && fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -210,12 +271,12 @@ describe('Kubo subdomain gateway redirect', () => {
       // *.localhost resolution) because Node's getaddrinfo on macOS
       // returns ENOTFOUND for those hosts. Jest doesn't run inside an
       // Electron context so `require('electron').net.fetch` isn't
-      // available; bind to Node's global fetch here. On Linux CI, Node's
-      // resolver does honour *.localhost so this still validates the
-      // redirect-follow contract; the macOS-specific resolution path is
-      // covered by the production net.fetch wiring + manual smoke test.
+      // available. This shim follows Kubo's redirect while preserving the
+      // redirected `Host: <cid>.ipfs.localhost:<port>` header and dialing
+      // loopback directly, which mirrors the Electron/Chromium behavior
+      // the handler relies on in production.
       jest.doMock('electron', () => ({
-        net: { fetch: globalThis.fetch.bind(globalThis) },
+        net: { fetch: fetchFollowingLocalhostRedirects },
       }));
       const { handleRequest } = require('../../ipfs/ipfs-protocol');
 

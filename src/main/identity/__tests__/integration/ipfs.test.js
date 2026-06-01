@@ -130,8 +130,12 @@ describe('IPFS Integration', () => {
     if (ipfsProcess && !ipfsProcess.killed) {
       ipfsProcess.kill('SIGTERM');
       await new Promise((resolve) => {
-        ipfsProcess.on('exit', resolve);
-        setTimeout(resolve, 3000);
+        const timer = setTimeout(resolve, 3000);
+        timer.unref?.();
+        ipfsProcess.on('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
     }
 

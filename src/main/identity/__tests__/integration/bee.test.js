@@ -133,10 +133,15 @@ describe('Bee Integration', () => {
     // Kill Bee process if running
     if (beeProcess && !beeProcess.killed) {
       beeProcess.kill('SIGTERM');
-      // Wait for process to exit
+      // Wait for process to exit, falling back after 2s. The fallback timer is
+      // unref'd and cleared on exit so it can't keep the Jest worker alive.
       await new Promise((resolve) => {
-        beeProcess.on('exit', resolve);
-        setTimeout(resolve, 2000); // Force continue after 2s
+        const timer = setTimeout(resolve, 2000);
+        timer.unref?.();
+        beeProcess.on('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
     }
 

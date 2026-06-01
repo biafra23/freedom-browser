@@ -2,6 +2,7 @@ const log = require('./logger');
 const { activeBzzBases, activeRadBases } = require('./state');
 const { getRadicleApiUrl } = require('./service-registry');
 const { loadSettings } = require('./settings-store');
+const { registerWebRequestHandler } = require('./webrequest-dispatcher');
 const { URL } = require('url');
 
 const sanitizeUrlForLog = (rawUrl) => {
@@ -168,74 +169,78 @@ function shouldBlockInvalidBzzRequest(url) {
   return false;
 }
 
-function registerRequestRewriter(targetSession) {
-  if (!targetSession) {
-    return;
+/**
+ * Pure dispatcher handler — examines a request and returns an action
+ * object (`{redirectURL}` or `{cancel}`) or `null` to pass through.
+ * Exported separately from the install step so tests can drive it
+ * without mocking `session.webRequest`.
+ */
+function rewriteRequestForDispatch(details) {
+  const webContentsId = details.webContentsId;
+
+  const { converted, url: convertedUrl } = convertProtocolUrl(details.url);
+  if (converted) {
+    log.info(
+      `[rewrite:protocol] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(convertedUrl)}`
+    );
+    return { redirectURL: convertedUrl };
   }
 
-  targetSession.webRequest.onBeforeRequest((details, callback) => {
-    const webContentsId = details.webContentsId;
-
-    const { converted, url: convertedUrl } = convertProtocolUrl(details.url);
-    if (converted) {
-      log.info(
-        `[rewrite:protocol] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(convertedUrl)}`
-      );
-      callback({ redirectURL: convertedUrl });
-      return;
-    }
-
-    // Check for Swarm (bzz) base first
-    const bzzBaseUrl = activeBzzBases.get(webContentsId);
-    if (bzzBaseUrl) {
-      const { shouldRewrite } = shouldRewriteRequest(details.url, bzzBaseUrl);
-      if (shouldRewrite) {
-        const redirectTarget = buildRewriteTarget(details.url, bzzBaseUrl);
-        if (redirectTarget) {
-          log.info(
-            `[rewrite:bzz] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(redirectTarget)}`
-          );
-          callback({ redirectURL: redirectTarget });
-          return;
-        }
+  // Check for Swarm (bzz) base first
+  const bzzBaseUrl = activeBzzBases.get(webContentsId);
+  if (bzzBaseUrl) {
+    const { shouldRewrite } = shouldRewriteRequest(details.url, bzzBaseUrl);
+    if (shouldRewrite) {
+      const redirectTarget = buildRewriteTarget(details.url, bzzBaseUrl);
+      if (redirectTarget) {
+        log.info(
+          `[rewrite:bzz] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(redirectTarget)}`
+        );
+        return { redirectURL: redirectTarget };
       }
     }
+  }
 
-    // No IPFS rewriter arm — `ipfs://` and `ipns://` are standard schemes
-    // dispatched to `src/main/ipfs/ipfs-protocol.js`, so the page origin is
-    // `ipfs://<cid|name>/` and same-origin sub-resources never reach
-    // webRequest as gateway URLs.
+  // No IPFS rewriter arm — `ipfs://` and `ipns://` are standard schemes
+  // dispatched to `src/main/ipfs/ipfs-protocol.js`, so the page origin is
+  // `ipfs://<cid|name>/` and same-origin sub-resources never reach
+  // webRequest as gateway URLs.
 
-    // Check for Radicle base
-    const radBaseUrl = activeRadBases.get(webContentsId);
-    if (radBaseUrl && loadSettings().enableRadicleIntegration === true) {
-      const { shouldRewrite } = shouldRewriteRequest(details.url, radBaseUrl);
-      if (shouldRewrite) {
-        const redirectTarget = buildRewriteTarget(details.url, radBaseUrl);
-        if (redirectTarget) {
-          log.info(
-            `[rewrite:rad] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(redirectTarget)}`
-          );
-          callback({ redirectURL: redirectTarget });
-          return;
-        }
+  // Check for Radicle base
+  const radBaseUrl = activeRadBases.get(webContentsId);
+  if (radBaseUrl && loadSettings().enableRadicleIntegration === true) {
+    const { shouldRewrite } = shouldRewriteRequest(details.url, radBaseUrl);
+    if (shouldRewrite) {
+      const redirectTarget = buildRewriteTarget(details.url, radBaseUrl);
+      if (redirectTarget) {
+        log.info(
+          `[rewrite:rad] ${sanitizeUrlForLog(details.url)} -> ${sanitizeUrlForLog(redirectTarget)}`
+        );
+        return { redirectURL: redirectTarget };
       }
     }
+  }
 
-    // Final guard: block requests to /bzz/ with missing or invalid hash
-    // to prevent "bzz download: invalid path" errors on the Bee node
-    if (shouldBlockInvalidBzzRequest(details.url)) {
-      callback({ cancel: true });
-      return;
-    }
+  // Final guard: block requests to /bzz/ with missing or invalid hash
+  // to prevent "bzz download: invalid path" errors on the Bee node
+  if (shouldBlockInvalidBzzRequest(details.url)) {
+    return { cancel: true };
+  }
 
-    // No rewrite needed
-    callback({});
-  });
+  return null;
+}
+
+/**
+ * Register the request rewriter as an onBeforeRequest handler. Must run
+ * before `attachWebRequestDispatcher()`.
+ */
+function installRequestRewriter() {
+  registerWebRequestHandler('onBeforeRequest', 'request-rewriter', rewriteRequestForDispatch);
 }
 
 module.exports = {
-  registerRequestRewriter,
+  installRequestRewriter,
+  rewriteRequestForDispatch,
   shouldRewriteRequest,
   buildRewriteTarget,
   convertProtocolUrl,

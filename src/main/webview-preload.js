@@ -200,6 +200,15 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   removeHistory: guardInternal('removeHistory', (id) => ipcRenderer.invoke('history:remove', id)),
   clearHistory: guardInternal('clearHistory', () => ipcRenderer.invoke('history:clear')),
 
+  // Unified payment history (read-only — producers record in main directly).
+  getPayments: guardInternal('getPayments', (filters) => ipcRenderer.invoke('payments:get-recent', filters)),
+  getPaymentsCount: guardInternal('getPaymentsCount', (filters) => ipcRenderer.invoke('payments:get-count', filters)),
+  clearPayments: guardInternal('clearPayments', () => ipcRenderer.invoke('payments:clear')),
+
+  // Token registry — used by the payments page to resolve asset
+  // metadata (symbol, decimals) per chainId:address.
+  getTokens: guardInternal('getTokens', (chainId) => ipcRenderer.invoke('tokens:get-tokens', chainId)),
+
   // Settings
   getSettings: guardInternal('getSettings', () => ipcRenderer.invoke('settings:get')),
   saveSettings: guardInternal('saveSettings', (settings) =>
@@ -282,6 +291,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
 
   // Auto-unsubscribed on pagehide.
   onSettingsUpdated: guardInternalSubscription('onSettingsUpdated', 'settings:updated'),
+  // freedom://payments uses this for live refresh on settlements (no
+  // user-driven event for a server-acknowledged paid request).
+  onPaymentRecorded: guardInternalSubscription('onPaymentRecorded', 'payments:tx-recorded'),
 
   // Bookmarks (read-only for internal pages)
   getBookmarks: guardInternal('getBookmarks', () => ipcRenderer.invoke('bookmarks:get')),
