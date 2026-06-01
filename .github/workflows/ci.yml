@@ -45,8 +45,10 @@ jobs:
           if-no-files-found: error
 
   # Issue #90 — Windows EPERM wiping bee-data/statestore during wallet creation.
-  # Reproduction lives in a cross-platform Jest test; the Windows leg is what
-  # actually exercises the EPERM-on-locked-handle behavior.
+  # Reproductions live in cross-platform Jest integration tests that spawn a
+  # real Bee node; the Windows leg is what actually exercises the
+  # EPERM-on-locked-handle behavior (raw wipe + the inject flow that must stop
+  # Bee before wiping).
   bee-statestore-lock:
     strategy:
       fail-fast: false
@@ -73,8 +75,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Run statestore-lock reproduction test
-        run: npx jest --forceExit src/main/identity/__tests__/integration/bee-statestore-lock.test.js
+      - name: Run statestore-lock reproduction tests
+        run: npx jest --forceExit --runInBand src/main/identity/__tests__/integration/bee-statestore-lock.test.js src/main/identity/__tests__/integration/bee-injection-stops-node.test.js
 
   # Issue #69 — address-bar clipboard: Win/Linux menu wiring + chrome context menu (all platforms).
   e2e-address-bar-clipboard:
