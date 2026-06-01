@@ -226,5 +226,11 @@ module.exports = {
   SWARM_SET_FEED_IDENTITY: 'swarm:set-feed-identity',
   SWARM_HAS_FEED_GRANT: 'swarm:has-feed-grant',
   SWARM_GET_IDENTITY_MODE: 'swarm:get-identity-mode',
+  SWARM_GET_ORIGIN_IDENTITIES: 'swarm:get-origin-identities',
+  SWARM_PREVIEW_APP_SCOPED_IDENTITY: 'swarm:preview-app-scoped-identity',
+  SWARM_CREATE_APP_SCOPED_IDENTITY: 'swarm:create-app-scoped-identity',
+  SWARM_ENSURE_BEE_WALLET_IDENTITY: 'swarm:ensure-bee-wallet-identity',
+  SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY: 'swarm:ensure-ethereum-wallet-identity',
+  SWARM_ACTIVATE_FEED_IDENTITY: 'swarm:activate-feed-identity',
   SWARM_REVOKE_FEED_ACCESS: 'swarm:revoke-feed-access',
 };

@@ -279,6 +279,32 @@ async function getPublisherKey(originIndex) {
 }
 
 /**
+ * Derive a browser Ethereum wallet key by wallet/account index.
+ * Vault must be unlocked. This returns the same key material used by
+ * wallet transaction/message signing without persisting it elsewhere.
+ * @param {number} walletIndex - Wallet account index (0, 1, 2, ...)
+ * @returns {Promise<Object>} { privateKey, publicKey, address, path, accountIndex }
+ */
+async function getUserWalletKey(walletIndex) {
+  if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+    throw new Error('Wallet index must be a non-negative integer');
+  }
+
+  const wallets = await getDerivedWallets();
+  if (!wallets.some((wallet) => wallet.index === walletIndex)) {
+    throw new Error(`Wallet with index ${walletIndex} does not exist`);
+  }
+
+  const identity = await loadIdentityModule();
+  const mnemonic = identity.getMnemonic();
+  if (!mnemonic) {
+    throw new Error('Vault must be unlocked to derive wallet keys');
+  }
+
+  return identity.deriveUserWallet(mnemonic, walletIndex);
+}
+
+/**
  * Get the Bee data directory
  *
  * Must resolve to the same directory bee-manager uses, so the keys we inject
@@ -1025,6 +1051,19 @@ async function renameDerivedWallet(index, newName) {
   });
 }
 
+function getSwarmPublisherIdentityReferences(walletIndex) {
+  const { getEthereumWalletIdentityReferences } = require('./swarm/feed-store');
+  return getEthereumWalletIdentityReferences(walletIndex);
+}
+
+function formatPublisherIdentityReferenceError(walletIndex, references) {
+  const origins = references.map((reference) => reference.origin);
+  const shownOrigins = origins.slice(0, 3).join(', ');
+  const extraCount = origins.length - 3;
+  const extra = extraCount > 0 ? ` and ${extraCount} more` : '';
+  return `Cannot delete wallet with index ${walletIndex}; it is active or pinned to Swarm feeds for ${shownOrigins}${extra}. Switch the affected publisher identities before deleting this wallet.`;
+}
+
 /**
  * Delete a derived wallet
  * @param {number} index - Wallet index (cannot be 0)
@@ -1044,6 +1083,14 @@ async function deleteDerivedWallet(index) {
 
   if (walletIndex === -1) {
     throw new Error(`Wallet with index ${index} does not exist`);
+  }
+
+  const publisherIdentityReferences = getSwarmPublisherIdentityReferences(index);
+  if (publisherIdentityReferences.length > 0) {
+    const err = new Error(formatPublisherIdentityReferenceError(index, publisherIdentityReferences));
+    err.code = 'SWARM_PUBLISHER_IDENTITY_WALLET_IN_USE';
+    err.references = publisherIdentityReferences;
+    throw err;
   }
 
   // Remove from list
@@ -1370,6 +1417,7 @@ module.exports = {
   // Key operations
   getDerivedKeys,
   getPublisherKey,
+  getUserWalletKey,
 
   // Multi-wallet operations
   getDerivedWallets,

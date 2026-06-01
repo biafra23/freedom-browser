@@ -6,14 +6,21 @@
  * connection permission state.
  *
  * Data model:
- *   { version, nextPublisherKeyIndex, origins: { [origin]: { identityMode, publisherKeyIndex, feeds } } }
+ *   {
+ *     version,
+ *     nextPublisherKeyIndex,
+ *     origins: {
+ *       [origin]: { activeIdentityId, identities, feedGranted, grantedAt, feeds }
+ *     }
+ *   }
  *
- * Identity mode is chosen once per origin at first feed grant:
+ * A default identity is chosen when an origin first receives feed access:
  *   - 'bee-wallet': uses the Bee node wallet key for signing
  *   - 'app-scoped': uses a dedicated publisher key derived at m/44'/73406'/{index}'/0/0
+ *   - 'ethereum-wallet': uses one of the browser's Ethereum wallet accounts
  *
  * Survives permission revocation — revoking Swarm connection does not
- * forget the publisher identity. Only an explicit reset changes it.
+ * forget publisher identities. Switching identity is an explicit user action.
  */
 
 const { app, ipcMain } = require('electron');
@@ -21,14 +28,26 @@ const path = require('path');
 const fs = require('fs');
 const IPC = require('../../shared/ipc-channels');
 const { normalizeOrigin } = require('../../shared/origin-utils');
+const { getDerivedKeys, getPublisherKey, getDerivedWallets } = require('../identity-manager');
 const log = require('electron-log');
 
 const FEEDS_FILE = 'swarm-feeds.json';
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
+const MAX_IDENTITY_LABEL_BYTES = 80;
 
-const VALID_IDENTITY_MODES = ['bee-wallet', 'app-scoped'];
+const VALID_IDENTITY_MODES = ['bee-wallet', 'app-scoped', 'ethereum-wallet'];
+const BEE_WALLET_IDENTITY_ID = 'bee-wallet';
+const ETHEREUM_WALLET_ID_PREFIX = 'ethereum-wallet';
 
 let feedsCache = null;
+
+class PreserveFeedStoreError extends Error {
+  constructor(message, backupSuffix = 'unsupported') {
+    super(message);
+    this.preserveOriginal = true;
+    this.backupSuffix = backupSuffix;
+  }
+}
 
 function getFeedsPath() {
   return path.join(app.getPath('userData'), FEEDS_FILE);
@@ -42,20 +61,296 @@ function createEmptyStore() {
   };
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getIdentityId(identityMode, publisherKeyIndex = null, walletIndex = null) {
+  if (identityMode === 'bee-wallet') {
+    return BEE_WALLET_IDENTITY_ID;
+  }
+  if (identityMode === 'app-scoped') {
+    if (typeof publisherKeyIndex !== 'number' || !Number.isInteger(publisherKeyIndex) || publisherKeyIndex < 0) {
+      throw new Error('App-scoped identity requires a non-negative publisher key index');
+    }
+    return `app-scoped:${publisherKeyIndex}`;
+  }
+  if (identityMode === 'ethereum-wallet') {
+    if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+      throw new Error('Ethereum wallet identity requires a non-negative wallet index');
+    }
+    return `${ETHEREUM_WALLET_ID_PREFIX}:${walletIndex}`;
+  }
+  throw new Error(`Invalid identity mode: ${identityMode}`);
+}
+
+function getIdentityLabel(identityMode, publisherKeyIndex = null, walletIndex = null) {
+  if (identityMode === 'bee-wallet') {
+    return 'Bee wallet identity';
+  }
+  if (identityMode === 'ethereum-wallet') {
+    return `Ethereum wallet ${(walletIndex ?? 0) + 1}`;
+  }
+  return `App-scoped identity ${(publisherKeyIndex ?? 0) + 1}`;
+}
+
+function normalizeIdentityLabel(label, fallback) {
+  if (label === undefined || label === null) {
+    return fallback;
+  }
+  if (typeof label !== 'string') {
+    throw new Error('Publisher identity label must be a string');
+  }
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  if (Buffer.byteLength(trimmed, 'utf-8') > MAX_IDENTITY_LABEL_BYTES) {
+    throw new Error(`Publisher identity label must be ${MAX_IDENTITY_LABEL_BYTES} bytes or less`);
+  }
+  return trimmed;
+}
+
+function createIdentity(identityMode, publisherKeyIndex = null, createdAt = Date.now(), label = null, walletIndex = null) {
+  if (!VALID_IDENTITY_MODES.includes(identityMode)) {
+    throw new Error(`Invalid identity mode: ${identityMode}`);
+  }
+
+  const id = getIdentityId(identityMode, publisherKeyIndex, walletIndex);
+  const fallbackLabel = getIdentityLabel(identityMode, publisherKeyIndex, walletIndex);
+  return {
+    id,
+    mode: identityMode,
+    publisherKeyIndex: identityMode === 'app-scoped' ? publisherKeyIndex : null,
+    walletIndex: identityMode === 'ethereum-wallet' ? walletIndex : null,
+    label: normalizeIdentityLabel(label, fallbackLabel),
+    createdAt,
+    lastUsedAt: null,
+  };
+}
+
+function getActiveIdentityFromEntry(entry) {
+  if (!entry || !entry.activeIdentityId || !isPlainObject(entry.identities)) {
+    return null;
+  }
+  return entry.identities[entry.activeIdentityId] || null;
+}
+
+function copyFeeds(feeds) {
+  const feedsCopy = {};
+  if (!isPlainObject(feeds)) {
+    return feedsCopy;
+  }
+  for (const [name, feed] of Object.entries(feeds)) {
+    feedsCopy[name] = { ...feed };
+  }
+  return feedsCopy;
+}
+
+function copyIdentities(identities) {
+  const identitiesCopy = {};
+  if (!isPlainObject(identities)) {
+    return identitiesCopy;
+  }
+  for (const [id, identity] of Object.entries(identities)) {
+    identitiesCopy[id] = { ...identity };
+  }
+  return identitiesCopy;
+}
+
+function decorateOriginEntry(entry) {
+  const activeIdentity = getActiveIdentityFromEntry(entry);
+  return {
+    ...entry,
+    identities: copyIdentities(entry.identities),
+    feeds: copyFeeds(entry.feeds),
+    identityMode: activeIdentity?.mode || null,
+    publisherKeyIndex: activeIdentity?.publisherKeyIndex ?? null,
+    walletIndex: activeIdentity?.walletIndex ?? null,
+  };
+}
+
+function migrateV1OriginEntry(entry) {
+  if (!isPlainObject(entry) || !VALID_IDENTITY_MODES.includes(entry.identityMode)) {
+    throw new Error('Invalid v1 origin entry');
+  }
+
+  const grantedAt = entry.grantedAt || Date.now();
+  const publisherKeyIndex = entry.identityMode === 'app-scoped' ? entry.publisherKeyIndex : null;
+  const identity = createIdentity(entry.identityMode, publisherKeyIndex, grantedAt);
+  const feeds = {};
+
+  if (entry.feeds !== undefined && !isPlainObject(entry.feeds)) {
+    throw new Error('Invalid v1 feed map');
+  }
+
+  for (const [feedName, feed] of Object.entries(entry.feeds || {})) {
+    if (!isPlainObject(feed)) {
+      throw new Error('Invalid v1 feed entry');
+    }
+    feeds[feedName] = {
+      ...feed,
+      identityId: feed.identityId || identity.id,
+    };
+  }
+
+  return {
+    activeIdentityId: identity.id,
+    feedGranted: !!entry.feedGranted,
+    grantedAt,
+    identities: {
+      [identity.id]: identity,
+    },
+    feeds,
+  };
+}
+
+function migrateV1Store(store) {
+  if (!isPlainObject(store.origins)) {
+    throw new Error('Invalid v1 feed store: origins must be an object');
+  }
+
+  const migrated = {
+    version: CURRENT_VERSION,
+    nextPublisherKeyIndex: Number.isInteger(store.nextPublisherKeyIndex) && store.nextPublisherKeyIndex >= 0
+      ? store.nextPublisherKeyIndex
+      : 0,
+    origins: {},
+  };
+
+  for (const [origin, entry] of Object.entries(store.origins)) {
+    let migratedEntry;
+    try {
+      migratedEntry = migrateV1OriginEntry(entry);
+    } catch (err) {
+      log.error(`[FeedStore] Skipping invalid v1 origin entry ${origin}:`, err.message);
+      continue;
+    }
+    migrated.origins[origin] = migratedEntry;
+    const activeIdentity = getActiveIdentityFromEntry(migratedEntry);
+    if (activeIdentity?.mode === 'app-scoped') {
+      updateNextPublisherKeyIndex(migrated, activeIdentity.publisherKeyIndex);
+    }
+  }
+
+  return migrated;
+}
+
+function validateV2Store(store) {
+  if (!isPlainObject(store.origins)) {
+    throw new Error('Invalid v2 feed store: origins must be an object');
+  }
+  if (!Number.isInteger(store.nextPublisherKeyIndex) || store.nextPublisherKeyIndex < 0) {
+    throw new Error('Invalid v2 feed store: nextPublisherKeyIndex must be a non-negative integer');
+  }
+
+  const sanitizedOrigins = {};
+  let changed = false;
+  for (const [origin, entry] of Object.entries(store.origins)) {
+    try {
+      sanitizedOrigins[origin] = sanitizeV2OriginEntry(origin, entry);
+    } catch (err) {
+      changed = true;
+      log.error(`[FeedStore] Skipping invalid v2 origin entry ${origin}:`, err.message);
+    }
+  }
+
+  if (changed) {
+    store.origins = sanitizedOrigins;
+  }
+  return store;
+}
+
+function sanitizeV2OriginEntry(origin, entry) {
+  if (!isPlainObject(entry) || !entry.activeIdentityId || !isPlainObject(entry.identities)) {
+    throw new Error(`Invalid v2 origin entry: ${origin}`);
+  }
+  const activeIdentity = getActiveIdentityFromEntry(entry);
+  if (!activeIdentity || !VALID_IDENTITY_MODES.includes(activeIdentity.mode)) {
+    throw new Error(`Invalid active identity for origin: ${origin}`);
+  }
+
+  const feeds = {};
+  if (entry.feeds !== undefined && !isPlainObject(entry.feeds)) {
+    log.error(`[FeedStore] Replacing invalid feed map for ${origin}`);
+  } else {
+    for (const [feedName, feed] of Object.entries(entry.feeds || {})) {
+      if (!isPlainObject(feed)) {
+        log.error(`[FeedStore] Skipping invalid feed entry ${origin}/${feedName}`);
+        continue;
+      }
+      feeds[feedName] = feed;
+    }
+  }
+
+  return {
+    ...entry,
+    feeds,
+  };
+}
+
+function getBackupPath(filePath, suffix) {
+  const parsed = path.parse(filePath);
+  let index = 0;
+  let candidate;
+  do {
+    const extra = index === 0 ? '' : `-${index}`;
+    candidate = path.join(parsed.dir, `${parsed.name}.${suffix}${extra}${parsed.ext}`);
+    index += 1;
+  } while (fs.existsSync(candidate));
+  return candidate;
+}
+
+function backupFeedsFile(filePath, suffix) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const backupPath = getBackupPath(filePath, suffix);
+    fs.copyFileSync(filePath, backupPath);
+    log.info(`[FeedStore] Backed up ${FEEDS_FILE} to ${path.basename(backupPath)}`);
+    return backupPath;
+  } catch (err) {
+    log.error('[FeedStore] Failed to back up feeds file:', err.message);
+    return null;
+  }
+}
+
+function loadFeedsFromFile(filePath) {
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+  if (!isPlainObject(parsed)) {
+    throw new Error('Feed store root must be an object');
+  }
+
+  if (parsed.version === 1) {
+    const migrated = migrateV1Store(parsed);
+    backupFeedsFile(filePath, 'v1-backup');
+    feedsCache = migrated;
+    saveFeeds();
+    return migrated;
+  }
+
+  if (parsed.version === CURRENT_VERSION) {
+    return validateV2Store(parsed);
+  }
+
+  throw new PreserveFeedStoreError(`Unsupported feed store version: ${parsed.version ?? 'missing'}`);
+}
+
 function loadFeeds() {
   if (feedsCache !== null) {
     return feedsCache;
   }
 
+  const filePath = getFeedsPath();
   try {
-    const filePath = getFeedsPath();
     if (fs.existsSync(filePath)) {
-      feedsCache = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      feedsCache = loadFeedsFromFile(filePath);
     } else {
       feedsCache = createEmptyStore();
     }
   } catch (err) {
     log.error('[FeedStore] Failed to load feeds:', err.message);
+    backupFeedsFile(filePath, err.backupSuffix || 'corrupt');
     feedsCache = createEmptyStore();
   }
 
@@ -65,7 +360,9 @@ function loadFeeds() {
 function saveFeeds() {
   try {
     const filePath = getFeedsPath();
-    fs.writeFileSync(filePath, JSON.stringify(feedsCache, null, 2), 'utf-8');
+    const tempPath = `${filePath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(feedsCache, null, 2), 'utf-8');
+    fs.renameSync(tempPath, filePath);
   } catch (err) {
     log.error('[FeedStore] Failed to save feeds:', err.message);
   }
@@ -80,31 +377,57 @@ function getOriginEntry(origin) {
   const key = normalizeOrigin(origin);
   const entry = store.origins[key];
   if (!entry) return null;
-  const feedsCopy = {};
-  if (entry.feeds) {
-    for (const [name, feed] of Object.entries(entry.feeds)) {
-      feedsCopy[name] = { ...feed };
-    }
-  }
-  return { ...entry, feeds: feedsCopy };
+  return decorateOriginEntry(entry);
 }
 
 /**
  * Create or update an origin entry with identity mode and key index.
- * Called once when the user first grants feed access to an origin.
+ * Used by the feed approval prompt to establish or re-grant feed access.
  * @param {string} origin
  * @param {{ identityMode: string, publisherKeyIndex?: number }} data
  * @returns {Object} The origin entry
  */
 function setOriginEntry(origin, data) {
+  if (!VALID_IDENTITY_MODES.includes(data.identityMode)) {
+    throw new Error(`Invalid identity mode: ${data.identityMode}`);
+  }
+
   const store = loadFeeds();
   const key = normalizeOrigin(origin);
 
   const existing = store.origins[key] || {};
+  let publisherKeyIndex = data.publisherKeyIndex ?? null;
+  let walletIndex = data.walletIndex ?? null;
+  if (data.identityMode === 'app-scoped' && publisherKeyIndex === null) {
+    publisherKeyIndex = allocatePublisherKeyIndexInStore(store);
+  }
+  if (data.identityMode === 'app-scoped') {
+    updateNextPublisherKeyIndex(store, publisherKeyIndex);
+  }
+  if (data.identityMode === 'ethereum-wallet') {
+    if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+      throw new Error('Ethereum wallet identity requires a non-negative wallet index');
+    }
+    publisherKeyIndex = null;
+  } else {
+    walletIndex = null;
+  }
+  const identity = createIdentity(
+    data.identityMode,
+    publisherKeyIndex,
+    existing.grantedAt || Date.now(),
+    null,
+    walletIndex
+  );
+  const identities = {
+    ...(existing.identities || {}),
+    [identity.id]: identity,
+  };
+
   store.origins[key] = {
     ...existing,
-    identityMode: data.identityMode,
-    publisherKeyIndex: data.publisherKeyIndex ?? existing.publisherKeyIndex ?? null,
+    activeIdentityId: identity.id,
+    identities,
     feedGranted: data.feedGranted ?? existing.feedGranted ?? false,
     grantedAt: existing.grantedAt || Date.now(),
     feeds: existing.feeds || {},
@@ -122,10 +445,262 @@ function setOriginEntry(origin, data) {
  */
 function allocatePublisherKeyIndex() {
   const store = loadFeeds();
-  const index = store.nextPublisherKeyIndex;
-  store.nextPublisherKeyIndex = index + 1;
+  const index = allocatePublisherKeyIndexInStore(store);
   saveFeeds();
   return index;
+}
+
+function allocatePublisherKeyIndexInStore(store) {
+  const index = store.nextPublisherKeyIndex;
+  store.nextPublisherKeyIndex = index + 1;
+  return index;
+}
+
+function updateNextPublisherKeyIndex(store, publisherKeyIndex) {
+  if (typeof publisherKeyIndex !== 'number') return;
+  if (store.nextPublisherKeyIndex <= publisherKeyIndex) {
+    store.nextPublisherKeyIndex = publisherKeyIndex + 1;
+  }
+}
+
+function createOriginShell() {
+  return {
+    activeIdentityId: null,
+    feedGranted: false,
+    grantedAt: Date.now(),
+    identities: {},
+    feeds: {},
+  };
+}
+
+function getOriginIdentityState(origin) {
+  const entry = getOriginEntry(origin);
+  if (!entry) return null;
+  return {
+    origin: normalizeOrigin(origin),
+    activeIdentityId: entry.activeIdentityId,
+    identityMode: entry.identityMode,
+    publisherKeyIndex: entry.publisherKeyIndex,
+    walletIndex: entry.walletIndex,
+    identities: Object.values(entry.identities || {})
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+    feedGranted: !!entry.feedGranted,
+    grantedAt: entry.grantedAt || null,
+    feedCount: entry.feeds ? Object.keys(entry.feeds).length : 0,
+  };
+}
+
+async function enrichIdentityOwner(identity, options = {}) {
+  const stored = options.stored !== false;
+  if (identity.mode === 'bee-wallet') {
+    const keys = getDerivedKeys();
+    if (!keys?.beeWallet?.address) {
+      throw new Error('Vault must be unlocked to inspect publisher identities');
+    }
+    return {
+      ...identity,
+      owner: keys.beeWallet.address,
+      stored,
+    };
+  }
+
+  if (identity.mode === 'app-scoped') {
+    if (typeof identity.publisherKeyIndex !== 'number') {
+      throw new Error('App-scoped identity is missing a publisher key index');
+    }
+    const publisherKey = await getPublisherKey(identity.publisherKeyIndex);
+    return {
+      ...identity,
+      owner: publisherKey.address,
+      stored,
+    };
+  }
+
+  if (identity.mode === 'ethereum-wallet') {
+    if (typeof identity.walletIndex !== 'number') {
+      throw new Error('Ethereum wallet identity is missing a wallet index');
+    }
+    const wallets = await getDerivedWallets();
+    const wallet = wallets.find((candidate) => candidate.index === identity.walletIndex);
+    return {
+      ...identity,
+      label: wallet?.name || identity.label || getIdentityLabel('ethereum-wallet', null, identity.walletIndex),
+      owner: wallet?.address || null,
+      stored,
+      unavailable: !wallet,
+    };
+  }
+
+  return { ...identity, owner: null, stored };
+}
+
+async function getOriginIdentityStateWithOwners(origin) {
+  const state = getOriginIdentityState(origin) || {
+    origin: normalizeOrigin(origin),
+    activeIdentityId: null,
+    identityMode: null,
+    publisherKeyIndex: null,
+    walletIndex: null,
+    identities: [],
+    feedGranted: false,
+    grantedAt: null,
+    feedCount: 0,
+  };
+
+  const identities = [];
+  let hasBeeWallet = false;
+  for (const identity of state.identities || []) {
+    const enriched = await enrichIdentityOwner(identity);
+    identities.push(enriched);
+    if (identity.id === BEE_WALLET_IDENTITY_ID) {
+      hasBeeWallet = true;
+    }
+  }
+
+  if (!hasBeeWallet) {
+    identities.push(await enrichIdentityOwner(
+      createIdentity('bee-wallet', null, 0),
+      { stored: false }
+    ));
+  }
+
+  const knownIds = new Set(identities.map((identity) => identity.id));
+  const wallets = await getDerivedWallets();
+  for (const wallet of wallets) {
+    const walletIdentity = createIdentity(
+      'ethereum-wallet',
+      null,
+      0,
+      wallet.name,
+      wallet.index
+    );
+    if (!knownIds.has(walletIdentity.id)) {
+      identities.push(await enrichIdentityOwner(walletIdentity, { stored: false }));
+    }
+  }
+
+  return {
+    ...state,
+    identities,
+  };
+}
+
+async function previewAppScopedIdentity(origin, options = {}) {
+  const store = loadFeeds();
+  const publisherKeyIndex = store.nextPublisherKeyIndex;
+  const identity = createIdentity('app-scoped', publisherKeyIndex, Date.now(), options.label);
+  const enriched = await enrichIdentityOwner(identity, { stored: false });
+  return {
+    ...enriched,
+    preview: true,
+    origin: normalizeOrigin(origin),
+  };
+}
+
+function createAppScopedIdentity(origin, options = {}) {
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key] || createOriginShell();
+  const publisherKeyIndex = allocatePublisherKeyIndexInStore(store);
+  const identity = createIdentity('app-scoped', publisherKeyIndex, Date.now(), options.label);
+
+  entry.identities = {
+    ...(entry.identities || {}),
+    [identity.id]: identity,
+  };
+  if (options.activate !== false || !entry.activeIdentityId) {
+    entry.activeIdentityId = identity.id;
+    entry.identities[identity.id].lastUsedAt = Date.now();
+  }
+  entry.feeds = entry.feeds || {};
+  entry.grantedAt = entry.grantedAt || Date.now();
+  entry.feedGranted = !!entry.feedGranted;
+
+  store.origins[key] = entry;
+  saveFeeds();
+  log.info(`[FeedStore] Created app-scoped identity ${identity.id} for ${key}`);
+  return getOriginEntry(origin);
+}
+
+function ensureBeeWalletIdentity(origin, options = {}) {
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key] || createOriginShell();
+  const existing = entry.identities?.[BEE_WALLET_IDENTITY_ID];
+  const identity = existing || createIdentity('bee-wallet', null, Date.now(), options.label);
+
+  entry.identities = {
+    ...(entry.identities || {}),
+    [identity.id]: identity,
+  };
+  if (options.activate === true || !entry.activeIdentityId) {
+    entry.activeIdentityId = identity.id;
+    entry.identities[identity.id].lastUsedAt = Date.now();
+  }
+  entry.feeds = entry.feeds || {};
+  entry.grantedAt = entry.grantedAt || Date.now();
+  entry.feedGranted = !!entry.feedGranted;
+
+  store.origins[key] = entry;
+  saveFeeds();
+  log.info(`[FeedStore] Ensured Bee wallet identity for ${key}`);
+  return getOriginEntry(origin);
+}
+
+async function ensureEthereumWalletIdentity(origin, walletIndex, options = {}) {
+  if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+    throw new Error('Wallet index must be a non-negative integer');
+  }
+  const wallets = await getDerivedWallets();
+  const wallet = wallets.find((candidate) => candidate.index === walletIndex);
+  if (!wallet) {
+    throw new Error(`Wallet with index ${walletIndex} does not exist`);
+  }
+
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key] || createOriginShell();
+  const identityId = getIdentityId('ethereum-wallet', null, walletIndex);
+  const existing = entry.identities?.[identityId];
+  const identity = existing || createIdentity('ethereum-wallet', null, Date.now(), wallet.name, walletIndex);
+
+  entry.identities = {
+    ...(entry.identities || {}),
+    [identity.id]: {
+      ...identity,
+      label: wallet.name || identity.label,
+    },
+  };
+  if (options.activate === true || !entry.activeIdentityId) {
+    entry.activeIdentityId = identity.id;
+    entry.identities[identity.id].lastUsedAt = Date.now();
+  }
+  entry.feeds = entry.feeds || {};
+  entry.grantedAt = entry.grantedAt || Date.now();
+  entry.feedGranted = !!entry.feedGranted;
+
+  store.origins[key] = entry;
+  saveFeeds();
+  log.info(`[FeedStore] Ensured Ethereum wallet identity ${identity.id} for ${key}`);
+  return getOriginEntry(origin);
+}
+
+function activateIdentity(origin, identityId) {
+  const store = loadFeeds();
+  const key = normalizeOrigin(origin);
+  const entry = store.origins[key];
+  if (!entry) {
+    throw new Error(`No origin entry for ${key}`);
+  }
+  if (!entry.identities?.[identityId]) {
+    throw new Error(`Publisher identity not found: ${identityId}`);
+  }
+
+  entry.activeIdentityId = identityId;
+  entry.identities[identityId].lastUsedAt = Date.now();
+  saveFeeds();
+  log.info(`[FeedStore] Activated identity ${identityId} for ${key}`);
+  return getOriginEntry(origin);
 }
 
 /**
@@ -165,6 +740,7 @@ function setFeed(origin, feedName, feedData) {
     topic: feedData.topic,
     owner: feedData.owner,
     manifestReference: feedData.manifestReference,
+    identityId: existing?.identityId || feedData.identityId || store.origins[key].activeIdentityId || null,
     createdAt: existing?.createdAt || Date.now(),
     lastUpdated: existing?.lastUpdated || null,
     lastReference: existing?.lastReference || null,
@@ -220,16 +796,62 @@ function getAllFeeds(origin) {
 function getAllOriginEntries() {
   const store = loadFeeds();
   return Object.entries(store.origins)
-    .filter(([, entry]) => entry.identityMode)
-    .map(([origin, entry]) => ({
-      origin,
-      identityMode: entry.identityMode,
-      publisherKeyIndex: entry.publisherKeyIndex ?? null,
-      feedGranted: !!entry.feedGranted,
-      grantedAt: entry.grantedAt || null,
-      feedCount: entry.feeds ? Object.keys(entry.feeds).length : 0,
-    }))
+    .filter(([, entry]) => entry.activeIdentityId)
+    .map(([origin, entry]) => {
+      const activeIdentity = getActiveIdentityFromEntry(entry);
+      return {
+        origin,
+        identityMode: activeIdentity?.mode || null,
+        publisherKeyIndex: activeIdentity?.publisherKeyIndex ?? null,
+        walletIndex: activeIdentity?.walletIndex ?? null,
+        activeIdentityId: entry.activeIdentityId,
+        identityCount: entry.identities ? Object.keys(entry.identities).length : 0,
+        feedGranted: !!entry.feedGranted,
+        grantedAt: entry.grantedAt || null,
+        feedCount: entry.feeds ? Object.keys(entry.feeds).length : 0,
+      };
+    })
     .sort((a, b) => (b.grantedAt || 0) - (a.grantedAt || 0));
+}
+
+function getEthereumWalletIdentityReferences(walletIndex) {
+  if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+    throw new Error('Wallet index must be a non-negative integer');
+  }
+
+  const store = loadFeeds();
+  const references = [];
+  for (const [origin, entry] of Object.entries(store.origins)) {
+    if (!isPlainObject(entry?.identities)) continue;
+
+    const feeds = isPlainObject(entry.feeds) ? entry.feeds : {};
+    for (const identity of Object.values(entry.identities)) {
+      if (identity?.mode !== 'ethereum-wallet' || identity.walletIndex !== walletIndex) {
+        continue;
+      }
+
+      const feedNames = Object.entries(feeds)
+        .filter(([, feed]) => feed?.identityId === identity.id)
+        .map(([feedName]) => feedName)
+        .sort();
+      const active = entry.activeIdentityId === identity.id;
+      if (!active && feedNames.length === 0) {
+        continue;
+      }
+      references.push({
+        origin,
+        identityId: identity.id,
+        active,
+        feedNames,
+        feedCount: feedNames.length,
+      });
+    }
+  }
+
+  return references.sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return a.origin.localeCompare(b.origin);
+  });
 }
 
 /**
@@ -244,7 +866,7 @@ function hasIdentityMode(origin) {
   const store = loadFeeds();
   const key = normalizeOrigin(origin);
   const entry = store.origins[key];
-  return !!(entry && entry.identityMode);
+  return !!(entry && entry.activeIdentityId && getActiveIdentityFromEntry(entry));
 }
 
 /**
@@ -307,6 +929,34 @@ function registerFeedStoreIpc() {
     return entry?.identityMode || null;
   });
 
+  ipcMain.handle(IPC.SWARM_GET_ORIGIN_IDENTITIES, async (_event, origin) => {
+    return getOriginIdentityStateWithOwners(origin);
+  });
+
+  ipcMain.handle(IPC.SWARM_PREVIEW_APP_SCOPED_IDENTITY, async (_event, origin, options = {}) => {
+    return previewAppScopedIdentity(origin, options);
+  });
+
+  ipcMain.handle(IPC.SWARM_CREATE_APP_SCOPED_IDENTITY, async (_event, origin, options = {}) => {
+    createAppScopedIdentity(origin, options);
+    return getOriginIdentityStateWithOwners(origin);
+  });
+
+  ipcMain.handle(IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY, async (_event, origin, options = {}) => {
+    ensureBeeWalletIdentity(origin, options);
+    return getOriginIdentityStateWithOwners(origin);
+  });
+
+  ipcMain.handle(IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY, async (_event, origin, walletIndex, options = {}) => {
+    await ensureEthereumWalletIdentity(origin, walletIndex, options);
+    return getOriginIdentityStateWithOwners(origin);
+  });
+
+  ipcMain.handle(IPC.SWARM_ACTIVATE_FEED_IDENTITY, async (_event, origin, identityId) => {
+    activateIdentity(origin, identityId);
+    return getOriginIdentityStateWithOwners(origin);
+  });
+
   // Idempotent for identity: if the origin already has an identity mode set,
   // return the existing entry without allocating a new key index.
   // Always grants feed access (feedGranted = true).
@@ -316,7 +966,10 @@ function registerFeedStoreIpc() {
     }
 
     const existing = getOriginEntry(origin);
-    if (existing && existing.identityMode) {
+    if (identityMode === 'ethereum-wallet' && !existing?.activeIdentityId) {
+      throw new Error('Use ensureEthereumWalletIdentity(origin, walletIndex) before setting ethereum-wallet feed identity');
+    }
+    if (existing && existing.activeIdentityId) {
       // Identity already set — just re-grant feed access
       if (!existing.feedGranted) {
         grantFeedAccess(origin);
@@ -324,11 +977,7 @@ function registerFeedStoreIpc() {
       return getOriginEntry(origin);
     }
 
-    let publisherKeyIndex = null;
-    if (identityMode === 'app-scoped') {
-      publisherKeyIndex = allocatePublisherKeyIndex();
-    }
-    return setOriginEntry(origin, { identityMode, publisherKeyIndex, feedGranted: true });
+    return setOriginEntry(origin, { identityMode, feedGranted: true });
   });
 
   ipcMain.handle(IPC.SWARM_REVOKE_FEED_ACCESS, (_event, origin) => {
@@ -347,11 +996,19 @@ module.exports = {
   getOriginEntry,
   setOriginEntry,
   allocatePublisherKeyIndex,
+  getOriginIdentityState,
+  getOriginIdentityStateWithOwners,
+  previewAppScopedIdentity,
+  createAppScopedIdentity,
+  ensureBeeWalletIdentity,
+  ensureEthereumWalletIdentity,
+  activateIdentity,
   getFeed,
   setFeed,
   updateFeedReference,
   getAllFeeds,
   getAllOriginEntries,
+  getEthereumWalletIdentityReferences,
   hasIdentityMode,
   hasFeedGrant,
   grantFeedAccess,

@@ -1,6 +1,100 @@
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { loadMainModule } = require('../../test/helpers/main-process-test-utils');
+
+jest.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+    getPath: jest.fn(),
+  },
+  ipcMain: {
+    handle: jest.fn(),
+  },
+}));
+
+const mockGetEthereumWalletIdentityReferences = jest.fn();
+
+jest.mock('./swarm/feed-store', () => ({
+  getEthereumWalletIdentityReferences: (...args) => mockGetEthereumWalletIdentityReferences(...args),
+}));
+
+const { deleteDerivedWallet } = require('./identity-manager');
+
+describe('identity-manager wallet deletion', () => {
+  let tmpDir;
+  let previousIdentityDataDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-manager-test-'));
+    previousIdentityDataDir = process.env.FREEDOM_IDENTITY_DATA;
+    process.env.FREEDOM_IDENTITY_DATA = tmpDir;
+    mockGetEthereumWalletIdentityReferences.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    if (previousIdentityDataDir === undefined) {
+      delete process.env.FREEDOM_IDENTITY_DATA;
+    } else {
+      process.env.FREEDOM_IDENTITY_DATA = previousIdentityDataDir;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeVaultMeta(meta) {
+    fs.writeFileSync(path.join(tmpDir, 'vault-meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
+  }
+
+  function readVaultMeta() {
+    return JSON.parse(fs.readFileSync(path.join(tmpDir, 'vault-meta.json'), 'utf-8'));
+  }
+
+  test('blocks deleting wallets referenced by Swarm publisher identities', async () => {
+    const references = [{
+      origin: 'myapp.eth',
+      identityId: 'ethereum-wallet:2',
+      active: true,
+      feedNames: ['blog'],
+      feedCount: 1,
+    }];
+    mockGetEthereumWalletIdentityReferences.mockReturnValue(references);
+    writeVaultMeta({
+      activeWalletIndex: 2,
+      derivedWallets: [
+        { index: 0, name: 'Main Wallet', address: '0x0' },
+        { index: 2, name: 'Trading Wallet', address: '0x2' },
+      ],
+    });
+
+    await expect(deleteDerivedWallet(2))
+      .rejects.toMatchObject({
+        code: 'SWARM_PUBLISHER_IDENTITY_WALLET_IN_USE',
+        references,
+      });
+
+    expect(mockGetEthereumWalletIdentityReferences).toHaveBeenCalledWith(2);
+    expect(readVaultMeta().derivedWallets.map((wallet) => wallet.index)).toEqual([0, 2]);
+    expect(readVaultMeta().activeWalletIndex).toBe(2);
+  });
+
+  test('deletes unreferenced derived wallet and resets active wallet', async () => {
+    writeVaultMeta({
+      activeWalletIndex: 2,
+      derivedWallets: [
+        { index: 0, name: 'Main Wallet', address: '0x0' },
+        { index: 2, name: 'Trading Wallet', address: '0x2' },
+      ],
+    });
+
+    await deleteDerivedWallet(2);
+
+    expect(mockGetEthereumWalletIdentityReferences).toHaveBeenCalledWith(2);
+    expect(readVaultMeta().derivedWallets.map((wallet) => wallet.index)).toEqual([0]);
+    expect(readVaultMeta().activeWalletIndex).toBe(0);
+  });
+});
+
 /**
- * Unit tests for injectAllIdentities restart reporting.
- *
  * Regression guard for issue #90: Bee's restart after (re)injection is owned by
  * injectBeeIdentity via the lifecycle hook (stop → wipe → start), so Bee must
  * NOT also be reported in `needsRestart` — otherwise the renderer restarts it a
@@ -9,12 +103,6 @@
  * The lazily-loaded `./identity` module is mocked so the test exercises the
  * orchestration/branch logic without real key derivation or node binaries.
  */
-
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { loadMainModule } = require('../../test/helpers/main-process-test-utils');
-
 function createIdentityMock() {
   return {
     createVault: jest.fn(async () => 'test test test test test test test test test test test about'),

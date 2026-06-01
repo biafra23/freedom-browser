@@ -30,9 +30,16 @@ const { createFeed, updateFeed, writeFeedPayload, readFeedPayload, buildTopicStr
 const { Topic } = require('@ethersphere/bee-js');
 const { VAULT_LOCKED_MESSAGE } = require('../wallet/vault-errors');
 const { getOriginEntry, getFeed, setFeed, updateFeedReference, hasFeedGrant, getAllFeeds } = require('./feed-store');
+const {
+  publishChunk,
+  readChunk,
+  writeSingleOwnerChunk,
+  readSingleOwnerChunk,
+  getSignerAddress,
+} = require('./chunk-service');
 const { addEntry, updateEntry } = require('./publish-history');
 const { getBeeApiUrl } = require('../service-registry');
-const { getDerivedKeys, getPublisherKey } = require('../identity-manager');
+const { getDerivedKeys, getPublisherKey, getUserWalletKey } = require('../identity-manager');
 const { resetVaultAutoLockTimer } = require('../vault-timer');
 const log = require('electron-log');
 
@@ -40,6 +47,24 @@ const LIMITS = {
   maxDataBytes: 10 * 1024 * 1024,    // 10 MB
   maxFilesBytes: 50 * 1024 * 1024,   // 50 MB
   maxFileCount: 100,
+  maxPathBytes: 100,
+  maxChunkPayloadBytes: 4096,
+};
+
+const SPEC_VERSION = '1.0';
+const MAX_U64 = (1n << 64n) - 1n;
+
+const READ_BUDGETS = {
+  connected: {
+    windowMs: 60_000,
+    maxRequests: 600,
+    maxBytes: 5 * 1024 * 1024,
+  },
+  anonymous: {
+    windowMs: 60_000,
+    maxRequests: 120,
+    maxBytes: 512 * 1024,
+  },
 };
 
 const ERRORS = {
@@ -62,14 +87,159 @@ const KNOWN_METHODS = [
   'swarm_writeFeedEntry',
   'swarm_readFeedEntry',
   'swarm_listFeeds',
+  'swarm_publishChunk',
+  'swarm_readChunk',
+  'swarm_writeSingleOwnerChunk',
+  'swarm_readSingleOwnerChunk',
+  'swarm_getSigningIdentity',
 ];
 
 // Tag ownership: tagUid → origin. Session-scoped, not persisted.
 // Prevents cross-origin tag snooping via getUploadStatus.
 const tagOwnership = new Map();
+const permissionFreeReadBuckets = new Map();
 
 function clearTagOwnership() {
   tagOwnership.clear();
+}
+
+function clearPermissionFreeReadBudgets() {
+  permissionFreeReadBuckets.clear();
+}
+
+function invalidParams(message, reason = 'invalid_params', extra = {}) {
+  return {
+    error: {
+      ...ERRORS.INVALID_PARAMS,
+      message,
+      data: { reason, ...extra },
+    },
+  };
+}
+
+function notAuthorized(reason) {
+  return {
+    error: {
+      ...ERRORS.UNAUTHORIZED,
+      message: 'The origin is not authorized for this operation',
+      data: { reason },
+    },
+  };
+}
+
+function notConnected() {
+  return notAuthorized('not_connected');
+}
+
+function feedNotGranted() {
+  return notAuthorized('feed_not_granted');
+}
+
+function validateEmptyOptions(options) {
+  if (options === undefined || options === null) return null;
+  if (typeof options !== 'object' || Array.isArray(options)) {
+    return invalidParams('options must be an object', 'invalid_params');
+  }
+  const keys = Object.keys(options);
+  if (keys.length > 0) {
+    return invalidParams(`Unsupported option: ${keys[0]}`, 'unsupported_option', { option: keys[0] });
+  }
+  return null;
+}
+
+function validateHexString(value, bytes, reason, field, options = {}) {
+  const chars = bytes * 2;
+  if (typeof value !== 'string') {
+    return invalidParams(`${field} must be a ${chars}-character hex string`, reason);
+  }
+  if (!options.allow0xPrefix && value.startsWith('0x')) {
+    return invalidParams(`${field} must be a ${chars}-character hex string`, reason);
+  }
+  const normalized = options.allow0xPrefix ? value.replace(/^0x/, '') : value;
+  if (normalized.length !== chars || !/^[0-9a-fA-F]+$/.test(normalized)) {
+    return invalidParams(`${field} must be a ${chars}-character hex string`, reason);
+  }
+  return null;
+}
+
+function normalizeAddress(address) {
+  // Ethereum owners conventionally include 0x; Swarm refs and identifiers do not.
+  return typeof address === 'string' ? address.replace(/^0x/, '') : '';
+}
+
+function validateSpan(span) {
+  if (span === undefined || span === null) return { ok: true, value: undefined };
+  if (typeof span === 'number') {
+    if (!Number.isInteger(span) || span < 0 || !Number.isSafeInteger(span)) {
+      return { ok: false };
+    }
+    return { ok: true, value: BigInt(span) };
+  }
+  if (typeof span === 'bigint') {
+    if (span < 0n || span > MAX_U64) return { ok: false };
+    return { ok: true, value: span };
+  }
+  return { ok: false };
+}
+
+function normalizePayloadParam(data) {
+  if (data === undefined || data === null) return null;
+  if (typeof data === 'string') return Buffer.from(data, 'utf-8');
+  return normalizeBytes(data);
+}
+
+function validateChunkPayload(data) {
+  const payload = normalizePayloadParam(data);
+  if (!payload) {
+    return {
+      error: invalidParams('data must be a string, Uint8Array, or ArrayBuffer').error,
+      payload: null,
+    };
+  }
+  if (payload.length === 0) {
+    // Bee rejects empty chunks; fail before prompting or spending postage.
+    return {
+      error: invalidParams('data must not be empty', 'invalid_params').error,
+      payload: null,
+    };
+  }
+  if (payload.length > LIMITS.maxChunkPayloadBytes) {
+    return {
+      error: invalidParams(
+        `Payload exceeds maximum chunk size of ${LIMITS.maxChunkPayloadBytes} bytes`,
+        'payload_too_large',
+        { limit: LIMITS.maxChunkPayloadBytes, actual: payload.length }
+      ).error,
+      payload: null,
+    };
+  }
+  return { payload, error: null };
+}
+
+function getReadBudget(origin) {
+  return getPermission(origin) ? READ_BUDGETS.connected : READ_BUDGETS.anonymous;
+}
+
+function consumePermissionFreeReadBudget(origin, { requests = 0, bytes = 0 } = {}) {
+  const budget = getReadBudget(origin);
+  const now = Date.now();
+  const existing = permissionFreeReadBuckets.get(origin);
+  const bucket = existing && now - existing.startedAt < budget.windowMs
+    ? existing
+    : { startedAt: now, requests: 0, bytes: 0 };
+
+  bucket.requests += requests;
+  bucket.bytes += bytes;
+  permissionFreeReadBuckets.set(origin, bucket);
+
+  if (bucket.requests > budget.maxRequests || bucket.bytes > budget.maxBytes) {
+    return invalidParams('Permission-free read budget exceeded', 'rate_limited', {
+      windowMs: budget.windowMs,
+      maxRequests: budget.maxRequests,
+      maxBytes: budget.maxBytes,
+    });
+  }
+  return null;
 }
 
 /**
@@ -101,6 +271,14 @@ async function executeSwarmMethod(method, params, origin) {
       return handleGetCapabilities(normalizedOrigin);
     }
 
+    if (method === 'swarm_readChunk') {
+      return handleReadChunk(params, normalizedOrigin);
+    }
+
+    if (method === 'swarm_readSingleOwnerChunk') {
+      return handleReadSingleOwnerChunk(params, normalizedOrigin);
+    }
+
     // swarm_readFeedEntry: no permission required. Feeds are public Swarm
     // data — any origin can read them via any Bee gateway without auth.
     // Gating this behind connection permission would force unnecessary
@@ -123,7 +301,7 @@ async function executeSwarmMethod(method, params, origin) {
     // All other methods require permission
     const permission = getPermission(normalizedOrigin);
     if (!permission) {
-      return { error: { ...ERRORS.UNAUTHORIZED, message: 'Origin not authorized. Call swarm_requestAccess first.' } };
+      return notConnected();
     }
 
     if (method === 'swarm_publishData') {
@@ -134,6 +312,12 @@ async function executeSwarmMethod(method, params, origin) {
 
     if (method === 'swarm_publishFiles') {
       const result = await handlePublishFiles(params, normalizedOrigin);
+      if (result.result) resetVaultAutoLockTimer();
+      return result;
+    }
+
+    if (method === 'swarm_publishChunk') {
+      const result = await handlePublishChunk(params, normalizedOrigin);
       if (result.result) resetVaultAutoLockTimer();
       return result;
     }
@@ -160,6 +344,18 @@ async function executeSwarmMethod(method, params, origin) {
       return result;
     }
 
+    if (method === 'swarm_writeSingleOwnerChunk') {
+      const result = await handleWriteSingleOwnerChunk(params, normalizedOrigin);
+      if (result.result) resetVaultAutoLockTimer();
+      return result;
+    }
+
+    if (method === 'swarm_getSigningIdentity') {
+      const result = await handleGetSigningIdentity(normalizedOrigin);
+      if (result.result) resetVaultAutoLockTimer();
+      return result;
+    }
+
     return { error: ERRORS.INTERNAL_ERROR };
   } catch (err) {
     log.error('[SwarmProvider] executeSwarmMethod failed:', err.message);
@@ -170,7 +366,7 @@ async function executeSwarmMethod(method, params, origin) {
 function handleRequestAccess(origin) {
   const permission = getPermission(origin);
   if (!permission) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Permission not granted. Renderer should show prompt first.' } };
+    return notConnected();
   }
   return { result: { connected: true, origin, capabilities: ['publish'] } };
 }
@@ -183,12 +379,20 @@ async function handleGetCapabilities(origin) {
 
   return {
     result: {
+      specVersion: SPEC_VERSION,
       canPublish: isConnected && preFlight.ok,
       reason: !isConnected ? 'not-connected' : (preFlight.ok ? null : preFlight.reason),
+      publisherIdentityModes: ['app-scoped', 'bee-wallet', 'ethereum-wallet'],
+      extensions: {
+        ethereumWalletPublisherIdentity: true,
+        publisherSigning: true,
+      },
       limits: {
         maxDataBytes: LIMITS.maxDataBytes,
         maxFilesBytes: LIMITS.maxFilesBytes,
         maxFileCount: LIMITS.maxFileCount,
+        maxPathBytes: LIMITS.maxPathBytes,
+        maxChunkPayloadBytes: LIMITS.maxChunkPayloadBytes,
       },
     },
   };
@@ -275,8 +479,9 @@ function validateVirtualPath(p) {
   if (typeof p !== 'string' || p.length === 0) {
     return { valid: false, message: 'Path must be a non-empty string' };
   }
-  if (p.length > 256) {
-    return { valid: false, message: 'Path exceeds 256 characters' };
+  const pathBytes = Buffer.byteLength(p, 'utf-8');
+  if (pathBytes > LIMITS.maxPathBytes) {
+    return { valid: false, message: `Path exceeds ${LIMITS.maxPathBytes} UTF-8 bytes` };
   }
   if (p.includes('\\')) {
     return { valid: false, message: 'Backslashes are not allowed' };
@@ -435,7 +640,7 @@ async function handleGetUploadStatus(params, origin) {
 
   const owner = tagOwnership.get(tagUid);
   if (!owner || owner !== origin) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Tag not found or not owned by this origin' } };
+    return notAuthorized('tag_ownership_mismatch');
   }
 
   try {
@@ -448,6 +653,221 @@ async function handleGetUploadStatus(params, origin) {
   } catch (err) {
     log.error(`[SwarmProvider] getUploadStatus failed for tag ${tagUid}:`, err.message);
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+  }
+}
+
+function mapChunkReadError(err) {
+  // Only semantic chunk-read failures become invalid params. Bee 5xx/timeouts
+  // must remain internal/transient errors so callers can distinguish them.
+  if (err.reason === 'chunk_not_found' || err.reason === 'chunk_type_mismatch') {
+    return { error: { ...ERRORS.INVALID_PARAMS, message: err.message, data: { reason: err.reason } } };
+  }
+  return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+}
+
+/**
+ * Handle swarm_publishChunk: validate one CAC payload and publish it.
+ */
+async function handlePublishChunk(params, origin) {
+  if (!params || typeof params !== 'object') {
+    return invalidParams('params is required');
+  }
+
+  const optionsError = validateEmptyOptions(params.options);
+  if (optionsError) return optionsError;
+
+  const { payload, error } = validateChunkPayload(params.data);
+  if (error) return { error };
+
+  const span = validateSpan(params.span);
+  if (!span.ok) {
+    return invalidParams('span must be a non-negative unsigned 64-bit integer', 'invalid_span');
+  }
+
+  const preFlight = await checkSwarmPreFlight();
+  if (!preFlight.ok) {
+    return { error: { ...ERRORS.NODE_UNAVAILABLE, message: `Node not available: ${preFlight.reason}`, data: { reason: preFlight.reason } } };
+  }
+
+  const historyEntry = addEntry({
+    type: 'chunk',
+    name: 'CAC chunk',
+    status: 'uploading',
+    origin,
+    bytesSize: payload.length,
+  });
+
+  try {
+    const result = await publishChunk(payload, { span: span.value });
+    updateEntry(historyEntry.id, {
+      status: 'completed',
+      reference: result.reference,
+      batchIdUsed: result.batchIdUsed,
+    });
+    return { result: { reference: result.reference } };
+  } catch (err) {
+    updateEntry(historyEntry.id, { status: 'failed', errorMessage: err.message });
+    log.error(`[SwarmProvider] publishChunk failed for ${origin}:`, err.message);
+    return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+  }
+}
+
+/**
+ * Handle swarm_readChunk: permission-free CAC read with type validation.
+ */
+async function handleReadChunk(params, origin) {
+  if (!params || typeof params !== 'object') {
+    return invalidParams('params is required');
+  }
+
+  const optionsError = validateEmptyOptions(params.options);
+  if (optionsError) return optionsError;
+
+  const referenceError = validateHexString(params.reference, 32, 'invalid_reference', 'reference');
+  if (referenceError) return referenceError;
+
+  const budgetError = consumePermissionFreeReadBudget(origin, { requests: 1 });
+  if (budgetError) return budgetError;
+
+  const reachable = await checkBeeReachable();
+  if (!reachable.ok) {
+    return { error: { ...ERRORS.NODE_UNAVAILABLE, message: `Node not available: ${reachable.reason}`, data: { reason: reachable.reason } } };
+  }
+
+  try {
+    const result = await readChunk(params.reference);
+    const byteBudgetError = consumePermissionFreeReadBudget(origin, {
+      bytes: Buffer.byteLength(result.data, 'base64'),
+    });
+    if (byteBudgetError) return byteBudgetError;
+    return { result };
+  } catch (err) {
+    log.error(`[SwarmProvider] readChunk failed for ${origin}:`, err.message);
+    return mapChunkReadError(err);
+  }
+}
+
+/**
+ * Handle swarm_writeSingleOwnerChunk: sign and publish an SOC.
+ */
+async function handleWriteSingleOwnerChunk(params, origin) {
+  if (!params || typeof params !== 'object') {
+    return invalidParams('params is required');
+  }
+
+  const optionsError = validateEmptyOptions(params.options);
+  if (optionsError) return optionsError;
+
+  const identifierError = validateHexString(params.identifier, 32, 'invalid_identifier', 'identifier');
+  if (identifierError) return identifierError;
+
+  const { payload, error } = validateChunkPayload(params.data);
+  if (error) return { error };
+
+  const span = validateSpan(params.span);
+  if (!span.ok) {
+    return invalidParams('span must be a non-negative unsigned 64-bit integer', 'invalid_span');
+  }
+
+  if (!hasFeedGrant(origin)) {
+    return feedNotGranted();
+  }
+
+  const originEntry = getOriginEntry(origin);
+  const activeIdentity = getActiveOriginIdentity(originEntry);
+  let signerKey;
+  try {
+    signerKey = await resolveSignerKey(activeIdentity);
+  } catch (err) {
+    return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+  }
+
+  const preFlight = await checkSwarmPreFlight();
+  if (!preFlight.ok) {
+    return { error: { ...ERRORS.NODE_UNAVAILABLE, message: `Node not available: ${preFlight.reason}`, data: { reason: preFlight.reason } } };
+  }
+
+  const historyEntry = addEntry({
+    type: 'soc',
+    name: 'SOC chunk',
+    status: 'uploading',
+    origin,
+    bytesSize: payload.length,
+  });
+
+  try {
+    const result = await writeSingleOwnerChunk(signerKey, params.identifier, payload, { span: span.value });
+    updateEntry(historyEntry.id, {
+      status: 'completed',
+      reference: result.reference,
+      batchIdUsed: result.batchIdUsed,
+    });
+    return {
+      result: {
+        reference: result.reference,
+        owner: result.owner,
+        identifier: result.identifier,
+      },
+    };
+  } catch (err) {
+    updateEntry(historyEntry.id, { status: 'failed', errorMessage: err.message });
+    log.error(`[SwarmProvider] writeSingleOwnerChunk failed for ${origin}:`, err.message);
+    return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+  }
+}
+
+/**
+ * Handle swarm_readSingleOwnerChunk: permission-free SOC read.
+ */
+async function handleReadSingleOwnerChunk(params, origin) {
+  if (!params || typeof params !== 'object') {
+    return invalidParams('params is required');
+  }
+
+  const optionsError = validateEmptyOptions(params.options);
+  if (optionsError) return optionsError;
+
+  const hasAddress = params.address !== undefined && params.address !== null;
+  const hasOwner = params.owner !== undefined && params.owner !== null;
+  const hasIdentifier = params.identifier !== undefined && params.identifier !== null;
+
+  if (hasAddress && (hasOwner || hasIdentifier)) {
+    return invalidParams('Provide either address, or owner + identifier, not both');
+  }
+  if (!hasAddress && (!hasOwner || !hasIdentifier)) {
+    return invalidParams('Either address, or owner + identifier, is required');
+  }
+
+  if (hasAddress) {
+    const addressError = validateHexString(params.address, 32, 'invalid_reference', 'address');
+    if (addressError) return addressError;
+  } else {
+    const owner = normalizeAddress(params.owner);
+    if (!/^[0-9a-fA-F]{40}$/.test(owner)) {
+      return invalidParams('owner must be a valid 40-character hex address', 'invalid_owner');
+    }
+    const identifierError = validateHexString(params.identifier, 32, 'invalid_identifier', 'identifier');
+    if (identifierError) return identifierError;
+  }
+
+  const budgetError = consumePermissionFreeReadBudget(origin, { requests: 1 });
+  if (budgetError) return budgetError;
+
+  const reachable = await checkBeeReachable();
+  if (!reachable.ok) {
+    return { error: { ...ERRORS.NODE_UNAVAILABLE, message: `Node not available: ${reachable.reason}`, data: { reason: reachable.reason } } };
+  }
+
+  try {
+    const result = await readSingleOwnerChunk(params);
+    const byteBudgetError = consumePermissionFreeReadBudget(origin, {
+      bytes: Buffer.byteLength(result.data, 'base64'),
+    });
+    if (byteBudgetError) return byteBudgetError;
+    return { result };
+  } catch (err) {
+    log.error(`[SwarmProvider] readSingleOwnerChunk failed for ${origin}:`, err.message);
+    return mapChunkReadError(err);
   }
 }
 
@@ -474,12 +894,53 @@ function validateFeedName(name) {
 }
 
 /**
- * Resolve the signer private key for an origin based on its identity mode.
- * @param {Object} originEntry - Origin entry from feed-store (must have identityMode set)
+ * Return the active identity from an origin entry. Falls back to the
+ * compatibility fields returned by older tests/mocks.
+ * @param {Object} originEntry
+ * @returns {Object|null}
+ */
+function getActiveOriginIdentity(originEntry) {
+  if (!originEntry) return null;
+  if (originEntry.activeIdentityId && originEntry.identities?.[originEntry.activeIdentityId]) {
+    return originEntry.identities[originEntry.activeIdentityId];
+  }
+  if (originEntry.identityMode) {
+    return {
+      id: originEntry.activeIdentityId || null,
+      mode: originEntry.identityMode,
+      publisherKeyIndex: originEntry.publisherKeyIndex ?? null,
+    };
+  }
+  return null;
+}
+
+/**
+ * Return the identity that owns a stored high-level feed. Existing feeds stay
+ * bound to their creation identity even if the origin's active identity later
+ * changes.
+ * @param {Object} originEntry
+ * @param {Object} feed
+ * @returns {Object|null}
+ */
+function getFeedIdentity(originEntry, feed) {
+  if (feed?.identityId && originEntry?.identities?.[feed.identityId]) {
+    return originEntry.identities[feed.identityId];
+  }
+  return getActiveOriginIdentity(originEntry);
+}
+
+function getIdentityMode(identity) {
+  return identity?.mode || identity?.identityMode || null;
+}
+
+/**
+ * Resolve the signer private key for a feed/SOC identity.
+ * @param {Object} identity - Identity record from feed-store
  * @returns {Promise<string>} 0x-prefixed hex private key
  */
-async function resolveSignerKey(originEntry) {
-  if (originEntry.identityMode === 'bee-wallet') {
+async function resolveSignerKey(identity) {
+  const identityMode = getIdentityMode(identity);
+  if (identityMode === 'bee-wallet') {
     const keys = getDerivedKeys();
     if (!keys) {
       throw new Error(VAULT_LOCKED_MESSAGE);
@@ -487,12 +948,53 @@ async function resolveSignerKey(originEntry) {
     return keys.beeWallet.privateKey;
   }
 
-  if (originEntry.identityMode === 'app-scoped') {
-    const publisherKey = await getPublisherKey(originEntry.publisherKeyIndex);
+  if (identityMode === 'app-scoped') {
+    if (typeof identity.publisherKeyIndex !== 'number') {
+      throw new Error('App-scoped identity is missing a publisher key index');
+    }
+    const publisherKey = await getPublisherKey(identity.publisherKeyIndex);
     return publisherKey.privateKey;
   }
 
-  throw new Error(`Unknown identity mode: ${originEntry.identityMode}`);
+  if (identityMode === 'ethereum-wallet') {
+    if (typeof identity.walletIndex !== 'number') {
+      throw new Error('Ethereum wallet identity is missing a wallet index');
+    }
+    const walletKey = await getUserWalletKey(identity.walletIndex);
+    return walletKey.privateKey;
+  }
+
+  throw new Error(`Unknown identity mode: ${identityMode}`);
+}
+
+/**
+ * Handle swarm_getSigningIdentity: disclose origin signing address after
+ * connection + feed/signing grant. Does not require Bee node readiness.
+ */
+async function handleGetSigningIdentity(origin) {
+  if (!hasFeedGrant(origin)) {
+    return feedNotGranted();
+  }
+
+  const originEntry = getOriginEntry(origin);
+  const activeIdentity = getActiveOriginIdentity(originEntry);
+  let signerKey;
+  try {
+    signerKey = await resolveSignerKey(activeIdentity);
+  } catch (err) {
+    return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+  }
+
+  try {
+    return {
+      result: {
+        owner: getSignerAddress(signerKey),
+        identityMode: getIdentityMode(activeIdentity),
+      },
+    };
+  } catch (err) {
+    return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
+  }
 }
 
 /**
@@ -511,7 +1013,7 @@ async function handleCreateFeed(params, origin) {
 
   // Feed capability = connection permission (already checked by caller) + active feed grant
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted. Renderer should show feed prompt first.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -519,6 +1021,7 @@ async function handleCreateFeed(params, origin) {
   // Idempotent: if feed already exists, return existing metadata
   const existingFeed = getFeed(origin, name);
   if (existingFeed) {
+    const feedIdentity = getFeedIdentity(originEntry, existingFeed);
     return {
       result: {
         feedId: name,
@@ -526,7 +1029,7 @@ async function handleCreateFeed(params, origin) {
         topic: existingFeed.topic,
         manifestReference: existingFeed.manifestReference,
         bzzUrl: `bzz://${existingFeed.manifestReference}`,
-        identityMode: originEntry.identityMode,
+        identityMode: getIdentityMode(feedIdentity),
       },
     };
   }
@@ -536,9 +1039,10 @@ async function handleCreateFeed(params, origin) {
     return { error: { ...ERRORS.NODE_UNAVAILABLE, message: `Node not available: ${preFlight.reason}`, data: { reason: preFlight.reason } } };
   }
 
+  const activeIdentity = getActiveOriginIdentity(originEntry);
   let signerKey;
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(activeIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -561,6 +1065,7 @@ async function handleCreateFeed(params, origin) {
       topic: result.topic,
       owner: result.owner,
       manifestReference: result.manifestReference,
+      identityId: activeIdentity.id,
     });
 
     updateEntry(historyEntry.id, { status: 'completed', ...result });
@@ -574,7 +1079,7 @@ async function handleCreateFeed(params, origin) {
         topic: result.topic,
         manifestReference: result.manifestReference,
         bzzUrl: result.bzzUrl,
-        identityMode: originEntry.identityMode,
+        identityMode: getIdentityMode(activeIdentity),
       },
     };
   } catch (err) {
@@ -603,7 +1108,7 @@ async function handleUpdateFeed(params, origin) {
   }
 
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -619,8 +1124,9 @@ async function handleUpdateFeed(params, origin) {
   }
 
   let signerKey;
+  const feedIdentity = getFeedIdentity(originEntry, existingFeed);
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(feedIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -692,7 +1198,7 @@ async function handleWriteFeedEntry(params, origin) {
   }
 
   if (!hasFeedGrant(origin)) {
-    return { error: { ...ERRORS.UNAUTHORIZED, message: 'Feed access not granted.', data: { reason: 'feed_not_granted' } } };
+    return feedNotGranted();
   }
 
   const originEntry = getOriginEntry(origin);
@@ -708,8 +1214,9 @@ async function handleWriteFeedEntry(params, origin) {
   }
 
   let signerKey;
+  const feedIdentity = getFeedIdentity(originEntry, existingFeed);
   try {
-    signerKey = await resolveSignerKey(originEntry);
+    signerKey = await resolveSignerKey(feedIdentity);
   } catch (err) {
     return { error: { ...ERRORS.INTERNAL_ERROR, message: err.message } };
   }
@@ -823,6 +1330,9 @@ async function handleReadFeedEntry(params, origin) {
     }
   }
 
+  const budgetError = consumePermissionFreeReadBudget(origin, { requests: 1 });
+  if (budgetError) return budgetError;
+
   // Read-only pre-flight: just check Bee API is reachable
   const reachable = await checkBeeReachable();
   if (!reachable.ok) {
@@ -833,6 +1343,10 @@ async function handleReadFeedEntry(params, origin) {
     const result = await readFeedPayload(resolvedOwner, resolvedTopic, index);
 
     const base64Data = result.payload.toString('base64');
+    const byteBudgetError = consumePermissionFreeReadBudget(origin, {
+      bytes: result.payload.length,
+    });
+    if (byteBudgetError) return byteBudgetError;
 
     return {
       result: {
@@ -878,6 +1392,11 @@ function handleListFeeds(origin) {
     lastUpdated: feed.lastUpdated,
     lastReference: feed.lastReference,
   }));
+  const budgetError = consumePermissionFreeReadBudget(origin, {
+    requests: 1,
+    bytes: Buffer.byteLength(JSON.stringify(result), 'utf-8'),
+  });
+  if (budgetError) return budgetError;
   return { result };
 }
 
@@ -967,5 +1486,6 @@ module.exports = {
   validateVirtualPath,
   validateFeedName,
   clearTagOwnership,
+  clearPermissionFreeReadBudgets,
   LIMITS,
 };

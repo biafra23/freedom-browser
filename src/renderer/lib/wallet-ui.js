@@ -31,8 +31,9 @@ import { initStampManager, closeStampManager } from './wallet/stamp-manager.js';
 import { initChequebookDeposit, closeChequebookDeposit } from './wallet/chequebook-deposit.js';
 import { initSwarmConnect, showSwarmConnect, updateSwarmConnectionBanner, showSwarmPublishApproval, showSwarmFeedApproval } from './wallet/swarm-connect.js';
 import { initVaultUnlock, showVaultUnlock } from './wallet/vault-unlock.js';
-import { initPermissionManage, showDappPermissions, showSwarmPermissions, showX402Permissions } from './wallet/permission-manage.js';
+import { initPermissionManage, showDappPermissions, showSwarmPermissions, showX402Permissions, closeDappPerms, closeSwarmPerms, closeX402Perms } from './wallet/permission-manage.js';
 import { initPublisherIdentities, closePublisherIdentities } from './wallet/publisher-identities.js';
+import { initPublisherIdentityCreate, closePublisherIdentityCreate } from './wallet/publisher-identity-create.js';
 
 // Re-export public API consumed by dapp-provider.js, swarm-provider.js, and index.js
 export { showDappConnect, updateConnectionBanner, showDappTxApproval, showDappSignApproval };
@@ -87,6 +88,7 @@ export function initWalletUi() {
   initStampManager();
   initChequebookDeposit();
   initPublisherIdentities();
+  initPublisherIdentityCreate();
 
   // Load chain registry (updates registeredTokens/registeredChains, then
   // render everything that depends on those — the asset list AND the
@@ -369,7 +371,11 @@ function closeAllSubscreens() {
   closePublishSetup();
   closeStampManager();
   closeChequebookDeposit();
+  closeDappPerms();
+  closeSwarmPerms();
+  closeX402Perms();
   closePublisherIdentities();
+  closePublisherIdentityCreate({ reject: true });
 }
 
 /**

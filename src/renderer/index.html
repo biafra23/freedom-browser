@@ -2214,40 +2214,25 @@
                   </svg>
                   <span>Back</span>
                 </button>
-                <h3 class="subscreen-title">Feed Access</h3>
+                <h3 class="subscreen-title" id="swarm-feed-title">Feed Access</h3>
               </div>
 
               <div class="subscreen-content">
                 <div class="swarm-connect-origin">
                   <div class="swarm-connect-site" id="swarm-feed-site">site.eth</div>
-                  <div class="swarm-connect-wants">wants to create and manage feeds</div>
+                  <div class="swarm-connect-wants" id="swarm-feed-wants">wants to create and manage feeds</div>
                 </div>
 
                 <div class="swarm-publish-details">
                   <div class="swarm-publish-row">
-                    <span class="swarm-publish-label">Feed name</span>
+                    <span class="swarm-publish-label" id="swarm-feed-detail-label">Feed name</span>
                     <span class="swarm-publish-value" id="swarm-feed-name">blog</span>
                   </div>
                 </div>
 
-                <div class="swarm-feed-identity-choice">
-                  <div class="swarm-feed-identity-title">Choose publisher identity:</div>
-
-                  <label class="swarm-feed-identity-option">
-                    <input type="radio" name="swarm-feed-identity" value="app-scoped" checked>
-                    <div class="swarm-feed-identity-label">
-                      <span class="swarm-feed-identity-name">App-scoped identity</span>
-                      <span class="swarm-feed-identity-desc">Dedicated key for this app only (recommended)</span>
-                    </div>
-                  </label>
-
-                  <label class="swarm-feed-identity-option">
-                    <input type="radio" name="swarm-feed-identity" value="bee-wallet">
-                    <div class="swarm-feed-identity-label">
-                      <span class="swarm-feed-identity-name">Bee wallet identity</span>
-                      <span class="swarm-feed-identity-desc">Uses your node's wallet address</span>
-                    </div>
-                  </label>
+                <div class="swarm-feed-identity-choice" id="swarm-feed-identity-choice">
+                  <div class="swarm-feed-identity-title">Publisher identity</div>
+                  <div id="swarm-feed-identity-selector"></div>
                 </div>
 
                 <div class="swarm-connect-warning">
@@ -2256,7 +2241,7 @@
                     <line x1="12" y1="16" x2="12" y2="12"/>
                     <line x1="12" y1="8" x2="12.01" y2="8"/>
                   </svg>
-                  <span>Feeds provide stable URLs that this app can update over time. Uses your stamps and bandwidth.</span>
+                  <span id="swarm-feed-warning">Feeds provide stable URLs that this app can update over time. Uses your stamps and bandwidth.</span>
                 </div>
 
                 <!-- Vault unlock section (feed signing requires vault access) -->
@@ -2285,7 +2270,7 @@
 
                 <label class="auto-approve-checkbox">
                   <input type="checkbox" id="swarm-feed-auto-approve" />
-                  <span>Always allow this site to manage feeds without asking</span>
+                  <span id="swarm-feed-auto-approve-label">Always allow this site to manage feeds without asking</span>
                 </label>
 
                 <div class="swarm-connect-actions">
@@ -2427,6 +2412,18 @@
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
+                  <div class="perms-toggle-row">
+                    <span class="perms-label">Auto-approve publisher signing</span>
+                    <label class="toggle-switch">
+                      <input type="checkbox" id="swarm-perms-signing-toggle" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="perms-section" id="swarm-perms-identity-section">
+                  <div class="perms-section-header">Publisher identity</div>
+                  <div id="swarm-perms-identity-selector"></div>
+                  <div class="publisher-identity-note hidden" id="swarm-perms-identity-note"></div>
                 </div>
                 <div class="perms-actions">
                   <button type="button" class="perms-disconnect-btn" id="swarm-perms-disconnect">Disconnect</button>
@@ -2447,11 +2444,46 @@
               </div>
 
               <div class="subscreen-content">
-                <div class="publisher-identity-search">
-                  <input type="text" id="publisher-identity-filter" placeholder="Search origins..." autocomplete="off">
+                <div id="publisher-identity-list-view">
+                  <div class="publisher-identity-search">
+                    <input type="text" id="publisher-identity-filter" placeholder="Search origins..." autocomplete="off">
+                  </div>
+                  <div id="publisher-identity-list"></div>
+                  <div class="publisher-identity-empty hidden" id="publisher-identity-empty">No publisher identities yet.</div>
                 </div>
-                <div id="publisher-identity-list"></div>
-                <div class="publisher-identity-empty hidden" id="publisher-identity-empty">No publisher identities yet.</div>
+
+                <div class="publisher-identity-detail hidden" id="publisher-identity-detail">
+                  <div class="perms-site" id="publisher-identity-detail-origin">site.eth</div>
+                  <div id="publisher-identity-selector"></div>
+                  <div class="publisher-identity-note hidden" id="publisher-identity-detail-note"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Create Publisher Identity sub-screen -->
+            <div id="sidebar-publisher-identity-create" class="sidebar-subscreen hidden">
+              <div class="subscreen-header">
+                <button type="button" class="subscreen-back-btn" id="publisher-identity-create-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                  </svg>
+                  <span>Back</span>
+                </button>
+                <h3 class="subscreen-title">New Publisher Identity</h3>
+              </div>
+              <div class="subscreen-content">
+                <div class="perms-site" id="publisher-identity-create-origin">site.eth</div>
+                <p class="create-wallet-message">Choose a label for this app-scoped publisher identity.</p>
+                <input type="text" id="publisher-identity-create-label"
+                       class="create-wallet-input"
+                       placeholder="Identity label"
+                       maxlength="80"
+                       autocomplete="off">
+                <div id="publisher-identity-create-error" class="unlock-error hidden"></div>
+                <div class="publisher-identity-create-actions">
+                  <button type="button" class="swarm-connect-reject-btn" id="publisher-identity-create-cancel">Cancel</button>
+                  <button type="button" class="create-wallet-submit-btn" id="publisher-identity-create-save">Save</button>
+                </div>
               </div>
             </div>
 
