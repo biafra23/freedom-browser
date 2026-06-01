@@ -39,5 +39,25 @@
       "anchor": "latest",
       "anchorTtlMs": 30000
     }
+  },
+  "8453": {
+    "chainId": 8453,
+    "chainIdHex": "0x2105",
+    "name": "Base",
+    "shortName": "BASE",
+    "nativeSymbol": "ETH",
+    "blockExplorer": "https://basescan.org",
+    "logo": "base.png",
+    "builtin": true,
+    "verification": {
+      "primary": "quorum"
+    },
+    "quorum": {
+      "k": 3,
+      "m": 2,
+      "timeoutMs": 5000,
+      "anchor": "latest",
+      "anchorTtlMs": 30000
+    }
   }
 }

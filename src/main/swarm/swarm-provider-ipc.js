@@ -28,6 +28,7 @@ const { getPermission } = require('./swarm-permissions');
 const { publishData, publishFilesFromContent, getUploadStatus } = require('./publish-service');
 const { createFeed, updateFeed, writeFeedPayload, readFeedPayload, buildTopicString } = require('./feed-service');
 const { Topic } = require('@ethersphere/bee-js');
+const { VAULT_LOCKED_MESSAGE } = require('../wallet/vault-errors');
 const { getOriginEntry, getFeed, setFeed, updateFeedReference, hasFeedGrant, getAllFeeds } = require('./feed-store');
 const { addEntry, updateEntry } = require('./publish-history');
 const { getBeeApiUrl } = require('../service-registry');
@@ -481,7 +482,7 @@ async function resolveSignerKey(originEntry) {
   if (originEntry.identityMode === 'bee-wallet') {
     const keys = getDerivedKeys();
     if (!keys) {
-      throw new Error('Vault is locked');
+      throw new Error(VAULT_LOCKED_MESSAGE);
     }
     return keys.beeWallet.privateKey;
   }

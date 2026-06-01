@@ -12,13 +12,11 @@ const {
 
 // Additional chain metadata not in the registry
 // (contracts, supportsHelios, etc.)
+const ETHER_NATIVE_CURRENCY = { name: 'Ether', symbol: 'ETH', decimals: 18 };
+
 const CHAIN_METADATA = {
   1: {
-    nativeCurrency: {
-      name: 'Ether',
-      symbol: 'ETH',
-      decimals: 18,
-    },
+    nativeCurrency: ETHER_NATIVE_CURRENCY,
     supportsHelios: true,
   },
   100: {
@@ -34,6 +32,10 @@ const CHAIN_METADATA = {
       staking: '0x781c6D1f0eaE6F1Da1F604c6cDCcdB8B76428ba7',
       priceOracle: '0x0FDc5429C50e2a39066D8A94F3e2D2476fcc3b85',
     },
+  },
+  8453: {
+    nativeCurrency: ETHER_NATIVE_CURRENCY,
+    supportsHelios: false,
   },
 };
 

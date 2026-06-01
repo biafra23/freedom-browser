@@ -33,6 +33,8 @@ let dappTxAutoApproveCheckbox;
 // Local state
 let dappTxPending = null;
 
+const ERC20_TRANSFER_SELECTOR = '0xa9059cbb';
+
 export function initDappTx() {
   dappTxScreen = document.getElementById('sidebar-dapp-tx');
   dappTxBackBtn = document.getElementById('dapp-tx-back');
@@ -334,10 +336,17 @@ async function approveDappTx() {
       }
     }
 
-    const result = await window.wallet.dappSendTransaction(tx, walletIndex);
+    const result = await window.wallet.dappSendTransaction(
+      tx,
+      walletIndex,
+      buildDappTxContext(permissionKey, txParams)
+    );
 
     if (!result.success) {
       throw new Error(result.error || 'Transaction failed');
+    }
+    if (result.recorded === false) {
+      console.warn('[WalletUI] dApp transaction broadcast but payment history did not record:', result.recordError);
     }
 
     if (dappTxAutoApproveCheckbox?.checked && permissionKey && selector && txParams.to) {
@@ -398,4 +407,33 @@ export function extractSelector(data) {
   const hex = data.startsWith('0x') ? data.slice(2) : data;
   if (hex.length < 8) return null;
   return '0x' + hex.slice(0, 8).toLowerCase();
+}
+
+export function decodeErc20Transfer(data) {
+  if (!data || typeof data !== 'string') return null;
+  const hex = data.toLowerCase();
+  if (!hex.startsWith(ERC20_TRANSFER_SELECTOR) || hex.length < 138) return null;
+  const recipientSlot = hex.slice(10, 74);
+  const amountSlot = hex.slice(74, 138);
+  if (!/^[0-9a-f]{64}$/.test(recipientSlot) || !/^[0-9a-f]{64}$/.test(amountSlot)) {
+    return null;
+  }
+  return {
+    toAddress: `0x${recipientSlot.slice(24)}`,
+    amount: BigInt(`0x${amountSlot}`).toString(10),
+  };
+}
+
+export function buildDappTxContext(origin, txParams = {}) {
+  const decoded = decodeErc20Transfer(txParams.data);
+  if (!decoded || !txParams.to) {
+    return { origin };
+  }
+  return {
+    origin,
+    asset: String(txParams.to).toLowerCase(),
+    toAddress: decoded.toAddress,
+    amount: decoded.amount,
+    metadata: { erc20Method: 'transfer' },
+  };
 }

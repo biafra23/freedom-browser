@@ -13,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const IPC = require('../shared/ipc-channels');
+const { VAULT_LOCKED_MESSAGE } = require('./wallet/vault-errors');
 
 // Identity module - loaded lazily
 let identityModule = null;
@@ -422,7 +423,7 @@ function removeStaleBeeDirs(dataDir) {
  */
 async function injectBeeIdentity() {
   if (!derivedKeys) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
 
   const identity = await loadIdentityModule();
@@ -467,7 +468,7 @@ async function injectBeeIdentity() {
  */
 async function injectIpfsIdentity() {
   if (!derivedKeys) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
 
   const identity = await loadIdentityModule();
@@ -548,7 +549,7 @@ function getIpfsBinaryPath() {
  */
 async function injectRadicleIdentity(alias = 'FreedomBrowser') {
   if (!derivedKeys) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
 
   const identity = await loadIdentityModule();
@@ -591,7 +592,7 @@ async function injectRadicleIdentity(alias = 'FreedomBrowser') {
  */
 async function injectAllIdentities(radicleAlias = 'FreedomBrowser', force = false) {
   if (!derivedKeys) {
-    throw new Error('Vault is locked');
+    throw new Error(VAULT_LOCKED_MESSAGE);
   }
 
   const results = {
