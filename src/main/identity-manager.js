@@ -399,6 +399,51 @@ function generateBeeKeystorePassword() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// On Windows, deleting LevelDB-backed dirs (statestore/localstore) throws
+// EPERM while the node still holds the `LOCK` file open without
+// FILE_SHARE_DELETE (issue #90). Node's own rmSync maxRetries/retryDelay does
+// NOT help here: on Windows an open-handle EPERM is short-circuited by
+// libuv/Node's fixWinEPERM path (which only clears a read-only *attribute*) and
+// never reaches the retry-sleep loop, so it throws immediately. We therefore
+// run our own synchronous retry loop, giving the node a moment to exit and the
+// OS to release the handle. Verified on Windows on ARM against a real Bee node.
+const RM_MAX_ATTEMPTS = 10;
+const RM_RETRY_DELAY_MS = 100;
+
+/**
+ * Block the current thread for `ms` without spinning the event loop.
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Recursively remove a path, retrying on transient Windows lock errors
+ * (EPERM/EBUSY) until the holding process exits and releases the handle.
+ * Returns true if the path existed and was removed.
+ * @param {string} targetPath - Absolute path to remove
+ * @returns {boolean}
+ */
+function removePathWithRetry(targetPath) {
+  if (!fs.existsSync(targetPath)) {
+    return false;
+  }
+  for (let attempt = 1; attempt <= RM_MAX_ATTEMPTS; attempt++) {
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      return true;
+    } catch (err) {
+      const transient = err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'ENOTEMPTY';
+      if (!transient || attempt === RM_MAX_ATTEMPTS) {
+        throw err;
+      }
+      sleepSync(attempt * RM_RETRY_DELAY_MS);
+    }
+  }
+  return true;
+}
+
 /**
  * Remove Bee's persisted state directories so a freshly injected identity
  * isn't mixed with state derived from the previous key.
@@ -407,9 +452,7 @@ function generateBeeKeystorePassword() {
 function removeStaleBeeDirs(dataDir) {
   const staleDirs = ['statestore', 'localstore', 'kademlia-metrics', 'stamperstore'];
   for (const dir of staleDirs) {
-    const dirPath = path.join(dataDir, dir);
-    if (fs.existsSync(dirPath)) {
-      fs.rmSync(dirPath, { recursive: true });
+    if (removePathWithRetry(path.join(dataDir, dir))) {
       console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
     }
   }
@@ -437,11 +480,20 @@ async function injectBeeIdentity() {
   // When re-injecting with a new key, Bee's persisted state (overlay address,
   // auxiliary keys) becomes invalid. Remove everything except the directories
   // we're about to write fresh (keys/ and config.yaml).
-  removeStaleBeeDirs(dataDir);
+  try {
+    removeStaleBeeDirs(dataDir);
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EBUSY') {
+      throw new Error(
+        'Could not reset node data because it is still in use. ' +
+          'Please close Freedom completely and try again.',
+        { cause: err }
+      );
+    }
+    throw err;
+  }
   for (const keyFile of ['libp2p_v2.key', 'pss.key']) {
-    const keyPath = path.join(dataDir, 'keys', keyFile);
-    if (fs.existsSync(keyPath)) {
-      fs.unlinkSync(keyPath);
+    if (removePathWithRetry(path.join(dataDir, 'keys', keyFile))) {
       console.log(`[IdentityManager] Removed old ${keyFile} (password mismatch prevention)`);
     }
   }
@@ -564,9 +616,7 @@ async function injectRadicleIdentity(alias = 'FreedomBrowser') {
   // routing db, etc.) becomes invalid. Remove stale state directories.
   const staleDirs = ['node', 'cobs', 'storage'];
   for (const dir of staleDirs) {
-    const dirPath = path.join(dataDir, dir);
-    if (fs.existsSync(dirPath)) {
-      fs.rmSync(dirPath, { recursive: true });
+    if (removePathWithRetry(path.join(dataDir, dir))) {
       console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
     }
   }
