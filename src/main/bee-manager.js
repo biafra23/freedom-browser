@@ -672,8 +672,34 @@ function registerBeeIpc() {
   });
 }
 
+// Lifecycle hooks for identity (re)injection: the injector must stop a Bee
+// node that holds the statestore LevelDB lock before wiping it, then restart
+// it with the new key. A node that is STARTING has already spawned and grabbed
+// the lock even though health checks haven't passed, so it must be stopped too
+// or the wipe fails with EPERM on Windows (issue #90). Dependencies are
+// injectable so the decision can be unit-tested without spawning a real node.
+function createBeeLifecycle(deps = {}) {
+  const getStatusFn = deps.getStatus || getStatus;
+  const stopFn = deps.stopBee || stopBee;
+  const startFn = deps.startBee || startBee;
+  const setInjected = deps.setUseInjectedIdentity || setUseInjectedIdentity;
+  return {
+    stop: async () => {
+      const status = getStatusFn().status;
+      const active = status === STATUS.RUNNING || status === STATUS.STARTING;
+      if (active) await stopFn();
+      return active;
+    },
+    start: async () => {
+      setInjected(true);
+      await startFn();
+    },
+  };
+}
+
 module.exports = {
   registerBeeIpc,
+  createBeeLifecycle,
   startBee,
   stopBee,
   getActivePort,
