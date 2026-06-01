@@ -44,7 +44,13 @@ function getBeeBinaryPath() {
   return fs.existsSync(binPath) ? binPath : null;
 }
 
-function waitForBeeReady(port, timeout = 90000) {
+function waitForBeeReady(port, stderrChunks = [], timeout = 90000) {
+  const timeoutError = () => {
+    const tail = stderrChunks.join('').split('\n').slice(-40).join('\n');
+    return new Error(
+      `Bee not ready after ${timeout}ms\n--- Bee stderr (last 40 lines) ---\n${tail}`
+    );
+  };
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
@@ -56,7 +62,7 @@ function waitForBeeReady(port, timeout = 90000) {
           } else if (Date.now() - start < timeout) {
             setTimeout(check, 500);
           } else {
-            reject(new Error(`Bee not ready after ${timeout}ms`));
+            reject(timeoutError());
           }
         }
       );
@@ -64,7 +70,7 @@ function waitForBeeReady(port, timeout = 90000) {
         if (Date.now() - start < timeout) {
           setTimeout(check, 500);
         } else {
-          reject(new Error(`Bee not ready after ${timeout}ms`));
+          reject(timeoutError());
         }
       });
       req.end();
@@ -116,13 +122,19 @@ describe('Bee injection stops node before wipe (issue #90 follow-up)', () => {
       const keys = deriveAllKeys(TEST_MNEMONIC);
       const configPath = createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT);
       fs.appendFileSync(configPath, `p2p-addr: 127.0.0.1:${TEST_P2P_PORT}\n`);
+      // Pin a neighborhood so Bee doesn't query the external Swarmscan
+      // suggester before going healthy — that lookup would make this required
+      // CI job flaky on any DNS/service hiccup.
+      fs.appendFileSync(configPath, 'target-neighborhood: "1"\n');
       await injectBeeKey(tempDir, keys.beeWallet.privateKey, TEST_PASSWORD);
+      const stderrChunks = [];
       beeProcess = spawn(beeBinary, ['start', `--config=${configPath}`], {
-        stdio: ['ignore', 'ignore', 'ignore'],
+        stdio: ['ignore', 'ignore', 'pipe'],
       });
+      beeProcess.stderr.on('data', (data) => stderrChunks.push(data.toString()));
 
       // Once healthy, Bee has opened statestore and holds the LevelDB LOCK.
-      await waitForBeeReady(TEST_PORT);
+      await waitForBeeReady(TEST_PORT, stderrChunks);
       expect(fs.existsSync(path.join(tempDir, 'statestore'))).toBe(true);
 
       // Wire a stop hook that tears down the running node, mirroring how
