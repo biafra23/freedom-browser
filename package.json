@@ -23,6 +23,7 @@
     "test:coverage": "jest --coverage --runInBand --forceExit",
     "test:e2e": "playwright test --project=harness",
     "test:e2e:live": "playwright test --project=live",
+    "test:e2e:onboarding": "playwright test --project=live test-e2e/live/onboarding-identity.spec.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
