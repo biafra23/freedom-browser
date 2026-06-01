@@ -10,8 +10,8 @@
  * webview (window.ethereum) → renderer (this) → main (RPC/signing)
  */
 
-import { showDappConnect, getSelectedChainId, setSelectedChainId, updateConnectionBanner, showDappTxApproval, showDappSignApproval, showVaultUnlock, updateSwarmConnectionBanner } from './wallet-ui.js';
-import { extractSelector } from './wallet/dapp-tx.js';
+import { showDappConnect, getSelectedChainId, setSelectedChainId, updateConnectionBanner, showDappTxApproval, showDappSignApproval, showVaultUnlock, updateSwarmConnectionBanner, updateX402ConnectionBanner } from './wallet-ui.js';
+import { buildDappTxContext, extractSelector } from './wallet/dapp-tx.js';
 import { getPermissionKey } from './origin-utils.js';
 
 // Feature flag state
@@ -291,8 +291,15 @@ async function autoApproveTx(permission, txParams, chainId, permissionKey) {
     tx.gasPrice = gasPrices.gasPrice;
   }
 
-  const result = await window.wallet.dappSendTransaction(tx, walletIndex);
+  const result = await window.wallet.dappSendTransaction(
+    tx,
+    walletIndex,
+    buildDappTxContext(permissionKey, txParams)
+  );
   if (!result.success) throw new Error(result.error || 'Transaction failed');
+  if (result.recorded === false) {
+    console.warn('[DappProvider] Auto-approved transaction broadcast but payment history did not record:', result.recordError);
+  }
 
   window.dappPermissions.updateLastUsed(permissionKey);
   return result.hash;
@@ -468,6 +475,7 @@ export function setActiveWebview(webview) {
   setTimeout(() => {
     updateConnectionBanner();
     updateSwarmConnectionBanner();
+    updateX402ConnectionBanner();
   }, 50);
 }
 

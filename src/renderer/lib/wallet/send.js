@@ -1178,10 +1178,20 @@ async function handleSendConfirm() {
       txParams.data = dataResult.data;
     }
 
-    const result = await window.wallet.sendTransaction(txParams);
+    // History captures the *user-visible* counterparty + amount: the real
+    // recipient (not the ERC-20 contract address) and the atomic amount
+    // (not txParams.value which is 0 for token transfers).
+    const result = await window.wallet.sendTransaction(txParams, {
+      asset: token.address,
+      toAddress: sendTxState.recipient,
+      amount: amountResult.value,
+    });
 
     if (!result.success) {
       throw new Error(result.error || 'Transaction failed');
+    }
+    if (result.recorded === false) {
+      console.warn('[WalletUI] Transaction broadcast but payment history did not record:', result.recordError);
     }
 
     console.log('[WalletUI] Transaction sent:', result.hash);

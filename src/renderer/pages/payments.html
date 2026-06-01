@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;"
+    />
+    <title>Payments</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        font-family:
+          'IBM Plex Sans',
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #21262d 100%);
+        color: #c9d1d9;
+        padding: 48px;
+        box-sizing: border-box;
+        min-height: 100vh;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 8px;
+        color: #2775ca;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .subtitle {
+        color: #8b949e;
+        margin-bottom: 24px;
+        font-size: 14px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .search-input {
+        flex: 1;
+        min-width: 220px;
+        max-width: 400px;
+        padding: 10px 16px;
+        background: #21262d;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        color: #c9d1d9;
+        font-size: 14px;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .search-input:focus {
+        border-color: #2775ca;
+      }
+      .search-input::placeholder {
+        color: #6e7681;
+      }
+      .filter-select {
+        padding: 10px 32px 10px 16px;
+        background: #21262d
+          url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="%236e7681" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>')
+          no-repeat right 12px center;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        color: #c9d1d9;
+        font-size: 14px;
+        font-family: inherit;
+        cursor: pointer;
+        appearance: none;
+        -webkit-appearance: none;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .filter-select:focus {
+        border-color: #2775ca;
+      }
+      .filter-select:hover {
+        background-color: #30363d;
+        border-color: #484f58;
+      }
+      .toolbar-right {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-left: auto;
+      }
+      .btn {
+        padding: 10px 16px;
+        background: #21262d;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        color: #c9d1d9;
+        font-size: 14px;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .btn:hover {
+        background: #30363d;
+        border-color: #484f58;
+      }
+      .btn.danger:hover {
+        background: #f8514915;
+        border-color: #f85149;
+        color: #f85149;
+      }
+
+      /* Table */
+      .table-wrap {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      thead {
+        background: #1c2128;
+      }
+      th {
+        text-align: left;
+        padding: 12px 16px;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #8b949e;
+        border-bottom: 1px solid #30363d;
+      }
+      td {
+        padding: 14px 16px;
+        border-bottom: 1px solid #21262d;
+        vertical-align: middle;
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody tr:hover {
+        background: rgba(39, 117, 202, 0.04);
+      }
+      .when {
+        color: #8b949e;
+        white-space: nowrap;
+      }
+      .site {
+        font-weight: 500;
+        color: #c9d1d9;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .site .anon {
+        color: #6e7681;
+        font-style: italic;
+      }
+      .amount {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .amount-asset {
+        color: #8b949e;
+        margin-left: 4px;
+      }
+      .addr {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        color: #8b949e;
+      }
+      .tx-link {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        color: #2775ca;
+        text-decoration: none;
+      }
+      .tx-link:hover {
+        text-decoration: underline;
+      }
+      .tx-empty {
+        color: #6e7681;
+        font-size: 12px;
+        font-style: italic;
+      }
+
+      /* Badges + pills */
+      .badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .chain-badge {
+        background: rgba(110, 118, 129, 0.2);
+        color: #c9d1d9;
+      }
+      .kind-x402 {
+        background: rgba(39, 117, 202, 0.18);
+        color: #5a9eee;
+      }
+      .kind-wallet-send {
+        background: rgba(187, 137, 250, 0.18);
+        color: #d2a8ff;
+      }
+      .kind-dapp-send {
+        background: rgba(245, 158, 11, 0.18);
+        color: #f0b65d;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .status-pill::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+      .status-confirmed,
+      .status-settled {
+        background: rgba(76, 175, 80, 0.12);
+        color: #9ad9b3;
+      }
+      .status-confirmed::before,
+      .status-settled::before {
+        background: #56d364;
+      }
+      .status-pending {
+        background: rgba(245, 158, 11, 0.12);
+        color: #f1d68b;
+      }
+      .status-pending::before {
+        background: #d29922;
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .status-failed {
+        background: rgba(248, 81, 73, 0.12);
+        color: #ffb3b3;
+      }
+      .status-failed::before {
+        background: #f85149;
+      }
+      .status-no-receipt {
+        background: rgba(110, 118, 129, 0.18);
+        color: #b3bac1;
+      }
+      .status-no-receipt::before {
+        background: #8b949e;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      /* States */
+      .empty-state,
+      .loading {
+        text-align: center;
+        padding: 64px 16px;
+        color: #6e7681;
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+      }
+      .empty-state svg {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+      }
+      .empty-state p {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      /* Light theme */
+      @media (prefers-color-scheme: light) {
+        body {
+          background: linear-gradient(135deg, #ffffff 0%, #f6f8fa 50%, #f0f2f5 100%);
+          color: #1a1a1a;
+        }
+        h1 { color: #2775ca; }
+        .subtitle, .when, .addr, .amount-asset { color: #6e7681; }
+        .search-input, .filter-select, .btn {
+          background: #ffffff;
+          border-color: #d0d7de;
+          color: #1a1a1a;
+        }
+        .search-input::placeholder { color: #8b949e; }
+        .table-wrap, .loading, .empty-state {
+          background: #ffffff;
+          border-color: #d0d7de;
+        }
+        thead { background: #f6f8fa; }
+        th { color: #57606a; border-bottom-color: #d0d7de; }
+        td { border-bottom-color: #eaeef2; }
+        tbody tr:hover { background: rgba(39, 117, 202, 0.05); }
+        .site { color: #1a1a1a; }
+        .chain-badge { background: rgba(0, 0, 0, 0.06); color: #1a1a1a; }
+        .kind-x402 { background: rgba(39, 117, 202, 0.12); color: #1f5fa8; }
+        .kind-wallet-send { background: rgba(140, 90, 220, 0.12); color: #6e3ba8; }
+        .kind-dapp-send { background: rgba(217, 119, 6, 0.12); color: #9a5a04; }
+        .status-confirmed, .status-settled { color: #1f7a34; }
+        .status-pending { color: #8a5a07; }
+        .status-failed { color: #b3261e; }
+        .status-no-receipt { color: #57606a; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+        <circle cx="12" cy="12" r="2"></circle>
+        <path d="M6 12h.01M18 12h.01"></path>
+      </svg>
+      Payments
+    </h1>
+    <p class="subtitle" id="stats">Loading…</p>
+
+    <div class="toolbar">
+      <input
+        type="text"
+        class="search-input"
+        id="search-input"
+        placeholder="Search site, address, or tx hash…"
+        autofocus
+      />
+      <select class="filter-select" id="kind-select">
+        <option value="">All kinds</option>
+        <option value="x402">x402</option>
+        <option value="wallet-send">Wallet send</option>
+        <option value="dapp-send">Dapp send</option>
+      </select>
+      <select class="filter-select" id="chain-select">
+        <option value="">All chains</option>
+      </select>
+      <div class="toolbar-right">
+        <button class="btn danger" id="clear-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Clear all
+        </button>
+      </div>
+    </div>
+
+    <div id="results">
+      <div class="loading">Loading payments…</div>
+    </div>
+
+    <script>
+      // freedomAPI is exposed globally by webview-preload.js via contextBridge.
+
+      const resultsEl = document.getElementById('results');
+      const statsEl = document.getElementById('stats');
+      const searchInput = document.getElementById('search-input');
+      const kindSelect = document.getElementById('kind-select');
+      const chainSelect = document.getElementById('chain-select');
+      const clearBtn = document.getElementById('clear-btn');
+
+      // The page fetches up to PAGE_LIMIT rows server-side (matching the
+      // store's MAX_LIMIT clamp) and does search + per-chain filtering
+      // client-side. For day-one volume this is fine; once anyone breaks
+      // 500 payments we'll wire a "Load more" pager onto the bottom.
+      const PAGE_LIMIT = 500;
+
+      let payments = [];          // current server-filtered page
+      let chainsById = new Map(); // chainId → { name, shortName, blockExplorer }
+      let tokensByKey = new Map();// `chainId:address` → { symbol, decimals }
+
+      // Single source of truth for the three kind values: the renderer label,
+      // the CSS class, and the "this row didn't carry an origin" fallback.
+      // Unknown kinds fall back to a neutral pill with the raw value.
+      const KIND_META = {
+        'x402':        { label: 'x402', cls: 'kind-x402',        anonLabel: '—' },
+        'wallet-send': { label: 'send', cls: 'kind-wallet-send', anonLabel: 'wallet send' },
+        'dapp-send':   { label: 'dapp', cls: 'kind-dapp-send',   anonLabel: 'dapp send' },
+      };
+      const KIND_FALLBACK = { label: '', cls: '', anonLabel: '—' };
+
+      // Atomic-units → decimal string with `decimals` precision, trailing
+      // zeroes stripped. Deliberately NOT the wallet's formatRawTokenBalance:
+      // that one caps display at 4 decimals and emits "<0.0001" — wrong for
+      // a payment-history audit log where cents matter.
+      function formatAtomic(amount, decimals) {
+        if (typeof amount !== 'string' || !/^\d+$/.test(amount)) return '--';
+        // Without decimals we can't render a meaningful human amount; showing
+        // "1000000" next to a token symbol would read as a million tokens.
+        if (typeof decimals !== 'number') return '--';
+        try {
+          const value = BigInt(amount);
+          const divisor = 10n ** BigInt(decimals);
+          const integer = value / divisor;
+          const frac = value % divisor;
+          if (frac === 0n) return integer.toString();
+          const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+          return `${integer}.${fracStr}`;
+        } catch {
+          return '--';
+        }
+      }
+
+      function truncateAddress(addr, head = 6, tail = 4) {
+        if (!addr || typeof addr !== 'string') return '';
+        if (addr.length <= head + tail + 2) return addr;
+        return `${addr.slice(0, head)}…${addr.slice(-tail)}`;
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+      }
+
+      function formatWhen(createdAt) {
+        const d = new Date(createdAt);
+        const now = new Date();
+        const diffMs = now - d;
+        const diffMin = Math.floor(diffMs / 60_000);
+        const diffHour = Math.floor(diffMin / 60);
+        const diffDay = Math.floor(diffHour / 24);
+        if (diffMin < 1) return 'Just now';
+        if (diffMin < 60) return `${diffMin}m ago`;
+        if (diffHour < 24) return `${diffHour}h ago`;
+        if (diffDay < 30) return `${diffDay}d ago`;
+        return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+      }
+
+      function kindMeta(kind) {
+        return KIND_META[kind] || { ...KIND_FALLBACK, label: kind || '' };
+      }
+
+      function siteCell(payment) {
+        if (payment.origin) {
+          return `<span title="${escapeHtml(payment.origin)}">${escapeHtml(payment.origin)}</span>`;
+        }
+        return `<span class="anon">${escapeHtml(kindMeta(payment.kind).anonLabel)}</span>`;
+      }
+
+      function amountCell(payment) {
+        const tokenKey = payment.asset ? `${payment.chainId}:${payment.asset}` : null;
+        const token = tokenKey ? tokensByKey.get(tokenKey) : null;
+        const decimals = token?.decimals;
+        const symbol = token?.symbol || (payment.asset ? 'token' : 'native');
+        const pretty = formatAtomic(payment.amount, decimals);
+        return `${escapeHtml(pretty)}<span class="amount-asset">${escapeHtml(symbol)}</span>`;
+      }
+
+      function chainCell(payment) {
+        const chain = chainsById.get(payment.chainId);
+        const label = chain?.shortName || chain?.name || `chain ${payment.chainId}`;
+        return `<span class="badge chain-badge" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+      }
+
+      function txCell(payment) {
+        if (!payment.txHash) return `<span class="tx-empty">no hash</span>`;
+        const chain = chainsById.get(payment.chainId);
+        const short = truncateAddress(payment.txHash, 10, 8);
+        if (chain?.blockExplorer) {
+          const url = `${chain.blockExplorer}/tx/${payment.txHash}`;
+          return `<a class="tx-link" href="${escapeHtml(url)}" target="_blank" rel="noopener" title="${escapeHtml(payment.txHash)}">${escapeHtml(short)}</a>`;
+        }
+        return `<span class="addr" title="${escapeHtml(payment.txHash)}">${escapeHtml(short)}</span>`;
+      }
+
+      function renderRow(p) {
+        const kind = kindMeta(p.kind);
+        return `
+          <tr>
+            <td class="when" title="${escapeHtml(new Date(p.createdAt).toLocaleString())}">${escapeHtml(formatWhen(p.createdAt))}</td>
+            <td><span class="badge ${escapeHtml(kind.cls)}">${escapeHtml(kind.label)}</span></td>
+            <td class="site">${siteCell(p)}</td>
+            <td class="amount">${amountCell(p)}</td>
+            <td class="addr" title="${escapeHtml(p.toAddress || '')}">${escapeHtml(truncateAddress(p.toAddress))}</td>
+            <td>${chainCell(p)}</td>
+            <td><span class="status-pill status-${escapeHtml(p.status)}">${escapeHtml(p.status)}</span></td>
+            <td>${txCell(p)}</td>
+          </tr>
+        `;
+      }
+
+      function applyClientFilters(rows) {
+        const q = searchInput.value.trim().toLowerCase();
+        if (!q) return rows;
+        return rows.filter((p) => {
+          const hay = `${p.origin || ''} ${p.toAddress || ''} ${p.fromAddress || ''} ${p.txHash || ''} ${p.url || ''}`.toLowerCase();
+          return hay.includes(q);
+        });
+      }
+
+      function render() {
+        const filtered = applyClientFilters(payments);
+
+        statsEl.textContent =
+          filtered.length === payments.length
+            ? `${payments.length} payment${payments.length === 1 ? '' : 's'}`
+            : `${filtered.length} of ${payments.length} payment${payments.length === 1 ? '' : 's'}`;
+
+        if (filtered.length === 0) {
+          resultsEl.innerHTML = `
+            <div class="empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
+              <p>${payments.length === 0 ? 'No payments yet.' : 'No payments match your filters.'}</p>
+            </div>
+          `;
+          return;
+        }
+
+        resultsEl.innerHTML = `
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Kind</th>
+                  <th>Site</th>
+                  <th>Amount</th>
+                  <th>To</th>
+                  <th>Chain</th>
+                  <th>Status</th>
+                  <th>Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filtered.map(renderRow).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      async function loadMetadata() {
+        // Networks: build chainId → {name, shortName, blockExplorer}.
+        const networks = await window.freedomAPI.getNetworkConfig();
+        if (networks?.success && networks.networks) {
+          for (const [id, chain] of Object.entries(networks.networks)) {
+            chainsById.set(Number(id), chain);
+          }
+          const opts = Array.from(chainsById.entries())
+            .map(([id, chain]) => `<option value="${id}">${escapeHtml(chain.name || `chain ${id}`)}</option>`)
+            .join('');
+          chainSelect.insertAdjacentHTML('beforeend', opts);
+        }
+
+        // Tokens across every known chain. One IPC per chainId today;
+        // GH issue noted for a future tokens:get-all consolidation once
+        // we have enough chains for the fan-out to matter.
+        const chainIds = Array.from(chainsById.keys());
+        const results = await Promise.all(
+          chainIds.map((id) => window.freedomAPI.getTokens(id).catch(() => null))
+        );
+        results.forEach((r) => {
+          if (!r?.success || !r.tokens) return;
+          for (const [key, token] of Object.entries(r.tokens)) {
+            tokensByKey.set(key, token);
+          }
+        });
+      }
+
+      async function loadPayments() {
+        const kind = kindSelect.value || undefined;
+        const chainId = chainSelect.value ? Number(chainSelect.value) : undefined;
+        const result = await window.freedomAPI.getPayments({ kind, chainId, limit: PAGE_LIMIT });
+        if (!result?.success) {
+          resultsEl.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(result?.error || 'unknown error')}</p></div>`;
+          return;
+        }
+        payments = result.payments || [];
+        render();
+      }
+
+      // Wire up controls. Search filters in-memory; kind + chain go
+      // server-side so >PAGE_LIMIT histories filter correctly.
+      searchInput.addEventListener('input', render);
+      kindSelect.addEventListener('change', loadPayments);
+      chainSelect.addEventListener('change', loadPayments);
+      clearBtn.addEventListener('click', async () => {
+        if (!confirm('Clear all payment history? This cannot be undone.')) return;
+        const result = await window.freedomAPI.clearPayments();
+        if (result?.success) {
+          payments = [];
+          render();
+        } else {
+          console.error('[payments] clear failed:', result?.error);
+        }
+      });
+
+      // Initial load. Metadata and payments are independent — fire both
+      // concurrently and re-render once metadata lands so the first paint
+      // shows the table immediately (with raw chain ids / unknown asset
+      // symbols), upgraded in place when chain + token lookups resolve.
+      Promise.all([
+        loadMetadata().then(render).catch((err) => console.error('[payments] metadata failed:', err)),
+        loadPayments().catch((err) => {
+          console.error('[payments] load failed:', err);
+          resultsEl.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(err.message)}</p></div>`;
+        }),
+      ]);
+
+      // Live refresh on every row mutation. Main broadcasts this after
+      // append / pending→confirmed / pending→failed / clear / removeById
+      // and after x402 settlement receipts land. Trailing-edge debounce
+      // coalesces bursts (concurrent Range segments, repollPending
+      // resolving N pending rows on boot) into a single re-query.
+      let refreshTimer = null;
+      window.freedomAPI.onPaymentRecorded?.(() => {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => {
+          loadPayments().catch((err) => console.error('[payments] live refresh failed:', err));
+        }, 150);
+      });
+    </script>
+  </body>
+</html>

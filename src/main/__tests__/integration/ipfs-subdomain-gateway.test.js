@@ -185,9 +185,10 @@ describe('Kubo subdomain gateway redirect', () => {
     if (ipfsProcess && !ipfsProcess.killed) {
       ipfsProcess.kill('SIGTERM');
       await new Promise((resolve) => {
-        const timeout = setTimeout(resolve, 3000);
+        const timer = setTimeout(resolve, 3000);
+        timer.unref?.();
         ipfsProcess.on('exit', () => {
-          clearTimeout(timeout);
+          clearTimeout(timer);
           resolve();
         });
       });
