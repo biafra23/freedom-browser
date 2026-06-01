@@ -60,26 +60,62 @@ async function fetchLatestRelease() {
   throw lastErr;
 }
 
-async function downloadFile(url, dest) {
-  console.log(`Downloading ${url} to ${dest}...`);
+// Abort a stalled request instead of letting it hang until the CI job-level
+// timeout (a hung binary download can otherwise burn a whole e2e job).
+const REQUEST_TIMEOUT_MS = 60000;
+
+function downloadFileOnce(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    https
+    const fail = (err) => {
+      file.close();
+      fs.unlink(dest, () => reject(err));
+    };
+    const req = https
       .get(url, { headers: { 'User-Agent': 'Freedom-Updater' } }, (response) => {
         if (response.statusCode === 302 || response.statusCode === 301) {
-          downloadFile(response.headers.location, dest).then(resolve).catch(reject);
+          file.close();
+          fs.unlink(dest, () => {
+            downloadFileOnce(response.headers.location, dest).then(resolve).catch(reject);
+          });
+          return;
+        }
+        if (response.statusCode !== 200) {
+          fail(new Error(`HTTP ${response.statusCode} for ${url}`));
           return;
         }
         response.pipe(file);
         file.on('finish', () => {
           file.close(resolve);
         });
+        file.on('error', fail);
       })
-      .on('error', (err) => {
-        fs.unlink(dest, () => {});
-        reject(err);
-      });
+      .on('error', fail);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Download timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`));
+    });
   });
+}
+
+async function downloadFile(url, dest) {
+  console.log(`Downloading ${url} to ${dest}...`);
+  const maxAttempts = 4;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await downloadFileOnce(url, dest);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * attempt;
+        console.warn(
+          `Download attempt ${attempt} failed (${err.message}); retrying in ${delayMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 async function main() {
