@@ -672,21 +672,38 @@ function registerBeeIpc() {
   });
 }
 
+function hasLiveProcess() {
+  return beeProcess !== null;
+}
+
+// States in which a Bee node may still hold the statestore LevelDB lock even
+// without a managed child process we can see: RUNNING also covers a reused
+// external daemon (beeProcess is null) and ERROR can be set by a failed health
+// check without the process being killed.
+const LOCK_HOLDING_STATES = new Set([
+  STATUS.RUNNING,
+  STATUS.STARTING,
+  STATUS.STOPPING,
+  STATUS.ERROR,
+]);
+
 // Lifecycle hooks for identity (re)injection: the injector must stop a Bee
 // node that holds the statestore LevelDB lock before wiping it, then restart
-// it with the new key. A node that is STARTING has already spawned and grabbed
-// the lock even though health checks haven't passed, so it must be stopped too
-// or the wipe fails with EPERM on Windows (issue #90). Dependencies are
-// injectable so the decision can be unit-tested without spawning a real node.
+// it with the new key. Any live process is treated as active (STARTING grabs
+// the lock before health passes; STOPPING is before the close event; ERROR can
+// leave the process alive), otherwise the wipe fails with EPERM on Windows
+// (issue #90). Dependencies are injectable so the decision can be unit-tested
+// without spawning a real node.
 function createBeeLifecycle(deps = {}) {
   const getStatusFn = deps.getStatus || getStatus;
+  const hasLiveProcessFn = deps.hasLiveProcess || hasLiveProcess;
   const stopFn = deps.stopBee || stopBee;
   const startFn = deps.startBee || startBee;
   const setInjected = deps.setUseInjectedIdentity || setUseInjectedIdentity;
   return {
     stop: async () => {
       const status = getStatusFn().status;
-      const active = status === STATUS.RUNNING || status === STATUS.STARTING;
+      const active = hasLiveProcessFn() || LOCK_HOLDING_STATES.has(status);
       if (active) await stopFn();
       return active;
     },
@@ -700,6 +717,7 @@ function createBeeLifecycle(deps = {}) {
 module.exports = {
   registerBeeIpc,
   createBeeLifecycle,
+  hasLiveProcess,
   startBee,
   stopBee,
   getActivePort,

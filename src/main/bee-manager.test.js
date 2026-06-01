@@ -648,17 +648,21 @@ describe('bee-manager', () => {
   // node that is STARTING (spawned, lock held, health not yet passing) must be
   // treated as active too, otherwise the wipe hits EPERM on Windows.
   describe('createBeeLifecycle (issue #90 startup race)', () => {
+    // Without a live process, every state that may still hold the statestore
+    // lock must stop (RUNNING/STARTING/STOPPING/ERROR); only a truly idle
+    // STOPPED node is skipped.
     test.each([
       ['running', true],
       ['starting', true],
+      ['stopping', true],
+      ['error', true],
       ['stopped', false],
-      ['stopping', false],
-      ['error', false],
-    ])('stop() with status %s stops the node: %s', async (status, expectedActive) => {
+    ])('stop() with status %s (no live process) stops the node: %s', async (status, expectedActive) => {
       const ctx = loadBeeManagerModule({ binExists: false });
       const stopBee = jest.fn().mockResolvedValue(undefined);
       const lifecycle = ctx.mod.createBeeLifecycle({
         getStatus: () => ({ status, error: null }),
+        hasLiveProcess: () => false,
         stopBee,
         startBee: jest.fn(),
         setUseInjectedIdentity: jest.fn(),
@@ -668,6 +672,25 @@ describe('bee-manager', () => {
 
       expect(wasActive).toBe(expectedActive);
       expect(stopBee).toHaveBeenCalledTimes(expectedActive ? 1 : 0);
+    });
+
+    // A live managed process holds the lock regardless of reported status, so a
+    // STOPPED status with a process still alive must be stopped before a wipe.
+    test('stop() stops when a live process exists even if status is STOPPED', async () => {
+      const ctx = loadBeeManagerModule({ binExists: false });
+      const stopBee = jest.fn().mockResolvedValue(undefined);
+      const lifecycle = ctx.mod.createBeeLifecycle({
+        getStatus: () => ({ status: 'stopped', error: null }),
+        hasLiveProcess: () => true,
+        stopBee,
+        startBee: jest.fn(),
+        setUseInjectedIdentity: jest.fn(),
+      });
+
+      const wasActive = await lifecycle.stop();
+
+      expect(wasActive).toBe(true);
+      expect(stopBee).toHaveBeenCalledTimes(1);
     });
 
     test('start() flags injected identity then starts the node', async () => {
