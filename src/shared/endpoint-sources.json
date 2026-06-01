@@ -75,6 +75,32 @@
     "coverage": { "100": "https://gnosis.drpc.org" }
   },
 
+  "base-official": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "8453": "https://mainnet.base.org" }
+  },
+  "base-publicnode": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "8453": "https://base-rpc.publicnode.com" }
+  },
+  "base-drpc-public": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "8453": "https://base.drpc.org" }
+  },
+  "base-llamarpc": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "8453": "https://base.llamarpc.com" }
+  },
+  "base-1rpc": {
+    "role": "rpc",
+    "keyed": false,
+    "coverage": { "8453": "https://1rpc.io/base" }
+  },
+
   "alchemy": {
     "role": "rpc",
     "keyed": true,

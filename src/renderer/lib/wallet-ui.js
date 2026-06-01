@@ -17,6 +17,8 @@ import { initRpcSettings } from './wallet/rpc-settings.js';
 import { initDappConnect, showDappConnect, updateConnectionBanner } from './wallet/dapp-connect.js';
 import { initDappTx, showDappTxApproval } from './wallet/dapp-tx.js';
 import { initDappSign, showDappSignApproval } from './wallet/dapp-sign.js';
+import { initDappX402, updateX402ConnectionBanner } from './wallet/dapp-x402.js';
+import { initRecentPayments, refreshRecentPayments } from './wallet/recent-payments.js';
 import { initSend, openSend, closeSend } from './wallet/send.js';
 import { initExportMnemonic, closeExportMnemonic } from './wallet/export-mnemonic.js';
 import { initWalletSelector, loadDerivedWallets } from './wallet/wallet-selector.js';
@@ -29,14 +31,15 @@ import { initStampManager, closeStampManager } from './wallet/stamp-manager.js';
 import { initChequebookDeposit, closeChequebookDeposit } from './wallet/chequebook-deposit.js';
 import { initSwarmConnect, showSwarmConnect, updateSwarmConnectionBanner, showSwarmPublishApproval, showSwarmFeedApproval } from './wallet/swarm-connect.js';
 import { initVaultUnlock, showVaultUnlock } from './wallet/vault-unlock.js';
-import { initPermissionManage, showDappPermissions, showSwarmPermissions, closeDappPerms, closeSwarmPerms } from './wallet/permission-manage.js';
+import { initPermissionManage, showDappPermissions, showSwarmPermissions, showX402Permissions, closeDappPerms, closeSwarmPerms, closeX402Perms } from './wallet/permission-manage.js';
 import { initPublisherIdentities, closePublisherIdentities } from './wallet/publisher-identities.js';
 import { initPublisherIdentityCreate, closePublisherIdentityCreate } from './wallet/publisher-identity-create.js';
 
 // Re-export public API consumed by dapp-provider.js, swarm-provider.js, and index.js
 export { showDappConnect, updateConnectionBanner, showDappTxApproval, showDappSignApproval };
 export { showSwarmConnect, updateSwarmConnectionBanner, showSwarmPublishApproval, showSwarmFeedApproval, showVaultUnlock };
-export { showDappPermissions, showSwarmPermissions };
+export { updateX402ConnectionBanner };
+export { showDappPermissions, showSwarmPermissions, showX402Permissions };
 export { getSelectedChainId, setSelectedChainId };
 
 // DOM references owned by the coordinator
@@ -71,6 +74,8 @@ export function initWalletUi() {
   initVaultUnlock();
   initPermissionManage();
   initDappTx();
+  initDappX402();
+  initRecentPayments();
   initDappSign();
   initSend();
   initExportMnemonic(switchTab);
@@ -85,10 +90,14 @@ export function initWalletUi() {
   initPublisherIdentities();
   initPublisherIdentityCreate();
 
-  // Load chain registry (updates registeredTokens/registeredChains, then render)
+  // Load chain registry (updates registeredTokens/registeredChains, then
+  // render everything that depends on those — the asset list AND the
+  // recent-payments mini-section which reads symbols/decimals from
+  // walletState.registeredTokens to format amounts).
   loadChainRegistry().then(() => {
     updateChainSwitcherDisplay();
     renderAssetList();
+    refreshRecentPayments().catch((err) => console.error('[wallet-ui] recent payments upgrade-after-registry failed:', err));
   });
 
   // Setup coordinator event listeners
@@ -140,6 +149,9 @@ function setupCoordinatorListeners() {
       switchTab(tabName);
       if ((tabName === 'wallet' || tabName === 'nodes') && (walletState.fullAddresses.wallet || walletState.fullAddresses.swarm)) {
         refreshBalances();
+      }
+      if (tabName === 'wallet') {
+        refreshRecentPayments().catch((err) => console.error('[wallet-ui] recent payments refresh failed:', err));
       }
     });
   });
@@ -361,6 +373,7 @@ function closeAllSubscreens() {
   closeChequebookDeposit();
   closeDappPerms();
   closeSwarmPerms();
+  closeX402Perms();
   closePublisherIdentities();
   closePublisherIdentityCreate({ reject: true });
 }

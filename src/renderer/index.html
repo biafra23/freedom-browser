@@ -775,6 +775,23 @@
                     </button>
                   </div>
 
+                  <!-- x402 Auto-Pay Banner (shown when current tab has an active payment allowance) -->
+                  <div class="x402-connection-banner hidden" id="x402-connection-banner">
+                    <div class="x402-connection-info" id="x402-connection-manage" title="Manage auto-pay">
+                      <span class="x402-connection-indicator"></span>
+                      <span class="x402-connection-text">
+                        <span class="x402-connection-label">Auto-pay</span>
+                        <span class="x402-connection-site" id="x402-connection-site">site.eth</span>
+                        <span class="x402-connection-remaining" id="x402-connection-remaining"></span>
+                      </span>
+                    </div>
+                    <button type="button" class="x402-connection-disconnect" id="x402-connection-disconnect" title="Revoke auto-pay">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                      </svg>
+                    </button>
+                  </div>
+
                   <!-- Wallet Selector -->
                   <div class="wallet-selector" id="wallet-selector">
                     <button type="button" class="wallet-selector-btn" id="wallet-selector-btn">
@@ -827,6 +844,15 @@
 
                   <div class="balance-error hidden" id="balance-error">
                     <span class="balance-error-text" id="balance-error-text"></span>
+                  </div>
+
+                  <!-- Recent payments (5 most recent; full list at freedom://payments) -->
+                  <div class="recent-payments">
+                    <div class="recent-payments-header">
+                      <span class="recent-payments-title">Recent payments</span>
+                      <a href="#" class="recent-payments-link" id="recent-payments-view-all">View all →</a>
+                    </div>
+                    <div id="recent-payments-list" class="recent-payments-list"></div>
                   </div>
                 </div>
 
@@ -1750,6 +1776,149 @@
               </div>
             </div>
 
+            <!-- x402 Payment Approval sub-screen -->
+            <div id="sidebar-x402-approval" class="sidebar-subscreen sidebar-modal hidden">
+              <div class="subscreen-header">
+                <button type="button" class="subscreen-back-btn" id="x402-approval-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                  </svg>
+                </button>
+                <h3 class="subscreen-title">Payment Required</h3>
+              </div>
+
+              <div class="subscreen-content">
+                <div class="dapp-tx-origin">
+                  <div class="dapp-tx-site" id="x402-approval-site">example.com</div>
+                  <div class="dapp-tx-action">requests an on-chain payment</div>
+                </div>
+
+                <!-- Multi-accept chooser. Only rendered when 2+ accepts[]
+                     are fundable from the active wallet; populated by JS
+                     in renderCard(). When the count is 1 or 0 this stays
+                     hidden and the detail rows / insufficient block tell
+                     the user what's going on instead. -->
+                <div class="x402-chooser hidden" id="x402-approval-chooser">
+                  <div class="x402-chooser-label">Pay with</div>
+                  <div class="x402-chooser-options" id="x402-approval-chooser-options"></div>
+                </div>
+
+                <div class="dapp-tx-details" id="x402-approval-details">
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">Amount</span>
+                    <span class="dapp-tx-value" id="x402-approval-amount">—</span>
+                  </div>
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">To</span>
+                    <code class="dapp-tx-value dapp-tx-address" id="x402-approval-to">—</code>
+                  </div>
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">Network</span>
+                    <span class="dapp-tx-value" id="x402-approval-network">—</span>
+                  </div>
+                  <div class="dapp-tx-row">
+                    <span class="dapp-tx-label">Page</span>
+                    <span class="dapp-tx-value" id="x402-approval-url">—</span>
+                  </div>
+                </div>
+
+                <!-- Insufficient-funds state. Replaces the detail rows
+                     when no `accepts[]` entry is fundable from the
+                     active wallet. Pay button stays disabled in this
+                     state (locked decision #2). -->
+                <div class="x402-insufficient hidden" id="x402-approval-insufficient">
+                  <p class="x402-insufficient-title">Insufficient funds</p>
+                  <p class="x402-insufficient-help">This site accepts:</p>
+                  <ul class="x402-insufficient-list" id="x402-approval-insufficient-list"></ul>
+                  <p class="x402-insufficient-footer" id="x402-approval-insufficient-footer">Top up at least one of these to pay.</p>
+                  <!-- Manual refresh: card shows cached balances; if the
+                       user knows they just bridged/received and the cache
+                       is stale, this is the explicit escape hatch to
+                       force a fresh RPC. Pay click never blocks on an
+                       RPC — this is the only client-side balance fetch
+                       on the manual-approval path. -->
+                  <button type="button" class="x402-insufficient-refresh" id="x402-approval-insufficient-refresh">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="23 4 23 10 17 10"/>
+                      <polyline points="1 20 1 14 7 14"/>
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    <span class="x402-insufficient-refresh-label">Refresh balances</span>
+                  </button>
+                </div>
+
+                <div class="dapp-tx-warning hidden" id="x402-approval-warning">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  <span id="x402-approval-warning-text"></span>
+                </div>
+
+                <div class="dapp-tx-unlock hidden" id="x402-approval-unlock">
+                  <p class="dapp-tx-unlock-text">Unlock your vault to proceed.</p>
+                  <button type="button" class="dapp-tx-touchid-btn hidden" id="x402-approval-touchid-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 11c0-1.1.9-2 2-2s2 .9 2 2-2 4-2 4"/>
+                      <path d="M8 15c0-2.2 1.8-4 4-4"/>
+                      <path d="M12 4a8 8 0 0 0-8 8c0 1.5.3 2.9.9 4.2"/>
+                      <path d="M12 4a8 8 0 0 1 8 8c0 1.5-.3 2.9-.9 4.2"/>
+                      <path d="M2 12c-.1 1.1-.1 3 .2 4.5"/>
+                      <path d="M22 12c.1 1.1.1 3-.2 4.5"/>
+                    </svg>
+                    <span>Unlock with Touch ID</span>
+                  </button>
+                  <button type="button" class="dapp-unlock-password-link hidden" id="x402-approval-password-link">or enter your password</button>
+                  <div class="dapp-tx-password-section hidden" id="x402-approval-password-section">
+                    <div class="dapp-tx-password-row">
+                      <input type="password" class="password-input" id="x402-approval-password-input" placeholder="Enter password" autocomplete="off">
+                      <button type="button" class="dapp-tx-password-submit" id="x402-approval-password-submit">Unlock</button>
+                    </div>
+                  </div>
+                  <div class="dapp-tx-error hidden" id="x402-approval-unlock-error"></div>
+                </div>
+
+                <div class="dapp-tx-error hidden" id="x402-approval-error"></div>
+
+                <!-- x402 auto-pay grant. Checkbox opts in; two inline
+                     editors set the cap amount + reset window. Defaults
+                     match what the user can tweak post-grant in the
+                     permission-manage sub-screen — but pre-set here so
+                     the user doesn't have to grant-then-edit. -->
+                <div class="x402-grant" id="x402-approval-grant-row">
+                  <label class="x402-grant-toggle">
+                    <input type="checkbox" id="x402-approval-grant-toggle" />
+                    <span class="x402-grant-toggle-label">Auto-pay future payments to this site</span>
+                  </label>
+                  <div class="x402-grant-fields">
+                    <div class="x402-grant-field">
+                      <label class="x402-grant-field-label" for="x402-approval-grant-cap-input">Spend cap</label>
+                      <div class="x402-grant-input-wrap">
+                        <!-- value + symbol populated by initDappX402 from
+                             DEFAULT_GRANT_CAP_USDC + the selected entry's
+                             asset; keeps the JS as the only source of
+                             truth for default copy. -->
+                        <input type="number" id="x402-approval-grant-cap-input" min="1" step="1" inputmode="numeric" />
+                        <span class="x402-grant-input-suffix" id="x402-approval-grant-cap-symbol"></span>
+                      </div>
+                    </div>
+                    <div class="x402-grant-field">
+                      <label class="x402-grant-field-label" for="x402-approval-grant-window-select">Resets every</label>
+                      <!-- options + default populated by initDappX402 from
+                           X402_WINDOW_OPTIONS + DEFAULT_GRANT_WINDOW_SECONDS. -->
+                      <select class="x402-grant-select" id="x402-approval-grant-window-select"></select>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="dapp-tx-actions">
+                  <button type="button" class="dapp-tx-reject-btn" id="x402-approval-reject">Reject</button>
+                  <button type="button" class="dapp-tx-approve-btn" id="x402-approval-approve" disabled>Pay</button>
+                </div>
+              </div>
+            </div>
+
             <!-- Publish Setup sub-screen -->
             <div id="sidebar-publish-setup" class="sidebar-subscreen hidden">
               <div class="subscreen-header">
@@ -2188,6 +2357,29 @@
                 </div>
                 <div class="perms-actions">
                   <button type="button" class="perms-disconnect-btn" id="dapp-perms-disconnect">Disconnect</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- x402 Auto-Pay Management sub-screen -->
+            <div id="sidebar-x402-permissions" class="sidebar-subscreen hidden">
+              <div class="subscreen-header">
+                <button type="button" class="subscreen-back-btn" id="x402-perms-back">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                  </svg>
+                  <span>Back</span>
+                </button>
+                <h3 class="subscreen-title">Auto-pay</h3>
+              </div>
+              <div class="subscreen-content">
+                <div class="perms-site" id="x402-perms-site">site.eth</div>
+                <div id="x402-perms-error" class="x402-perms-error hidden" role="alert"></div>
+                <div id="x402-perms-list" class="perms-section">
+                  <!-- One block per (chainId, asset) allowance, rendered dynamically -->
+                </div>
+                <div class="perms-actions">
+                  <button type="button" class="perms-disconnect-btn" id="x402-perms-revoke-all">Revoke auto-pay</button>
                 </div>
               </div>
             </div>
