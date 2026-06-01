@@ -10,5 +10,6 @@ Use these files on demand:
 - `changelog-process.md`: release changelog procedure.
 - `release-process.md`: release branch, version bump, tag, build, and publish steps.
 - `security-checklist.md`: pre-commit and pre-PR security checks.
+- `windows-utm-build.md`: build and run a native Windows build in a UTM VM on macOS.
 
 Keep `AGENTS.md` short and stable. Put detailed examples and process notes here.
