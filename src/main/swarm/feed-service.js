@@ -8,7 +8,7 @@
  * to prevent index collisions from concurrent callers.
  */
 
-const { PrivateKey, Topic, EthAddress, BeeResponseError } = require('@ethersphere/bee-js');
+const { PrivateKey, Topic, EthAddress, BeeResponseError, Bytes, Identifier, FeedIndex } = require('@ethersphere/bee-js');
 const { getBee, selectBestBatch, toHex } = require('./swarm-service');
 const log = require('electron-log');
 
@@ -82,6 +82,47 @@ function buildTopicString(normalizedOrigin, feedName) {
  */
 function feedIndexToNumber(feedIndex) {
   return Number(feedIndex.toBigInt());
+}
+
+function normalizeFeedIndex(index) {
+  return typeof index === 'number' ? FeedIndex.fromBigInt(BigInt(index)) : index;
+}
+
+function concatUint8Arrays(parts) {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function makeFeedIdentifier(topic, index) {
+  const feedIndex = normalizeFeedIndex(index);
+  return new Identifier(Bytes.keccak256(concatUint8Arrays([
+    topic.toUint8Array(),
+    feedIndex.toUint8Array(),
+  ])).toUint8Array());
+}
+
+async function downloadExactFeedPayload(bee, owner, topic, index) {
+  const feedIndex = normalizeFeedIndex(index);
+  const identifier = makeFeedIdentifier(topic, feedIndex);
+  const reference = bee.calculateSingleOwnerChunkAddress(identifier, owner);
+  const raw = await bee.downloadChunk(reference);
+  const soc = bee.unmarshalSingleOwnerChunk(raw, reference);
+  const cac = bee.makeContentAddressedChunk(soc.payload, soc.span);
+  const payload = cac.span.toBigInt() <= 4096n
+    ? cac.payload
+    : await bee.downloadData(cac.address);
+
+  return {
+    payload,
+    feedIndex,
+    feedIndexNext: feedIndex.next(),
+  };
 }
 
 /**
@@ -219,7 +260,7 @@ async function writeFeedPayload(signerPrivateKey, topicString, data, options = {
     if (index !== undefined && index !== null) {
       // Explicit index — check for existing entry (overwrite protection)
       try {
-        await writer.downloadPayload({ index });
+        await downloadExactFeedPayload(bee, privateKey.publicKey().address(), topic, index);
         const err = new Error(`Feed entry already exists at index ${index}`);
         err.reason = 'index_already_exists';
         throw err;
@@ -257,8 +298,9 @@ async function readFeedPayload(ownerAddress, topic, index) {
   const reader = bee.makeFeedReader(topic, owner);
 
   try {
-    const options = index !== undefined && index !== null ? { index } : undefined;
-    const result = await reader.downloadPayload(options);
+    const result = index !== undefined && index !== null
+      ? await downloadExactFeedPayload(bee, owner, topic, index)
+      : await reader.downloadPayload();
 
     const payload = Buffer.from(result.payload.toUint8Array());
     const readIndex = feedIndexToNumber(result.feedIndex);

@@ -177,6 +177,7 @@ async function loadPermissionManage(options = {}) {
   const document = createDocument();
   const identityView = new FakeElement();
   const hideAllSubscreens = jest.fn();
+  const registerScreenHider = jest.fn();
   const openSidebarPanel = jest.fn();
   const updateConnectionBanner = jest.fn();
   const updateSwarmConnectionBanner = jest.fn();
@@ -226,6 +227,7 @@ async function loadPermissionManage(options = {}) {
   jest.doMock('./wallet-state.js', () => ({
     walletState: { identityView },
     hideAllSubscreens,
+    registerScreenHider,
   }));
   jest.doMock('../sidebar.js', () => ({ open: openSidebarPanel }));
   jest.doMock('./dapp-connect.js', () => ({

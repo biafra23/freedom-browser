@@ -19,6 +19,16 @@ jest.mock('electron-log', () => ({
   error: jest.fn(),
 }));
 
+const mockGetDerivedKeys = jest.fn();
+const mockGetPublisherKey = jest.fn();
+const mockGetDerivedWallets = jest.fn();
+
+jest.mock('../identity-manager', () => ({
+  getDerivedKeys: (...args) => mockGetDerivedKeys(...args),
+  getPublisherKey: (...args) => mockGetPublisherKey(...args),
+  getDerivedWallets: (...args) => mockGetDerivedWallets(...args),
+}));
+
 const { app } = require('electron');
 
 let tmpDir;
@@ -38,10 +48,18 @@ const {
   getOriginEntry,
   setOriginEntry,
   allocatePublisherKeyIndex,
+  getOriginIdentityState,
+  previewAppScopedIdentity,
+  createAppScopedIdentity,
+  ensureBeeWalletIdentity,
+  ensureEthereumWalletIdentity,
+  activateIdentity,
   getFeed,
   setFeed,
   updateFeedReference,
   getAllFeeds,
+  getAllOriginEntries,
+  getEthereumWalletIdentityReferences,
   hasIdentityMode,
   hasFeedGrant,
   grantFeedAccess,
@@ -52,7 +70,29 @@ const {
 
 beforeEach(() => {
   _resetCache();
+  mockGetDerivedKeys.mockReturnValue({
+    beeWallet: {
+      address: '0xBee0000000000000000000000000000000000000',
+      privateKey: '0xbeekey',
+    },
+  });
+  mockGetPublisherKey.mockImplementation(async (index) => ({
+    address: `0xPublisher${index}`,
+    privateKey: `0xpublisher${index}`,
+  }));
+  mockGetDerivedWallets.mockResolvedValue([
+    { index: 0, name: 'Main Wallet', address: '0xWallet000000000000000000000000000000000000' },
+    { index: 2, name: 'Trading Wallet', address: '0xWallet222222222222222222222222222222222222' },
+  ]);
 });
+
+function getFeedsFilePath() {
+  return path.join(tmpDir, 'swarm-feeds.json');
+}
+
+function readFeedsFile() {
+  return JSON.parse(fs.readFileSync(getFeedsFilePath(), 'utf-8'));
+}
 
 describe('feed-store', () => {
   describe('origin entries', () => {
@@ -67,6 +107,11 @@ describe('feed-store', () => {
       });
       expect(entry.identityMode).toBe('app-scoped');
       expect(entry.publisherKeyIndex).toBe(0);
+      expect(entry.activeIdentityId).toBe('app-scoped:0');
+      expect(entry.identities['app-scoped:0']).toMatchObject({
+        mode: 'app-scoped',
+        publisherKeyIndex: 0,
+      });
       expect(entry.grantedAt).toEqual(expect.any(Number));
       expect(entry.feeds).toEqual({});
     });
@@ -77,6 +122,22 @@ describe('feed-store', () => {
       });
       expect(entry.identityMode).toBe('bee-wallet');
       expect(entry.publisherKeyIndex).toBeNull();
+      expect(entry.activeIdentityId).toBe('bee-wallet');
+    });
+
+    test('setOriginEntry creates entry with ethereum-wallet mode', () => {
+      const entry = setOriginEntry('myapp.eth', {
+        identityMode: 'ethereum-wallet',
+        walletIndex: 2,
+      });
+      expect(entry.identityMode).toBe('ethereum-wallet');
+      expect(entry.publisherKeyIndex).toBeNull();
+      expect(entry.walletIndex).toBe(2);
+      expect(entry.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(entry.identities['ethereum-wallet:2']).toMatchObject({
+        mode: 'ethereum-wallet',
+        walletIndex: 2,
+      });
     });
 
     test('getOriginEntry returns entry after set', () => {
@@ -119,6 +180,137 @@ describe('feed-store', () => {
     });
   });
 
+  describe('identity management', () => {
+    test('getOriginIdentityState lists identities for an origin', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const state = getOriginIdentityState('myapp.eth');
+
+      expect(state.origin).toBe('myapp.eth');
+      expect(state.activeIdentityId).toBe('app-scoped:0');
+      expect(state.identities).toHaveLength(1);
+      expect(state.identities[0]).toMatchObject({
+        id: 'app-scoped:0',
+        mode: 'app-scoped',
+      });
+    });
+
+    test('createAppScopedIdentity adds and activates a new identity without dropping old identities', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = createAppScopedIdentity('myapp.eth', { label: '  Testing identity  ' });
+
+      expect(entry.activeIdentityId).toBe('app-scoped:1');
+      expect(entry.identities['app-scoped:0']).toBeDefined();
+      expect(entry.identities['app-scoped:1']).toMatchObject({
+        mode: 'app-scoped',
+        publisherKeyIndex: 1,
+        label: 'Testing identity',
+      });
+      expect(allocatePublisherKeyIndex()).toBe(2);
+    });
+
+    test('ensureBeeWalletIdentity can add Bee wallet without activating it', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = ensureBeeWalletIdentity('myapp.eth');
+
+      expect(entry.activeIdentityId).toBe('app-scoped:0');
+      expect(entry.identities['bee-wallet']).toMatchObject({
+        mode: 'bee-wallet',
+        publisherKeyIndex: null,
+      });
+    });
+
+    test('ensureBeeWalletIdentity can activate Bee wallet identity', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = ensureBeeWalletIdentity('myapp.eth', { activate: true });
+
+      expect(entry.activeIdentityId).toBe('bee-wallet');
+      expect(entry.identityMode).toBe('bee-wallet');
+      expect(entry.publisherKeyIndex).toBeNull();
+    });
+
+    test('ensureEthereumWalletIdentity can add and activate a browser wallet identity', async () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      const entry = await ensureEthereumWalletIdentity('myapp.eth', 2, { activate: true });
+
+      expect(entry.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(entry.identityMode).toBe('ethereum-wallet');
+      expect(entry.walletIndex).toBe(2);
+      expect(entry.identities['ethereum-wallet:2']).toMatchObject({
+        mode: 'ethereum-wallet',
+        walletIndex: 2,
+        label: 'Trading Wallet',
+      });
+    });
+
+    test('ensureEthereumWalletIdentity rejects missing browser wallets', async () => {
+      await expect(ensureEthereumWalletIdentity('myapp.eth', 99))
+        .rejects.toThrow('Wallet with index 99 does not exist');
+    });
+
+    test('getEthereumWalletIdentityReferences lists active and feed-pinned identities', async () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+      await ensureEthereumWalletIdentity('myapp.eth', 2, { activate: true });
+      setFeed('myapp.eth', 'blog', { topic: 'a', owner: 'b', manifestReference: 'c' });
+
+      setOriginEntry('other.eth', { identityMode: 'app-scoped', publisherKeyIndex: 1 });
+      await ensureEthereumWalletIdentity('other.eth', 2);
+      setFeed('other.eth', 'archive', {
+        topic: 'd',
+        owner: 'e',
+        manifestReference: 'f',
+        identityId: 'ethereum-wallet:2',
+      });
+
+      setOriginEntry('unused.eth', { identityMode: 'app-scoped', publisherKeyIndex: 2 });
+      await ensureEthereumWalletIdentity('unused.eth', 2);
+
+      expect(getEthereumWalletIdentityReferences(2)).toEqual([
+        {
+          origin: 'myapp.eth',
+          identityId: 'ethereum-wallet:2',
+          active: true,
+          feedNames: ['blog'],
+          feedCount: 1,
+        },
+        {
+          origin: 'other.eth',
+          identityId: 'ethereum-wallet:2',
+          active: false,
+          feedNames: ['archive'],
+          feedCount: 1,
+        },
+      ]);
+    });
+
+    test('getEthereumWalletIdentityReferences returns empty list for unreferenced wallet', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      expect(getEthereumWalletIdentityReferences(2)).toEqual([]);
+    });
+
+    test('activateIdentity switches active identity without retagging existing feeds', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+      setFeed('myapp.eth', 'blog', { topic: 'a', owner: 'b', manifestReference: 'c' });
+      createAppScopedIdentity('myapp.eth');
+
+      const entry = activateIdentity('myapp.eth', 'app-scoped:0');
+
+      expect(entry.activeIdentityId).toBe('app-scoped:0');
+      expect(getFeed('myapp.eth', 'blog').identityId).toBe('app-scoped:0');
+    });
+
+    test('activateIdentity rejects unknown identities', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      expect(() => activateIdentity('myapp.eth', 'missing')).toThrow('Publisher identity not found');
+    });
+  });
+
   describe('feed entries', () => {
     beforeEach(() => {
       setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
@@ -141,6 +333,7 @@ describe('feed-store', () => {
       expect(feed.topic).toBe('abc123');
       expect(feed.owner).toBe('def456');
       expect(feed.manifestReference).toBe('789abc');
+      expect(feed.identityId).toBe('app-scoped:0');
       expect(feed.createdAt).toEqual(expect.any(Number));
       expect(feed.lastUpdated).toBeNull();
       expect(feed.lastReference).toBeNull();
@@ -234,23 +427,156 @@ describe('feed-store', () => {
       const entry = getOriginEntry('myapp.eth');
       // Mutate the returned object at every level
       entry.identityMode = 'corrupted';
+      entry.identities['app-scoped:0'].mode = 'corrupted';
       entry.feeds.blog.owner = 'corrupted';
       entry.feeds.newFeed = { topic: 'injected' };
 
       // Cache should be unaffected
       const fresh = getOriginEntry('myapp.eth');
       expect(fresh.identityMode).toBe('app-scoped');
+      expect(fresh.identities['app-scoped:0'].mode).toBe('app-scoped');
       expect(fresh.feeds.blog.owner).toBe('b');
       expect(fresh.feeds.newFeed).toBeUndefined();
     });
 
     test('writes to disk', () => {
       setOriginEntry('myapp.eth', { identityMode: 'bee-wallet' });
-      const filePath = path.join(tmpDir, 'swarm-feeds.json');
+      const filePath = getFeedsFilePath();
       expect(fs.existsSync(filePath)).toBe(true);
       const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      expect(data.version).toBe(1);
+      expect(data.version).toBe(2);
       expect(data.origins['myapp.eth']).toBeDefined();
+      expect(data.origins['myapp.eth'].activeIdentityId).toBe('bee-wallet');
+    });
+  });
+
+  describe('store migration', () => {
+    test('migrates v1 app-scoped origin entries to v2 identities', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 1,
+        nextPublisherKeyIndex: 7,
+        origins: {
+          'myapp.eth': {
+            identityMode: 'app-scoped',
+            publisherKeyIndex: 3,
+            feedGranted: true,
+            grantedAt: 1234,
+            feeds: {
+              blog: {
+                topic: 'topic',
+                owner: 'owner',
+                manifestReference: 'manifest',
+                createdAt: 1300,
+                lastUpdated: 1400,
+                lastReference: 'reference',
+              },
+            },
+          },
+        },
+      }), 'utf-8');
+
+      const entry = getOriginEntry('myapp.eth');
+      expect(entry.identityMode).toBe('app-scoped');
+      expect(entry.publisherKeyIndex).toBe(3);
+      expect(entry.activeIdentityId).toBe('app-scoped:3');
+      expect(entry.identities['app-scoped:3']).toMatchObject({
+        id: 'app-scoped:3',
+        mode: 'app-scoped',
+        publisherKeyIndex: 3,
+        label: 'App-scoped identity 4',
+        createdAt: 1234,
+      });
+      expect(entry.feeds.blog.identityId).toBe('app-scoped:3');
+
+      const persisted = readFeedsFile();
+      expect(persisted.version).toBe(2);
+      expect(persisted.nextPublisherKeyIndex).toBe(7);
+      expect(persisted.origins['myapp.eth'].feeds.blog.identityId).toBe('app-scoped:3');
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.v1-backup.json'))).toBe(true);
+    });
+
+    test('migrates v1 bee-wallet origin entries to v2 identities', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 1,
+        nextPublisherKeyIndex: 2,
+        origins: {
+          'beeapp.eth': {
+            identityMode: 'bee-wallet',
+            feedGranted: false,
+            grantedAt: 2345,
+            feeds: {},
+          },
+        },
+      }), 'utf-8');
+
+      const entry = getOriginEntry('beeapp.eth');
+      expect(entry.identityMode).toBe('bee-wallet');
+      expect(entry.publisherKeyIndex).toBeNull();
+      expect(entry.activeIdentityId).toBe('bee-wallet');
+      expect(entry.identities['bee-wallet']).toMatchObject({
+        id: 'bee-wallet',
+        mode: 'bee-wallet',
+        publisherKeyIndex: null,
+        label: 'Bee wallet identity',
+      });
+    });
+
+    test('preserves missing version files instead of overwriting them', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        nextPublisherKeyIndex: 99,
+        origins: {
+          'myapp.eth': {
+            identityMode: 'app-scoped',
+            publisherKeyIndex: 0,
+          },
+        },
+      }), 'utf-8');
+
+      expect(getOriginEntry('myapp.eth')).toBeNull();
+      const persisted = readFeedsFile();
+      expect(persisted.version).toBeUndefined();
+      expect(persisted.nextPublisherKeyIndex).toBe(99);
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.unsupported.json'))).toBe(true);
+    });
+
+    test('preserves unknown version files instead of overwriting them', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 999,
+        nextPublisherKeyIndex: 99,
+        origins: {},
+      }), 'utf-8');
+
+      expect(getAllOriginEntries()).toEqual([]);
+      const persisted = readFeedsFile();
+      expect(persisted.version).toBe(999);
+      expect(persisted.nextPublisherKeyIndex).toBe(99);
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.unsupported.json'))).toBe(true);
+    });
+
+    test('skips invalid v1 entries while migrating valid entries', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 1,
+        nextPublisherKeyIndex: 4,
+        origins: {
+          'valid.eth': {
+            identityMode: 'app-scoped',
+            publisherKeyIndex: 2,
+            feedGranted: true,
+            grantedAt: 1234,
+            feeds: {},
+          },
+          'bad.eth': {
+            identityMode: 'missing-mode',
+            feedGranted: true,
+            feeds: {},
+          },
+        },
+      }), 'utf-8');
+
+      expect(getOriginEntry('valid.eth')?.activeIdentityId).toBe('app-scoped:2');
+      expect(getOriginEntry('bad.eth')).toBeNull();
+      expect(readFeedsFile().origins['valid.eth']).toBeDefined();
+      expect(readFeedsFile().origins['bad.eth']).toBeUndefined();
     });
   });
 
@@ -328,6 +654,12 @@ describe('feed-store', () => {
     test('registers expected channels', () => {
       expect(ipcHandlers[IPC.SWARM_HAS_FEED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_PREVIEW_APP_SCOPED_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]).toBeDefined();
     });
 
     test('has-feed-identity returns false for unknown origin', () => {
@@ -365,6 +697,12 @@ describe('feed-store', () => {
         .toThrow('Invalid identity mode');
     });
 
+    test('set-feed-identity rejects ethereum-wallet for a new origin without wallet index setup', () => {
+      _resetCache();
+      expect(() => ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-eth.eth', 'ethereum-wallet'))
+        .toThrow('ensureEthereumWalletIdentity');
+    });
+
     test('has-feed-identity returns true after identity set', () => {
       _resetCache();
       ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-test2.eth', 'bee-wallet');
@@ -395,6 +733,116 @@ describe('feed-store', () => {
       const second = ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-regrant.eth', 'app-scoped');
       expect(second.feedGranted).toBe(true);
       expect(second.publisherKeyIndex).toBe(first.publisherKeyIndex);
+    });
+
+    test('identity management IPC creates, ensures, and activates identities', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-manage.eth', 'app-scoped');
+
+      const withNewIdentity = await ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]({}, 'ipc-manage.eth', {
+        label: 'Second identity',
+      });
+      expect(withNewIdentity.activeIdentityId).toBe('app-scoped:1');
+      expect(withNewIdentity.identities.find((identity) => identity.id === 'app-scoped:1')).toMatchObject({
+        label: 'Second identity',
+        owner: '0xPublisher1',
+        stored: true,
+      });
+
+      const withBeeIdentity = await ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]({}, 'ipc-manage.eth');
+      expect(withBeeIdentity.activeIdentityId).toBe('app-scoped:1');
+      expect(withBeeIdentity.identities.find((identity) => identity.id === 'bee-wallet')).toMatchObject({
+        owner: '0xBee0000000000000000000000000000000000000',
+        stored: true,
+      });
+
+      const withWalletIdentity = await ipcHandlers[IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY]({}, 'ipc-manage.eth', 2);
+      expect(withWalletIdentity.activeIdentityId).toBe('app-scoped:1');
+      expect(withWalletIdentity.identities.find((identity) => identity.id === 'ethereum-wallet:2')).toMatchObject({
+        label: 'Trading Wallet',
+        owner: '0xWallet222222222222222222222222222222222222',
+        stored: true,
+      });
+
+      const switched = await ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]({}, 'ipc-manage.eth', 'ethereum-wallet:2');
+      expect(switched.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(switched.identityMode).toBe('ethereum-wallet');
+      expect(switched.walletIndex).toBe(2);
+
+      const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-manage.eth');
+      expect(state.activeIdentityId).toBe('ethereum-wallet:2');
+      expect(state.identities.map((identity) => identity.id)).toEqual([
+        'app-scoped:0',
+        'app-scoped:1',
+        'bee-wallet',
+        'ethereum-wallet:2',
+        'ethereum-wallet:0',
+      ]);
+    });
+
+    test('preview-app-scoped-identity does not allocate or persist until approval', async () => {
+      _resetCache();
+
+      const preview = await previewAppScopedIdentity('preview.eth');
+
+      expect(preview).toMatchObject({
+        id: 'app-scoped:0',
+        mode: 'app-scoped',
+        publisherKeyIndex: 0,
+        owner: '0xPublisher0',
+        stored: false,
+        preview: true,
+      });
+      expect(getOriginEntry('preview.eth')).toBeNull();
+      expect(allocatePublisherKeyIndex()).toBe(0);
+    });
+
+    test('get-origin-identities includes Bee wallet as an available identity', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-available.eth', 'app-scoped');
+
+      const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-available.eth');
+      const beeIdentity = state.identities.find((identity) => identity.id === 'bee-wallet');
+
+      expect(beeIdentity).toMatchObject({
+        mode: 'bee-wallet',
+        owner: '0xBee0000000000000000000000000000000000000',
+        stored: false,
+      });
+    });
+
+    test('get-origin-identities includes browser wallets as available identities', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-wallets.eth', 'app-scoped');
+
+      const state = await ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-wallets.eth');
+      const walletIdentities = state.identities.filter((identity) => identity.mode === 'ethereum-wallet');
+
+      expect(walletIdentities).toEqual([
+        expect.objectContaining({
+          id: 'ethereum-wallet:0',
+          label: 'Main Wallet',
+          walletIndex: 0,
+          owner: '0xWallet000000000000000000000000000000000000',
+          stored: false,
+        }),
+        expect.objectContaining({
+          id: 'ethereum-wallet:2',
+          label: 'Trading Wallet',
+          walletIndex: 2,
+          owner: '0xWallet222222222222222222222222222222222222',
+          stored: false,
+        }),
+      ]);
+    });
+
+    test('get-origin-identities requires unlocked vault for owner inspection', async () => {
+      _resetCache();
+      ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-locked.eth', 'app-scoped');
+      mockGetDerivedKeys.mockReturnValue(null);
+
+      await expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]({}, 'ipc-locked.eth'))
+        .rejects.toThrow('Vault must be unlocked');
     });
   });
 });

@@ -2,17 +2,24 @@ const mockCreateFeedManifest = jest.fn();
 const mockMakeFeedWriter = jest.fn();
 const mockMakeFeedReader = jest.fn();
 const mockGetPostageBatches = jest.fn();
+const mockCalculateSingleOwnerChunkAddress = jest.fn();
+const mockDownloadChunk = jest.fn();
+const mockUnmarshalSingleOwnerChunk = jest.fn();
+const mockMakeContentAddressedChunk = jest.fn();
+const mockDownloadData = jest.fn();
 
 // Minimal stand-ins for bee-js typed bytes used in assertions
 class MockReference {
   constructor(hex) { this._hex = hex; }
   toHex() { return this._hex; }
+  toUint8Array() { return Buffer.from(this._hex.replace(/^0x/, ''), 'hex'); }
 }
 
 let topicCounter = 0;
 class MockTopic {
   constructor(hex) { this._hex = hex; }
   toHex() { return this._hex; }
+  toUint8Array() { return Buffer.from(this._hex, 'hex'); }
   static fromString(_s) { return new MockTopic((topicCounter++).toString(16).padStart(64, '0')); }
 }
 
@@ -20,6 +27,7 @@ class MockEthAddress {
   constructor(hex) { this._hex = typeof hex === 'string' ? hex.replace(/^0x/, '') : hex; }
   toHex() { return this._hex; }
   toChecksum() { return `0x${this._hex}`; }
+  toUint8Array() { return Buffer.from(this._hex, 'hex'); }
 }
 
 class MockPublicKey {
@@ -38,6 +46,18 @@ class MockPrivateKey {
 
 class MockFeedIndex {
   constructor(value) { this._value = BigInt(value); }
+  static fromBigInt(value) { return new MockFeedIndex(value); }
+  toBigInt() { return this._value; }
+  next() { return new MockFeedIndex(this._value + 1n); }
+  toUint8Array() {
+    const bytes = Buffer.alloc(8);
+    bytes.writeBigUInt64BE(this._value);
+    return bytes;
+  }
+}
+
+class MockSpan {
+  constructor(value) { this._value = BigInt(value); }
   toBigInt() { return this._value; }
 }
 
@@ -53,7 +73,11 @@ class MockBytes {
     this.length = this._bytes.length;
   }
   toUint8Array() { return this._bytes; }
+  toHex() { return Buffer.from(this._bytes).toString('hex'); }
+  static keccak256(_bytes) { return new MockBytes(new Uint8Array(32).fill(7)); }
 }
+
+class MockIdentifier extends MockBytes {}
 
 // Stand-in for bee-js BeeResponseError — used for error discrimination
 class MockBeeResponseError extends Error {
@@ -73,10 +97,18 @@ jest.mock('@ethersphere/bee-js', () => ({
     makeFeedWriter: mockMakeFeedWriter,
     makeFeedReader: mockMakeFeedReader,
     getPostageBatches: mockGetPostageBatches,
+    calculateSingleOwnerChunkAddress: mockCalculateSingleOwnerChunkAddress,
+    downloadChunk: mockDownloadChunk,
+    unmarshalSingleOwnerChunk: mockUnmarshalSingleOwnerChunk,
+    makeContentAddressedChunk: mockMakeContentAddressedChunk,
+    downloadData: mockDownloadData,
   })),
   PrivateKey: MockPrivateKey,
   Topic: MockTopic,
   EthAddress: MockEthAddress,
+  Bytes: MockBytes,
+  Identifier: MockIdentifier,
+  FeedIndex: MockFeedIndex,
   BeeResponseError: MockBeeResponseError,
 }));
 
@@ -133,9 +165,26 @@ function createMockReader({ downloadPayloadResult, downloadPayloadFn } = {}) {
   return reader;
 }
 
+function mockExactFeedPayload(data = 'exact data', span = 1n) {
+  const reference = new MockReference('ee'.repeat(32));
+  const payload = new MockBytes(data);
+  const soc = { payload, span: new MockSpan(span) };
+  mockCalculateSingleOwnerChunkAddress.mockReturnValue(reference);
+  mockDownloadChunk.mockResolvedValue(new MockBytes('raw soc'));
+  mockUnmarshalSingleOwnerChunk.mockReturnValue(soc);
+  mockMakeContentAddressedChunk.mockReturnValue({
+    payload,
+    span: soc.span,
+    address: new MockReference('dd'.repeat(32)),
+  });
+  return { reference, payload, soc };
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   topicCounter = 0;
+  mockCalculateSingleOwnerChunkAddress.mockReturnValue(new MockReference('ee'.repeat(32)));
+  mockDownloadChunk.mockRejectedValue(make404());
 });
 
 describe('feed-service', () => {
@@ -413,8 +462,7 @@ describe('feed-service', () => {
 
     test('uses explicit index when provided', async () => {
       const writer = createMockWriter();
-      // downloadPayload with { index: 10 } throws 404 — index available
-      writer.downloadPayload.mockRejectedValue(make404());
+      mockDownloadChunk.mockRejectedValue(make404());
       mockMakeFeedWriter.mockReturnValue(writer);
       mockBatchForAutoSelect();
 
@@ -423,15 +471,13 @@ describe('feed-service', () => {
       expect(result.index).toBe(10);
       const [, , options] = writer.uploadPayload.mock.calls[0];
       expect(options.index).toBe(10);
+      expect(writer.downloadPayload).not.toHaveBeenCalled();
+      expect(mockCalculateSingleOwnerChunkAddress).toHaveBeenCalled();
     });
 
     test('rejects explicit index that already has an entry (overwrite protection)', async () => {
       const writer = createMockWriter();
-      // downloadPayload with { index: 5 } succeeds → entry exists
-      writer.downloadPayload.mockResolvedValue({
-        payload: Buffer.from('existing'),
-        feedIndex: new MockFeedIndex(5),
-      });
+      mockExactFeedPayload('existing');
       mockMakeFeedWriter.mockReturnValue(writer);
       mockBatchForAutoSelect();
 
@@ -440,14 +486,12 @@ describe('feed-service', () => {
 
       // uploadPayload should NOT have been called
       expect(writer.uploadPayload).not.toHaveBeenCalled();
+      expect(writer.downloadPayload).not.toHaveBeenCalled();
     });
 
     test('overwrite protection error has reason property', async () => {
       const writer = createMockWriter();
-      writer.downloadPayload.mockResolvedValue({
-        payload: Buffer.from('existing'),
-        feedIndex: new MockFeedIndex(0),
-      });
+      mockExactFeedPayload('existing');
       mockMakeFeedWriter.mockReturnValue(writer);
       mockBatchForAutoSelect();
 
@@ -498,7 +542,7 @@ describe('feed-service', () => {
 
     test('propagates non-404 errors during overwrite check (does not treat as free index)', async () => {
       const writer = createMockWriter();
-      writer.downloadPayload.mockRejectedValue(new Error('network timeout'));
+      mockDownloadChunk.mockRejectedValue(new Error('network timeout'));
       mockMakeFeedWriter.mockReturnValue(writer);
       mockBatchForAutoSelect();
 
@@ -556,28 +600,24 @@ describe('feed-service', () => {
 
       const result = await readFeedPayload(MOCK_OWNER, new MockTopic('ab'.repeat(32)));
 
-      expect(reader.downloadPayload).toHaveBeenCalledWith(undefined);
+      expect(reader.downloadPayload).toHaveBeenCalledWith();
       expect(result.payload).toEqual(Buffer.from('latest data'));
       expect(result.index).toBe(3);
       expect(result.nextIndex).toBe(4);
     });
 
     test('reads specific index when provided', async () => {
-      const reader = createMockReader({
-        downloadPayloadResult: {
-          payload: new MockBytes('entry 2'),
-          feedIndex: new MockFeedIndex(2),
-          feedIndexNext: undefined,
-        },
-      });
+      const reader = createMockReader();
+      mockExactFeedPayload('entry 2');
       mockMakeFeedReader.mockReturnValue(reader);
 
       const result = await readFeedPayload(MOCK_OWNER, new MockTopic('ab'.repeat(32)), 2);
 
-      expect(reader.downloadPayload).toHaveBeenCalledWith({ index: 2 });
+      expect(reader.downloadPayload).not.toHaveBeenCalled();
+      expect(mockDownloadChunk).toHaveBeenCalled();
       expect(result.payload).toEqual(Buffer.from('entry 2'));
       expect(result.index).toBe(2);
-      expect(result.nextIndex).toBeNull();
+      expect(result.nextIndex).toBe(3);
     });
 
     test('unwraps bee-js Bytes payload via toUint8Array (regression test for zeroing bug)', async () => {
@@ -585,13 +625,8 @@ describe('feed-service', () => {
       // but NO numeric index properties. If the service does Buffer.from(bytesInstance)
       // directly, Node treats it as array-like and fills with zeros. The fix is to
       // call .toUint8Array() first.
-      const reader = createMockReader({
-        downloadPayloadResult: {
-          payload: new MockBytes('HELLO-WORLD'),
-          feedIndex: new MockFeedIndex(0),
-          feedIndexNext: new MockFeedIndex(1),
-        },
-      });
+      const reader = createMockReader();
+      mockExactFeedPayload('HELLO-WORLD');
       mockMakeFeedReader.mockReturnValue(reader);
 
       const result = await readFeedPayload(MOCK_OWNER, new MockTopic('ab'.repeat(32)), 0);
@@ -631,6 +666,7 @@ describe('feed-service', () => {
     test('throws entry_not_found on missing index (indexed read)', async () => {
       const reader = createMockReader(); // downloadPayload rejects
       mockMakeFeedReader.mockReturnValue(reader);
+      mockDownloadChunk.mockRejectedValue(make404());
 
       try {
         await readFeedPayload(MOCK_OWNER, new MockTopic('ab'.repeat(32)), 99);
@@ -652,7 +688,7 @@ describe('feed-service', () => {
 
     test('propagates non-404 errors on indexed read (does not return entry_not_found)', async () => {
       const reader = createMockReader();
-      reader.downloadPayload.mockRejectedValue(new Error('Bee internal error'));
+      mockDownloadChunk.mockRejectedValue(new Error('Bee internal error'));
       mockMakeFeedReader.mockReturnValue(reader);
 
       await expect(readFeedPayload(MOCK_OWNER, new MockTopic('ab'.repeat(32)), 5))
