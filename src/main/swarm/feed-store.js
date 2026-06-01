@@ -814,6 +814,46 @@ function getAllOriginEntries() {
     .sort((a, b) => (b.grantedAt || 0) - (a.grantedAt || 0));
 }
 
+function getEthereumWalletIdentityReferences(walletIndex) {
+  if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+    throw new Error('Wallet index must be a non-negative integer');
+  }
+
+  const store = loadFeeds();
+  const references = [];
+  for (const [origin, entry] of Object.entries(store.origins)) {
+    if (!isPlainObject(entry?.identities)) continue;
+
+    const feeds = isPlainObject(entry.feeds) ? entry.feeds : {};
+    for (const identity of Object.values(entry.identities)) {
+      if (identity?.mode !== 'ethereum-wallet' || identity.walletIndex !== walletIndex) {
+        continue;
+      }
+
+      const feedNames = Object.entries(feeds)
+        .filter(([, feed]) => feed?.identityId === identity.id)
+        .map(([feedName]) => feedName)
+        .sort();
+      const active = entry.activeIdentityId === identity.id;
+      if (!active && feedNames.length === 0) {
+        continue;
+      }
+      references.push({
+        origin,
+        identityId: identity.id,
+        active,
+        feedNames,
+        feedCount: feedNames.length,
+      });
+    }
+  }
+
+  return references.sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return a.origin.localeCompare(b.origin);
+  });
+}
+
 /**
  * Check if an origin has feed identity metadata set.
  * This is NOT the same as "has feed permission" — identity metadata
@@ -968,6 +1008,7 @@ module.exports = {
   updateFeedReference,
   getAllFeeds,
   getAllOriginEntries,
+  getEthereumWalletIdentityReferences,
   hasIdentityMode,
   hasFeedGrant,
   grantFeedAccess,

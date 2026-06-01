@@ -59,6 +59,7 @@ const {
   updateFeedReference,
   getAllFeeds,
   getAllOriginEntries,
+  getEthereumWalletIdentityReferences,
   hasIdentityMode,
   hasFeedGrant,
   grantFeedAccess,
@@ -249,6 +250,47 @@ describe('feed-store', () => {
     test('ensureEthereumWalletIdentity rejects missing browser wallets', async () => {
       await expect(ensureEthereumWalletIdentity('myapp.eth', 99))
         .rejects.toThrow('Wallet with index 99 does not exist');
+    });
+
+    test('getEthereumWalletIdentityReferences lists active and feed-pinned identities', async () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+      await ensureEthereumWalletIdentity('myapp.eth', 2, { activate: true });
+      setFeed('myapp.eth', 'blog', { topic: 'a', owner: 'b', manifestReference: 'c' });
+
+      setOriginEntry('other.eth', { identityMode: 'app-scoped', publisherKeyIndex: 1 });
+      await ensureEthereumWalletIdentity('other.eth', 2);
+      setFeed('other.eth', 'archive', {
+        topic: 'd',
+        owner: 'e',
+        manifestReference: 'f',
+        identityId: 'ethereum-wallet:2',
+      });
+
+      setOriginEntry('unused.eth', { identityMode: 'app-scoped', publisherKeyIndex: 2 });
+      await ensureEthereumWalletIdentity('unused.eth', 2);
+
+      expect(getEthereumWalletIdentityReferences(2)).toEqual([
+        {
+          origin: 'myapp.eth',
+          identityId: 'ethereum-wallet:2',
+          active: true,
+          feedNames: ['blog'],
+          feedCount: 1,
+        },
+        {
+          origin: 'other.eth',
+          identityId: 'ethereum-wallet:2',
+          active: false,
+          feedNames: ['archive'],
+          feedCount: 1,
+        },
+      ]);
+    });
+
+    test('getEthereumWalletIdentityReferences returns empty list for unreferenced wallet', () => {
+      setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
+
+      expect(getEthereumWalletIdentityReferences(2)).toEqual([]);
     });
 
     test('activateIdentity switches active identity without retagging existing feeds', () => {

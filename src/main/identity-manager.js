@@ -913,6 +913,19 @@ async function renameDerivedWallet(index, newName) {
   });
 }
 
+function getSwarmPublisherIdentityReferences(walletIndex) {
+  const { getEthereumWalletIdentityReferences } = require('./swarm/feed-store');
+  return getEthereumWalletIdentityReferences(walletIndex);
+}
+
+function formatPublisherIdentityReferenceError(walletIndex, references) {
+  const origins = references.map((reference) => reference.origin);
+  const shownOrigins = origins.slice(0, 3).join(', ');
+  const extraCount = origins.length - 3;
+  const extra = extraCount > 0 ? ` and ${extraCount} more` : '';
+  return `Cannot delete wallet with index ${walletIndex}; it is active or pinned to Swarm feeds for ${shownOrigins}${extra}. Switch the affected publisher identities before deleting this wallet.`;
+}
+
 /**
  * Delete a derived wallet
  * @param {number} index - Wallet index (cannot be 0)
@@ -932,6 +945,14 @@ async function deleteDerivedWallet(index) {
 
   if (walletIndex === -1) {
     throw new Error(`Wallet with index ${index} does not exist`);
+  }
+
+  const publisherIdentityReferences = getSwarmPublisherIdentityReferences(index);
+  if (publisherIdentityReferences.length > 0) {
+    const err = new Error(formatPublisherIdentityReferenceError(index, publisherIdentityReferences));
+    err.code = 'SWARM_PUBLISHER_IDENTITY_WALLET_IN_USE';
+    err.references = publisherIdentityReferences;
+    throw err;
   }
 
   // Remove from list
