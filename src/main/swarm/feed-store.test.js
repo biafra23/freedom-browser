@@ -49,6 +49,7 @@ const {
   setOriginEntry,
   allocatePublisherKeyIndex,
   getOriginIdentityState,
+  previewAppScopedIdentity,
   createAppScopedIdentity,
   ensureBeeWalletIdentity,
   ensureEthereumWalletIdentity,
@@ -478,7 +479,7 @@ describe('feed-store', () => {
       });
     });
 
-    test('treats missing version as corrupt and starts fresh', () => {
+    test('preserves missing version files instead of overwriting them', () => {
       fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
         nextPublisherKeyIndex: 99,
         origins: {
@@ -491,15 +492,12 @@ describe('feed-store', () => {
 
       expect(getOriginEntry('myapp.eth')).toBeNull();
       const persisted = readFeedsFile();
-      expect(persisted).toEqual({
-        version: 2,
-        nextPublisherKeyIndex: 0,
-        origins: {},
-      });
-      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.corrupt.json'))).toBe(true);
+      expect(persisted.version).toBeUndefined();
+      expect(persisted.nextPublisherKeyIndex).toBe(99);
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.unsupported.json'))).toBe(true);
     });
 
-    test('treats unknown version as corrupt and starts fresh', () => {
+    test('preserves unknown version files instead of overwriting them', () => {
       fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
         version: 999,
         nextPublisherKeyIndex: 99,
@@ -508,9 +506,35 @@ describe('feed-store', () => {
 
       expect(getAllOriginEntries()).toEqual([]);
       const persisted = readFeedsFile();
-      expect(persisted.version).toBe(2);
-      expect(persisted.nextPublisherKeyIndex).toBe(0);
-      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.corrupt.json'))).toBe(true);
+      expect(persisted.version).toBe(999);
+      expect(persisted.nextPublisherKeyIndex).toBe(99);
+      expect(fs.existsSync(path.join(tmpDir, 'swarm-feeds.unsupported.json'))).toBe(true);
+    });
+
+    test('skips invalid v1 entries while migrating valid entries', () => {
+      fs.writeFileSync(getFeedsFilePath(), JSON.stringify({
+        version: 1,
+        nextPublisherKeyIndex: 4,
+        origins: {
+          'valid.eth': {
+            identityMode: 'app-scoped',
+            publisherKeyIndex: 2,
+            feedGranted: true,
+            grantedAt: 1234,
+            feeds: {},
+          },
+          'bad.eth': {
+            identityMode: 'missing-mode',
+            feedGranted: true,
+            feeds: {},
+          },
+        },
+      }), 'utf-8');
+
+      expect(getOriginEntry('valid.eth')?.activeIdentityId).toBe('app-scoped:2');
+      expect(getOriginEntry('bad.eth')).toBeNull();
+      expect(readFeedsFile().origins['valid.eth']).toBeDefined();
+      expect(readFeedsFile().origins['bad.eth']).toBeUndefined();
     });
   });
 
@@ -589,6 +613,7 @@ describe('feed-store', () => {
       expect(ipcHandlers[IPC.SWARM_HAS_FEED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_PREVIEW_APP_SCOPED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY]).toBeDefined();
@@ -628,6 +653,12 @@ describe('feed-store', () => {
       _resetCache();
       expect(() => ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-bad.eth', 'invalid'))
         .toThrow('Invalid identity mode');
+    });
+
+    test('set-feed-identity rejects ethereum-wallet for a new origin without wallet index setup', () => {
+      _resetCache();
+      expect(() => ipcHandlers[IPC.SWARM_SET_FEED_IDENTITY]({}, 'ipc-eth.eth', 'ethereum-wallet'))
+        .toThrow('ensureEthereumWalletIdentity');
     });
 
     test('has-feed-identity returns true after identity set', () => {
@@ -705,6 +736,23 @@ describe('feed-store', () => {
         'ethereum-wallet:2',
         'ethereum-wallet:0',
       ]);
+    });
+
+    test('preview-app-scoped-identity does not allocate or persist until approval', async () => {
+      _resetCache();
+
+      const preview = await previewAppScopedIdentity('preview.eth');
+
+      expect(preview).toMatchObject({
+        id: 'app-scoped:0',
+        mode: 'app-scoped',
+        publisherKeyIndex: 0,
+        owner: '0xPublisher0',
+        stored: false,
+        preview: true,
+      });
+      expect(getOriginEntry('preview.eth')).toBeNull();
+      expect(allocatePublisherKeyIndex()).toBe(0);
     });
 
     test('get-origin-identities includes Bee wallet as an available identity', async () => {

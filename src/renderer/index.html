@@ -2214,18 +2214,18 @@
                   </svg>
                   <span>Back</span>
                 </button>
-                <h3 class="subscreen-title">Feed Access</h3>
+                <h3 class="subscreen-title" id="swarm-feed-title">Feed Access</h3>
               </div>
 
               <div class="subscreen-content">
                 <div class="swarm-connect-origin">
                   <div class="swarm-connect-site" id="swarm-feed-site">site.eth</div>
-                  <div class="swarm-connect-wants">wants to create and manage feeds</div>
+                  <div class="swarm-connect-wants" id="swarm-feed-wants">wants to create and manage feeds</div>
                 </div>
 
                 <div class="swarm-publish-details">
                   <div class="swarm-publish-row">
-                    <span class="swarm-publish-label">Feed name</span>
+                    <span class="swarm-publish-label" id="swarm-feed-detail-label">Feed name</span>
                     <span class="swarm-publish-value" id="swarm-feed-name">blog</span>
                   </div>
                 </div>
@@ -2241,7 +2241,7 @@
                     <line x1="12" y1="16" x2="12" y2="12"/>
                     <line x1="12" y1="8" x2="12.01" y2="8"/>
                   </svg>
-                  <span>Feeds provide stable URLs that this app can update over time. Uses your stamps and bandwidth.</span>
+                  <span id="swarm-feed-warning">Feeds provide stable URLs that this app can update over time. Uses your stamps and bandwidth.</span>
                 </div>
 
                 <!-- Vault unlock section (feed signing requires vault access) -->
@@ -2270,7 +2270,7 @@
 
                 <label class="auto-approve-checkbox">
                   <input type="checkbox" id="swarm-feed-auto-approve" />
-                  <span>Always allow this site to manage feeds without asking</span>
+                  <span id="swarm-feed-auto-approve-label">Always allow this site to manage feeds without asking</span>
                 </label>
 
                 <div class="swarm-connect-actions">
@@ -2409,6 +2409,13 @@
                     <span class="perms-label">Auto-approve feed operations</span>
                     <label class="toggle-switch">
                       <input type="checkbox" id="swarm-perms-feeds-toggle" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                  <div class="perms-toggle-row">
+                    <span class="perms-label">Auto-approve publisher signing</span>
+                    <label class="toggle-switch">
+                      <input type="checkbox" id="swarm-perms-signing-toggle" />
                       <span class="toggle-slider"></span>
                     </label>
                   </div>

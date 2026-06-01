@@ -473,6 +473,7 @@ contextBridge.exposeInMainWorld('swarmFeedStore', {
   hasFeedGrant: (origin) => ipcRenderer.invoke('swarm:has-feed-grant', origin),
   getIdentityMode: (origin) => ipcRenderer.invoke('swarm:get-identity-mode', origin),
   getOriginIdentities: (origin) => ipcRenderer.invoke('swarm:get-origin-identities', origin),
+  previewAppScopedIdentity: (origin, options) => ipcRenderer.invoke('swarm:preview-app-scoped-identity', origin, options),
   createAppScopedIdentity: (origin, options) => ipcRenderer.invoke('swarm:create-app-scoped-identity', origin, options),
   ensureBeeWalletIdentity: (origin, options) => ipcRenderer.invoke('swarm:ensure-bee-wallet-identity', origin, options),
   ensureEthereumWalletIdentity: (origin, walletIndex, options) =>

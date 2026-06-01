@@ -216,6 +216,11 @@ describe('swarm-provider-ipc', () => {
         specVersion: '1.0',
         canPublish: true,
         reason: null,
+        publisherIdentityModes: ['app-scoped', 'bee-wallet', 'ethereum-wallet'],
+        extensions: {
+          ethereumWalletPublisherIdentity: true,
+          publisherSigning: true,
+        },
         limits: {
           maxDataBytes: LIMITS.maxDataBytes,
           maxFilesBytes: LIMITS.maxFilesBytes,

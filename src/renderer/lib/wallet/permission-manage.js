@@ -35,6 +35,7 @@ let swarmPermsBack;
 let swarmPermsSite;
 let swarmPermsPublishToggle;
 let swarmPermsFeedsToggle;
+let swarmPermsSigningToggle;
 let swarmPermsIdentitySelector;
 let swarmPermsIdentityNote;
 let swarmPermsDisconnect;
@@ -79,6 +80,7 @@ export function initPermissionManage() {
   swarmPermsSite = document.getElementById('swarm-perms-site');
   swarmPermsPublishToggle = document.getElementById('swarm-perms-publish-toggle');
   swarmPermsFeedsToggle = document.getElementById('swarm-perms-feeds-toggle');
+  swarmPermsSigningToggle = document.getElementById('swarm-perms-signing-toggle');
   swarmPermsIdentitySelector = document.getElementById('swarm-perms-identity-selector');
   swarmPermsIdentityNote = document.getElementById('swarm-perms-identity-note');
   swarmPermsDisconnect = document.getElementById('swarm-perms-disconnect');
@@ -95,6 +97,12 @@ export function initPermissionManage() {
   swarmPermsFeedsToggle?.addEventListener('change', async () => {
     if (swarmPermsKey) {
       await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'feeds', swarmPermsFeedsToggle.checked);
+      updateSwarmConnectionBanner(swarmPermsKey);
+    }
+  });
+  swarmPermsSigningToggle?.addEventListener('change', async () => {
+    if (swarmPermsKey) {
+      await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'signing', swarmPermsSigningToggle.checked);
       updateSwarmConnectionBanner(swarmPermsKey);
     }
   });
@@ -212,6 +220,9 @@ export async function showSwarmPermissions(permissionKey, options = {}) {
   }
   if (swarmPermsFeedsToggle) {
     swarmPermsFeedsToggle.checked = permission.autoApprove?.feeds === true;
+  }
+  if (swarmPermsSigningToggle) {
+    swarmPermsSigningToggle.checked = permission.autoApprove?.signing === true;
   }
   await refreshSwarmIdentitySection();
 

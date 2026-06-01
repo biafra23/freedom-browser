@@ -92,37 +92,14 @@ async function handleSwarmRequest(webview, request) {
     } else if (
       method === 'swarm_createFeed' ||
       method === 'swarm_updateFeed' ||
-      method === 'swarm_writeFeedEntry' ||
+      method === 'swarm_writeFeedEntry'
+    ) {
+      result = await handleFeedSigningRequest(method, params, permissionKey, 'feeds');
+    } else if (
       method === 'swarm_writeSingleOwnerChunk' ||
       method === 'swarm_getSigningIdentity'
     ) {
-      await requirePermission(permissionKey);
-
-      const [hasFeedAccess, vaultStatus] = await Promise.all([
-        window.swarmFeedStore?.hasFeedGrant?.(permissionKey),
-        window.identity?.getStatus?.(),
-      ]);
-      const vaultLocked = !vaultStatus?.isUnlocked;
-
-      if (!hasFeedAccess) {
-        // First time or reconnect: full approval (identity choice + unlock)
-        await new Promise((resolve, reject) => {
-          showSwarmFeedApproval(permissionKey, params, resolve, reject);
-        });
-      } else if (vaultLocked) {
-        // Has access but vault locked: minimal unlock prompt
-        await showVaultUnlock(permissionKey);
-      } else {
-        // Has access + vault unlocked: check auto-approve
-        const feedAutoApproved = await window.swarmPermissions.getAutoApprove(permissionKey, 'feeds');
-        if (!feedAutoApproved) {
-          await new Promise((resolve, reject) => {
-            showSwarmFeedApproval(permissionKey, params, resolve, reject);
-          });
-        }
-      }
-
-      result = await executeWithPermission(method, params, permissionKey);
+      result = await handleFeedSigningRequest(method, params, permissionKey, 'signing');
     } else {
       // All other methods: check permission, forward to main
       result = await executeWithPermission(method, params, permissionKey);
@@ -136,6 +113,33 @@ async function handleSwarmRequest(webview, request) {
       data: error.data,
     });
   }
+}
+
+async function handleFeedSigningRequest(method, params, permissionKey, autoApproveType) {
+  await requirePermission(permissionKey);
+
+  const [hasFeedAccess, vaultStatus] = await Promise.all([
+    window.swarmFeedStore?.hasFeedGrant?.(permissionKey),
+    window.identity?.getStatus?.(),
+  ]);
+  const vaultLocked = !vaultStatus?.isUnlocked;
+
+  if (!hasFeedAccess) {
+    await new Promise((resolve, reject) => {
+      showSwarmFeedApproval(permissionKey, params, resolve, reject, { method, autoApproveType });
+    });
+  } else if (vaultLocked) {
+    await showVaultUnlock(permissionKey);
+  } else {
+    const autoApproved = await window.swarmPermissions.getAutoApprove(permissionKey, autoApproveType);
+    if (!autoApproved) {
+      await new Promise((resolve, reject) => {
+        showSwarmFeedApproval(permissionKey, params, resolve, reject, { method, autoApproveType });
+      });
+    }
+  }
+
+  return executeWithPermission(method, params, permissionKey);
 }
 
 /**

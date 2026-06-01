@@ -41,6 +41,14 @@ const ETHEREUM_WALLET_ID_PREFIX = 'ethereum-wallet';
 
 let feedsCache = null;
 
+class PreserveFeedStoreError extends Error {
+  constructor(message, backupSuffix = 'unsupported') {
+    super(message);
+    this.preserveOriginal = true;
+    this.backupSuffix = backupSuffix;
+  }
+}
+
 function getFeedsPath() {
   return path.join(app.getPath('userData'), FEEDS_FILE);
 }
@@ -211,7 +219,13 @@ function migrateV1Store(store) {
   };
 
   for (const [origin, entry] of Object.entries(store.origins)) {
-    const migratedEntry = migrateV1OriginEntry(entry);
+    let migratedEntry;
+    try {
+      migratedEntry = migrateV1OriginEntry(entry);
+    } catch (err) {
+      log.error(`[FeedStore] Skipping invalid v1 origin entry ${origin}:`, err.message);
+      continue;
+    }
     migrated.origins[origin] = migratedEntry;
     const activeIdentity = getActiveIdentityFromEntry(migratedEntry);
     if (activeIdentity?.mode === 'app-scoped') {
@@ -230,20 +244,49 @@ function validateV2Store(store) {
     throw new Error('Invalid v2 feed store: nextPublisherKeyIndex must be a non-negative integer');
   }
 
+  const sanitizedOrigins = {};
+  let changed = false;
   for (const [origin, entry] of Object.entries(store.origins)) {
-    if (!isPlainObject(entry) || !entry.activeIdentityId || !isPlainObject(entry.identities)) {
-      throw new Error(`Invalid v2 origin entry: ${origin}`);
-    }
-    const activeIdentity = getActiveIdentityFromEntry(entry);
-    if (!activeIdentity || !VALID_IDENTITY_MODES.includes(activeIdentity.mode)) {
-      throw new Error(`Invalid active identity for origin: ${origin}`);
-    }
-    if (!isPlainObject(entry.feeds)) {
-      entry.feeds = {};
+    try {
+      sanitizedOrigins[origin] = sanitizeV2OriginEntry(origin, entry);
+    } catch (err) {
+      changed = true;
+      log.error(`[FeedStore] Skipping invalid v2 origin entry ${origin}:`, err.message);
     }
   }
 
+  if (changed) {
+    store.origins = sanitizedOrigins;
+  }
   return store;
+}
+
+function sanitizeV2OriginEntry(origin, entry) {
+  if (!isPlainObject(entry) || !entry.activeIdentityId || !isPlainObject(entry.identities)) {
+    throw new Error(`Invalid v2 origin entry: ${origin}`);
+  }
+  const activeIdentity = getActiveIdentityFromEntry(entry);
+  if (!activeIdentity || !VALID_IDENTITY_MODES.includes(activeIdentity.mode)) {
+    throw new Error(`Invalid active identity for origin: ${origin}`);
+  }
+
+  const feeds = {};
+  if (entry.feeds !== undefined && !isPlainObject(entry.feeds)) {
+    log.error(`[FeedStore] Replacing invalid feed map for ${origin}`);
+  } else {
+    for (const [feedName, feed] of Object.entries(entry.feeds || {})) {
+      if (!isPlainObject(feed)) {
+        log.error(`[FeedStore] Skipping invalid feed entry ${origin}/${feedName}`);
+        continue;
+      }
+      feeds[feedName] = feed;
+    }
+  }
+
+  return {
+    ...entry,
+    feeds,
+  };
 }
 
 function getBackupPath(filePath, suffix) {
@@ -290,7 +333,7 @@ function loadFeedsFromFile(filePath) {
     return validateV2Store(parsed);
   }
 
-  throw new Error(`Unsupported feed store version: ${parsed.version ?? 'missing'}`);
+  throw new PreserveFeedStoreError(`Unsupported feed store version: ${parsed.version ?? 'missing'}`);
 }
 
 function loadFeeds() {
@@ -307,9 +350,8 @@ function loadFeeds() {
     }
   } catch (err) {
     log.error('[FeedStore] Failed to load feeds:', err.message);
-    backupFeedsFile(filePath, 'corrupt');
+    backupFeedsFile(filePath, err.backupSuffix || 'corrupt');
     feedsCache = createEmptyStore();
-    saveFeeds();
   }
 
   return feedsCache;
@@ -540,6 +582,18 @@ async function getOriginIdentityStateWithOwners(origin) {
   return {
     ...state,
     identities,
+  };
+}
+
+async function previewAppScopedIdentity(origin, options = {}) {
+  const store = loadFeeds();
+  const publisherKeyIndex = store.nextPublisherKeyIndex;
+  const identity = createIdentity('app-scoped', publisherKeyIndex, Date.now(), options.label);
+  const enriched = await enrichIdentityOwner(identity, { stored: false });
+  return {
+    ...enriched,
+    preview: true,
+    origin: normalizeOrigin(origin),
   };
 }
 
@@ -839,6 +893,10 @@ function registerFeedStoreIpc() {
     return getOriginIdentityStateWithOwners(origin);
   });
 
+  ipcMain.handle(IPC.SWARM_PREVIEW_APP_SCOPED_IDENTITY, async (_event, origin, options = {}) => {
+    return previewAppScopedIdentity(origin, options);
+  });
+
   ipcMain.handle(IPC.SWARM_CREATE_APP_SCOPED_IDENTITY, async (_event, origin, options = {}) => {
     createAppScopedIdentity(origin, options);
     return getOriginIdentityStateWithOwners(origin);
@@ -868,6 +926,9 @@ function registerFeedStoreIpc() {
     }
 
     const existing = getOriginEntry(origin);
+    if (identityMode === 'ethereum-wallet' && !existing?.activeIdentityId) {
+      throw new Error('Use ensureEthereumWalletIdentity(origin, walletIndex) before setting ethereum-wallet feed identity');
+    }
     if (existing && existing.activeIdentityId) {
       // Identity already set — just re-grant feed access
       if (!existing.feedGranted) {
@@ -897,6 +958,7 @@ module.exports = {
   allocatePublisherKeyIndex,
   getOriginIdentityState,
   getOriginIdentityStateWithOwners,
+  previewAppScopedIdentity,
   createAppScopedIdentity,
   ensureBeeWalletIdentity,
   ensureEthereumWalletIdentity,

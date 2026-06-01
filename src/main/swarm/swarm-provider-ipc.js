@@ -382,6 +382,11 @@ async function handleGetCapabilities(origin) {
       specVersion: SPEC_VERSION,
       canPublish: isConnected && preFlight.ok,
       reason: !isConnected ? 'not-connected' : (preFlight.ok ? null : preFlight.reason),
+      publisherIdentityModes: ['app-scoped', 'bee-wallet', 'ethereum-wallet'],
+      extensions: {
+        ethereumWalletPublisherIdentity: true,
+        publisherSigning: true,
+      },
       limits: {
         maxDataBytes: LIMITS.maxDataBytes,
         maxFilesBytes: LIMITS.maxFilesBytes,
