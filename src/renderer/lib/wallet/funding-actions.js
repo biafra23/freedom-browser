@@ -22,7 +22,7 @@ export const XBZZ_TOKEN_KEY = '100:0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da';
 export function topUpXdai(beeWalletAddress) {
   const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
-    return { error: 'Bee wallet address not available.' };
+    return { error: 'Ant wallet address not available.' };
   }
 
   const mainBalance = parseFloat(walletState.currentBalances[XDAI_TOKEN_KEY]?.formatted || '0');
@@ -50,7 +50,7 @@ export function topUpXdai(beeWalletAddress) {
 export function topUpXbzz(beeWalletAddress) {
   const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
-    return { error: 'Bee wallet address not available.' };
+    return { error: 'Ant wallet address not available.' };
   }
 
   const mainXbzz = parseFloat(walletState.currentBalances[XBZZ_TOKEN_KEY]?.formatted || '0');

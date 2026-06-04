@@ -129,7 +129,7 @@ function getModeBadge(identityMode) {
   if (identityMode === 'ethereum-wallet') {
     return '<span class="publisher-identity-badge badge-ethereum-wallet">Ethereum wallet</span>';
   }
-  return '<span class="publisher-identity-badge badge-bee-wallet">Bee wallet</span>';
+  return '<span class="publisher-identity-badge badge-bee-wallet">Ant wallet</span>';
 }
 
 function showPublisherIdentityList() {

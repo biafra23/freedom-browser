@@ -237,7 +237,7 @@ describe('bee-ui', () => {
     expect(ctx.elements.beeToggleSwitch.classList.contains('running')).toBe(false);
 
     ctx.mod.updateBeeUi('error', 'offline');
-    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Bee Error: offline');
+    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Ant Error: offline');
 
     ctx.mod.updateBeeUi('stopped');
     expect(ctx.elements.beeStatusRow.classList.contains('visible')).toBe(false);
@@ -282,7 +282,7 @@ describe('bee-ui', () => {
       status: 'error',
       error: 'offline',
     });
-    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Bee Status Update: error (offline)');
+    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Ant Status Update: error (offline)');
 
     ctx.state.currentBeeStatus = 'running';
     ctx.elements.beeToggleBtn.dispatch('click');

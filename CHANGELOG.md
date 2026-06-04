@@ -2,6 +2,12 @@
 
 All notable changes to Freedom will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Bundled Swarm node switched from Bee to Ant (antd), a bee-compatible light node — node status, menus, and wallet copy now read "Ant"
+
 ## [0.7.4] - 2026-06-01
 
 ### Added

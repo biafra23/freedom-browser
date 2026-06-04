@@ -146,7 +146,7 @@ export const updateBeeUi = (status, error) => {
       beeToggleSwitch.classList.add('running');
       break;
     case 'error':
-      if (error) pushDebug(`Bee Error: ${error}`);
+      if (error) pushDebug(`Ant Error: ${error}`);
       break;
     case 'stopping':
     case 'stopped':
@@ -270,8 +270,8 @@ export const initBeeUi = () => {
         .stop()
         .then(({ status, error }) => updateBeeUi(status, error))
         .catch((err) => {
-          console.error('Failed to toggle Bee', err);
-          pushDebug(`Failed to toggle Bee: ${err.message}`);
+          console.error('Failed to toggle Ant', err);
+          pushDebug(`Failed to toggle Ant: ${err.message}`);
         });
     } else {
       state.suppressRunningStatus = false;
@@ -282,8 +282,8 @@ export const initBeeUi = () => {
         .start()
         .then(({ status, error }) => updateBeeUi(status, error))
         .catch((err) => {
-          console.error('Failed to toggle Bee', err);
-          pushDebug(`Failed to toggle Bee: ${err.message}`);
+          console.error('Failed to toggle Ant', err);
+          pushDebug(`Failed to toggle Ant: ${err.message}`);
         });
     }
   });
@@ -291,7 +291,7 @@ export const initBeeUi = () => {
   // Listen for status updates from main process
   if (window.bee) {
     const handleStatus = ({ status, error }) => {
-      pushDebug(`Bee Status Update: ${status} ${error ? `(${error})` : ''}`);
+      pushDebug(`Ant Status Update: ${status} ${error ? `(${error})` : ''}`);
       updateBeeUi(status, error);
     };
     window.bee.onStatusUpdate(handleStatus);
