@@ -21,7 +21,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
 3. **Download the node binaries (first time only):**
 
    ```bash
-   npm run bee:download
+   npm run ant:download
    npm run ipfs:download
    npm run radicle:download
    ```
@@ -183,13 +183,13 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 |                      | Swarm          | IPFS                                  | Radicle                        |
 | -------------------- | -------------- | ------------------------------------- | ------------------------------ |
 | **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       |
-| **Node Software**    | Bee            | Kubo                                  | radicle-node + radicle-httpd   |
+| **Node Software**    | Ant (antd, bee-compatible) | Kubo                      | radicle-node + radicle-httpd   |
 | **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
 | **Gateway Port**     | 1633           | 8080                                  | 8780                           |
 | **API Port**         | 1633           | 5001                                  | 8780                           |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
 | **Data Directory**   | `bee-data/`    | `ipfs-data/`                          | `radicle-data/`                |
-| **Binary Directory** | `bee-bin/`     | `ipfs-bin/`                           | `radicle-bin/`                 |
+| **Binary Directory** | `ant-bin/`     | `ipfs-bin/`                           | `radicle-bin/`                 |
 
 ### Smart Node Connection
 
@@ -417,10 +417,10 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | `npm start`                                                       | Launch the Electron app                      |
 | `npm test`                                                        | Run unit tests (Jest)                        |
 | `npm run test:e2e`                                                | Run the harness E2E suite (stubbed nodes; fast, no network) |
-| `npm run test:e2e:live`                                           | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
-| `npm run bee:download`                                            | Download the Bee binary for your platform    |
+| `npm run test:e2e:live`                                           | Run the live E2E suite (real Ant + IPFS + ENS; manual only) |
+| `npm run ant:download`                                            | Download the Ant (antd) binary for your platform |
 | `npm run ipfs:download`                                           | Download the Kubo binary for your platform   |
-| `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset`     | Manage Bee outside the app                   |
+| `npm run ant:start` / `ant:stop` / `ant:status` / `ant:reset`     | Manage Ant outside the app                   |
 | `npm run ipfs:start` / `ipfs:stop` / `ipfs:status` / `ipfs:reset` | Manage IPFS outside the app                  |
 | `npm run build -- --mac --unsigned`                               | Build unsigned macOS app (for local testing) |
 | `npm run dist -- --mac`                                           | Build signed macOS distributable (DMG + ZIP) |
@@ -487,7 +487,7 @@ Two Playwright projects live under `test-e2e/`. The harness suite is run manuall
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
 | `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Bee/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
-| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Bee + IPFS spawn, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. Currently one spec (`eth-sites.spec.js`) cold-starts both nodes, waits for >20 connected peers on each, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS) and asserts the rendered pages. Requires `npm run bee:download` and `npm run ipfs:download` first; Swarm/IPFS cold-start can take a few minutes on a fresh repo. The Bee check is skipped if the binary is missing; the IPFS check fails loudly. |
+| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + IPFS spawn, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. Currently one spec (`eth-sites.spec.js`) cold-starts both nodes, waits for >20 connected peers on each, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS) and asserts the rendered pages. Requires `npm run ant:download` and `npm run ipfs:download` first; Swarm/IPFS cold-start can take a few minutes on a fresh repo. The Ant check is skipped if the binary is missing; the IPFS check fails loudly. |
 
 Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Bee port detection don't tolerate parallel app instances.
 
@@ -702,7 +702,7 @@ npm run start:test-updater
 
 - Freedom automatically detects port conflicts and uses fallback ports
 - If the node still fails, check terminal output for specific error messages
-- Reset Bee data: `npm run bee:reset`
+- Reset Ant data: `npm run ant:reset`
 
 ### IPFS fails to start
 
