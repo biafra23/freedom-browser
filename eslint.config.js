@@ -11,6 +11,7 @@ module.exports = [
       'node_modules/**',
       'src/renderer/vendor/**',
       'bee-bin/**',
+      'ant-bin/**',
       'ipfs-bin/**',
       'bee-data/**',
       'ipfs-data/**',

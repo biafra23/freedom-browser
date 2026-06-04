@@ -1,0 +1,11 @@
+# Sample Ant (antd) Configuration — bee-compatible YAML the antd node parses.
+api-addr: 127.0.0.1:1633
+swap-enable: 'false'
+mainnet: 'true'
+full-node: 'false'
+cors-allowed-origins: '*'
+skip-postage-snapshot: 'true'
+resolver-options: https://ethereum.publicnode.com
+data-dir: DATA_DIR
+password: PASSWORD
+storage-incentives-enable: 'false'

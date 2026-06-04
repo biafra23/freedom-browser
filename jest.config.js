@@ -1,7 +1,7 @@
 /** @type {import('jest').Config} */
 module.exports = {
   testMatch: ['**/*.test.js'],
-  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/bee-bin/', '/ipfs-bin/', '/test-e2e/'],
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/bee-bin/', '/ant-bin/', '/ipfs-bin/', '/test-e2e/'],
   collectCoverageFrom: ['src/**/*.js', '!src/**/*.test.js', '!src/renderer/vendor/**'],
   // Coverage thresholds are intentionally below typical "healthy" targets.
   // The Swarm publishing feature landed with heavily-tested services

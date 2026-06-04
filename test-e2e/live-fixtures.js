@@ -16,14 +16,14 @@ const repoRoot = path.resolve(__dirname, '..');
 
 // Mirror bee-manager.js's binary-path resolution so we can detect a
 // missing binary up front and skip the suite gracefully (downloading
-// the Bee binary is a per-platform extra step the user opts into via
-// `npm run bee:download`).
+// the Ant binary is a per-platform extra step the user opts into via
+// `npm run ant:download`).
 function resolveBeeBinaryPath() {
   const platformMap = { darwin: 'mac', linux: 'linux', win32: 'win' };
   const platform = platformMap[process.platform] || process.platform;
   const arch = process.arch;
-  const binName = process.platform === 'win32' ? 'bee.exe' : 'bee';
-  return path.join(repoRoot, 'bee-bin', `${platform}-${arch}`, binName);
+  const binName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+  return path.join(repoRoot, 'ant-bin', `${platform}-${arch}`, binName);
 }
 
 // Mirror ipfs-manager.js's binary-path resolution. Used by specs that

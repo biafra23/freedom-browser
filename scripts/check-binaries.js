@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const BEE_BIN_DIR = path.join(__dirname, '..', 'bee-bin');
+const ANT_BIN_DIR = path.join(__dirname, '..', 'ant-bin');
 const IPFS_BIN_DIR = path.join(__dirname, '..', 'ipfs-bin');
 const RADICLE_BIN_DIR = path.join(__dirname, '..', 'radicle-bin');
 
@@ -73,14 +73,14 @@ function checkBinaries(platforms) {
 
   for (const { os, arch } of platforms) {
     const platformDir = `${os}-${arch}`;
-    const beeExt = os === 'win' ? '.exe' : '';
+    const antExt = os === 'win' ? '.exe' : '';
     const ipfsExt = os === 'win' ? '.exe' : '';
 
-    const beePath = path.join(BEE_BIN_DIR, platformDir, `bee${beeExt}`);
+    const antPath = path.join(ANT_BIN_DIR, platformDir, `antd${antExt}`);
     const ipfsPath = path.join(IPFS_BIN_DIR, platformDir, `ipfs${ipfsExt}`);
 
-    if (!fs.existsSync(beePath)) {
-      missing.push(`bee binary for ${platformDir}: ${beePath}`);
+    if (!fs.existsSync(antPath)) {
+      missing.push(`antd binary for ${platformDir}: ${antPath}`);
     }
     if (!fs.existsSync(ipfsPath)) {
       missing.push(`ipfs binary for ${platformDir}: ${ipfsPath}`);
@@ -113,7 +113,7 @@ function main() {
     console.error('\n❌ Build cannot proceed. Missing binaries:\n');
     missing.forEach((m) => console.error(`  - ${m}`));
     console.error('\nRun the following commands to download binaries:');
-    console.error('  npm run bee:download');
+    console.error('  npm run ant:download');
     console.error('  npm run ipfs:download');
     console.error('  npm run radicle:download\n');
     process.exit(1);

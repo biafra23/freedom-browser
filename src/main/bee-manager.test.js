@@ -244,8 +244,8 @@ function loadBeeManagerModule(options = {}) {
     win32: 'win',
   };
   const platform = platformMap[process.platform] || process.platform;
-  const binaryName = process.platform === 'win32' ? 'bee.exe' : 'bee';
-  const beeBinPath = path.join(PROJECT_ROOT, 'bee-bin', `${platform}-${process.arch}`, binaryName);
+  const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+  const beeBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
   const dataDir = options.isPackaged
     ? path.join(options.userDataDir || '/tmp/freedom-user-data', 'bee-data')
     : DEV_BEE_DATA_DIR;
@@ -427,8 +427,8 @@ describe('bee-manager', () => {
       win32: 'win',
     };
     const platform = platformMap[process.platform] || process.platform;
-    const binaryName = process.platform === 'win32' ? 'bee.exe' : 'bee';
-    const beeBinPath = path.join(PROJECT_ROOT, 'bee-bin', `${platform}-${process.arch}`, binaryName);
+    const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+    const beeBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
     const dataDir = DEV_BEE_DATA_DIR;
     const configPath = path.join(dataDir, 'config.yaml');
     const keysPath = path.join(dataDir, 'keys');
@@ -470,10 +470,11 @@ describe('bee-manager', () => {
     expect(ctx.loadSettings).toHaveBeenCalled();
     expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(ctx.dataDir, { recursive: true });
     expect(ctx.randomBytes).toHaveBeenCalledWith(32);
-    expect(ctx.execSync).toHaveBeenCalledWith(`"${ctx.beeBinPath}" init --config="${ctx.configPath}"`);
+    // antd self-initializes its identity; Freedom no longer runs an init step.
+    expect(ctx.execSync).not.toHaveBeenCalled();
     expect(ctx.spawnedProcesses).toHaveLength(1);
     expect(ctx.spawnedProcesses[0].binary).toBe(ctx.beeBinPath);
-    expect(ctx.spawnedProcesses[0].args).toEqual(['start', `--config=${ctx.configPath}`]);
+    expect(ctx.spawnedProcesses[0].args).toEqual([`--config=${ctx.configPath}`]);
     expect(ctx.mod.getActivePort()).toBe(1634);
     expect(ctx.updateService).toHaveBeenCalledWith('bee', {
       api: 'http://127.0.0.1:1634',

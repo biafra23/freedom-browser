@@ -62,16 +62,16 @@ function getBeeBinaryPath() {
   };
   const platform = platformMap[process.platform] || process.platform;
 
-  // In dev, bee-bin is at project root (../../ from src/main)
-  let basePath = path.join(__dirname, '..', '..', 'bee-bin');
+  // In dev, ant-bin is at project root (../../ from src/main)
+  let basePath = path.join(__dirname, '..', '..', 'ant-bin');
 
   if (app.isPackaged) {
-    basePath = path.join(process.resourcesPath, 'bee-bin');
-    const binName = process.platform === 'win32' ? 'bee.exe' : 'bee';
+    basePath = path.join(process.resourcesPath, 'ant-bin');
+    const binName = process.platform === 'win32' ? 'antd.exe' : 'antd';
     return path.join(basePath, binName);
   }
 
-  const binName = process.platform === 'win32' ? 'bee.exe' : 'bee';
+  const binName = process.platform === 'win32' ? 'antd.exe' : 'antd';
   return path.join(basePath, `${platform}-${arch}`, binName);
 }
 
@@ -200,27 +200,21 @@ function ensureConfig(dataDir, apiPort, nodeMode = BEE_NODE_MODE.ULTRA_LIGHT) {
     }`
   );
 
-  // Initialize keys if this is a fresh config
-  // Skip if identity system has injected keys (swarm.key exists)
+  // Identity handling. Unlike bee, antd has no `init` subcommand: when an
+  // injected Web3 v3 keystore exists at `keys/swarm.key` antd loads its
+  // identity from it; otherwise antd self-generates a native identity
+  // (`identity.json`) on start. So there is no separate init step to run —
+  // we only log which path will be taken.
   const keysDir = path.join(dataDir, 'keys');
   const swarmKeyPath = path.join(keysDir, 'swarm.key');
 
-  if (!fs.existsSync(keysDir)) {
-    if (useInjectedIdentity) {
-      log.info('[Bee] Waiting for identity injection (useInjectedIdentity=true)');
-      // Keys should be injected by identity-manager before starting
-    } else {
-      const binPath = getBeeBinaryPath();
-      try {
-        const { execSync } = require('child_process');
-        log.info('[Bee] Running init to generate keys...');
-        execSync(`"${binPath}" init --config="${configPath}"`);
-      } catch (e) {
-        log.error('[Bee] Init failed:', e.message);
-      }
-    }
-  } else if (fs.existsSync(swarmKeyPath)) {
-    log.info('[Bee] Using existing/injected keys from', keysDir);
+  if (fs.existsSync(swarmKeyPath)) {
+    log.info('[Bee] Using injected keys from', keysDir);
+  } else if (useInjectedIdentity) {
+    log.info('[Bee] Waiting for identity injection (useInjectedIdentity=true)');
+    // Keys should be injected by identity-manager before starting
+  } else {
+    log.info('[Bee] No injected keystore; antd will self-initialize its node identity on start');
   }
 
   return configPath;
@@ -455,7 +449,9 @@ async function startBee() {
     return;
   }
 
-  const args = ['start', `--config=${configPath}`];
+  // antd is flag-only (no `start` subcommand): it runs the node directly from
+  // the bee-compatible YAML config Freedom writes.
+  const args = [`--config=${configPath}`];
 
   log.info(`[Bee] Starting: ${binPath} ${args.join(' ')}`);
 

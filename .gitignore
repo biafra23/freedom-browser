@@ -13,6 +13,7 @@ tmp/
 *.swp
 .env
 bee-bin/
+ant-bin/
 bee-data/
 ipfs-bin/
 ipfs-data/

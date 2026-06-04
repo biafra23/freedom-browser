@@ -28,7 +28,7 @@ function resolveBinary(dir, base) {
   return path.join(repoRoot, dir, `${platform}-${arch}`, binName);
 }
 
-const BEE_BINARY_PATH = resolveBinary('bee-bin', 'bee');
+const BEE_BINARY_PATH = resolveBinary('ant-bin', 'antd');
 const IPFS_BINARY_PATH = resolveBinary('ipfs-bin', 'ipfs');
 const HAS_BEE_BINARY = fs.existsSync(BEE_BINARY_PATH);
 const HAS_IPFS_BINARY = fs.existsSync(IPFS_BINARY_PATH);
