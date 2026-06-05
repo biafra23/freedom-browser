@@ -114,7 +114,7 @@ jobs:
         run: npm run ant:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ANT_RELEASE_TAG: v0.5.7
+          ANT_RELEASE_TAG: v0.5.8
 
       - name: Download IPFS binary
         run: npm run ipfs:download
@@ -171,7 +171,7 @@ jobs:
         run: npm run ant:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ANT_RELEASE_TAG: v0.5.7
+          ANT_RELEASE_TAG: v0.5.8
 
       - name: Download IPFS binary
         run: npm run ipfs:download

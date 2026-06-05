@@ -7,6 +7,7 @@ All notable changes to Freedom will be documented in this file.
 ### Changed
 
 - Bundled Swarm node switched from Bee to Ant (antd), a bee-compatible light node — node status, menus, and wallet copy now read "Ant"
+- Updated the bundled Ant node to v0.5.8, which adds runtime postage-batch management so publishing to Swarm (buying stamps, uploading data/files/sites) now works end-to-end in light mode
 
 ## [0.7.4] - 2026-06-01
 
