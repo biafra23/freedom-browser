@@ -252,6 +252,9 @@ Pure consistency; can trail the headline. Each item is a coordinated change.
      fresh dir, **rediscover** the chequebook from chain (pass the known
      chequebook hint / let Ant's factory check find it) so a fresh dir does not
      redeploy on-chain. Ultra-light (default, `swap-enable:false`) is unaffected.
+     See [`freedom-chequebook-migration.md`](./freedom-chequebook-migration.md)
+     for the zero-touch carry-over design (on-chain discovery of the existing
+     chequebook + seeding Ant) shipped via auto-update.
 3. **Config filename** `config/bee.yaml` → `config/ant.yaml`: extraResources
    (done in 3A) + any runtime writer. Note: the runtime config is written as
    `config.yaml` inside the data dir (`bee-manager.js:37`,
