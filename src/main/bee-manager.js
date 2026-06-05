@@ -10,7 +10,11 @@ const IPC = require('../shared/ipc-channels');
 const { loadSettings } = require('./settings-store');
 const registry = require('./networks/network-registry');
 const { getBeeDataDir } = require('./profile-paths');
-const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
+const {
+  getActiveProfile,
+  getReservedProfilePorts,
+  updateActiveProfileNodeConfig,
+} = require('./profile-resolver');
 const {
   MODE,
   DEFAULTS,
@@ -372,9 +376,14 @@ function probeBeeApi(port) {
 /**
  * Find an available port starting from the default
  */
-async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.bee.fallbackRange) {
+async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.bee.fallbackRange, options = {}) {
+  const reservedPorts = options.reservedPorts || new Set();
   for (let i = 0; i < maxAttempts; i++) {
     const port = defaultPort + i;
+    if (reservedPorts.has(port)) {
+      log.info(`[Bee] Port ${port} is reserved by another profile, trying next...`);
+      continue;
+    }
     const open = await isPortOpen(port);
     if (!open) {
       return port;
@@ -567,10 +576,13 @@ async function startBee() {
   const configuredApiPort = apiPort;
   const configuredP2pPort = p2pPort;
   let usingFallbackPort = false;
+  const reservedProfilePorts = managedProfileNode ? getReservedProfilePorts() : new Set();
 
   const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
   if (existing.conflict || managedApiPortBusy) {
-    const newApiPort = await findAvailablePort(apiPort + 1);
+    const newApiPort = await findAvailablePort(apiPort + 1, DEFAULTS.bee.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!newApiPort) {
       updateState(STATUS.ERROR, 'No available ports for Bee API');
       setStatusMessage('bee', 'Node failed to start');
@@ -582,7 +594,9 @@ async function startBee() {
 
   const managedP2pPortBusy = managedProfileNode ? await isPortOpen(p2pPort) : false;
   if (managedP2pPortBusy) {
-    const newP2pPort = await findAvailablePort(p2pPort + 1);
+    const newP2pPort = await findAvailablePort(p2pPort + 1, DEFAULTS.bee.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!newP2pPort) {
       updateState(STATUS.ERROR, 'No available ports for Bee P2P');
       setStatusMessage('bee', 'Node failed to start');

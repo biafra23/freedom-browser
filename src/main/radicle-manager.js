@@ -14,7 +14,11 @@ const IPC = require('../shared/ipc-channels');
 const { success, failure, validateNonEmptyString } = require('./ipc-contract');
 const { loadSettings } = require('./settings-store');
 const { getRadicleDataDir } = require('./profile-paths');
-const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
+const {
+  getActiveProfile,
+  getReservedProfilePorts,
+  updateActiveProfileNodeConfig,
+} = require('./profile-resolver');
 
 /**
  * Validate a Radicle Repository ID (RID).
@@ -426,9 +430,14 @@ function probeRadicleApi(port) {
 /**
  * Find an available port starting from the default
  */
-async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.radicle.fallbackRange) {
+async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.radicle.fallbackRange, options = {}) {
+  const reservedPorts = options.reservedPorts || new Set();
   for (let i = 0; i < maxAttempts; i++) {
     const port = defaultPort + i;
+    if (reservedPorts.has(port)) {
+      log.info(`[Radicle] Port ${port} is reserved by another profile, trying next...`);
+      continue;
+    }
     const open = await isPortOpen(port);
     if (!open) {
       return port;
@@ -818,10 +827,13 @@ async function startRadicle() {
   const configuredHttpPort = httpPort;
   const configuredP2pPort = p2pPort;
   let usingFallbackPort = false;
+  const reservedProfilePorts = managedProfileNode ? getReservedProfilePorts() : new Set();
 
   const managedHttpPortBusy = managedProfileNode ? await isPortOpen(httpPort) : false;
   if (existing.conflict || managedHttpPortBusy) {
-    const newHttpPort = await findAvailablePort(httpPort + 1);
+    const newHttpPort = await findAvailablePort(httpPort + 1, DEFAULTS.radicle.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!newHttpPort) {
       updateState(STATUS.ERROR, 'No available ports for Radicle httpd');
       setStatusMessage('radicle', 'Node failed to start');
@@ -833,7 +845,9 @@ async function startRadicle() {
 
   const managedP2pPortBusy = managedProfileNode ? await isPortOpen(p2pPort) : false;
   if (managedP2pPortBusy) {
-    const newP2pPort = await findAvailablePort(p2pPort + 1);
+    const newP2pPort = await findAvailablePort(p2pPort + 1, DEFAULTS.radicle.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!newP2pPort) {
       updateState(STATUS.ERROR, 'No available ports for Radicle P2P');
       setStatusMessage('radicle', 'Node failed to start');

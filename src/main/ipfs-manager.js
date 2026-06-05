@@ -8,7 +8,11 @@ const https = require('https');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { getIpfsDataDir } = require('./profile-paths');
-const { getActiveProfile, updateActiveProfileNodeConfig } = require('./profile-resolver');
+const {
+  getActiveProfile,
+  getReservedProfilePorts,
+  updateActiveProfileNodeConfig,
+} = require('./profile-resolver');
 const {
   MODE,
   DEFAULTS,
@@ -511,9 +515,14 @@ async function resolveReusedIpfsGatewayUrl(apiUrl) {
 /**
  * Find an available port starting from the default
  */
-async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.ipfs.fallbackRange) {
+async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.ipfs.fallbackRange, options = {}) {
+  const reservedPorts = options.reservedPorts || new Set();
   for (let i = 0; i < maxAttempts; i++) {
     const port = defaultPort + i;
+    if (reservedPorts.has(port)) {
+      log.info(`[IPFS] Port ${port} is reserved by another profile, trying next...`);
+      continue;
+    }
     const open = await isPortOpen(port);
     if (!open) {
       return port;
@@ -737,10 +746,13 @@ async function startIpfs() {
   const configuredApiPort = apiPort;
   const configuredGatewayPort = gatewayPort;
   let usingFallbackPort = false;
+  const reservedProfilePorts = managedProfileNode ? getReservedProfilePorts() : new Set();
 
   const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
   if (existing.conflict || managedApiPortBusy) {
-    const newApiPort = await findAvailablePort(apiPort + 1);
+    const newApiPort = await findAvailablePort(apiPort + 1, DEFAULTS.ipfs.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!newApiPort) {
       updateState(STATUS.ERROR, 'No available ports for IPFS API');
       setStatusMessage('ipfs', 'Node failed to start');
@@ -753,7 +765,9 @@ async function startIpfs() {
   // Check gateway port
   const gatewayOpen = await isPortOpen(gatewayPort);
   if (gatewayOpen) {
-    const newGatewayPort = await findAvailablePort(gatewayPort + 1);
+    const newGatewayPort = await findAvailablePort(gatewayPort + 1, DEFAULTS.ipfs.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!newGatewayPort) {
       updateState(STATUS.ERROR, 'No available ports for IPFS gateway');
       setStatusMessage('ipfs', 'Node failed to start');

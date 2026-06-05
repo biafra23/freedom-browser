@@ -6,6 +6,7 @@ const {
   deleteProfile,
   ensureProfile,
   getCheckoutId,
+  getReservedManagedPorts,
   hashPath,
   importProfile,
   listProfileSummaries,
@@ -222,6 +223,17 @@ function updateActiveProfileNodeConfig(protocol, updates) {
   return result;
 }
 
+function getReservedProfilePorts(profile = activeProfile) {
+  if (!profile || profile.source !== 'catalog') {
+    return new Set();
+  }
+
+  return getReservedManagedPorts(profile.appRoot, {
+    ...getProfileCatalogOptions(profile),
+    excludeProfileId: profile.id,
+  });
+}
+
 function getProfileCatalogOptions(profile = activeProfile) {
   if (!profile || profile.source !== 'catalog') {
     return null;
@@ -307,6 +319,7 @@ module.exports = {
   getArgValue,
   getDefaultRepoRoot,
   getLegacyDevDataDirs,
+  getReservedProfilePorts,
   importProfileForActiveApp,
   initializeProfile,
   listProfilesForActiveApp,

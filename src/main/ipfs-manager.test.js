@@ -283,6 +283,7 @@ function loadIpfsManagerModule(options = {}) {
       [require.resolve('./logger')]: () => log,
       [require.resolve('./profile-resolver')]: () => ({
         getActiveProfile: jest.fn(() => options.activeProfile || null),
+        getReservedProfilePorts: jest.fn(() => new Set(options.reservedPorts || [])),
         updateActiveProfileNodeConfig,
       }),
       [require.resolve('./service-registry')]: () => ({
@@ -563,6 +564,51 @@ describe('ipfs-manager', () => {
       gateway: 'http://localhost:18081',
       mode: 'bundled',
     });
+
+    const stopPromise = ctx.mod.stopIpfs();
+    await flushMicrotasks();
+    await stopPromise;
+  });
+
+  test('skips reserved sibling profile ports when reassigning IPFS ports', async () => {
+    jest.useFakeTimers();
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            ipfs: { mode: 'managed', apiPort: 15001, gatewayPort: 18080 },
+          },
+        },
+      },
+      configExists: true,
+      reservedPorts: [15002, 18081],
+      portResolver: (port) => port === 15001 || port === 18080,
+      httpResponse: (options) => {
+        if (options.port === 15003) {
+          return {
+            statusCode: 200,
+            body: { ID: 'peer-15003' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('ipfs', {
+      apiPort: 15003,
+      gatewayPort: 18082,
+    });
+    expect(ctx.mod.getActivePort()).toBe(15003);
+    expect(ctx.mod.getActiveGatewayPort()).toBe(18082);
 
     const stopPromise = ctx.mod.stopIpfs();
     await flushMicrotasks();

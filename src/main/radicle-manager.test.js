@@ -319,6 +319,7 @@ function loadRadicleManagerModule(options = {}) {
       [require.resolve('./logger')]: () => log,
       [require.resolve('./profile-resolver')]: () => ({
         getActiveProfile: jest.fn(() => options.activeProfile || null),
+        getReservedProfilePorts: jest.fn(() => new Set(options.reservedPorts || [])),
         updateActiveProfileNodeConfig,
       }),
       [require.resolve('./service-registry')]: () => ({
@@ -835,6 +836,49 @@ describe('radicle-manager', () => {
     expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
       path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
       expect.stringContaining('"0.0.0.0:18777"')
+    );
+
+    const stopPromise = ctx.mod.stopRadicle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stopPromise;
+  });
+
+  test('skips reserved sibling profile ports when reassigning Radicle ports', async () => {
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            radicle: { mode: 'managed', httpPort: 18780, p2pPort: 18776 },
+          },
+        },
+      },
+      configExists: false,
+      keyFiles: [],
+      reservedPorts: [18781, 18777],
+      portResolver: (port) => port === 18780 || port === 18776,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:18782/') {
+          return { statusCode: 200, body: {} };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('radicle', {
+      httpPort: 18782,
+      p2pPort: 18778,
+    });
+    expect(ctx.spawnedProcesses).toHaveLength(2);
+    expect(ctx.spawnedProcesses[1].args).toEqual(['--listen', '127.0.0.1:18782']);
+    expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
+      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      expect.stringContaining('"0.0.0.0:18778"')
     );
 
     const stopPromise = ctx.mod.stopRadicle();

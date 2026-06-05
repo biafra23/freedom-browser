@@ -186,6 +186,41 @@ function getRecordManagedPorts(record, options = {}) {
   });
 }
 
+function addIntegerPort(target, port) {
+  if (Number.isInteger(port) && port > 0) {
+    target.add(port);
+  }
+}
+
+function getReservedManagedPorts(appRoot, options = {}) {
+  const catalog = loadCatalog(appRoot);
+  const reservedPorts = new Set();
+
+  for (const record of catalog.profiles) {
+    if (options.excludeProfileId && record.id === options.excludeProfileId) {
+      continue;
+    }
+
+    const metadata = readProfileMetadata(record.dir) || {};
+    const nodes = fillMissingNodeConfig(
+      {
+        ...(record.nodes || {}),
+        ...(metadata.nodes || {}),
+      },
+      getRecordManagedPorts(record, options)
+    );
+
+    addIntegerPort(reservedPorts, nodes.bee?.apiPort);
+    addIntegerPort(reservedPorts, nodes.bee?.p2pPort);
+    addIntegerPort(reservedPorts, nodes.ipfs?.apiPort);
+    addIntegerPort(reservedPorts, nodes.ipfs?.gatewayPort);
+    addIntegerPort(reservedPorts, nodes.radicle?.httpPort);
+    addIntegerPort(reservedPorts, nodes.radicle?.p2pPort);
+  }
+
+  return reservedPorts;
+}
+
 function normalizeRecordNodeConfig(record, options = {}) {
   const nodes = fillMissingNodeConfig(record.nodes || {}, getRecordManagedPorts(record, options));
   const changed = JSON.stringify(nodes) !== JSON.stringify(record.nodes || {});
@@ -866,6 +901,7 @@ module.exports = {
   getDevPortOffset,
   getManagedPorts,
   getProfileMetaPath,
+  getReservedManagedPorts,
   hashPath,
   importProfile,
   listProfileSummaries,

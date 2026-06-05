@@ -297,6 +297,7 @@ function loadBeeManagerModule(options = {}) {
       [require.resolve('./networks/network-registry')]: () => registry,
       [require.resolve('./profile-resolver')]: () => ({
         getActiveProfile: jest.fn(() => options.activeProfile || null),
+        getReservedProfilePorts: jest.fn(() => new Set(options.reservedPorts || [])),
         updateActiveProfileNodeConfig,
       }),
       [require.resolve('./service-registry')]: () => ({
@@ -520,6 +521,49 @@ describe('bee-manager', () => {
       gateway: 'http://127.0.0.1:11634',
       mode: 'bundled',
     });
+
+    const stopPromise = ctx.mod.stopBee();
+    await jest.advanceTimersByTimeAsync(0);
+    await stopPromise;
+  });
+
+  test('skips reserved sibling profile ports when reassigning Bee ports', async () => {
+    jest.useFakeTimers();
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11633, p2pPort: 12633 },
+          },
+        },
+      },
+      reservedPorts: [11634],
+      portResolver: (port) => port === 11633,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:11635/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
+      apiPort: 11635,
+      p2pPort: 12633,
+    });
+    expect(ctx.mod.getActivePort()).toBe(11635);
 
     const stopPromise = ctx.mod.stopBee();
     await jest.advanceTimersByTimeAsync(0);
