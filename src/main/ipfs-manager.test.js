@@ -624,6 +624,47 @@ describe('ipfs-manager', () => {
     expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
   });
 
+  test('rejects configured external IPFS when the gateway is unreachable', async () => {
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            ipfs: {
+              mode: 'external',
+              externalApi: 'http://127.0.0.1:25001',
+              externalGateway: 'http://localhost:28080',
+            },
+          },
+        },
+      },
+      httpResponse: (options) => {
+        if (options.port === 25001 && options.path === '/api/v0/id') {
+          return {
+            statusCode: 200,
+            body: { ID: 'peer-external' },
+          };
+        }
+        if (options.port === 28080 && options.method === 'GET') {
+          return { error: new Error('gateway closed') };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.updateService).not.toHaveBeenCalled();
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'ipfs',
+      'External gateway unreachable'
+    );
+  });
+
   test('marks a disabled profile IPFS node without probing or spawning', async () => {
     const checkedPorts = [];
     const ctx = loadIpfsManagerModule({
@@ -751,6 +792,32 @@ describe('ipfs-manager', () => {
     expect(ctx.spawnedProcesses[0].kills).toContain('SIGTERM');
     expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('fails managed startup when the gateway port has no fallback', async () => {
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            ipfs: { mode: 'managed', apiPort: 15001, gatewayPort: 18080 },
+          },
+        },
+      },
+      configExists: true,
+      portResolver: (port) => port === 18080 || (port >= 18081 && port <= 18090),
+      httpResponse: () => ({
+        statusCode: 500,
+        body: '',
+      }),
+    });
+
+    await ctx.mod.startIpfs();
+    await flushMicrotasks();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.updateActiveProfileNodeConfig).not.toHaveBeenCalled();
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node failed to start');
   });
 
   test('fails startup when the IPFS binary is missing', async () => {

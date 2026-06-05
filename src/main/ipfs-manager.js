@@ -605,6 +605,12 @@ async function startExternalIpfs(config) {
     return;
   }
 
+  if (!await probeIpfsGatewayUrl(gatewayUrl)) {
+    updateState(STATUS.ERROR, 'External IPFS gateway endpoint is unreachable');
+    setStatusMessage('ipfs', 'External gateway unreachable');
+    return;
+  }
+
   currentApiUrl = apiUrl;
   currentGatewayUrl = gatewayUrl;
   currentApiPort = getPortFromUrl(apiUrl);
@@ -748,9 +754,13 @@ async function startIpfs() {
   const gatewayOpen = await isPortOpen(gatewayPort);
   if (gatewayOpen) {
     const newGatewayPort = await findAvailablePort(gatewayPort + 1);
-    if (newGatewayPort) {
-      gatewayPort = newGatewayPort;
+    if (!newGatewayPort) {
+      updateState(STATUS.ERROR, 'No available ports for IPFS gateway');
+      setStatusMessage('ipfs', 'Node failed to start');
+      return;
     }
+    usingFallbackPort = true;
+    gatewayPort = newGatewayPort;
   }
 
   if (
