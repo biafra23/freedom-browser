@@ -232,7 +232,7 @@ describe('profile external candidates', () => {
     webContents.isLoading = () => false;
     webContents.send = jest.fn((channel, payload) => {
       setImmediate(() => {
-        ipcMain.emit(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, {}, {
+        ipcMain.emit(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, { sender: webContents }, {
           requestId: payload.requestId,
           choices: {
             bee: 'external',
@@ -280,5 +280,40 @@ describe('profile external candidates', () => {
       bee: 'external',
       ipfs: 'managed',
     });
+  });
+
+  test('ignores external-candidate decisions from a different window sender', async () => {
+    const profile = createProfile();
+    const ipcMain = new EventEmitter();
+    const webContents = new EventEmitter();
+    const otherWebContents = new EventEmitter();
+    const window = new EventEmitter();
+    webContents.isLoading = () => false;
+    webContents.send = jest.fn((channel, payload) => {
+      setImmediate(() => {
+        ipcMain.emit(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, { sender: otherWebContents }, {
+          requestId: payload.requestId,
+          choices: { bee: 'external' },
+        });
+        ipcMain.emit(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, { sender: webContents }, {
+          requestId: payload.requestId,
+          choices: { bee: 'managed' },
+        });
+      });
+    });
+    window.webContents = webContents;
+    window.isDestroyed = () => false;
+
+    const choices = await presentExternalCandidatesInWindow(
+      profile,
+      [{ protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] }],
+      {
+        ipcMain,
+        requestId: 'req-bound',
+        window,
+      }
+    );
+
+    expect(choices).toEqual({ bee: 'managed' });
   });
 });

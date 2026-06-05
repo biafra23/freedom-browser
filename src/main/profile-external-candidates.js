@@ -250,6 +250,7 @@ async function presentExternalCandidatesInWindow(profile, candidates, options = 
 
   const requestId = options.requestId || crypto.randomBytes(16).toString('hex');
   const ipc = options.ipcMain || ipcMain;
+  const expectedSender = window.webContents;
   return new Promise((resolve) => {
     const finish = (choices) => {
       ipc.removeListener(IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, onDecision);
@@ -258,6 +259,7 @@ async function presentExternalCandidatesInWindow(profile, candidates, options = 
     };
     const onDecision = (_event, payload = {}) => {
       if (payload.requestId !== requestId) return;
+      if (_event?.sender !== expectedSender) return;
       finish(payload.choices);
     };
     const onClosed = () => {

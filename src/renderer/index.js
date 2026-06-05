@@ -138,6 +138,8 @@ function initExternalNodeCandidatesModal() {
   let currentRequestId = null;
   let currentCandidates = [];
   let hasResponded = false;
+  let promptActive = false;
+  const pendingRequests = [];
 
   const closeModal = () => {
     if (modal.open && typeof modal.close === 'function') {
@@ -150,6 +152,19 @@ function initExternalNodeCandidatesModal() {
   const choicesForAll = (choice) =>
     Object.fromEntries(currentCandidates.map((candidate) => [candidate.protocol, choice]));
 
+  const showNextPrompt = () => {
+    if (promptActive || !pendingRequests.length) return;
+    openPrompt(pendingRequests.shift());
+  };
+
+  const resetPrompt = () => {
+    currentRequestId = null;
+    currentCandidates = [];
+    hasResponded = false;
+    promptActive = false;
+    setTimeout(showNextPrompt, 0);
+  };
+
   const sendDecision = (choices) => {
     if (!currentRequestId || hasResponded) return;
     hasResponded = true;
@@ -158,6 +173,7 @@ function initExternalNodeCandidatesModal() {
       choices,
     });
     closeModal();
+    resetPrompt();
   };
 
   const keepManagedForAll = () => {
@@ -225,11 +241,16 @@ function initExternalNodeCandidatesModal() {
     sendDecision(choices);
   };
 
-  const handleExternalNodeCandidates = (payload = {}) => {
+  function openPrompt(payload = {}) {
+    promptActive = true;
     currentRequestId = payload.requestId || null;
     currentCandidates = Array.isArray(payload.candidates) ? payload.candidates : [];
     hasResponded = false;
-    if (!currentRequestId || !currentCandidates.length) {
+    if (!currentRequestId) {
+      resetPrompt();
+      return;
+    }
+    if (!currentCandidates.length) {
       sendDecision({});
       return;
     }
@@ -239,6 +260,11 @@ function initExternalNodeCandidatesModal() {
     } else {
       modal.setAttribute('open', '');
     }
+  }
+
+  const handleExternalNodeCandidates = (payload = {}) => {
+    pendingRequests.push(payload);
+    showNextPrompt();
   };
 
   externalNodeCandidatesHandler = handleExternalNodeCandidates;
