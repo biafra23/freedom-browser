@@ -77,6 +77,40 @@ describe('profile resolver', () => {
     expect(catalog.profiles.map((entry) => entry.id)).toEqual(['default', 'work']);
   });
 
+  test('updates lastOpenedAt only for the profile selected for launch', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const { resolveProfile } = require('./profile-resolver');
+
+    resolveProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      now: '2026-05-25T00:00:00.000Z',
+    });
+
+    resolveProfile(app, {
+      argv: ['electron', '.', '--profile=work'],
+      env: {},
+      now: '2026-05-26T00:00:00.000Z',
+    });
+
+    const catalog = JSON.parse(
+      fs.readFileSync(path.join(userDataDir, 'profile-registry.json'), 'utf-8')
+    );
+    const byId = Object.fromEntries(catalog.profiles.map((profile) => [profile.id, profile]));
+    const defaultMetadata = JSON.parse(
+      fs.readFileSync(path.join(userDataDir, 'profile.json'), 'utf-8')
+    );
+    const workMetadata = JSON.parse(
+      fs.readFileSync(path.join(userDataDir, 'Profiles', 'work', 'profile.json'), 'utf-8')
+    );
+
+    expect(byId.default.lastOpenedAt).toBe('2026-05-25T00:00:00.000Z');
+    expect(defaultMetadata.lastOpenedAt).toBe('2026-05-25T00:00:00.000Z');
+    expect(byId.work.lastOpenedAt).toBe('2026-05-26T00:00:00.000Z');
+    expect(workMetadata.lastOpenedAt).toBe('2026-05-26T00:00:00.000Z');
+  });
+
   test('uses FREEDOM_TEST_USER_DATA as the highest-precedence bypass', () => {
     const userDataDir = track(makeTempDir());
     const testUserData = track(makeTempDir());

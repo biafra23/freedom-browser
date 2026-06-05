@@ -125,6 +125,7 @@ function resolveProfile(app, options = {}) {
     checkoutHash,
     defaultProfileDir,
     dev: isDev,
+    markOpened: true,
     now: options.now,
   });
 

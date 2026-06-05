@@ -488,6 +488,31 @@ function createProfileMetadata(record) {
   };
 }
 
+function createRecordFromExistingProfile(appRoot, profileId, dir, catalog, options = {}) {
+  const existingMetadata = readProfileMetadata(dir) || {};
+  const usedSlots = getUsedSlots(catalog);
+  const metadataSlot = Number.isInteger(existingMetadata.slot) ? existingMetadata.slot : null;
+  const slot = metadataSlot !== null && !usedSlots.has(metadataSlot)
+    ? metadataSlot
+    : allocateSlot(catalog, profileId);
+  const ports = getManagedPorts(slot, {
+    dev: options.dev,
+    checkoutHash: options.checkoutHash,
+  });
+  const now = options.now || new Date().toISOString();
+  const displayName = existingMetadata.displayName || displayNameFromId(profileId);
+
+  return {
+    id: profileId,
+    displayName,
+    dir,
+    slot,
+    createdAt: existingMetadata.createdAt || now,
+    lastOpenedAt: existingMetadata.lastOpenedAt || now,
+    nodes: rebaseNodeConfig(existingMetadata.nodes || {}, ports),
+  };
+}
+
 function writeProfileMetadata(profileDir, metadata) {
   ensureDir(profileDir);
   writeJsonAtomic(getProfileMetaPath(profileDir), metadata);
@@ -668,27 +693,7 @@ function importProfile(appRoot, profileId, options = {}) {
       throw new Error('Refusing to import a profile outside the profiles directory');
     }
 
-    const existingMetadata = readProfileMetadata(dir) || {};
-    const usedSlots = getUsedSlots(catalog);
-    const metadataSlot = Number.isInteger(existingMetadata.slot) ? existingMetadata.slot : null;
-    const slot = metadataSlot !== null && !usedSlots.has(metadataSlot)
-      ? metadataSlot
-      : allocateSlot(catalog, id);
-    const ports = getManagedPorts(slot, {
-      dev: options.dev,
-      checkoutHash: options.checkoutHash,
-    });
-    const now = options.now || new Date().toISOString();
-    const displayName = existingMetadata.displayName || displayNameFromId(id);
-    const record = {
-      id,
-      displayName,
-      dir,
-      slot,
-      createdAt: existingMetadata.createdAt || now,
-      lastOpenedAt: existingMetadata.lastOpenedAt || now,
-      nodes: rebaseNodeConfig(existingMetadata.nodes || {}, ports),
-    };
+    const record = createRecordFromExistingProfile(appRoot, id, dir, catalog, options);
 
     catalog.profiles.push(record);
     saveCatalog(appRoot, catalog);
@@ -751,27 +756,42 @@ function ensureProfile(appRoot, profileId, options = {}) {
     const catalog = loadCatalog(appRoot);
     let record = findProfile(catalog, profileId);
     let catalogChanged = false;
+    let adoptedExistingProfile = false;
 
     if (!record) {
-      record = createProfileRecord(appRoot, profileId, {
-        ...options,
-        catalog,
-      });
+      const dir = getProfileDir(appRoot, profileId, options);
+      const dirExists = fs.existsSync(dir) && fs.statSync(dir).isDirectory();
+      const existingMetadata = dirExists ? readProfileMetadata(dir) : null;
+
+      if (existingMetadata) {
+        record = createRecordFromExistingProfile(appRoot, profileId, dir, catalog, options);
+        adoptedExistingProfile = true;
+      } else if (dirExists && profileId !== DEFAULT_PROFILE_ID) {
+        throw new Error(
+          `Profile directory exists but is not registered: ${profileId}. ` +
+          'Import it from the profile manager before launching it.'
+        );
+      } else {
+        record = createProfileRecord(appRoot, profileId, {
+          ...options,
+          catalog,
+        });
+      }
       catalog.profiles.push(record);
       catalogChanged = true;
     } else if (normalizeRecordNodeConfig(record, options)) {
       catalogChanged = true;
     }
 
-    if (catalogChanged) {
-      saveCatalog(appRoot, catalog);
-    }
-
     ensureDir(record.dir);
 
     const metaPath = getProfileMetaPath(record.dir);
     let metadata;
-    if (fs.existsSync(metaPath)) {
+    let metadataChanged = false;
+    if (adoptedExistingProfile) {
+      metadata = createProfileMetadata(record);
+      metadataChanged = true;
+    } else if (fs.existsSync(metaPath)) {
       metadata = readJson(metaPath);
       const normalizedNodes = fillMissingNodeConfig(
         {
@@ -785,10 +805,32 @@ function ensureProfile(appRoot, profileId, options = {}) {
           ...metadata,
           nodes: normalizedNodes,
         };
-        writeProfileMetadata(record.dir, metadata);
+        metadataChanged = true;
       }
     } else {
       metadata = createProfileMetadata(record);
+      metadataChanged = true;
+    }
+
+    if (options.markOpened === true) {
+      const openedAt = options.now || new Date().toISOString();
+      if (record.lastOpenedAt !== openedAt) {
+        record.lastOpenedAt = openedAt;
+        catalogChanged = true;
+      }
+      if (metadata.lastOpenedAt !== openedAt) {
+        metadata = {
+          ...metadata,
+          lastOpenedAt: openedAt,
+        };
+        metadataChanged = true;
+      }
+    }
+
+    if (catalogChanged) {
+      saveCatalog(appRoot, catalog);
+    }
+    if (metadataChanged) {
       writeProfileMetadata(record.dir, metadata);
     }
 

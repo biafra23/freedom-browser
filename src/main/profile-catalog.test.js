@@ -169,6 +169,71 @@ describe('profile catalog', () => {
     expect(metadata.nodes.bee.p2pPort).toBe(12633);
   });
 
+  test('adopts an existing profile directory with metadata instead of assigning a fresh slot', () => {
+    const appRoot = track(makeTempDir());
+    const profileDir = path.join(appRoot, 'Profiles', 'work');
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(profileDir, 'profile.json'),
+      JSON.stringify({
+        version: 1,
+        id: 'old-work-id',
+        displayName: 'Recovered Work',
+        createdAt: '2026-05-20T00:00:00.000Z',
+        lastOpenedAt: '2026-05-21T00:00:00.000Z',
+        slot: 7,
+        nodes: {
+          bee: {
+            mode: 'external',
+            externalApi: 'http://127.0.0.1:1633',
+          },
+        },
+      }, null, 2)
+    );
+
+    const result = ensureProfile(appRoot, 'work', {
+      markOpened: true,
+      now: '2026-05-25T00:00:00.000Z',
+    });
+
+    expect(result.record).toMatchObject({
+      id: 'work',
+      displayName: 'Recovered Work',
+      slot: 7,
+    });
+    expect(result.metadata).toMatchObject({
+      id: 'work',
+      displayName: 'Recovered Work',
+      slot: 7,
+      lastOpenedAt: '2026-05-25T00:00:00.000Z',
+    });
+    expect(result.metadata.nodes.bee).toMatchObject({
+      mode: 'external',
+      apiPort: 11640,
+      p2pPort: 12640,
+      externalApi: 'http://127.0.0.1:1633',
+    });
+
+    const catalog = JSON.parse(
+      fs.readFileSync(path.join(appRoot, 'profile-registry.json'), 'utf-8')
+    );
+    expect(catalog.profiles).toHaveLength(1);
+    expect(catalog.profiles[0].slot).toBe(7);
+  });
+
+  test('refuses to launch an unregistered profile directory without metadata', () => {
+    const appRoot = track(makeTempDir());
+    const profileDir = path.join(appRoot, 'Profiles', 'work');
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(path.join(profileDir, 'history.sqlite'), 'existing data');
+
+    expect(() => ensureProfile(appRoot, 'work')).toThrow(
+      'Profile directory exists but is not registered: work'
+    );
+    expect(fs.existsSync(path.join(profileDir, 'profile.json'))).toBe(false);
+    expect(fs.existsSync(path.join(appRoot, 'profile-registry.json'))).toBe(false);
+  });
+
   test('deletes the short app-owned Radicle home with a profile', () => {
     const tempRoot = track(makeTempDir());
     const appRoot = path.join(tempRoot, 'Freedom Dev', 'freedom-browser-abcdef12');
