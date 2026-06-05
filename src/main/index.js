@@ -67,6 +67,17 @@ try {
   }
   throw error;
 }
+let focusCurrentProfileWindow = null;
+const profileFocusWatcher = startProfileFocusRequestWatcher(
+  activeProfile,
+  () => app.whenReady().then(() => {
+    if (typeof focusCurrentProfileWindow !== 'function') {
+      throw new Error('Main window focus handler is not ready');
+    }
+    return focusCurrentProfileWindow();
+  }),
+  { logger: console }
+);
 
 const { version } = require('../../package.json');
 const iconPath = app.isPackaged
@@ -155,6 +166,7 @@ const {
   setWindowTitle,
   getMainWindows,
 } = require('./windows/mainWindow');
+focusCurrentProfileWindow = focusOrCreateMainWindow;
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
 const { registerWebContentsHandlers } = require('./webcontents-setup');
@@ -168,11 +180,6 @@ log.info('[profile] Active profile:', {
   appRoot: activeProfile.appRoot,
 });
 warnAboutLegacyDevData(activeProfile, { logger: log });
-const profileFocusWatcher = startProfileFocusRequestWatcher(
-  activeProfile,
-  () => app.whenReady().then(() => focusOrCreateMainWindow()),
-  { logger: log }
-);
 app.on('will-quit', () => {
   unregisterShutdownSignalHandlers();
   profileFocusWatcher.stop();
