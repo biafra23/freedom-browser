@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const {
   createTempUserDataDir,
@@ -6,15 +7,19 @@ const {
   removeTempUserDataDir,
 } = require('../../test/helpers/main-process-test-utils');
 
-const originalEnv = {
-  FREEDOM_BEE_DATA: process.env.FREEDOM_BEE_DATA,
-  FREEDOM_IPFS_DATA: process.env.FREEDOM_IPFS_DATA,
-  FREEDOM_RADICLE_DATA: process.env.FREEDOM_RADICLE_DATA,
-  FREEDOM_IDENTITY_DATA: process.env.FREEDOM_IDENTITY_DATA,
-};
+const ENV_KEYS = [
+  'FREEDOM_BEE_DATA',
+  'FREEDOM_IPFS_DATA',
+  'FREEDOM_RADICLE_DATA',
+  'FREEDOM_IDENTITY_DATA',
+];
 
-function restoreEnv() {
-  for (const [key, value] of Object.entries(originalEnv)) {
+function snapshotEnv() {
+  return Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot) {
+  for (const [key, value] of Object.entries(snapshot)) {
     if (value === undefined) {
       delete process.env[key];
     } else {
@@ -23,7 +28,7 @@ function restoreEnv() {
   }
 }
 
-function makeIdentityMock() {
+function makeProfileIdentityMock() {
   return {
     createVault: jest.fn().mockResolvedValue('test mnemonic'),
     unlockVault: jest.fn().mockResolvedValue(undefined),
@@ -43,17 +48,36 @@ function makeIdentityMock() {
   };
 }
 
+function makeRestartIdentityMock() {
+  return {
+    createVault: jest.fn(async () => 'test test test test test test test test test test test about'),
+    unlockVault: jest.fn(async () => {}),
+    deriveAllKeys: jest.fn(() => ({
+      userWallet: { address: '0xuser', privateKey: '0x01' },
+      beeWallet: { address: '0xbee', privateKey: '0x02' },
+      ipfsKey: { privateKey: '0x03', publicKey: '0x04' },
+      radicleKey: { privateKey: '0x05', publicKey: '0x06' },
+    })),
+    injectBeeKey: jest.fn(async () => {}),
+    createBeeConfig: jest.fn(() => {}),
+    injectIpfsKey: jest.fn(() => 'QmTestPeerId'),
+    injectRadicleKey: jest.fn(() => 'did:key:zTest'),
+  };
+}
+
 describe('identity-manager profile paths', () => {
   let tempDirs = [];
+  let envSnapshot;
 
   beforeEach(() => {
     tempDirs = [];
-    restoreEnv();
+    envSnapshot = snapshotEnv();
+    restoreEnv(envSnapshot);
     jest.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    restoreEnv();
+    restoreEnv(envSnapshot);
     for (const dir of tempDirs) {
       removeTempUserDataDir(dir);
     }
@@ -79,8 +103,7 @@ describe('identity-manager profile paths', () => {
 
     fs.writeFileSync(path.join(ipfsDir, 'config'), '{}');
 
-    const identityMock = makeIdentityMock();
-    const identityModulePath = require.resolve('./identity');
+    const identityMock = makeProfileIdentityMock();
     const activeProfile = {
       id: 'profiled',
       source: 'catalog',
@@ -93,7 +116,7 @@ describe('identity-manager profile paths', () => {
     const { mod } = loadMainModule(require.resolve('./identity-manager'), {
       userDataDir,
       extraMocks: {
-        [identityModulePath]: () => identityMock,
+        [require.resolve('./identity')]: () => identityMock,
         [require.resolve('./profile-resolver')]: () => ({
           getActiveProfile: jest.fn(() => activeProfile),
         }),
@@ -133,5 +156,166 @@ describe('identity-manager profile paths', () => {
       'ProfileAlias'
     );
     expect(fs.existsSync(path.join(ipfsDir, '.identity-injected'))).toBe(true);
+  });
+});
+
+describe('identity-manager wallet deletion', () => {
+  let tmpDir;
+  let envSnapshot;
+  let mockGetEthereumWalletIdentityReferences;
+  let identityManager;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-manager-test-'));
+    envSnapshot = snapshotEnv();
+    process.env.FREEDOM_IDENTITY_DATA = tmpDir;
+    mockGetEthereumWalletIdentityReferences = jest.fn(() => []);
+    identityManager = loadMainModule(require.resolve('./identity-manager'), {
+      userDataDir: tmpDir,
+      extraMocks: {
+        [require.resolve('./swarm/feed-store')]: () => ({
+          getEthereumWalletIdentityReferences: (...args) =>
+            mockGetEthereumWalletIdentityReferences(...args),
+        }),
+      },
+    }).mod;
+  });
+
+  afterEach(() => {
+    restoreEnv(envSnapshot);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeVaultMeta(meta) {
+    fs.writeFileSync(path.join(tmpDir, 'vault-meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
+  }
+
+  function readVaultMeta() {
+    return JSON.parse(fs.readFileSync(path.join(tmpDir, 'vault-meta.json'), 'utf-8'));
+  }
+
+  test('blocks deleting wallets referenced by Swarm publisher identities', async () => {
+    const references = [{
+      origin: 'myapp.eth',
+      identityId: 'ethereum-wallet:2',
+      active: true,
+      feedNames: ['blog'],
+      feedCount: 1,
+    }];
+    mockGetEthereumWalletIdentityReferences.mockReturnValue(references);
+    writeVaultMeta({
+      activeWalletIndex: 2,
+      derivedWallets: [
+        { index: 0, name: 'Main Wallet', address: '0x0' },
+        { index: 2, name: 'Trading Wallet', address: '0x2' },
+      ],
+    });
+
+    await expect(identityManager.deleteDerivedWallet(2))
+      .rejects.toMatchObject({
+        code: 'SWARM_PUBLISHER_IDENTITY_WALLET_IN_USE',
+        references,
+      });
+
+    expect(mockGetEthereumWalletIdentityReferences).toHaveBeenCalledWith(2);
+    expect(readVaultMeta().derivedWallets.map((wallet) => wallet.index)).toEqual([0, 2]);
+    expect(readVaultMeta().activeWalletIndex).toBe(2);
+  });
+
+  test('deletes unreferenced derived wallet and resets active wallet', async () => {
+    writeVaultMeta({
+      activeWalletIndex: 2,
+      derivedWallets: [
+        { index: 0, name: 'Main Wallet', address: '0x0' },
+        { index: 2, name: 'Trading Wallet', address: '0x2' },
+      ],
+    });
+
+    await identityManager.deleteDerivedWallet(2);
+
+    expect(mockGetEthereumWalletIdentityReferences).toHaveBeenCalledWith(2);
+    expect(readVaultMeta().derivedWallets.map((wallet) => wallet.index)).toEqual([0]);
+    expect(readVaultMeta().activeWalletIndex).toBe(0);
+  });
+});
+
+describe('injectAllIdentities restart reporting (issue #90)', () => {
+  let root;
+  let dataDirs;
+  let envSnapshot;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-mgr-'));
+    dataDirs = {
+      identity: path.join(root, 'identity'),
+      bee: path.join(root, 'bee'),
+      ipfs: path.join(root, 'ipfs'),
+      radicle: path.join(root, 'radicle'),
+    };
+    for (const dir of Object.values(dataDirs)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    envSnapshot = snapshotEnv();
+    process.env.FREEDOM_IDENTITY_DATA = dataDirs.identity;
+    process.env.FREEDOM_BEE_DATA = dataDirs.bee;
+    process.env.FREEDOM_IPFS_DATA = dataDirs.ipfs;
+    process.env.FREEDOM_RADICLE_DATA = dataDirs.radicle;
+  });
+
+  afterEach(() => {
+    restoreEnv(envSnapshot);
+    if (root && fs.existsSync(root)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function loadIdentityManager(dataDirsForLoad) {
+    return loadMainModule(require.resolve('./identity-manager'), {
+      extraMocks: {
+        [require.resolve('./identity')]: () => makeRestartIdentityMock(),
+      },
+      userDataDir: dataDirsForLoad.identity,
+    }).mod;
+  }
+
+  function seedBeeInjected() {
+    fs.mkdirSync(path.join(dataDirs.bee, 'keys'), { recursive: true });
+    fs.writeFileSync(path.join(dataDirs.bee, 'keys', 'swarm.key'), '{}');
+  }
+
+  function seedIpfsConfig(withPeerId) {
+    const config = withPeerId ? { Identity: { PeerID: 'QmExisting' } } : {};
+    fs.writeFileSync(path.join(dataDirs.ipfs, 'config'), JSON.stringify(config));
+  }
+
+  function seedRadicleInjected() {
+    fs.mkdirSync(path.join(dataDirs.radicle, 'keys'), { recursive: true });
+    fs.writeFileSync(path.join(dataDirs.radicle, 'keys', 'radicle'), 'key');
+  }
+
+  test('force reinjection reports IPFS/Radicle but NOT Bee for restart', async () => {
+    seedBeeInjected();
+    seedIpfsConfig(true);
+    seedRadicleInjected();
+
+    const mgr = loadIdentityManager(dataDirs);
+    await mgr.createNewVault('password-123');
+
+    const results = await mgr.injectAllIdentities('FreedomBrowser', true);
+
+    expect(results.needsRestart).not.toContain('bee');
+    expect(results.needsRestart).toEqual(expect.arrayContaining(['ipfs', 'radicle']));
+    expect(results.bee.reinjected).toBe(true);
+  });
+
+  test('first-time injection reports nothing for restart', async () => {
+    seedIpfsConfig(false);
+
+    const mgr = loadIdentityManager(dataDirs);
+    await mgr.createNewVault('password-123');
+
+    const results = await mgr.injectAllIdentities('FreedomBrowser', false);
+
+    expect(results.needsRestart).toEqual([]);
   });
 });

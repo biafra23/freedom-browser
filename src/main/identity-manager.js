@@ -25,6 +25,24 @@ const { VAULT_LOCKED_MESSAGE } = require('./wallet/vault-errors');
 // Identity module - loaded lazily
 let identityModule = null;
 
+// Optional Bee node lifecycle hooks, wired by the main process (see index.js).
+// Bee holds an exclusive LevelDB lock on statestore while running, so it must be
+// stopped before its stale state is wiped during (re)injection — otherwise the
+// wipe fails with EPERM on Windows (issue #90). `stop` resolves to whether Bee
+// was running; `start` brings it back up with the freshly injected identity.
+let beeLifecycle = { stop: null, start: null };
+
+/**
+ * Register Bee node lifecycle hooks used around identity (re)injection.
+ * @param {{stop?: () => Promise<boolean>, start?: () => Promise<void>}} hooks
+ */
+function setBeeLifecycle(hooks = {}) {
+  beeLifecycle = {
+    stop: typeof hooks.stop === 'function' ? hooks.stop : null,
+    start: typeof hooks.start === 'function' ? hooks.start : null,
+  };
+}
+
 // Cached derived keys (only available when unlocked)
 let derivedKeys = null;
 
@@ -252,6 +270,32 @@ async function getPublisherKey(originIndex) {
 }
 
 /**
+ * Derive a browser Ethereum wallet key by wallet/account index.
+ * Vault must be unlocked. This returns the same key material used by
+ * wallet transaction/message signing without persisting it elsewhere.
+ * @param {number} walletIndex - Wallet account index (0, 1, 2, ...)
+ * @returns {Promise<Object>} { privateKey, publicKey, address, path, accountIndex }
+ */
+async function getUserWalletKey(walletIndex) {
+  if (typeof walletIndex !== 'number' || !Number.isInteger(walletIndex) || walletIndex < 0) {
+    throw new Error('Wallet index must be a non-negative integer');
+  }
+
+  const wallets = await getDerivedWallets();
+  if (!wallets.some((wallet) => wallet.index === walletIndex)) {
+    throw new Error(`Wallet with index ${walletIndex} does not exist`);
+  }
+
+  const identity = await loadIdentityModule();
+  const mnemonic = identity.getMnemonic();
+  if (!mnemonic) {
+    throw new Error('Vault must be unlocked to derive wallet keys');
+  }
+
+  return identity.deriveUserWallet(mnemonic, walletIndex);
+}
+
+/**
  * Check if Bee identity has been injected
  */
 function isBeeIdentityInjected() {
@@ -388,6 +432,110 @@ function getBeeP2pPortForIdentityConfig() {
   throw new Error('Active profile is missing a Bee P2P port');
 }
 
+// On Windows, deleting LevelDB-backed dirs (statestore/localstore) throws
+// EPERM while the node still holds the `LOCK` file open without
+// FILE_SHARE_DELETE (issue #90). Node's own rmSync maxRetries/retryDelay does
+// NOT help here: on Windows an open-handle EPERM is short-circuited by
+// libuv/Node's fixWinEPERM path (which only clears a read-only *attribute*) and
+// never reaches the retry-sleep loop, so it throws immediately. We therefore
+// run our own synchronous retry loop, giving the node a moment to exit and the
+// OS to release the handle. Verified on Windows on ARM against a real Bee node.
+const RM_MAX_ATTEMPTS = 10;
+const RM_RETRY_DELAY_MS = 100;
+
+/**
+ * Block the current thread for `ms` without spinning the event loop.
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Recursively remove a path, retrying on transient Windows lock errors
+ * (EPERM/EBUSY) until the holding process exits and releases the handle.
+ * Returns true if the path existed and was removed.
+ * @param {string} targetPath - Absolute path to remove
+ * @returns {boolean}
+ */
+function removePathWithRetry(targetPath) {
+  if (!fs.existsSync(targetPath)) {
+    return false;
+  }
+  for (let attempt = 1; attempt <= RM_MAX_ATTEMPTS; attempt++) {
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      return true;
+    } catch (err) {
+      const transient = err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'ENOTEMPTY';
+      if (!transient || attempt === RM_MAX_ATTEMPTS) {
+        throw err;
+      }
+      sleepSync(attempt * RM_RETRY_DELAY_MS);
+    }
+  }
+  return true;
+}
+
+/**
+ * Remove Bee's persisted state directories so a freshly injected identity
+ * isn't mixed with state derived from the previous key.
+ * @param {string} dataDir - Bee data directory
+ */
+function removeStaleBeeDirs(dataDir) {
+  const staleDirs = ['statestore', 'localstore', 'kademlia-metrics', 'stamperstore'];
+  for (const dir of staleDirs) {
+    if (removePathWithRetry(path.join(dataDir, dir))) {
+      console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
+    }
+  }
+}
+
+/**
+ * Wipe Bee's stale persisted state ahead of a fresh key injection.
+ *
+ * A running Bee node holds an exclusive LevelDB lock on `statestore`; on Windows
+ * deleting it then fails with EPERM (issue #90). The synchronous retry loop in
+ * removePathWithRetry only helps if the holder exits, so we first stop the node
+ * via the registered lifecycle hook and wait for it to exit, releasing the lock.
+ *
+ * @param {string} dataDir - Bee data directory
+ * @returns {Promise<boolean>} whether Bee was running and was stopped
+ */
+async function wipeStaleBeeState(dataDir) {
+  let beeWasRunning = false;
+  if (beeLifecycle.stop) {
+    try {
+      beeWasRunning = (await beeLifecycle.stop()) === true;
+    } catch (err) {
+      console.warn('[IdentityManager] Bee stop hook failed before wipe:', err.message);
+    }
+  }
+
+  // When re-injecting with a new key, Bee's persisted state (overlay address,
+  // auxiliary keys) becomes invalid. Remove everything except the directories
+  // we're about to write fresh (keys/ and config.yaml).
+  try {
+    removeStaleBeeDirs(dataDir);
+  } catch (err) {
+    if (err.code === 'EPERM' || err.code === 'EBUSY') {
+      throw new Error(
+        'Could not reset node data because it is still in use. ' +
+          'Please close Freedom completely and try again.',
+        { cause: err }
+      );
+    }
+    throw err;
+  }
+  for (const keyFile of ['libp2p_v2.key', 'pss.key']) {
+    if (removePathWithRetry(path.join(dataDir, 'keys', keyFile))) {
+      console.log(`[IdentityManager] Removed old ${keyFile} (password mismatch prevention)`);
+    }
+  }
+
+  return beeWasRunning;
+}
+
 /**
  * Inject Bee identity
  * Generates its own random password for the keystore (stored in config.yaml)
@@ -407,24 +555,8 @@ async function injectBeeIdentity() {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  // When re-injecting with a new key, Bee's persisted state (overlay address,
-  // auxiliary keys) becomes invalid. Remove everything except the directories
-  // we're about to write fresh (keys/ and config.yaml).
-  const staleDirs = ['statestore', 'localstore', 'kademlia-metrics', 'stamperstore'];
-  for (const dir of staleDirs) {
-    const dirPath = path.join(dataDir, dir);
-    if (fs.existsSync(dirPath)) {
-      fs.rmSync(dirPath, { recursive: true });
-      console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
-    }
-  }
-  for (const keyFile of ['libp2p_v2.key', 'pss.key']) {
-    const keyPath = path.join(dataDir, 'keys', keyFile);
-    if (fs.existsSync(keyPath)) {
-      fs.unlinkSync(keyPath);
-      console.log(`[IdentityManager] Removed old ${keyFile} (password mismatch prevention)`);
-    }
-  }
+  // Stop Bee (if running) and wipe its stale state before writing fresh keys.
+  const beeWasRunning = await wipeStaleBeeState(dataDir);
 
   // Generate a random password for the Bee keystore
   // This is separate from the vault password - defense in depth
@@ -442,6 +574,16 @@ async function injectBeeIdentity() {
   );
 
   injectedNodes.bee = true;
+
+  // If we stopped a running node to wipe it, bring it back up with the new
+  // identity so the user isn't left with a silently-stopped node.
+  if (beeWasRunning && beeLifecycle.start) {
+    try {
+      await beeLifecycle.start();
+    } catch (err) {
+      console.warn('[IdentityManager] Bee start hook failed after injection:', err.message);
+    }
+  }
 
   console.log(`[IdentityManager] Bee identity injected: ${derivedKeys.beeWallet.address}`);
   return { address: derivedKeys.beeWallet.address };
@@ -549,9 +691,7 @@ async function injectRadicleIdentity(alias = 'FreedomBrowser') {
   // routing db, etc.) becomes invalid. Remove stale state directories.
   const staleDirs = ['node', 'cobs', 'storage'];
   for (const dir of staleDirs) {
-    const dirPath = path.join(dataDir, dir);
-    if (fs.existsSync(dirPath)) {
-      fs.rmSync(dirPath, { recursive: true });
+    if (removePathWithRetry(path.join(dataDir, dir))) {
       console.log(`[IdentityManager] Removed old ${dir} (identity change)`);
     }
   }
@@ -593,8 +733,11 @@ async function injectAllIdentities(radicleAlias = 'FreedomBrowser', force = fals
     const wasInjected = isBeeIdentityInjected();
     results.bee = await injectBeeIdentity();
     if (wasInjected && force) {
+      // Bee's restart is owned by injectBeeIdentity (via the lifecycle hook),
+      // which stops the lock-holding node before the wipe and starts it again
+      // with the new key. Deliberately NOT added to needsRestart so the
+      // renderer doesn't restart Bee a second time (issue #90).
       results.bee.reinjected = true;
-      results.needsRestart.push('bee');
     }
   } else {
     results.bee = { address: derivedKeys.beeWallet.address, alreadyInjected: true };
@@ -881,6 +1024,19 @@ async function renameDerivedWallet(index, newName) {
   });
 }
 
+function getSwarmPublisherIdentityReferences(walletIndex) {
+  const { getEthereumWalletIdentityReferences } = require('./swarm/feed-store');
+  return getEthereumWalletIdentityReferences(walletIndex);
+}
+
+function formatPublisherIdentityReferenceError(walletIndex, references) {
+  const origins = references.map((reference) => reference.origin);
+  const shownOrigins = origins.slice(0, 3).join(', ');
+  const extraCount = origins.length - 3;
+  const extra = extraCount > 0 ? ` and ${extraCount} more` : '';
+  return `Cannot delete wallet with index ${walletIndex}; it is active or pinned to Swarm feeds for ${shownOrigins}${extra}. Switch the affected publisher identities before deleting this wallet.`;
+}
+
 /**
  * Delete a derived wallet
  * @param {number} index - Wallet index (cannot be 0)
@@ -900,6 +1056,14 @@ async function deleteDerivedWallet(index) {
 
   if (walletIndex === -1) {
     throw new Error(`Wallet with index ${index} does not exist`);
+  }
+
+  const publisherIdentityReferences = getSwarmPublisherIdentityReferences(index);
+  if (publisherIdentityReferences.length > 0) {
+    const err = new Error(formatPublisherIdentityReferenceError(index, publisherIdentityReferences));
+    err.code = 'SWARM_PUBLISHER_IDENTITY_WALLET_IN_USE';
+    err.references = publisherIdentityReferences;
+    throw err;
   }
 
   // Remove from list
@@ -1226,6 +1390,7 @@ module.exports = {
   // Key operations
   getDerivedKeys,
   getPublisherKey,
+  getUserWalletKey,
 
   // Multi-wallet operations
   getDerivedWallets,
@@ -1237,6 +1402,9 @@ module.exports = {
   getActiveWalletAddress,
 
   // Identity injection
+  setBeeLifecycle,
+  removeStaleBeeDirs,
+  wipeStaleBeeState,
   injectBeeIdentity,
   injectIpfsIdentity,
   injectRadicleIdentity,

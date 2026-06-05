@@ -169,6 +169,8 @@ describe('preload', () => {
       [exposures.githubBridge, 'validateUrl', ['https://github.com/openai/project'], IPC.GITHUB_BRIDGE_VALIDATE_URL, ['https://github.com/openai/project']],
       [exposures.githubBridge, 'checkExisting', ['https://github.com/openai/project'], IPC.GITHUB_BRIDGE_CHECK_EXISTING, ['https://github.com/openai/project']],
       [exposures.serviceRegistry, 'getRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
+      [exposures.swarmFeedStore, 'previewAppScopedIdentity', ['origin.eth', { label: 'Draft' }], IPC.SWARM_PREVIEW_APP_SCOPED_IDENTITY, ['origin.eth', { label: 'Draft' }]],
+      [exposures.swarmFeedStore, 'ensureEthereumWalletIdentity', ['origin.eth', 2, { activate: true }], IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY, ['origin.eth', 2, { activate: true }]],
       [exposures.payments, 'getRecent', [{ limit: 10 }], IPC.PAYMENTS_GET_RECENT, [{ limit: 10 }]],
       [exposures.payments, 'getById', [7], IPC.PAYMENTS_GET_BY_ID, [7]],
       [exposures.payments, 'getCount', [{ kind: 'x402' }], IPC.PAYMENTS_GET_COUNT, [{ kind: 'x402' }]],

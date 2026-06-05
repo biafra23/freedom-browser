@@ -879,4 +879,98 @@ describe('bee-manager', () => {
     expect(ctx.spawn).not.toHaveBeenCalled();
     expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node failed to start');
   });
+
+  // Regression guard for issue #90: identity injection must stop a Bee node that
+  // already holds the statestore LevelDB lock before the directory is wiped. A
+  // node that is STARTING (spawned, lock held, health not yet passing) must be
+  // treated as active too, otherwise the wipe hits EPERM on Windows.
+  describe('createBeeLifecycle (issue #90 startup race)', () => {
+    // Without a live process, every state that may still hold the statestore
+    // lock must stop (RUNNING/STARTING/STOPPING/ERROR); only a truly idle
+    // STOPPED node is skipped.
+    test.each([
+      ['running', true],
+      ['starting', true],
+      ['stopping', true],
+      ['error', true],
+      ['stopped', false],
+    ])('stop() with status %s (no live process) stops the node: %s', async (status, expectedActive) => {
+      const ctx = loadBeeManagerModule({ binExists: false });
+      const stopBee = jest.fn().mockResolvedValue(undefined);
+      const lifecycle = ctx.mod.createBeeLifecycle({
+        getStatus: () => ({ status, error: null }),
+        hasLiveProcess: () => false,
+        stopBee,
+        startBee: jest.fn(),
+        setUseInjectedIdentity: jest.fn(),
+      });
+
+      const wasActive = await lifecycle.stop();
+
+      expect(wasActive).toBe(expectedActive);
+      expect(stopBee).toHaveBeenCalledTimes(expectedActive ? 1 : 0);
+    });
+
+    // A live managed process holds the lock regardless of reported status, so a
+    // STOPPED status with a process still alive must be stopped before a wipe.
+    test('stop() stops when a live process exists even if status is STOPPED', async () => {
+      const ctx = loadBeeManagerModule({ binExists: false });
+      const stopBee = jest.fn().mockResolvedValue(undefined);
+      const lifecycle = ctx.mod.createBeeLifecycle({
+        getStatus: () => ({ status: 'stopped', error: null }),
+        hasLiveProcess: () => true,
+        stopBee,
+        startBee: jest.fn(),
+        setUseInjectedIdentity: jest.fn(),
+      });
+
+      const wasActive = await lifecycle.stop();
+
+      expect(wasActive).toBe(true);
+      expect(stopBee).toHaveBeenCalledTimes(1);
+    });
+
+    test('start() flags injected identity then starts the node', async () => {
+      const ctx = loadBeeManagerModule({ binExists: false });
+      const calls = [];
+      const lifecycle = ctx.mod.createBeeLifecycle({
+        getStatus: () => ({ status: 'stopped', error: null }),
+        stopBee: jest.fn(),
+        startBee: jest.fn(() => calls.push('start')),
+        setUseInjectedIdentity: jest.fn(() => calls.push('flag')),
+      });
+
+      await lifecycle.start();
+
+      expect(calls).toEqual(['flag', 'start']);
+    });
+
+    test('stops a real spawned-but-not-yet-running (STARTING) node', async () => {
+      jest.useFakeTimers();
+
+      const ctx = loadBeeManagerModule({
+        beeNodeMode: 'ultraLight',
+        portSequence: [false],
+        // Health never passes, so the node stays in STARTING with its process
+        // (and statestore lock) alive — the exact startup-race window.
+        httpResponse: () => ({ statusCode: 500, body: '' }),
+      });
+
+      await ctx.mod.startBee();
+      await flushMicrotasks();
+
+      expect(ctx.mod.getStatus().status).toBe('starting');
+      expect(ctx.spawnedProcesses).toHaveLength(1);
+
+      const lifecycle = ctx.mod.createBeeLifecycle();
+      const stopPromise = lifecycle.stop();
+      await jest.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+      const wasActive = await stopPromise;
+
+      expect(wasActive).toBe(true);
+      expect(ctx.spawnedProcesses[0].kills).toContain('SIGTERM');
+      expect(ctx.mod.getStatus().status).toBe('stopped');
+    });
+  });
 });

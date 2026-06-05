@@ -2,6 +2,31 @@
 
 All notable changes to Freedom will be documented in this file.
 
+## [0.7.4] - 2026-06-01
+
+### Added
+
+- Native x402 payment support — pay as you browse, straight from the built-in wallet:
+  - Approval card with optional per-origin auto-pay caps
+  - Transparent subresource payments, no x402 SDK required
+  - Payment history at freedom://payments and in the wallet sidebar
+- Swarm publisher identities — pick which identity signs the content you publish:
+  - Use a browser EVM wallet as a publisher identity, alongside the existing app and Bee-node identities
+  - Manage identities and choose one from a selector when publishing
+- `window.swarm` provider gains chunk-level read and write methods for dApps
+
+### Fixed
+
+- Setting up a wallet publisher identity on Windows no longer fails with an EPERM error
+
+### Security
+
+- Updated runtime dependencies:
+  - Electron 41.7.0 to 41.7.1 (Chromium 146.0.7680.216, Node 24.15.0 — same as 41.7.0; Electron-side patches only)
+  - `@corpus-core/colibri-stateless` 1.1.26 to 1.1.28
+- Updated dev dependencies:
+  - `eslint` 10.4.0 to 10.4.1
+
 ## [0.7.3] - 2026-05-26
 
 ### Security

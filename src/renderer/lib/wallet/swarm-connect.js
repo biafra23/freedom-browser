@@ -10,6 +10,11 @@ import { formatBytes } from './wallet-utils.js';
 import { open as openSidebarPanel, isVisible as isSidebarVisible } from '../sidebar.js';
 import { getPermissionKey, getActiveWebview } from '../dapp-provider.js';
 import { showSwarmPermissions } from './permission-manage.js';
+import {
+  BEE_WALLET_IDENTITY_ID,
+  getActivePublisherIdentity,
+  renderPublisherIdentitySelector,
+} from './publisher-identity-selector.js';
 
 // DOM references — connect screen
 let swarmConnectScreen;
@@ -42,12 +47,19 @@ let swarmPublishAutoApproveCheckbox;
 // DOM references — feed approval screen
 let swarmFeedScreen;
 let swarmFeedBackBtn;
+let swarmFeedTitle;
 let swarmFeedSite;
+let swarmFeedWants;
+let swarmFeedDetailLabel;
 let swarmFeedName;
+let swarmFeedIdentityChoice;
+let swarmFeedIdentitySelector;
 let swarmFeedRejectBtn;
 let swarmFeedApproveBtn;
 
 let swarmFeedAutoApproveCheckbox;
+let swarmFeedAutoApproveLabel;
+let swarmFeedWarning;
 
 // DOM references — feed unlock section
 let swarmFeedUnlock;
@@ -62,6 +74,7 @@ let swarmFeedUnlockError;
 let swarmConnectPending = null;
 let swarmPublishPending = null;
 let swarmFeedPending = null;
+let swarmFeedIdentityState = null;
 let currentBannerPermissionKey = null;
 
 export function initSwarmConnect() {
@@ -112,12 +125,19 @@ export function initSwarmConnect() {
 
   swarmFeedScreen = document.getElementById('sidebar-swarm-feed-approve');
   swarmFeedBackBtn = document.getElementById('swarm-feed-back');
+  swarmFeedTitle = document.getElementById('swarm-feed-title');
   swarmFeedSite = document.getElementById('swarm-feed-site');
+  swarmFeedWants = document.getElementById('swarm-feed-wants');
+  swarmFeedDetailLabel = document.getElementById('swarm-feed-detail-label');
   swarmFeedName = document.getElementById('swarm-feed-name');
+  swarmFeedIdentityChoice = document.getElementById('swarm-feed-identity-choice');
+  swarmFeedIdentitySelector = document.getElementById('swarm-feed-identity-selector');
   swarmFeedRejectBtn = document.getElementById('swarm-feed-reject');
   swarmFeedApproveBtn = document.getElementById('swarm-feed-approve');
 
   swarmFeedAutoApproveCheckbox = document.getElementById('swarm-feed-auto-approve');
+  swarmFeedAutoApproveLabel = document.getElementById('swarm-feed-auto-approve-label');
+  swarmFeedWarning = document.getElementById('swarm-feed-warning');
   swarmFeedUnlock = document.getElementById('swarm-feed-unlock');
   swarmFeedTouchIdBtn = document.getElementById('swarm-feed-touchid-btn');
   swarmFeedPasswordLink = document.getElementById('swarm-feed-password-link');
@@ -270,7 +290,7 @@ export async function updateSwarmConnectionBanner(permissionKey = null) {
       if (swarmConnectionSite) {
         swarmConnectionSite.textContent = permissionKey;
       }
-      const hasAutoApprove = permission.autoApprove?.publish || permission.autoApprove?.feeds;
+      const hasAutoApprove = permission.autoApprove?.publish || permission.autoApprove?.feeds || permission.autoApprove?.signing;
       swarmAutoApproveBadge?.classList.toggle('hidden', !hasAutoApprove);
 
       currentBannerPermissionKey = permissionKey;
@@ -341,7 +361,7 @@ function setupSwarmPublishScreen() {
  * Show the per-publish approval prompt.
  * Resolves on "Publish", rejects (code 4001) on "Cancel".
  */
-export function showSwarmPublishApproval(permissionKey, params, resolve, reject) {
+export function showSwarmPublishApproval(permissionKey, params, resolve, reject, method) {
   swarmPublishPending = { permissionKey, resolve, reject };
   if (swarmPublishAutoApproveCheckbox) swarmPublishAutoApproveCheckbox.checked = false;
 
@@ -350,6 +370,7 @@ export function showSwarmPublishApproval(permissionKey, params, resolve, reject)
   }
 
   const isFileMode = Array.isArray(params?.files);
+  const isChunkMode = method === 'swarm_publishChunk';
 
   if (isFileMode) {
     // File mode: show file count, total size, path preview
@@ -376,7 +397,7 @@ export function showSwarmPublishApproval(permissionKey, params, resolve, reject)
   } else {
     // Data mode: show content type, size, optional name
     if (swarmPublishType) {
-      swarmPublishType.textContent = params?.contentType || 'unknown';
+      swarmPublishType.textContent = isChunkMode ? 'Swarm chunk' : (params?.contentType || 'unknown');
     }
     if (swarmPublishSize) {
       const data = params?.data;
@@ -485,30 +506,21 @@ function setupSwarmFeedScreen() {
 
 /**
  * Show the feed access approval prompt.
- * On approval, stores the chosen identity mode and grants feed access.
+ * On approval, establishes or re-grants feed access for the origin.
  */
-export async function showSwarmFeedApproval(permissionKey, params, resolve, reject) {
-  swarmFeedPending = { permissionKey, resolve, reject };
+export async function showSwarmFeedApproval(permissionKey, params, resolve, reject, options = {}) {
+  const autoApproveType = options.autoApproveType === 'signing' ? 'signing' : 'feeds';
+  swarmFeedPending = { permissionKey, resolve, reject, autoApproveType };
+  swarmFeedIdentityState = null;
   if (swarmFeedAutoApproveCheckbox) swarmFeedAutoApproveCheckbox.checked = false;
+
+  applyFeedPromptCopy(options.method, params, autoApproveType);
 
   if (swarmFeedSite) {
     swarmFeedSite.textContent = permissionKey || 'Unknown';
   }
 
-  if (swarmFeedName) {
-    swarmFeedName.textContent = params?.name || params?.feedId || 'unnamed';
-  }
-
-  // Pre-select the stored identity mode when re-granting, default to app-scoped for new origins
-  let defaultMode = 'app-scoped';
-  try {
-    const storedMode = await window.swarmFeedStore?.getIdentityMode?.(permissionKey);
-    if (storedMode) defaultMode = storedMode;
-  } catch {
-    // Non-critical
-  }
-  const defaultRadio = document.querySelector(`input[name="swarm-feed-identity"][value="${defaultMode}"]`);
-  if (defaultRadio) defaultRadio.checked = true;
+  renderFeedIdentitySelector();
 
   // Disable Allow until vault status is confirmed
   if (swarmFeedApproveBtn) swarmFeedApproveBtn.disabled = true;
@@ -523,6 +535,111 @@ export async function showSwarmFeedApproval(permissionKey, params, resolve, reje
   checkFeedUnlockStatus();
 }
 
+function applyFeedPromptCopy(method, params, autoApproveType) {
+  const signing = autoApproveType === 'signing';
+
+  if (swarmFeedTitle) {
+    swarmFeedTitle.textContent = signing ? 'Publisher Signing' : 'Feed Access';
+  }
+  if (swarmFeedWants) {
+    swarmFeedWants.textContent = signing
+      ? 'wants to use your publisher identity'
+      : 'wants to create and manage feeds';
+  }
+  if (swarmFeedDetailLabel) {
+    swarmFeedDetailLabel.textContent = signing ? 'Request' : 'Feed name';
+  }
+  if (swarmFeedName) {
+    swarmFeedName.textContent = signing
+      ? signingRequestLabel(method, params)
+      : (params?.name || params?.feedId || params?.identifier || 'Feed operation');
+  }
+  if (swarmFeedWarning) {
+    swarmFeedWarning.textContent = signing
+      ? 'Publisher signing can create Single Owner Chunks and reveal the active publisher owner for this site.'
+      : 'Feeds provide stable URLs that this app can update over time. Uses your stamps and bandwidth.';
+  }
+  if (swarmFeedAutoApproveLabel) {
+    swarmFeedAutoApproveLabel.textContent = signing
+      ? 'Always allow this site to use this publisher identity without asking'
+      : 'Always allow this site to manage feeds without asking';
+  }
+}
+
+function signingRequestLabel(method, params) {
+  if (method === 'swarm_writeSingleOwnerChunk') {
+    return params?.identifier ? `Single Owner Chunk ${params.identifier}` : 'Single Owner Chunk';
+  }
+  if (method === 'swarm_getSigningIdentity') {
+    return 'Signing identity';
+  }
+  return 'Publisher signing';
+}
+
+function renderFeedIdentitySelector() {
+  swarmFeedIdentityChoice?.classList.remove('hidden');
+  renderPublisherIdentitySelector(swarmFeedIdentitySelector, swarmFeedIdentityState, {
+    onSelect: (identity) => activateFeedPromptIdentity(identity),
+    onCreateAppScoped: () => createFeedPromptIdentity(),
+  });
+}
+
+async function refreshFeedIdentitySelector() {
+  if (!swarmFeedPending?.permissionKey) return;
+  try {
+    swarmFeedIdentityState = await loadFeedIdentityState(swarmFeedPending.permissionKey);
+    renderFeedIdentitySelector();
+  } catch (err) {
+    console.error('[SwarmConnect] Failed to load publisher identities:', err);
+    showFeedUnlockError(err.message || 'Failed to load publisher identities');
+  }
+}
+
+async function loadFeedIdentityState(permissionKey) {
+  let state = await window.swarmFeedStore.getOriginIdentities(permissionKey);
+  if (!state?.activeIdentityId) {
+    const preview = await window.swarmFeedStore.previewAppScopedIdentity(permissionKey);
+    state = addOrReplaceIdentity(state, preview);
+    state.activeIdentityId = preview.id;
+  }
+  return state;
+}
+
+async function activateFeedPromptIdentity(identity) {
+  if (!swarmFeedPending?.permissionKey || !identity) return;
+  if (identity.id === swarmFeedIdentityState?.activeIdentityId) return;
+
+  swarmFeedIdentityState = {
+    ...swarmFeedIdentityState,
+    activeIdentityId: identity.id,
+    identities: addOrReplaceIdentity(swarmFeedIdentityState, identity).identities,
+  };
+  renderFeedIdentitySelector();
+}
+
+async function createFeedPromptIdentity() {
+  if (!swarmFeedPending?.permissionKey) return;
+  const { permissionKey } = swarmFeedPending;
+  try {
+    const preview = await window.swarmFeedStore.previewAppScopedIdentity(permissionKey);
+    swarmFeedIdentityState = addOrReplaceIdentity(swarmFeedIdentityState, preview);
+    swarmFeedIdentityState.activeIdentityId = preview.id;
+    renderFeedIdentitySelector();
+  } catch (err) {
+    console.error('[SwarmConnect] Failed to preview publisher identity:', err);
+    showFeedUnlockError(err.message || 'Failed to preview publisher identity');
+  }
+}
+
+function addOrReplaceIdentity(state, identity) {
+  const identities = (state?.identities || []).filter((candidate) => candidate.id !== identity.id);
+  identities.push(identity);
+  return {
+    ...(state || {}),
+    identities,
+  };
+}
+
 async function checkFeedUnlockStatus() {
   try {
     const status = await window.identity.getStatus();
@@ -530,6 +647,7 @@ async function checkFeedUnlockStatus() {
     if (status.isUnlocked) {
       swarmFeedUnlock?.classList.add('hidden');
       if (swarmFeedApproveBtn) swarmFeedApproveBtn.disabled = false;
+      await refreshFeedIdentitySelector();
       return;
     }
 
@@ -581,6 +699,7 @@ async function handleFeedTouchIdUnlock() {
     swarmFeedUnlock?.classList.add('hidden');
     if (swarmFeedApproveBtn) swarmFeedApproveBtn.disabled = false;
     hideFeedUnlockError();
+    await refreshFeedIdentitySelector();
   } catch (err) {
     console.error('[SwarmConnect] Feed Touch ID unlock failed:', err);
     if (err.message !== 'Touch ID cancelled') {
@@ -603,6 +722,7 @@ async function handleFeedPasswordUnlock() {
     if (swarmFeedApproveBtn) swarmFeedApproveBtn.disabled = false;
     if (swarmFeedPasswordInput) swarmFeedPasswordInput.value = '';
     hideFeedUnlockError();
+    await refreshFeedIdentitySelector();
   } catch (err) {
     console.error('[SwarmConnect] Feed password unlock failed:', err);
     showFeedUnlockError(err.message || 'Failed to unlock');
@@ -627,6 +747,8 @@ function closeSwarmFeedApproval() {
   swarmFeedScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   swarmFeedPending = null;
+  swarmFeedIdentityState = null;
+  if (swarmFeedIdentitySelector) swarmFeedIdentitySelector.innerHTML = '';
   // Reset unlock state
   if (swarmFeedPasswordInput) swarmFeedPasswordInput.value = '';
   hideFeedUnlockError();
@@ -635,25 +757,52 @@ function closeSwarmFeedApproval() {
 async function approveSwarmFeed() {
   if (!swarmFeedPending) return;
 
-  const { permissionKey, resolve, reject } = swarmFeedPending;
-
-  const selectedRadio = document.querySelector('input[name="swarm-feed-identity"]:checked');
-  const identityMode = selectedRadio?.value || 'app-scoped';
+  const { permissionKey, resolve, reject, autoApproveType } = swarmFeedPending;
 
   try {
-    await window.swarmFeedStore.setFeedIdentity(permissionKey, identityMode);
+    if (!swarmFeedIdentityState?.activeIdentityId) {
+      swarmFeedIdentityState = await loadFeedIdentityState(permissionKey);
+    }
+    const activeIdentity = getActivePublisherIdentity(swarmFeedIdentityState);
+    const entry = await persistFeedPromptIdentity(permissionKey, activeIdentity);
+    const effectiveMode = entry?.identityMode || activeIdentity?.mode || 'app-scoped';
 
     if (swarmFeedAutoApproveCheckbox?.checked && permissionKey) {
-      await window.swarmPermissions.setAutoApprove(permissionKey, 'feeds', true);
-      console.log('[SwarmConnect] Auto-approve feeds enabled for:', permissionKey);
+      await window.swarmPermissions.setAutoApprove(permissionKey, autoApproveType, true);
+      console.log(`[SwarmConnect] Auto-approve ${autoApproveType} enabled for:`, permissionKey);
     }
 
     resolve();
-    console.log('[SwarmConnect] Feed access approved:', permissionKey, 'mode:', identityMode);
+    console.log('[SwarmConnect] Feed access approved:', permissionKey, 'mode:', effectiveMode);
   } catch (err) {
     console.error('[SwarmConnect] Failed to set feed identity:', err);
     reject({ code: -32603, message: err.message || 'Failed to set feed identity' });
   }
+}
+
+async function persistFeedPromptIdentity(permissionKey, identity) {
+  if (!identity) {
+    throw new Error('No publisher identity selected');
+  }
+
+  if (identity.id === BEE_WALLET_IDENTITY_ID) {
+    await window.swarmFeedStore.ensureBeeWalletIdentity(permissionKey, { activate: true });
+  } else if (identity.mode === 'ethereum-wallet') {
+    await window.swarmFeedStore.ensureEthereumWalletIdentity(
+      permissionKey,
+      identity.walletIndex,
+      { activate: true }
+    );
+  } else if (identity.mode === 'app-scoped' && identity.stored === false) {
+    await window.swarmFeedStore.createAppScopedIdentity(permissionKey, {
+      activate: true,
+      label: identity.label,
+    });
+  } else {
+    await window.swarmFeedStore.activateFeedIdentity(permissionKey, identity.id);
+  }
+
+  return window.swarmFeedStore.setFeedIdentity(permissionKey, identity.mode);
 }
 
 function rejectSwarmFeed() {

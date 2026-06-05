@@ -39,6 +39,8 @@ const {
   revokePermission,
   getAllPermissions,
   updateLastUsed,
+  getAutoApprove,
+  setAutoApprove,
   registerSwarmPermissionsIpc,
   _resetCache,
 } = require('./swarm-permissions');
@@ -59,8 +61,19 @@ describe('swarm-permissions', () => {
         origin: 'myapp.eth',
         connectedAt: expect.any(Number),
         lastUsed: expect.any(Number),
-        autoApprove: { publish: false, feeds: false },
+        autoApprove: { publish: false, feeds: false, signing: false },
       });
+    });
+
+    test('supports signing auto-approve separately from feeds', () => {
+      grantPermission('myapp.eth');
+
+      expect(getAutoApprove('myapp.eth', 'feeds')).toBe(false);
+      expect(getAutoApprove('myapp.eth', 'signing')).toBe(false);
+
+      expect(setAutoApprove('myapp.eth', 'signing', true)).toBe(true);
+      expect(getAutoApprove('myapp.eth', 'feeds')).toBe(false);
+      expect(getAutoApprove('myapp.eth', 'signing')).toBe(true);
     });
 
     test('getPermission returns entry after grant', () => {

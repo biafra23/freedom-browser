@@ -6,7 +6,7 @@
  * permissions consume storage/bandwidth, wallet permissions expose accounts.
  *
  * Permissions are persisted to disk. Schema per origin:
- *   { origin, connectedAt, lastUsed, autoApprove: { publish: false, feeds: false } }
+ *   { origin, connectedAt, lastUsed, autoApprove: { publish: false, feeds: false, signing: false } }
  */
 
 const { app, ipcMain } = require('electron');
@@ -137,8 +137,8 @@ function updateLastUsed(origin) {
   return false;
 }
 
-const VALID_AUTO_APPROVE_TYPES = new Set(['publish', 'feeds']);
-const DEFAULT_AUTO_APPROVE = () => ({ publish: false, feeds: false });
+const VALID_AUTO_APPROVE_TYPES = new Set(['publish', 'feeds', 'signing']);
+const DEFAULT_AUTO_APPROVE = () => ({ publish: false, feeds: false, signing: false });
 
 /**
  * Check if an auto-approve type is enabled for an origin.

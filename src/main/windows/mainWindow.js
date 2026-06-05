@@ -27,10 +27,16 @@ function getIconPath() {
 function createMainWindow(initialUrl = null) {
   const isMac = process.platform === 'darwin';
 
+  // Headless E2E: keep the window hidden so a local test run doesn't pop a
+  // window or steal focus. The renderer still loads and is fully driveable via
+  // Playwright (DOM/JS), it just never paints to screen.
+  const hideWindow = process.env.FREEDOM_TEST_HIDE_WINDOW === '1';
+
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'Freedom',
+    show: !hideWindow,
     backgroundColor: '#1f2020',
     // Set icon for Linux/Windows (macOS uses the app bundle icon)
     // Also hide the menu bar on Windows/Linux

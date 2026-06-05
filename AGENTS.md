@@ -23,5 +23,6 @@ Before executing task-specific work, read the corresponding playbook:
 - Changelog updates *(version bumps, release prep)*: `docs/agent-playbooks/changelog-process.md`
 - Cutting a release *(release branch, version bump, tag, build, publish)*: `docs/agent-playbooks/release-process.md`
 - Security checklist *(before commit or PR)*: `docs/agent-playbooks/security-checklist.md`
+- Windows build in a UTM VM *(building/running a native Windows build on macOS for testing)*: `docs/agent-playbooks/windows-utm-build.md`
 
 If multiple categories apply, read all relevant playbooks.

@@ -5,12 +5,23 @@ const { execSync } = require('child_process');
 
 const OUTPUT_DIR = path.join(__dirname, '..', 'bee-bin');
 
-async function fetchLatestRelease() {
+function fetchReleaseOnce() {
   return new Promise((resolve, reject) => {
+    // Authenticate when a token is available (e.g. GITHUB_TOKEN in CI) to lift
+    // the 60 req/hour unauthenticated limit that shared runner IPs often hit.
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const headers = {
+      'User-Agent': 'Freedom-Updater',
+      Accept: 'application/vnd.github+json',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
     const options = {
       hostname: 'api.github.com',
       path: '/repos/ethersphere/bee/releases/latest',
-      headers: { 'User-Agent': 'Freedom-Updater' },
+      headers,
     };
 
     https
@@ -29,26 +40,82 @@ async function fetchLatestRelease() {
   });
 }
 
-async function downloadFile(url, dest) {
-  console.log(`Downloading ${url} to ${dest}...`);
+async function fetchLatestRelease() {
+  const maxAttempts = 4;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetchReleaseOnce();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * attempt;
+        console.warn(
+          `Release fetch attempt ${attempt} failed (${err.message}); retrying in ${delayMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// Abort a stalled request instead of letting it hang until the CI job-level
+// timeout (a hung binary download can otherwise burn a whole e2e job).
+const REQUEST_TIMEOUT_MS = 60000;
+
+function downloadFileOnce(url, dest) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    https
+    const fail = (err) => {
+      file.close();
+      fs.unlink(dest, () => reject(err));
+    };
+    const req = https
       .get(url, { headers: { 'User-Agent': 'Freedom-Updater' } }, (response) => {
         if (response.statusCode === 302 || response.statusCode === 301) {
-          downloadFile(response.headers.location, dest).then(resolve).catch(reject);
+          file.close();
+          fs.unlink(dest, () => {
+            downloadFileOnce(response.headers.location, dest).then(resolve).catch(reject);
+          });
+          return;
+        }
+        if (response.statusCode !== 200) {
+          fail(new Error(`HTTP ${response.statusCode} for ${url}`));
           return;
         }
         response.pipe(file);
         file.on('finish', () => {
           file.close(resolve);
         });
+        file.on('error', fail);
       })
-      .on('error', (err) => {
-        fs.unlink(dest, () => {});
-        reject(err);
-      });
+      .on('error', fail);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`Download timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`));
+    });
   });
+}
+
+async function downloadFile(url, dest) {
+  console.log(`Downloading ${url} to ${dest}...`);
+  const maxAttempts = 4;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await downloadFileOnce(url, dest);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * attempt;
+        console.warn(
+          `Download attempt ${attempt} failed (${err.message}); retrying in ${delayMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 async function main() {

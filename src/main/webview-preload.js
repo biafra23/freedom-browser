@@ -584,11 +584,19 @@ try {
           return new Promise((resolve, reject) => {
             pendingRequests.set(id, { resolve, reject });
             window.postMessage({ type: 'FREEDOM_SWARM_REQUEST', id, method, params: params || {} }, '*');
-            const timeout = (method.startsWith('swarm_publish') || method === 'swarm_writeFeedEntry' || method === 'swarm_updateFeed') ? 300000 : 60000;
+            const longRunning = method.startsWith('swarm_publish') ||
+              method === 'swarm_createFeed' ||
+              method === 'swarm_updateFeed' ||
+              method === 'swarm_writeFeedEntry' ||
+              method === 'swarm_writeSingleOwnerChunk' ||
+              method === 'swarm_getSigningIdentity';
+            const timeout = longRunning ? 300000 : 60000;
             setTimeout(() => {
               if (pendingRequests.has(id)) {
                 pendingRequests.delete(id);
-                reject(new Error('Request timed out'));
+                const err = new Error('Request timed out');
+                err.code = -32603;
+                reject(err);
               }
             }, timeout);
           });
@@ -604,6 +612,11 @@ try {
         writeFeedEntry(params) { return this.request({ method: 'swarm_writeFeedEntry', params: params }); },
         readFeedEntry(params) { return this.request({ method: 'swarm_readFeedEntry', params: params }); },
         listFeeds() { return this.request({ method: 'swarm_listFeeds' }); },
+        publishChunk(params) { return this.request({ method: 'swarm_publishChunk', params: params }); },
+        readChunk(params) { return this.request({ method: 'swarm_readChunk', params: params }); },
+        writeSingleOwnerChunk(params) { return this.request({ method: 'swarm_writeSingleOwnerChunk', params: params }); },
+        readSingleOwnerChunk(params) { return this.request({ method: 'swarm_readSingleOwnerChunk', params: params }); },
+        getSigningIdentity() { return this.request({ method: 'swarm_getSigningIdentity' }); },
 
         on(event, handler) { if (eventListeners[event]) eventListeners[event].push(handler); return this; },
         removeListener(event, handler) {
@@ -614,7 +627,11 @@ try {
           return this;
         },
         addListener(event, handler) { return this.on(event, handler); },
-        removeAllListeners(event) { if (event && eventListeners[event]) eventListeners[event] = []; return this; },
+        removeAllListeners(event) {
+          if (event && eventListeners[event]) eventListeners[event] = [];
+          if (!event) Object.keys(eventListeners).forEach((key) => { eventListeners[key] = []; });
+          return this;
+        },
       };
 
       window.addEventListener('message', function(event) {

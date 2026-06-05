@@ -5,10 +5,18 @@
  * Accessible by clicking the connection banner info area.
  */
 
-import { walletState, hideAllSubscreens } from './wallet-state.js';
+import { walletState, hideAllSubscreens, registerScreenHider } from './wallet-state.js';
 import { open as openSidebarPanel } from '../sidebar.js';
 import { updateConnectionBanner, disconnectDapp } from './dapp-connect.js';
 import { updateSwarmConnectionBanner, disconnectSwarmApp } from './swarm-connect.js';
+import { showVaultUnlock } from './vault-unlock.js';
+import { showPublisherIdentityCreate } from './publisher-identity-create.js';
+import {
+  BEE_WALLET_IDENTITY_ID,
+  getActivePublisherIdentity,
+  identityLabel,
+  renderPublisherIdentitySelector,
+} from './publisher-identity-selector.js';
 import { updateX402ConnectionBanner, disconnectX402 } from './dapp-x402.js';
 import { formatRawTokenBalance, toAtomicUnits, X402_WINDOW_OPTIONS } from './wallet-utils.js';
 
@@ -27,8 +35,12 @@ let swarmPermsBack;
 let swarmPermsSite;
 let swarmPermsPublishToggle;
 let swarmPermsFeedsToggle;
+let swarmPermsSigningToggle;
+let swarmPermsIdentitySelector;
+let swarmPermsIdentityNote;
 let swarmPermsDisconnect;
 let swarmPermsKey = null;
+let swarmPermsIdentityState = null;
 
 // x402 permission management
 let x402PermsScreen;
@@ -54,6 +66,7 @@ export function initPermissionManage() {
 
   dappPermsBack?.addEventListener('click', closeDappPerms);
   dappPermsDisconnect?.addEventListener('click', handleDappDisconnect);
+  registerScreenHider(() => closeDappPerms());
   dappPermsSigningToggle?.addEventListener('change', async () => {
     if (dappPermsKey) {
       await window.dappPermissions.setSigningAutoApprove(dappPermsKey, dappPermsSigningToggle.checked);
@@ -67,10 +80,14 @@ export function initPermissionManage() {
   swarmPermsSite = document.getElementById('swarm-perms-site');
   swarmPermsPublishToggle = document.getElementById('swarm-perms-publish-toggle');
   swarmPermsFeedsToggle = document.getElementById('swarm-perms-feeds-toggle');
+  swarmPermsSigningToggle = document.getElementById('swarm-perms-signing-toggle');
+  swarmPermsIdentitySelector = document.getElementById('swarm-perms-identity-selector');
+  swarmPermsIdentityNote = document.getElementById('swarm-perms-identity-note');
   swarmPermsDisconnect = document.getElementById('swarm-perms-disconnect');
 
   swarmPermsBack?.addEventListener('click', closeSwarmPerms);
   swarmPermsDisconnect?.addEventListener('click', handleSwarmDisconnect);
+  registerScreenHider(() => closeSwarmPerms());
   swarmPermsPublishToggle?.addEventListener('change', async () => {
     if (swarmPermsKey) {
       await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'publish', swarmPermsPublishToggle.checked);
@@ -80,6 +97,12 @@ export function initPermissionManage() {
   swarmPermsFeedsToggle?.addEventListener('change', async () => {
     if (swarmPermsKey) {
       await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'feeds', swarmPermsFeedsToggle.checked);
+      updateSwarmConnectionBanner(swarmPermsKey);
+    }
+  });
+  swarmPermsSigningToggle?.addEventListener('change', async () => {
+    if (swarmPermsKey) {
+      await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'signing', swarmPermsSigningToggle.checked);
       updateSwarmConnectionBanner(swarmPermsKey);
     }
   });
@@ -94,14 +117,16 @@ export function initPermissionManage() {
 
   x402PermsBack?.addEventListener('click', closeX402Perms);
   x402PermsRevokeAll?.addEventListener('click', handleX402RevokeAll);
+  registerScreenHider(() => closeX402Perms());
 }
 
 export async function showDappPermissions(permissionKey) {
-  dappPermsKey = permissionKey;
-  if (dappPermsSite) dappPermsSite.textContent = permissionKey;
-
   const permission = await window.dappPermissions.getPermission(permissionKey);
   if (!permission) return;
+
+  hideAllSubscreens();
+  dappPermsKey = permissionKey;
+  if (dappPermsSite) dappPermsSite.textContent = permissionKey;
 
   if (dappPermsSigningToggle) {
     dappPermsSigningToggle.checked = permission.autoApprove?.signing === true;
@@ -109,7 +134,6 @@ export async function showDappPermissions(permissionKey) {
 
   renderTxRules(permission.autoApprove?.transactions || []);
 
-  hideAllSubscreens();
   walletState.identityView?.classList.add('hidden');
   dappPermsScreen?.classList.remove('hidden');
   openSidebarPanel();
@@ -166,7 +190,7 @@ function renderTxRules(rules) {
   }
 }
 
-function closeDappPerms() {
+export function closeDappPerms() {
   dappPermsScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   dappPermsKey = null;
@@ -178,12 +202,18 @@ async function handleDappDisconnect() {
   closeDappPerms();
 }
 
-export async function showSwarmPermissions(permissionKey) {
-  swarmPermsKey = permissionKey;
-  if (swarmPermsSite) swarmPermsSite.textContent = permissionKey;
-
+export async function showSwarmPermissions(permissionKey, options = {}) {
   const permission = await window.swarmPermissions.getPermission(permissionKey);
   if (!permission) return;
+
+  const unlocked = await ensurePublisherIdentityUnlocked(permissionKey);
+  if (!unlocked) {
+    return;
+  }
+
+  hideAllSubscreens();
+  swarmPermsKey = permissionKey;
+  if (swarmPermsSite) swarmPermsSite.textContent = permissionKey;
 
   if (swarmPermsPublishToggle) {
     swarmPermsPublishToggle.checked = permission.autoApprove?.publish === true;
@@ -191,17 +221,30 @@ export async function showSwarmPermissions(permissionKey) {
   if (swarmPermsFeedsToggle) {
     swarmPermsFeedsToggle.checked = permission.autoApprove?.feeds === true;
   }
+  if (swarmPermsSigningToggle) {
+    swarmPermsSigningToggle.checked = permission.autoApprove?.signing === true;
+  }
+  await refreshSwarmIdentitySection();
 
-  hideAllSubscreens();
   walletState.identityView?.classList.add('hidden');
   swarmPermsScreen?.classList.remove('hidden');
   openSidebarPanel();
+
+  if (options.focusIdentity) {
+    document.getElementById('swarm-perms-identity-section')?.scrollIntoView({ block: 'nearest' });
+  }
 }
 
-function closeSwarmPerms() {
+export function closeSwarmPerms() {
   swarmPermsScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   swarmPermsKey = null;
+  swarmPermsIdentityState = null;
+  if (swarmPermsIdentitySelector) swarmPermsIdentitySelector.innerHTML = '';
+  if (swarmPermsIdentityNote) {
+    swarmPermsIdentityNote.textContent = '';
+    swarmPermsIdentityNote.classList.add('hidden');
+  }
 }
 
 async function handleSwarmDisconnect() {
@@ -210,14 +253,102 @@ async function handleSwarmDisconnect() {
   closeSwarmPerms();
 }
 
+async function ensurePublisherIdentityUnlocked(permissionKey) {
+  try {
+    const status = await window.identity.getStatus();
+    if (status.isUnlocked) return true;
+    await showVaultUnlock(permissionKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshSwarmIdentitySection(note = '') {
+  if (!swarmPermsKey) return;
+  try {
+    swarmPermsIdentityState = await loadOrCreateIdentityState(swarmPermsKey);
+  } catch (err) {
+    console.error('[PermissionManage] Failed to load Swarm identities:', err);
+    swarmPermsIdentityState = null;
+  }
+  renderSwarmIdentitySection(note);
+}
+
+async function loadOrCreateIdentityState(origin) {
+  let state = await window.swarmFeedStore.getOriginIdentities(origin);
+  if (!state?.activeIdentityId) {
+    state = await window.swarmFeedStore.createAppScopedIdentity(origin);
+  }
+  return state;
+}
+
+function renderSwarmIdentitySection(note) {
+  renderPublisherIdentitySelector(swarmPermsIdentitySelector, swarmPermsIdentityState, {
+    onSelect: (identity) => activateSwarmIdentity(identity),
+    onCreateAppScoped: () => createSwarmAppScopedIdentity(),
+  });
+
+  if (swarmPermsIdentityNote) {
+    swarmPermsIdentityNote.textContent = note;
+    swarmPermsIdentityNote.classList.toggle('hidden', !note);
+  }
+}
+
+async function disableFeedAutoApprove() {
+  if (!swarmPermsKey) return;
+  await window.swarmPermissions.setAutoApprove(swarmPermsKey, 'feeds', false);
+  if (swarmPermsFeedsToggle) swarmPermsFeedsToggle.checked = false;
+  updateSwarmConnectionBanner(swarmPermsKey);
+}
+
+async function activateSwarmIdentity(identity) {
+  if (!swarmPermsKey || !identity) return;
+  if (identity.id === swarmPermsIdentityState?.activeIdentityId) return;
+
+  if (identity.id === BEE_WALLET_IDENTITY_ID) {
+    swarmPermsIdentityState = await window.swarmFeedStore.ensureBeeWalletIdentity(swarmPermsKey, { activate: true });
+  } else if (identity.mode === 'ethereum-wallet') {
+    swarmPermsIdentityState = await window.swarmFeedStore.ensureEthereumWalletIdentity(
+      swarmPermsKey,
+      identity.walletIndex,
+      { activate: true }
+    );
+  } else {
+    swarmPermsIdentityState = await window.swarmFeedStore.activateFeedIdentity(swarmPermsKey, identity.id);
+  }
+  await disableFeedAutoApprove();
+  renderSwarmIdentitySection(`${identityLabel(getActivePublisherIdentity(swarmPermsIdentityState))} is now active. Feed auto-approve was turned off.`);
+}
+
+async function createSwarmAppScopedIdentity() {
+  if (!swarmPermsKey) return;
+  swarmPermsScreen?.classList.add('hidden');
+  try {
+    const state = await showPublisherIdentityCreate(swarmPermsKey);
+    swarmPermsScreen?.classList.remove('hidden');
+    if (state) {
+      swarmPermsIdentityState = state;
+      await disableFeedAutoApprove();
+      renderSwarmIdentitySection(`${identityLabel(getActivePublisherIdentity(state))} was created and selected. Feed auto-approve was turned off.`);
+    } else {
+      await refreshSwarmIdentitySection();
+    }
+  } catch (err) {
+    console.error('[PermissionManage] Publisher identity creation dismissed:', err);
+    closeSwarmPerms();
+  }
+}
+
 export async function showX402Permissions(originKey) {
+  hideAllSubscreens();
+
   x402PermsKey = originKey;
   if (x402PermsSite) x402PermsSite.textContent = originKey;
   setX402PermsError('');
 
   await renderX402Permissions();
 
-  hideAllSubscreens();
   walletState.identityView?.classList.add('hidden');
   x402PermsScreen?.classList.remove('hidden');
   openSidebarPanel();
@@ -460,7 +591,7 @@ function setX402PermsError(message) {
   x402PermsError.classList.toggle('hidden', !message);
 }
 
-function closeX402Perms() {
+export function closeX402Perms() {
   x402PermsScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
   x402PermsKey = null;
