@@ -10,18 +10,16 @@ tooling. The user-facing headline is **"bee replaced by ant"** — this is
 a deliberate rebrand, not a hidden swap. So we keep the bee-compatible
 *protocol* and rename everything *presentational*.
 
-The key idea is three concentric rings (Section 5): an immutable
+The key idea is three concentric rings (Section 3): an immutable
 protocol core that stays bee-shaped, a presentation ring that becomes
 "Ant" (this delivers the headline), and an internal-identifier ring we
 rename for consistency with care around migrations.
 
-> Status of the Ant side: the bee-shaped HTTP API, CORS (`null` origin),
-> bee YAML config parsing, Web3-v3 `keys/swarm.key` decryption, graceful
-> SIGTERM, and the on-chain publish flow (buy/topup/dilute stamps,
-> wallet/chequebook, `/status`, `/chainstate`) are implemented and the
-> chain write paths have been validated live on Gnosis mainnet. The one
-> remaining hard blocker is CLI-shape compatibility (`start` / `init`
-> subcommands) — see Track A.
+> Scope: this document covers only the **Freedom-side** work (the rings
+> model, the rebrand, the fetch tooling, and migrations). All `antd`-side
+> changes — bee-compatible HTTP API, CLI shape, binary publishing, runtime
+> postage, chequebook bootstrap, visible-peers reporting — are tracked solely
+> upstream in the Ant project, the single source of truth for Ant.
 
 ---
 
@@ -44,96 +42,29 @@ All of this is what a drop-in must satisfy. References are to this repo.
 | Identity injection | `src/main/identity/injection.js` + `formats.js` | `keys/swarm.key` = `ethers` `Wallet.encrypt()` → standard **v3 keystore** (scrypt, AES‑128‑CTR, lowercase `crypto`). Password is written into the config. `setUseInjectedIdentity(true)` makes bee‑manager skip `init`. |
 | Shutdown | `stopBee()` | `SIGTERM`, then `SIGKILL` after **5 s**. |
 
-### What Ant already satisfies
-- bee HTTP API surface used by `bee-js` (upload/download/feeds/stamps/status…).
-- `GET /health` shape (`{status, version, apiVersion}`), `200`.
-- `cors-allowed-origins: "null"` and `"*"`.
-- bee YAML keys above (unknown keys accepted + ignored).
-- `keys/swarm.key` v3 keystore decode (ethers output: lowercase `crypto`, scrypt, AES‑128‑CTR) using the config `password`.
-- Graceful `SIGTERM` well under the 5 s force-kill window.
-- On-chain publish flow (validated live on Gnosis).
+This is the contract a drop-in must satisfy. Whether/how `antd` meets each
+row — HTTP API surface, `/health` shape, CORS, YAML keys, `keys/swarm.key`
+decode, graceful `SIGTERM`, on-chain publish flow — is tracked upstream in the
+Ant project.
 
 ---
 
-## 2. Gaps that block a clean swap (fix on the Ant side)
+## 2. Ant-side prerequisites (tracked upstream in the Ant project)
 
-1. **CLI subcommands — hard blocker.** `antd` is flag-only; it rejects
-   `start` and `init` (`error: unexpected argument 'start' found`).
-   Freedom spawns `bee start --config=…` and `bee init --config=…`. Ant
-   must accept both. See Track A.
-2. **`resolver-options` (ENS).** bee can resolve ENS names for `bzz://`.
-   Confirm Freedom resolves ENS itself (`src/main/ens-resolver.js`,
-   `ens-prefetch.js`) and doesn't rely on the node's `resolver-options`;
-   if it does, Ant needs an equivalent or Freedom must always resolve
-   client-side. **Action: verify before GA.**
-3. **Release build required.** The injected keystore uses scrypt
-   `n=131072`; decryption is fast in a `--release` build but multiple
-   seconds in `debug`. Ship release binaries only.
-4. **`init` must produce the exact keystore Freedom expects when *not*
-   injecting** (dev/fallback path): write `keys/swarm.key` as a v3
-   keystore encrypted with the config `password`, then exit `0`. When a
-   key is already injected, `init` is a successful no-op.
+The changes that make `antd` a clean drop-in target — CLI compatibility
+(`start`/`init`/bare-flag), per-platform binary publishing with `SHA256SUMS`,
+the dev/fallback keystore-writing `init`, runtime postage management,
+chequebook auto-bootstrap, and visible-peers reporting — are **not** owned by
+this repo. They are tracked, with status, upstream in the Ant project.
+
+One item needs a Freedom-side check rather than an Ant change: **ENS.**
+Confirm Freedom resolves ENS itself (`src/main/ens-resolver.js`,
+`ens-prefetch.js`) and never relies on the node's `resolver-options`. Verify
+before GA.
 
 ---
 
-## 3. Track A — make `antd` CLI-compatible
-
-Add a `clap` subcommand layer while keeping today's bare-flag invocation
-working (back-compat for our own tooling/tests):
-
-- `antd start [--config <f>] [flags…]` → run the node (current default).
-- `antd init  [--config <f>] [--password / --password-file]` →
-  - if `keys/swarm.key` exists (injected): log + exit `0`;
-  - else generate a secp256k1 key, write it as a v3 keystore at
-    `<data-dir>/keys/swarm.key` encrypted with the resolved password,
-    and exit `0`.
-- Bare `antd [flags…]` (no subcommand) → behaves like `start` (so our
-  systemd units and the live-test harness are unaffected).
-
-Acceptance: `antd start --config X` boots and serves `/health`;
-`antd init --config X` writes a keystore (or no-ops) and exits `0`;
-`antd --version` prints the deployed version.
-
----
-
-## 4. Track B — build & publish Ant binaries ("upload binaries somewhere")
-
-Yes — publish prebuilt, release-mode `antd` binaries per platform so
-Freedom can fetch them exactly like it fetches bee.
-
-**Targets** (mirror `fetch-bee.js`):
-
-| os-arch | rust target | how |
-|---|---|---|
-| `linux-x64` | `x86_64-unknown-linux-gnu` (or `-musl`) | native / `cargo-zigbuild` |
-| `linux-arm64` | `aarch64-unknown-linux-gnu` | `cross` / zigbuild |
-| `mac-x64` | `x86_64-apple-darwin` | macOS runner |
-| `mac-arm64` | `aarch64-apple-darwin` | macOS runner |
-| `win-x64` | `x86_64-pc-windows-gnu`/`-msvc` | windows runner / `cross` |
-| `win-arm64` | (copy x64, emulation) | mirror bee's fallback |
-
-**Packaging & naming.** Produce one archive per target whose name
-contains os+arch keywords a fetch script can match (e.g.
-`antd-<version>-<os>-<arch>.tar.gz` / `.zip`), each containing a single
-binary. Because we are **surfacing the Ant name**, ship the binary as
-`antd`/`antd.exe` (not `bee`) and have Freedom's tooling install it into
-an `ant-bin/<os>-<arch>/` tree. (See Ring 2 in Section 5 — the binary
-name and its directory are part of the rename.)
-
-**Where to upload.** Simplest is **GitHub Releases on the `ant` repo**
-(the existing fetch script already speaks the GitHub releases API):
-tag = the deployed version, attach the 5 archives + a `SHA256SUMS` file.
-Alternatives: any HTTPS/CDN, or Swarm itself (bootstrap chicken-and-egg
-— avoid for the bundled fetch). **Always publish checksums** and verify
-them on download.
-
-**CI.** Add a release workflow (build matrix → archive → checksum →
-create GitHub Release). macOS targets need a macOS runner; Linux/Windows
-can cross-compile.
-
----
-
-## 5. Track C — the rebrand: rename rings ("bee replaced by ant")
+## 3. Track C — the rebrand: rename rings ("bee replaced by ant")
 
 Surfacing the Ant name touches ~1,700 `bee` references across the repo,
 but they are **not equal**. Sort every occurrence into one of three
@@ -233,23 +164,21 @@ headline lands:
 
 ---
 
-## 6. Validation / acceptance checklist
+## 4. Validation / acceptance checklist
 
-- `bee init --config <f>`: writes `keys/swarm.key` (or no-ops when
-  injected) and exits `0`.
-- `bee start --config <f>`: `/health` is `200` within Freedom's 60 s
-  poll; `SIGTERM` exits in < 5 s.
+These validate the **swap from Freedom's side**; `antd`-side acceptance
+(CLI gates, identity-derivation correctness) lives upstream in the Ant project.
+
 - **Identity parity:** overlay + Ethereum address derived from an
   injected `swarm.key` match what bee derives for the same key (compare
-  `GET /addresses`). (Ant already derives eth + overlay from the
-  keystore; confirm overlay nonce convention matches bee’s default.)
+  `GET /addresses`).
 - **bee-js v12 flows** exercised by Freedom go green against Ant:
   upload (`POST /bzz` with stamp), download (`GET /bzz`), feeds, stamps
   list/get, `/status`, `/chainstate`, `/wallet`, `/chequebook/*`.
 - Run Freedom’s suites with Ant swapped in: `npm run test:e2e`,
   `test:e2e:live`, `test:e2e:onboarding`.
 - ENS resolution: confirm `bzz://<name>.eth` works via Freedom’s own
-  resolver (gap #2).
+  resolver (the ENS check in §2).
 
 **Rebrand acceptance (the headline):**
 - No user-visible string says "Bee" where it means the node — UI, menus,
@@ -272,16 +201,13 @@ headline lands:
 
 ---
 
-## 7. Rollout
+## 5. Rollout
 
 - **Phase 0 — local smoke.** Build `antd --release` for the host, copy to
   `bee-bin/<host>/bee`, run Freedom dev against a throwaway
-  `FREEDOM_BEE_DATA`, smoke bee-js upload/download. (No CLI changes
-  needed if you temporarily wrap `start`.)
-- **Phase 1 — CLI compat.** Implement `start`/`init` (Track A); re-smoke
-  with the unmodified `bee-manager` spawn path.
-- **Phase 2 — publish.** CI cross-build matrix + GitHub Release with
-  checksums (Track B).
+  `FREEDOM_BEE_DATA`, smoke bee-js upload/download.
+- **Ant-side prerequisites.** CLI compatibility and published binaries +
+  checksums — tracked upstream in the Ant project, not here.
 - **Phase 3 — wire Freedom + Ring 1 rebrand.** Add `fetch-ant.js`,
   switch the download/npm scripts (Ring 2 tooling), and do the **Ring 1
   presentation rename** so the UI reads "Ant". `dist` a Freedom build,
@@ -295,7 +221,7 @@ headline lands:
 
 ---
 
-## 8. Risks & notes
+## 6. Risks & notes
 
 - **macOS signing/notarization.** The node binary ships as an
   `extraResource`. Confirm how the bee binary is currently handled by
@@ -307,9 +233,6 @@ headline lands:
 - **External-daemon reuse.** If a real bee is already on `1633`, Freedom
   reuses it and won’t start Ant — fine, but note it for testing (kill
   stray bee first, or use a throwaway data dir + the fallback-port path).
-- **Version string.** Keep `antd --version` and `/health.version`
-  meaningful so the journal and Freedom’s reuse logic can correlate a
-  build.
 - **Keep bee as fallback** during rollout so a regression doesn’t brick
   the publish flow.
 - **Test churn from the rebrand.** ~1,700 `bee` references; many live in

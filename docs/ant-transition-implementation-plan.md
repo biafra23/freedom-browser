@@ -16,7 +16,7 @@ API: `api.github.com/repos/solardev-xyz/ant/releases/latest`.
 **Guiding constraint (from the rings):** never touch Ring 0 (wire protocol,
 `@ethersphere/bee-js`, bee YAML *keys*, `keys/swarm.key`, port `1633`). Rename
 Ring 1 (everything a human reads → "Ant") and Ring 2 (internal identifiers,
-with migrations). See design doc §5.
+with migrations). See design doc §3.
 
 **Per-`AGENTS.md`, every code-touching task ends with:** `npm run lint` clean,
 and `npm test` for any file with a `.test.js` sibling. File moves under
@@ -31,14 +31,14 @@ follows `docs/agent-playbooks/changelog-process.md`.
 | Phase | Goal | Ships? | Depends on |
 |---|---|---|---|
 | 0 | Local smoke: prove Ant serves bee-js against Freedom dev | no | Ant release binary |
-| 1 | Ant CLI compat (`start`/`init`) — **upstream Ant, not this repo** | no | — |
-| 2 | Publish Ant binaries + checksums (CI) — **upstream Ant** *(workflow done)* | no | Phase 1 |
-| 3 | Wire Freedom fetch/tooling + **Ring 1 rebrand** + headless e2e CI | **yes** | Phase 2 |
+| 3 | Wire Freedom fetch/tooling + **Ring 1 rebrand** + headless e2e CI | **yes** | Ant binaries published |
 | 4 | Ring 2 cleanup: rename internal identifiers + migrations | no (consistency) | Phase 3 |
 | 5 | Ship behind a flag, keep bee fallback, land changelog | **yes** | Phase 3/4 |
 
-Phases 1–2 are work on the **Ant (`antd`) codebase**, tracked here for
-completeness but executed in that repo. Phases 0, 3, 4, 5 are **this repo**.
+Phases 0, 3, 4, 5 are **this repo**. The Ant-side prerequisites this plan
+depends on (CLI compatibility, binary publishing, runtime postage, chequebook
+bootstrap, visible-peers reporting) are tracked upstream in the Ant project —
+the single source of truth for `antd` changes.
 
 ---
 
@@ -61,78 +61,19 @@ paths *before* investing in tooling/rebrand.
    (`bee-manager.js:511`) and `SIGTERM` exits < 5s (`bee-manager.js:611`).
 
 **Gate:** Freedom dev runs an Ant node, upload/download round-trips, health +
-shutdown timings fit the existing windows. If `start` isn't accepted yet, wrap
-it temporarily (design doc §7 Phase 0) — that's exactly what Phase 1 fixes.
+shutdown timings fit the existing windows.
 
 ---
 
-## Phase 1 — Ant CLI compatibility *(upstream `antd` repo)*
+## Ant-side prerequisites *(tracked upstream in the Ant project)*
 
-Implement in Ant so the **unmodified** `bee-manager` spawn path works. From
-design doc §3 (Track A):
-
-- `antd start [--config <f>] [flags…]` → run the node.
-- `antd init [--config <f>] [--password/--password-file]` →
-  - if `keys/swarm.key` exists (injected): log + exit `0`;
-  - else generate secp256k1, write v3 keystore at `<data-dir>/keys/swarm.key`
-    encrypted with the resolved password, exit `0`.
-- Bare `antd [flags…]` (no subcommand) → behaves like `start` (back-compat).
-
-**Gate (design doc §3):** `antd start --config X` serves `/health`;
-`antd init --config X` writes a keystore or no-ops and exits `0`;
-`antd --version` prints the build. Re-run Phase 0 smoke with the **unmodified**
-spawn path (`spawn(binPath, ['start', '--config=…'])`, `bee-manager.js:458`)
-and the init path (`execSync("<bin>" init --config="…")`, `bee-manager.js:217`).
-
----
-
-## Phase 2 — Build & publish Ant binaries *(upstream `antd` repo)*
-
-From design doc §4 (Track B). **This is already implemented upstream** in
-[`solardev-xyz/ant/.github/workflows/release.yml`](https://github.com/solardev-xyz/ant/blob/main/.github/workflows/release.yml)
-(triggers on `v*` tags; `workflow_dispatch` is a build-only dry run). It builds
-`-p antd --release` per target and publishes archives + `SHA256SUMS`. The build
-matrix:
-
-| asset keyword | rust target | runner | archive |
-|---|---|---|---|
-| `linux-amd64` | `x86_64-unknown-linux-gnu` | ubuntu-latest | `.tar.gz` |
-| `linux-arm64` | `aarch64-unknown-linux-gnu` | ubuntu-latest (cross gcc) | `.tar.gz` |
-| `darwin-amd64` | `x86_64-apple-darwin` | macos-13 | `.tar.gz` |
-| `darwin-arm64` | `aarch64-apple-darwin` | macos-14 | `.tar.gz` |
-| `windows-amd64` | `x86_64-pc-windows-msvc` | windows-latest | `.zip` |
-
-### Confirmed final filenames
-
-The workflow's package step names each archive
-`antd-v${ver}-${asset}` (where `ver` strips the leading `v` from the tag). For
-`v0.5.7` the published release will contain **exactly**:
-
-```
-antd-v0.5.7-linux-amd64.tar.gz
-antd-v0.5.7-linux-arm64.tar.gz
-antd-v0.5.7-darwin-amd64.tar.gz
-antd-v0.5.7-darwin-arm64.tar.gz
-antd-v0.5.7-windows-amd64.zip
-SHA256SUMS
-```
-
-Key facts the fetch script can rely on:
-- **5 archives, no `win-arm64`** — identical to bee; `fetch-ant.js` copies
-  `windows-amd64` → `win-arm64` (emulation fallback).
-- **Each archive holds a single binary at its root**: `antd` (unix, `chmod 755`)
-  or `antd.exe` (windows). No nested directory.
-- **The os/arch keywords (`darwin/amd64`, `linux/arm64`, `windows/amd64`, …) are
-  identical to bee's** — so the per-target `keywords` arrays in `fetch-bee.js`
-  (`fetch-bee.js:128-135`) carry over to `fetch-ant.js` **unchanged**. Only the
-  repo slug, the binary name (`bee`→`antd`), and the output dir
-  (`bee-bin`→`ant-bin`) change.
-- `SHA256SUMS` is `sha256sum *` over the archives (filename → hash), so verify
-  by archive filename before extracting.
-
-**Gate:** the 5 archives + `SHA256SUMS` are downloadable from
-[`v0.5.7`](https://github.com/solardev-xyz/ant/releases/tag/v0.5.7) (the tag is
-being cut — page is currently 404); checksums verify.
+The drop-in depends on changes inside the `antd` codebase — CLI compatibility
+(`start`/`init`), per-platform binary publishing with `SHA256SUMS`, runtime
+postage-batch management, chequebook auto-bootstrap, and visible-peers
+reporting. These are **not** tracked here; they live in the Ant project's own
+plan. This plan only assumes
+the host-matching `antd` archives are downloadable from `solardev-xyz/ant`
+releases (with `SHA256SUMS`) before Phase 3 wires the fetch tooling.
 
 ---
 
@@ -146,7 +87,8 @@ keeps working on every PR.
 ### 3A — Fetch & build tooling (Ring 1-visible + Ring 2 tooling)
 
 1. **`scripts/fetch-ant.js`** (fork of `scripts/fetch-bee.js`): the upstream
-   naming (Phase 2) was designed to mirror bee, so this is a minimal fork:
+   asset naming (defined upstream in the Ant project) mirrors bee, so this is a
+   minimal fork:
    - Point release API at `solardev-xyz/ant` — replace `ethersphere/bee` at
      `fetch-bee.js:23` with `solardev-xyz/ant` (use `…/releases/latest`, or pin
      `…/releases/tags/v0.5.7` until newer tags exist).
@@ -177,12 +119,12 @@ keeps working on every PR.
    `to: ant.yaml` (the config *filename* is Ring 2; keys stay).
 
 > Decision: keep the **old `bee:*` scripts + `fetch-bee.js` as a fallback path**
-> through Phase 5 (design doc §8 "keep bee as fallback"). Remove in a later
+> through Phase 5 (design doc §6 "keep bee as fallback"). Remove in a later
 > cleanup once Ant has soaked.
 
 ### 3B — Ring 1 presentation rename ("Bee" → "Ant" where it means the node)
 
-Decision rule (design doc §5): a string meaning *the node software* → **Ant**;
+Decision rule (design doc §3): a string meaning *the node software* → **Ant**;
 a string meaning *the Swarm network* → leave **Swarm**. Do **not** touch
 protocol/`bee-js`/config-keys (Ring 0).
 
@@ -215,7 +157,7 @@ Primary user-facing files (from the repo `grep`, highest-density first):
 `bee-ui.test.js` 133). Update expectations in lockstep — **string only, no
 behavior change** (`AGENTS.md` rule 7).
 
-**Gate (design doc §6 rebrand acceptance):**
+**Gate (design doc §4 rebrand acceptance):**
 `grep -rnE "Bee" src/renderer` returns only Ring-0/protocol or comments;
 UI/menus/pills/settings/toasts read "Ant"; "Swarm" preserved where it means the
 network. `npm run lint` + `npm test` green. A `dist` build fetches `antd` into
@@ -282,7 +224,7 @@ Tasks:
    already use that matrix as a template, including the macOS signing caveat in
    §"Open items").
 5. During rollout keep the **existing bee e2e jobs** green in parallel (they
-   stay as-is — no matrix change) so the fallback path (design doc §8) stays
+   stay as-is — no matrix change) so the fallback path (design doc §6) stays
    covered until Ant soaks. `e2e-ant` is purely additive alongside them.
 
 **Gate:** `e2e-ant` is required on PRs and green — Freedom launches, spawns
@@ -334,7 +276,7 @@ Pure consistency; can trail the headline. Each item is a coordinated change.
    tests `__tests__/integration/bee*.test.js`, plus each `.test.js` sibling.
    Pure churn; update all `require()`/import paths.
 
-**Gate (design doc §6):** settings migration verified upgrade-in-place (not just
+**Gate (design doc §4):** settings migration verified upgrade-in-place (not just
 fresh install); fresh `ant-data` re-derives the **same** overlay/eth
 (`GET /addresses` unchanged); light-mode chequebook rediscovered, not
 redeployed; `npm run lint` + full `npm test`/e2e green.
@@ -344,26 +286,24 @@ redeployed; `npm run lint` + full `npm test`/e2e green.
 ## Phase 5 — Ship (this repo)
 
 1. Land behind a channel/flag; **keep the bee fetch path as fallback** until Ant
-   soaks (design doc §8).
+   soaks (design doc §6).
 2. Land the `CHANGELOG.md` headline "Bee replaced by Ant" per
    `docs/agent-playbooks/changelog-process.md`.
 3. Run the full release validation: `npm run test:e2e`, `test:e2e:live`,
    `test:e2e:onboarding`; verify ENS `bzz://<name>.eth` via Freedom's own
-   resolver (`ens-resolver.js`/`ens-prefetch.js`) — design doc gap #2.
+   resolver (`ens-resolver.js`/`ens-prefetch.js`) — design doc §2 (ENS).
 4. Follow `docs/agent-playbooks/release-process.md` for the release/tag/build.
 
 ---
 
-## Open items to resolve before GA (from design doc §2 / §8)
+## Open items to resolve before GA (from design doc §6)
 
-- **ENS gap #2:** confirm Freedom resolves ENS client-side and does not rely on
+- **ENS:** confirm Freedom resolves ENS client-side and does not rely on
   the node's `resolver-options`. Verify in `src/main/ens-resolver.js` /
   `ens-prefetch.js`. (Action before GA.)
 - **macOS signing/notarization:** the Ant binary ships as an `extraResource` —
   confirm it gets the same hardened-runtime/signing treatment as bee
   (`scripts/macos-notary.js` / `dist:mac:*`).
-- **Release-build requirement:** keystore scrypt `n=131072` decrypts fast only
-  in `--release`. Ship release binaries only.
 - **External-daemon reuse:** if a real bee answers `1633`, Freedom reuses it and
   won't start Ant (`detectExistingDaemon()`, `bee-manager.js:319`). Note for
   testing: kill stray bee or use throwaway data dir + fallback port.
@@ -376,8 +316,7 @@ redeployed; `npm run lint` + full `npm test`/e2e green.
 ## Per-phase definition of done (checklist)
 
 - [ ] Phase 0 — Ant binary smoked against Freedom dev (upload/download/health/SIGTERM).
-- [ ] Phase 1 — `antd start`/`init`/bare-flag accepted; gate met *(upstream)*.
-- [ ] Phase 2 — 5 archives + `SHA256SUMS` published at `solardev-xyz/ant` `v0.5.7`; checksums verify *(upstream: workflow already in `release.yml`, awaiting tag)*.
+- [ ] Ant-side prerequisites met — tracked upstream in the Ant project.
 - [ ] Phase 3A — `fetch-ant.js` + `check-binaries.js` + npm scripts + packaging target `ant-bin`/`ant.yaml`; checksum verification wired.
 - [ ] Phase 3B — Ring 1 strings read "Ant"; `grep "Bee" src/renderer` clean; tests updated; e2e green.
 - [ ] Phase 3C — standalone `e2e-ant` CI job runs Freedom headlessly (xvfb) against the real `antd`, required + green on PRs; existing bee e2e jobs kept untouched in parallel during rollout.
