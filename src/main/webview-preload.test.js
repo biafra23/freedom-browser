@@ -15,6 +15,7 @@ const internalPages = {
     history: 'history.html',
     links: 'links.html',
     'protocol-test': 'protocol-test.html',
+    settings: 'settings.html',
   },
   other: ['error.html', 'rad-browser.html'],
 };
@@ -148,12 +149,6 @@ describe('webview-preload', () => {
       ['getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
       ['getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
       ['listProfiles', [], IPC.PROFILE_LIST, []],
-      ['createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
-      ['importProfile', ['work'], IPC.PROFILE_IMPORT, [{ id: 'work' }]],
-      ['renameProfile', ['work', 'Work'], IPC.PROFILE_RENAME, [{ id: 'work', displayName: 'Work' }]],
-      ['openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
-      ['deleteProfile', ['work', 'Work'], IPC.PROFILE_DELETE, [{ id: 'work', confirmDisplayName: 'Work' }]],
-      ['updateProfileNodeConfig', ['bee', { mode: 'disabled' }], IPC.PROFILE_UPDATE_NODE_CONFIG, [{ protocol: 'bee', config: { mode: 'disabled' } }]],
       ['getServiceRegistry', [], IPC.SERVICE_REGISTRY_GET, []],
       ['openPublishSetup', [], IPC.SIDEBAR_OPEN_PUBLISH_SETUP, []],
       ['getBookmarks', [], IPC.BOOKMARKS_GET, []],
@@ -172,6 +167,62 @@ describe('webview-preload', () => {
     }
 
     expect(consoleLogSpy).toHaveBeenCalledWith('[webview-preload] Loaded (freedomAPI + context menu + ethereum + swarm provider)');
+  });
+
+  test('exposes profile mutation methods only on the settings page', async () => {
+    const { exposures, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/settings.html',
+        protocol: 'file:',
+        pathname: '/app/pages/settings.html',
+      },
+    });
+
+    const mutationCases = [
+      ['createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
+      ['importProfile', ['work'], IPC.PROFILE_IMPORT, [{ id: 'work' }]],
+      ['renameProfile', ['work', 'Work'], IPC.PROFILE_RENAME, [{ id: 'work', displayName: 'Work' }]],
+      ['openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
+      ['deleteProfile', ['work', 'Work'], IPC.PROFILE_DELETE, [{ id: 'work', confirmDisplayName: 'Work' }]],
+      ['updateProfileNodeConfig', ['bee', { mode: 'disabled' }], IPC.PROFILE_UPDATE_NODE_CONFIG, [{ protocol: 'bee', config: { mode: 'disabled' } }]],
+    ];
+
+    for (const [method, args, channel, expectedArgs] of mutationCases) {
+      ipcRenderer.invoke.mockClear();
+      await exposures.freedomAPI[method](...args);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(channel, ...expectedArgs);
+    }
+  });
+
+  test('blocks profile mutation methods on other internal pages', async () => {
+    const { exposures, ipcRenderer } = loadWebviewPreloadModule({
+      location: {
+        href: 'file:///app/pages/history.html',
+        protocol: 'file:',
+        pathname: '/app/pages/history.html',
+      },
+    });
+
+    await expect(exposures.freedomAPI.createProfile({ displayName: 'Work' })).rejects.toThrow(
+      'freedomAPI profile changes are only available on settings'
+    );
+    await expect(exposures.freedomAPI.updateProfileNodeConfig('bee', {
+      mode: 'disabled',
+    })).rejects.toThrow(
+      'freedomAPI profile changes are only available on settings'
+    );
+
+    expect(ipcRenderer.invoke).not.toHaveBeenCalledWith(
+      IPC.PROFILE_CREATE,
+      expect.anything()
+    );
+    expect(ipcRenderer.invoke).not.toHaveBeenCalledWith(
+      IPC.PROFILE_UPDATE_NODE_CONFIG,
+      expect.anything()
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      '[freedomAPI] blocked settings-only "createProfile" on page: file:///app/pages/history.html'
+    );
   });
 
   test('onSettingsUpdated forwards the broadcast and unsubscribes on pagehide', () => {

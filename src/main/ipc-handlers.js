@@ -91,6 +91,38 @@ const formatWindowTitle = (title) => {
   return title?.trim() ? `${title.trim()} - Freedom` : 'Freedom';
 };
 
+function getIpcSenderUrl(event) {
+  return event?.senderFrame?.url || event?.sender?.getURL?.() || '';
+}
+
+function normalizeFileUrlPath(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'file:') return null;
+    return decodeURIComponent(parsed.pathname).replace(/\\/g, '/');
+  } catch {
+    return null;
+  }
+}
+
+function isTrustedProfileMutationSender(event) {
+  const pathname = normalizeFileUrlPath(getIpcSenderUrl(event));
+  if (!pathname) return false;
+
+  return pathname.endsWith('/src/renderer/index.html')
+    || pathname.endsWith('/src/renderer/pages/settings.html');
+}
+
+function withTrustedProfileMutationSender(event, fn) {
+  if (!isTrustedProfileMutationSender(event)) {
+    return failure(
+      'PROFILE_IPC_FORBIDDEN',
+      'Profile changes are only available from trusted profile UI'
+    );
+  }
+  return fn();
+}
+
 function serializeActiveProfile() {
   const profile = getActiveProfile();
   if (!profile) return null;
@@ -569,13 +601,25 @@ function registerBaseIpcHandlers(callbacks = {}) {
 
   ipcMain.handle(IPC.PROFILE_GET_ACTIVE, () => serializeActiveProfile());
   ipcMain.handle(IPC.PROFILE_LIST, () => listProfilesFromIpc());
-  ipcMain.handle(IPC.PROFILE_CREATE, (_event, payload = {}) => createProfileFromIpc(payload));
-  ipcMain.handle(IPC.PROFILE_IMPORT, (_event, payload = {}) => importProfileFromIpc(payload));
-  ipcMain.handle(IPC.PROFILE_RENAME, (_event, payload = {}) => renameProfileFromIpc(payload));
-  ipcMain.handle(IPC.PROFILE_OPEN, (_event, payload = {}) => openProfileFromIpc(payload));
-  ipcMain.handle(IPC.PROFILE_DELETE, (_event, payload = {}) => deleteProfileFromIpc(payload));
-  ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (_event, payload = {}) =>
-    updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
+  ipcMain.handle(IPC.PROFILE_CREATE, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => createProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_IMPORT, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => importProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_RENAME, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => renameProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_OPEN, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => openProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_DELETE, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => deleteProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () =>
+      updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
+    )
   );
 
   ipcMain.handle(IPC.GET_WEBVIEW_PRELOAD_PATH, () => {
@@ -704,6 +748,7 @@ module.exports = {
   createProfileFromIpc,
   deleteProfileFromIpc,
   importProfileFromIpc,
+  isTrustedProfileMutationSender,
   listProfilesFromIpc,
   openProfileFromIpc,
   renameProfileFromIpc,

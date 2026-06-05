@@ -21,6 +21,19 @@ function createWindowMock() {
   };
 }
 
+const HOST_RENDERER_URL = 'file:///app/src/renderer/index.html';
+const SETTINGS_PAGE_URL = 'file:///app/src/renderer/pages/settings.html';
+const HISTORY_PAGE_URL = 'file:///app/src/renderer/pages/history.html';
+
+function createIpcEvent(url = SETTINGS_PAGE_URL) {
+  return {
+    senderFrame: { url },
+    sender: {
+      getURL: jest.fn(() => url),
+    },
+  };
+}
+
 function loadIpcHandlersModule(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const log = {
@@ -194,6 +207,8 @@ function loadIpcHandlersModule(options = {}) {
     importProfileForActiveApp,
     listProfilesForActiveApp,
     launchProfile,
+    invokeProfileMutation: (channel, payload = {}, url = SETTINGS_PAGE_URL) =>
+      Promise.resolve(ipcMain.handlers.get(channel)(createIpcEvent(url), payload)),
     renameProfileForActiveApp,
     updateActiveProfileNodeConfig,
   };
@@ -476,7 +491,7 @@ describe('ipc-handlers', () => {
     );
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_CREATE, { displayName: 'Work' })
+      ctx.invokeProfileMutation(IPC.PROFILE_CREATE, { displayName: 'Work' })
     ).resolves.toEqual(
       success({
         profile: {
@@ -496,7 +511,7 @@ describe('ipc-handlers', () => {
     });
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_RENAME, { id: 'default', displayName: 'Personal' })
+      ctx.invokeProfileMutation(IPC.PROFILE_RENAME, { id: 'default', displayName: 'Personal' })
     ).resolves.toEqual(
       success({
         profile: {
@@ -547,7 +562,9 @@ describe('ipc-handlers', () => {
 
     ctx.mod.registerBaseIpcHandlers();
 
-    await expect(ctx.ipcMain.invoke(IPC.PROFILE_OPEN, { id: 'work' })).resolves.toEqual(
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_OPEN, { id: 'work' }, HOST_RENDERER_URL)
+    ).resolves.toEqual(
       success({
         profile: {
           id: 'work',
@@ -570,12 +587,32 @@ describe('ipc-handlers', () => {
     );
   });
 
+  test('rejects profile mutations from non-settings internal pages', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(
+        IPC.PROFILE_CREATE,
+        { displayName: 'Work' },
+        HISTORY_PAGE_URL
+      )
+    ).resolves.toEqual(
+      failure(
+        'PROFILE_IPC_FORBIDDEN',
+        'Profile changes are only available from trusted profile UI'
+      )
+    );
+    expect(ctx.createProfileForActiveApp).not.toHaveBeenCalled();
+  });
+
   test('imports unregistered profile directories through profile IPC', async () => {
     const ctx = loadIpcHandlersModule();
 
     ctx.mod.registerBaseIpcHandlers();
 
-    await expect(ctx.ipcMain.invoke(IPC.PROFILE_IMPORT, { id: 'work' })).resolves.toEqual(
+    await expect(ctx.invokeProfileMutation(IPC.PROFILE_IMPORT, { id: 'work' })).resolves.toEqual(
       success({
         profile: {
           id: 'work',
@@ -596,7 +633,7 @@ describe('ipc-handlers', () => {
 
     ctx.mod.registerBaseIpcHandlers();
 
-    await expect(ctx.ipcMain.invoke(IPC.PROFILE_OPEN, { id: 'default' })).resolves.toEqual(
+    await expect(ctx.invokeProfileMutation(IPC.PROFILE_OPEN, { id: 'default' })).resolves.toEqual(
       failure('PROFILE_ALREADY_OPEN', 'This profile is already open')
     );
     expect(ctx.launchProfile).not.toHaveBeenCalled();
@@ -608,7 +645,7 @@ describe('ipc-handlers', () => {
     ctx.mod.registerBaseIpcHandlers();
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_DELETE, {
+      ctx.invokeProfileMutation(IPC.PROFILE_DELETE, {
         id: 'work',
         confirmDisplayName: 'Work',
       })
@@ -651,7 +688,7 @@ describe('ipc-handlers', () => {
     ctx.mod.registerBaseIpcHandlers();
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
         protocol: 'bee',
         config: {
           mode: 'external',
@@ -707,7 +744,7 @@ describe('ipc-handlers', () => {
     ctx.mod.registerBaseIpcHandlers();
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
         protocol: 'bee',
         config: { mode: 'preferExternal' },
       })
@@ -718,7 +755,7 @@ describe('ipc-handlers', () => {
     );
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
         protocol: 'ipfs',
         config: { mode: 'external', externalApi: '127.0.0.1:5001' },
       })
@@ -743,7 +780,7 @@ describe('ipc-handlers', () => {
     ctx.mod.registerBaseIpcHandlers();
 
     await expect(
-      ctx.ipcMain.invoke(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
         protocol: 'bee',
         config: { mode: 'disabled' },
       })

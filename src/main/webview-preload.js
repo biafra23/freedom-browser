@@ -28,6 +28,14 @@ const isInternalPage = () => {
   return ALLOWED_FILES.some((file) => pathname.endsWith(`/pages/${file}`));
 };
 
+const isSettingsPage = () => {
+  const location = globalThis.location;
+  if (!location || location.protocol !== 'file:') return false;
+  const pathname = location.pathname || '';
+  const settingsFile = internalPages.routable?.settings || 'settings.html';
+  return pathname.endsWith(`/pages/${settingsFile}`);
+};
+
 const guardInternal =
   (name, fn) =>
   (...args) => {
@@ -35,6 +43,17 @@ const guardInternal =
       const url = globalThis.location?.href || 'unknown';
       console.warn(`[freedomAPI] blocked "${name}" on non-internal page: ${url}`);
       return Promise.reject(new Error('freedomAPI is only available on internal pages'));
+    }
+    return fn(...args);
+  };
+
+const guardSettingsPage =
+  (name, fn) =>
+  (...args) => {
+    if (!isSettingsPage()) {
+      const url = globalThis.location?.href || 'unknown';
+      console.warn(`[freedomAPI] blocked settings-only "${name}" on page: ${url}`);
+      return Promise.reject(new Error('freedomAPI profile changes are only available on settings'));
     }
     return fn(...args);
   };
@@ -222,22 +241,22 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   ),
   onProfileUpdated: guardInternalSubscription('onProfileUpdated', 'profile:updated'),
   listProfiles: guardInternal('listProfiles', () => ipcRenderer.invoke('profile:list')),
-  createProfile: guardInternal('createProfile', (profile) =>
+  createProfile: guardSettingsPage('createProfile', (profile) =>
     ipcRenderer.invoke('profile:create', profile)
   ),
-  importProfile: guardInternal('importProfile', (id) =>
+  importProfile: guardSettingsPage('importProfile', (id) =>
     ipcRenderer.invoke('profile:import', { id })
   ),
-  renameProfile: guardInternal('renameProfile', (id, displayName) =>
+  renameProfile: guardSettingsPage('renameProfile', (id, displayName) =>
     ipcRenderer.invoke('profile:rename', { id, displayName })
   ),
-  openProfile: guardInternal('openProfile', (id) =>
+  openProfile: guardSettingsPage('openProfile', (id) =>
     ipcRenderer.invoke('profile:open', { id })
   ),
-  deleteProfile: guardInternal('deleteProfile', (id, confirmDisplayName) =>
+  deleteProfile: guardSettingsPage('deleteProfile', (id, confirmDisplayName) =>
     ipcRenderer.invoke('profile:delete', { id, confirmDisplayName })
   ),
-  updateProfileNodeConfig: guardInternal('updateProfileNodeConfig', (protocol, config) =>
+  updateProfileNodeConfig: guardSettingsPage('updateProfileNodeConfig', (protocol, config) =>
     ipcRenderer.invoke('profile:update-node-config', { protocol, config })
   ),
 
