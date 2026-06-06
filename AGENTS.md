@@ -24,6 +24,5 @@ Before executing task-specific work, read the corresponding playbook:
 - Cutting a release *(release branch, version bump, tag, build, publish)*: `docs/agent-playbooks/release-process.md`
 - Security checklist *(before commit or PR)*: `docs/agent-playbooks/security-checklist.md`
 - Windows build in a UTM VM *(building/running a native Windows build on macOS for testing)*: `docs/agent-playbooks/windows-utm-build.md`
-- Bee→Ant chequebook carry-over *(implementing the Ant transition, chequebook handling, or the zero-touch auto-update migration)*: `docs/freedom-chequebook-migration.md`
 
 If multiple categories apply, read all relevant playbooks.

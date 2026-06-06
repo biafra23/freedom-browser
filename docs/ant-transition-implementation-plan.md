@@ -248,13 +248,12 @@ Pure consistency; can trail the headline. Each item is a coordinated change.
    re-injected as `keys/swarm.key` on every start
    (`identity-manager.js` → `injection.injectBeeKey`). Old `bee-data` is left
    in place, unreferenced.
-   - ⚠️ **Light/SWAP mode only:** chequebook lives in the statestore. With a
-     fresh dir, **rediscover** the chequebook from chain (pass the known
-     chequebook hint / let Ant's factory check find it) so a fresh dir does not
-     redeploy on-chain. Ultra-light (default, `swap-enable:false`) is unaffected.
-     See [`freedom-chequebook-migration.md`](./freedom-chequebook-migration.md)
-     for the zero-touch carry-over design (on-chain discovery of the existing
-     chequebook + seeding Ant) shipped via auto-update.
+   - ⚠️ **Light/SWAP mode only:** the chequebook lives in the statestore. With a
+     fresh dir, the chequebook must be **recovered on-chain rather than
+     redeployed**, or the old funds are stranded. This is an Ant-side
+     responsibility (full Bee parity: reload persisted → else rediscover from
+     chain → adopt → deploy only if none); it is not handled in this repo.
+     Ultra-light (default, `swap-enable:false`) is unaffected.
 3. **Config filename** `config/bee.yaml` → `config/ant.yaml`: extraResources
    (done in 3A) + any runtime writer. Note: the runtime config is written as
    `config.yaml` inside the data dir (`bee-manager.js:37`,
