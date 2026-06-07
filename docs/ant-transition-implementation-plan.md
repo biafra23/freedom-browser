@@ -248,12 +248,24 @@ Pure consistency; can trail the headline. Each item is a coordinated change.
    re-injected as `keys/swarm.key` on every start
    (`identity-manager.js` → `injection.injectBeeKey`). Old `bee-data` is left
    in place, unreferenced.
-   - ⚠️ **Light/SWAP mode only:** the chequebook lives in the statestore. With a
-     fresh dir, the chequebook must be **recovered on-chain rather than
-     redeployed**, or the old funds are stranded. This is an Ant-side
-     responsibility (full Bee parity: reload persisted → else rediscover from
-     chain → adopt → deploy only if none); it is not handled in this repo.
-     Ultra-light (default, `swap-enable:false`) is unaffected.
+   - ✅ **Light/SWAP mode — DONE (antd ≥ 0.5.10):** the chequebook lives in the
+     statestore, so a fresh dir must **recover it on-chain rather than redeploy**
+     (else the old funds are stranded). Ant now does this itself, owning the full
+     Bee-parity flow: **reload persisted → else rediscover from chain → adopt →
+     deploy only if none.** The same recovery covers node-owned postage batches.
+     Driven entirely by the node EOA (`keys/swarm.key`) + an RPC endpoint; the
+     log-scan endpoint defaults to `https://rpc.gnosischain.com` via antd's
+     `--gnosis-logs-rpc-url` (empty string disables recovery), so no Freedom-side
+     wiring is needed beyond the existing `--config` launch. Ultra-light
+     (default, `swap-enable:false`) is unaffected.
+     - **Verified end-to-end** on a fresh data dir carrying only the bee
+       `keys/swarm.key` (light/SWAP): first start logged `rediscovered owned
+       postage batch from chain` (`batches=1`) and `rediscovered node-owned
+       chequebook on-chain; adopting it (no fresh deploy)`; the rewritten
+       `chequebook.json` had empty `deploy_tx`/`salt` (adopted, not deployed);
+       `GET /stamps` repopulated with `usable:true` (no "stamps needed"); and a
+       restart took the `reloaded persisted …`/`reusing persisted … chequebook`
+       path with no re-discovery cost.
 3. **Config filename** `config/bee.yaml` → `config/ant.yaml`: extraResources
    (done in 3A) + any runtime writer. Note: the runtime config is written as
    `config.yaml` inside the data dir (`bee-manager.js:37`,
