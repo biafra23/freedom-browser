@@ -178,7 +178,7 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsPeersCount.textContent).toBe('3');
     expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('↓1.5 KB/s');
     expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('↑1.0 MB/s');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('0.28.0');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Kubo v0.28.0');
     expect(ctx.state.ipfsVersionFetched).toBe(true);
     expect(ctx.state.ipfsPeersInterval).toBe(1);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 1000);
@@ -191,7 +191,7 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsPeersCount.textContent).toBe('0');
     expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('');
     expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('0.28.0');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Kubo v0.28.0');
 
     ctx.mod.resetIpfsVersion();
     expect(ctx.state.ipfsVersionFetched).toBe(false);

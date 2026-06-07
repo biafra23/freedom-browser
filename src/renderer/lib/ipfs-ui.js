@@ -88,7 +88,10 @@ const fetchVersionOnce = async () => {
     const response = await fetch(buildIpfsApiUrl('/api/v0/id'), { method: 'POST' });
     if (response.ok) {
       const data = await response.json();
-      state.ipfsVersionValue = data?.AgentVersion?.split('/')[1]?.split('-')[0] || '';
+      // Kubo's AgentVersion is "kubo/0.41.0/<commit>"; surface the semver as
+      // the product label "Kubo v0.41.0" to match the Ant node card.
+      const ipfsSemver = data?.AgentVersion?.split('/')[1]?.split('-')[0] || '';
+      state.ipfsVersionValue = ipfsSemver ? `Kubo v${ipfsSemver}` : '';
       state.ipfsVersionFetched = true;
       if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
     } else {

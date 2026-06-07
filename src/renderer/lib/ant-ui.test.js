@@ -110,7 +110,7 @@ const loadBeeModule = async (options = {}) => {
 
       return {
         ok: true,
-        json: async () => ({ version: '2.3.4-abcdef' }),
+        json: async () => ({ version: 'antd/0.5.8-abcdef' }),
       };
     });
   global.window = {
@@ -176,7 +176,7 @@ describe('bee-ui', () => {
     expect(ctx.elements.beeInfoPanel.classList.contains('visible')).toBe(true);
     expect(ctx.elements.beePeersCount.textContent).toBe('2');
     expect(ctx.elements.beeNetworkPeers.textContent).toBe('7');
-    expect(ctx.elements.beeVersionText.textContent).toBe('2.3.4');
+    expect(ctx.elements.beeVersionText.textContent).toBe('Ant v0.5.8');
     expect(ctx.state.antVersionFetched).toBe(true);
     expect(ctx.state.antPeersInterval).toBe(1);
     expect(ctx.state.antVisibleInterval).toBe(2);
@@ -192,7 +192,7 @@ describe('bee-ui', () => {
     expect(ctx.elements.beeInfoPanel.classList.contains('visible')).toBe(false);
     expect(ctx.elements.beePeersCount.textContent).toBe('0');
     expect(ctx.elements.beeNetworkPeers.textContent).toBe('0');
-    expect(ctx.elements.beeVersionText.textContent).toBe('2.3.4');
+    expect(ctx.elements.beeVersionText.textContent).toBe('Ant v0.5.8');
 
     ctx.mod.resetAntVersion();
     expect(ctx.state.antVersionFetched).toBe(false);

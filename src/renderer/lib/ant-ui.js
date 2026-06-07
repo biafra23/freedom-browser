@@ -88,7 +88,11 @@ const fetchAntVersionOnce = async () => {
     const healthResponse = await fetch(buildAntUrl('/health'));
     if (healthResponse.ok) {
       const healthData = await healthResponse.json();
-      state.antVersionValue = (healthData?.version || '').split('-')[0];
+      // antd reports a wire-format version like "antd/0.5.8-<build>"; surface
+      // it as the product label "Ant v0.5.8" to match the rest of the UI.
+      const rawVersion = (healthData?.version || '').split('-')[0];
+      const antSemver = rawVersion.includes('/') ? rawVersion.split('/').pop() : rawVersion;
+      state.antVersionValue = antSemver ? `Ant v${antSemver}` : '';
       state.antVersionFetched = true;
       if (beeVersionText) beeVersionText.textContent = state.antVersionValue;
     } else if (beeVersionText) {
