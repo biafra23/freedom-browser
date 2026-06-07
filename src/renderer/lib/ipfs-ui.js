@@ -37,7 +37,7 @@ const formatBandwidth = (bytesPerSec) => {
 };
 
 const fetchPeersAndBandwidth = async () => {
-  if (!state.beeMenuOpen) return;
+  if (!state.antMenuOpen) return;
   if (state.currentIpfsStatus === 'stopped') {
     stopIpfsInfoPolling();
     return;
@@ -100,7 +100,7 @@ const fetchVersionOnce = async () => {
 };
 
 export const startIpfsInfoPolling = () => {
-  if (!state.beeMenuOpen || state.currentIpfsStatus === 'stopped') {
+  if (!state.antMenuOpen || state.currentIpfsStatus === 'stopped') {
     stopIpfsInfoPolling();
     return;
   }
@@ -147,7 +147,7 @@ export const updateIpfsUi = (status, error) => {
       break;
   }
 
-  if (state.beeMenuOpen) {
+  if (state.antMenuOpen) {
     if (status === 'stopped') {
       stopIpfsInfoPolling();
     } else if (!state.ipfsPeersInterval && ipfsToggleSwitch?.classList.contains('running')) {

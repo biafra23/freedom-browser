@@ -4,11 +4,10 @@ const https = require('https');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
 
-// Fork of fetch-bee.js for the Ant (`antd`) Swarm light node. Ant is a
-// bee-compatible drop-in published at solardev-xyz/ant; its release assets
-// mirror bee's os/arch keyword scheme so the per-target matcher below is the
-// same shape fetch-bee.js uses. The binary shipped is `antd` (not `bee`) and
-// it installs into `ant-bin/<os>-<arch>/` so Freedom surfaces the Ant name.
+// Fetches the Ant (`antd`) Swarm light node. Ant is a bee-compatible drop-in
+// published at solardev-xyz/ant; its release assets follow a bee-style os/arch
+// keyword scheme, which the per-target matcher below relies on. The binary
+// shipped is `antd` (not `bee`) and it installs into `ant-bin/<os>-<arch>/`.
 const OUTPUT_DIR = path.join(__dirname, '..', 'ant-bin');
 const ANT_REPO = process.env.ANT_REPO || 'solardev-xyz/ant';
 // Pin a specific tag via ANT_RELEASE_TAG (e.g. `v0.5.7`); otherwise resolve

@@ -25,7 +25,7 @@ const { formatRadicleUrl, deriveRadBaseFromUrl, deriveDisplayValue } = require('
 
 // Mock service-registry so convertProtocolUrl can resolve gateway URLs
 jest.mock('./service-registry', () => ({
-  getBeeApiUrl: () => 'http://127.0.0.1:1633',
+  getAntApiUrl: () => 'http://127.0.0.1:1633',
   getRadicleApiUrl: () => 'http://127.0.0.1:8780',
 }));
 

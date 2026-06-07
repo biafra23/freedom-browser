@@ -622,7 +622,7 @@ function createAppScopedIdentity(origin, options = {}) {
   return getOriginEntry(origin);
 }
 
-function ensureBeeWalletIdentity(origin, options = {}) {
+function ensureAntWalletIdentity(origin, options = {}) {
   const store = loadFeeds();
   const key = normalizeOrigin(origin);
   const entry = store.origins[key] || createOriginShell();
@@ -643,7 +643,7 @@ function ensureBeeWalletIdentity(origin, options = {}) {
 
   store.origins[key] = entry;
   saveFeeds();
-  log.info(`[FeedStore] Ensured Bee wallet identity for ${key}`);
+  log.info(`[FeedStore] Ensured Ant wallet identity for ${key}`);
   return getOriginEntry(origin);
 }
 
@@ -942,8 +942,8 @@ function registerFeedStoreIpc() {
     return getOriginIdentityStateWithOwners(origin);
   });
 
-  ipcMain.handle(IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY, async (_event, origin, options = {}) => {
-    ensureBeeWalletIdentity(origin, options);
+  ipcMain.handle(IPC.SWARM_ENSURE_ANT_WALLET_IDENTITY, async (_event, origin, options = {}) => {
+    ensureAntWalletIdentity(origin, options);
     return getOriginIdentityStateWithOwners(origin);
   });
 
@@ -1000,7 +1000,7 @@ module.exports = {
   getOriginIdentityStateWithOwners,
   previewAppScopedIdentity,
   createAppScopedIdentity,
-  ensureBeeWalletIdentity,
+  ensureAntWalletIdentity,
   ensureEthereumWalletIdentity,
   activateIdentity,
   getFeed,

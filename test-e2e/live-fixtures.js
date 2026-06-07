@@ -14,11 +14,11 @@ const os = require('os');
 
 const repoRoot = path.resolve(__dirname, '..');
 
-// Mirror bee-manager.js's binary-path resolution so we can detect a
+// Mirror ant-manager.js's binary-path resolution so we can detect a
 // missing binary up front and skip the suite gracefully (downloading
 // the Ant binary is a per-platform extra step the user opts into via
 // `npm run ant:download`).
-function resolveBeeBinaryPath() {
+function resolveAntBinaryPath() {
   const platformMap = { darwin: 'mac', linux: 'linux', win32: 'win' };
   const platform = platformMap[process.platform] || process.platform;
   const arch = process.arch;
@@ -37,8 +37,8 @@ function resolveIpfsBinaryPath() {
   return path.join(repoRoot, 'ipfs-bin', `${platform}-${arch}`, binName);
 }
 
-const BEE_BINARY_PATH = resolveBeeBinaryPath();
-const HAS_BEE_BINARY = fs.existsSync(BEE_BINARY_PATH);
+const ANT_BINARY_PATH = resolveAntBinaryPath();
+const HAS_ANT_BINARY = fs.existsSync(ANT_BINARY_PATH);
 
 const IPFS_BINARY_PATH = resolveIpfsBinaryPath();
 const HAS_IPFS_BINARY = fs.existsSync(IPFS_BINARY_PATH);
@@ -52,11 +52,11 @@ const test = base.extend({
   electronApp: async ({}, use) => {
     // One temp root per run, with four subdirs:
     //   - userData/     → settings, bookmarks, history (FREEDOM_TEST_USER_DATA)
-    //   - bee-data/     → Bee's identity, swarm key, peerstore (FREEDOM_BEE_DATA)
+    //   - ant-data/     → Ant's identity, swarm key, peerstore (FREEDOM_ANT_DATA)
     //   - ipfs-data/    → Kubo's repo, identity, peerstore (FREEDOM_IPFS_DATA)
     //   - identity/     → vault meta + node-identity files (FREEDOM_IDENTITY_DATA)
     // All four overrides matter: in dev mode these directories default
-    // to `<repoRoot>/bee-data`, `<repoRoot>/ipfs-data`, and
+    // to `<repoRoot>/ant-data`, `<repoRoot>/ipfs-data`, and
     // `<repoRoot>/identity-data` — pointing them at empty temp dirs is
     // what keeps a live run from clobbering the developer's persistent
     // state. The identity override is the most subtle of the three:
@@ -66,7 +66,7 @@ const test = base.extend({
     // have.
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'freedom-live-e2e-'));
     const userDataDir = path.join(tmpRoot, 'userData');
-    const beeDataDir = path.join(tmpRoot, 'bee-data');
+    const beeDataDir = path.join(tmpRoot, 'ant-data');
     const ipfsDataDir = path.join(tmpRoot, 'ipfs-data');
     const identityDataDir = path.join(tmpRoot, 'identity');
     for (const dir of [userDataDir, beeDataDir, ipfsDataDir, identityDataDir]) {
@@ -82,7 +82,7 @@ const test = base.extend({
         // the production code paths (actual Bee spawn, live ENS, real
         // protocol handlers).
         FREEDOM_TEST_USER_DATA: userDataDir,
-        FREEDOM_BEE_DATA: beeDataDir,
+        FREEDOM_ANT_DATA: beeDataDir,
         FREEDOM_IPFS_DATA: ipfsDataDir,
         FREEDOM_IDENTITY_DATA: identityDataDir,
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
@@ -116,8 +116,8 @@ const test = base.extend({
 module.exports = {
   test,
   expect,
-  HAS_BEE_BINARY,
-  BEE_BINARY_PATH,
+  HAS_ANT_BINARY,
+  ANT_BINARY_PATH,
   HAS_IPFS_BINARY,
   IPFS_BINARY_PATH,
 };

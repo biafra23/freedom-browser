@@ -295,11 +295,11 @@ async function restartNodes(nodeNames) {
     try {
       if (nodeName === 'bee') {
         // Check if Bee is running
-        const beeStatus = await window.bee.getStatus();
+        const beeStatus = await window.ant.getStatus();
         if (beeStatus.status === 'running') {
           console.log('[Onboarding] Restarting Bee node...');
-          await window.bee.stop();
-          await window.bee.start();
+          await window.ant.stop();
+          await window.ant.start();
         }
       } else if (nodeName === 'ipfs') {
         // Check if IPFS is running
@@ -787,8 +787,8 @@ async function startNodesFromSettings() {
   try {
     const settings = await window.electronAPI.getSettings();
 
-    if (settings.startBeeAtLaunch) {
-      window.bee.start();
+    if (settings.startAntAtLaunch) {
+      window.ant.start();
     }
     if (settings.startIpfsAtLaunch) {
       window.ipfs.start();

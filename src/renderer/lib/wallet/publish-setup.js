@@ -9,7 +9,7 @@ import { state } from '../state.js';
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { isChequebookDeployed } from './wallet-utils.js';
 import { normalizeSwarmMode } from './swarm-readiness.js';
-import { fetchBeeJson } from './bee-api.js';
+import { fetchAntJson } from './ant-api.js';
 import { openStampManager } from './stamp-manager.js';
 import { topUpXdai, topUpXbzz, GNOSIS_CHAIN_ID, XDAI_TOKEN_KEY, XBZZ_TOKEN_KEY } from './funding-actions.js';
 
@@ -31,7 +31,7 @@ let stepStamps;
 let stepStampsBtn;
 
 let pollInterval = null;
-let cachedBeeWalletAddress = null;
+let cachedAntWalletAddress = null;
 let lastEvaluation = null;
 
 /**
@@ -39,8 +39,8 @@ let lastEvaluation = null;
  * address over the cached Bee API value. The cache is only a fallback for
  * when identity data hasn't loaded yet.
  */
-function getBeeWalletAddress() {
-  return walletState.fullAddresses.swarm || cachedBeeWalletAddress;
+function getAntWalletAddress() {
+  return walletState.fullAddresses.swarm || cachedAntWalletAddress;
 }
 
 export function initPublishSetup() {
@@ -65,7 +65,7 @@ export function initPublishSetup() {
 
   window.addEventListener('wallet:tx-success', () => {
     if (!publishSetupScreen?.classList.contains('hidden')) {
-      clearBeeWalletCache();
+      clearAntWalletCache();
       setTimeout(() => refreshChecklist(), 3000);
     }
   });
@@ -80,14 +80,14 @@ export function openPublishSetup() {
   walletState.identityView?.classList.add('hidden');
   publishSetupScreen?.classList.remove('hidden');
 
-  clearBeeWalletCache();
+  clearAntWalletCache();
   refreshChecklist();
   startPolling();
 }
 
 export function closePublishSetup() {
   stopPolling();
-  cachedBeeWalletAddress = null;
+  cachedAntWalletAddress = null;
   lastEvaluation = null;
   publishSetupScreen?.classList.add('hidden');
   walletState.identityView?.classList.remove('hidden');
@@ -115,14 +115,14 @@ async function refreshChecklist() {
 }
 
 async function evaluateSteps() {
-  const beeStatus = state.currentBeeStatus;
+  const beeStatus = state.currentAntStatus;
 
   // If Bee isn't running, return a node-level blocked state
   if (beeStatus !== 'running') {
     return {
       nodeState: beeStatus === 'starting' ? 'starting' : beeStatus === 'stopping' ? 'stopping' : beeStatus === 'error' ? 'error' : 'stopped',
       hasXdai: false,
-      beeWalletAddress: getBeeWalletAddress(),
+      antWalletAddress: getAntWalletAddress(),
       isLightOrFull: false,
       chequebookDeployed: false,
       stampsSynced: false,
@@ -136,15 +136,15 @@ async function evaluateSteps() {
   let nodeResult, addressesResult, chequebookAddrResult;
   try {
     [nodeResult, addressesResult, chequebookAddrResult] = await Promise.all([
-      fetchBeeJson('/node'),
-      fetchBeeJson('/addresses'),
-      fetchBeeJson('/chequebook/address'),
+      fetchAntJson('/node'),
+      fetchAntJson('/addresses'),
+      fetchAntJson('/chequebook/address'),
     ]);
   } catch {
     return {
       nodeState: 'unreachable',
       hasXdai: false,
-      beeWalletAddress: getBeeWalletAddress(),
+      antWalletAddress: getAntWalletAddress(),
       isLightOrFull: false,
       chequebookDeployed: false,
       stampsSynced: false,
@@ -156,10 +156,10 @@ async function evaluateSteps() {
 
   const beeMode = normalizeSwarmMode(nodeResult.data?.beeMode);
   const isLightOrFull = beeMode === 'light' || beeMode === 'full';
-  const beeWalletAddress = addressesResult.data?.ethereum || null;
+  const antWalletAddress = addressesResult.data?.ethereum || null;
 
-  if (beeWalletAddress) {
-    cachedBeeWalletAddress = beeWalletAddress;
+  if (antWalletAddress) {
+    cachedAntWalletAddress = antWalletAddress;
   }
 
   const chequebookAddr = chequebookAddrResult.data?.chequebookAddress;
@@ -169,7 +169,7 @@ async function evaluateSteps() {
   let hasXdai = false;
   let beeHasXbzz = false;
   let mainWalletHasXbzz = false;
-  const beeAddr = getBeeWalletAddress();
+  const beeAddr = getAntWalletAddress();
   const mainAddr = walletState.fullAddresses.wallet;
 
   // Bee wallet balances
@@ -201,9 +201,9 @@ async function evaluateSteps() {
   let syncProgress = null;
 
   if (isLightOrFull) {
-    const tier2Promises = [fetchBeeJson('/status')];
+    const tier2Promises = [fetchAntJson('/status')];
     if (chequebookDeployed) {
-      tier2Promises.push(fetchBeeJson('/wallet'), fetchBeeJson('/stamps'));
+      tier2Promises.push(fetchAntJson('/wallet'), fetchAntJson('/stamps'));
     }
 
     let statusResult, walletResult, stampsResult;
@@ -250,7 +250,7 @@ async function evaluateSteps() {
   return {
     nodeState: 'running',
     hasXdai,
-    beeWalletAddress: getBeeWalletAddress(),
+    antWalletAddress: getAntWalletAddress(),
     isLightOrFull,
     chequebookDeployed,
     stampsSynced,
@@ -303,8 +303,8 @@ function renderSteps(steps) {
   }
 
   if (stepFundXdaiMeta) {
-    if (steps.beeWalletAddress) {
-      stepFundXdaiMeta.textContent = steps.beeWalletAddress;
+    if (steps.antWalletAddress) {
+      stepFundXdaiMeta.textContent = steps.antWalletAddress;
       stepFundXdaiMeta.classList.remove('hidden');
     } else {
       stepFundXdaiMeta.classList.add('hidden');
@@ -388,13 +388,13 @@ function toggleEl(el, visible) {
 
 function handleFundXdai() {
   closePublishSetup();
-  topUpXdai(getBeeWalletAddress());
+  topUpXdai(getAntWalletAddress());
 }
 
 async function handleSwitchToLightMode() {
   try {
     const settings = await window.electronAPI?.getSettings?.();
-    const nextSettings = { ...settings, beeNodeMode: 'light' };
+    const nextSettings = { ...settings, antNodeMode: 'light' };
     const success = await window.electronAPI?.saveSettings?.(nextSettings);
 
     if (!success) {
@@ -408,7 +408,7 @@ async function handleSwitchToLightMode() {
 
 function handleFundXbzz() {
   closePublishSetup();
-  topUpXbzz(getBeeWalletAddress());
+  topUpXbzz(getAntWalletAddress());
 }
 
 function handleBuyStamps() {
@@ -420,8 +420,8 @@ function handleBuyStamps() {
 // Helpers
 // ============================================
 
-async function clearBeeWalletCache() {
-  const addr = getBeeWalletAddress();
+async function clearAntWalletCache() {
+  const addr = getAntWalletAddress();
   if (addr && window.wallet?.clearBalanceCache) {
     try {
       await window.wallet.clearBalanceCache(addr);

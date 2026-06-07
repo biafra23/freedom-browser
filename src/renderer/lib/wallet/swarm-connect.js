@@ -786,7 +786,7 @@ async function persistFeedPromptIdentity(permissionKey, identity) {
   }
 
   if (identity.id === BEE_WALLET_IDENTITY_ID) {
-    await window.swarmFeedStore.ensureBeeWalletIdentity(permissionKey, { activate: true });
+    await window.swarmFeedStore.ensureAntWalletIdentity(permissionKey, { activate: true });
   } else if (identity.mode === 'ethereum-wallet') {
     await window.swarmFeedStore.ensureEthereumWalletIdentity(
       permissionKey,

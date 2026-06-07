@@ -12,9 +12,8 @@ coverage/
 tmp/
 *.swp
 .env
-bee-bin/
 ant-bin/
-bee-data/
+ant-data/
 ipfs-bin/
 ipfs-data/
 dev-scripts/

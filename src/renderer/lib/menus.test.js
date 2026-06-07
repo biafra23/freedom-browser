@@ -74,8 +74,8 @@ const loadMenusModule = async ({ platform = 'darwin', webview } = {}) => {
     hideMenuBackdrop: jest.fn(),
   };
   const beeUiMocks = {
-    startBeeInfoPolling: jest.fn(),
-    stopBeeInfoPolling: jest.fn(),
+    startAntInfoPolling: jest.fn(),
+    stopAntInfoPolling: jest.fn(),
   };
   const ipfsUiMocks = {
     startIpfsInfoPolling: jest.fn(),
@@ -130,7 +130,7 @@ const loadMenusModule = async ({ platform = 'darwin', webview } = {}) => {
   jest.doMock('./tabs.js', () => tabsMocks);
   jest.doMock('./bookmarks-ui.js', () => bookmarkMocks);
   jest.doMock('./menu-backdrop.js', () => backdropMocks);
-  jest.doMock('./bee-ui.js', () => beeUiMocks);
+  jest.doMock('./ant-ui.js', () => beeUiMocks);
   jest.doMock('./ipfs-ui.js', () => ipfsUiMocks);
   jest.doMock('./radicle-ui.js', () => radicleUiMocks);
 
@@ -270,24 +270,24 @@ describe('menus', () => {
     const { menus, state, elements, mocks } = await loadMenusModule();
 
     menus.initMenus();
-    state.beeVersionFetched = true;
-    state.beeVersionValue = '1.2.3';
+    state.antVersionFetched = true;
+    state.antVersionValue = '1.2.3';
     elements.beePeersCount.textContent = '5';
     elements.beeNetworkPeers.textContent = '8';
 
-    menus.setBeeMenuOpen(true);
+    menus.setAntMenuOpen(true);
 
-    expect(state.beeMenuOpen).toBe(true);
+    expect(state.antMenuOpen).toBe(true);
     expect(elements.beeMenuDropdown.classList.toggle).toHaveBeenCalledWith('open', true);
-    expect(mocks.beeUiMocks.startBeeInfoPolling).toHaveBeenCalled();
+    expect(mocks.beeUiMocks.startAntInfoPolling).toHaveBeenCalled();
     expect(mocks.ipfsUiMocks.startIpfsInfoPolling).toHaveBeenCalled();
     expect(mocks.radicleUiMocks.startRadicleInfoPolling).toHaveBeenCalled();
     expect(mocks.backdropMocks.showMenuBackdrop).toHaveBeenCalled();
 
-    menus.setBeeMenuOpen(false);
+    menus.setAntMenuOpen(false);
 
-    expect(state.beeMenuOpen).toBe(false);
-    expect(mocks.beeUiMocks.stopBeeInfoPolling).toHaveBeenCalled();
+    expect(state.antMenuOpen).toBe(false);
+    expect(mocks.beeUiMocks.stopAntInfoPolling).toHaveBeenCalled();
     expect(mocks.ipfsUiMocks.stopIpfsInfoPolling).toHaveBeenCalled();
     expect(mocks.radicleUiMocks.stopRadicleInfoPolling).toHaveBeenCalled();
     expect(elements.beePeersCount.textContent).toBe('0');
@@ -302,13 +302,13 @@ describe('menus', () => {
 
     menus.initMenus();
     menus.setMenuOpen(true);
-    menus.setBeeMenuOpen(true);
+    menus.setAntMenuOpen(true);
 
     handlers.documentHandlers.click({ target: {} });
     elements.webviewElement.handlers.focus();
     handlers.windowHandlers.blur();
 
     expect(state.menuOpen).toBe(false);
-    expect(state.beeMenuOpen).toBe(false);
+    expect(state.antMenuOpen).toBe(false);
   });
 });

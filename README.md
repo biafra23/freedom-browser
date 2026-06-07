@@ -38,7 +38,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
 
 ## Architecture
 
-Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`bee-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
+Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`ant-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
 
 When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, or rewrites the URL to the active gateway URL via the registry (`rad`). `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the protocol handler — Kubo's path-gateway is fast on the first request, so no warm-up probe is needed.
 
@@ -188,7 +188,7 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 | **Gateway Port**     | 1633           | 8080                                  | 8780                           |
 | **API Port**         | 1633           | 5001                                  | 8780                           |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
-| **Data Directory**   | `bee-data/`    | `ipfs-data/`                          | `radicle-data/`                |
+| **Data Directory**   | `ant-data/`    | `ipfs-data/`                          | `radicle-data/`                |
 | **Binary Directory** | `ant-bin/`     | `ipfs-bin/`                           | `radicle-bin/`                 |
 
 ### Smart Node Connection
@@ -474,7 +474,7 @@ npm test
 
 The suite covers most of `src/main/` and `src/renderer/lib/` — see `src/**/*.test.js` for the full list. Notable areas include:
 
-- **Networking & protocols**: `bzz-protocol`, `swarm-probe`, `swarm-service`, `swarm-provider-ipc`, `request-rewriter`, `ens-resolver`, `ipfs-manager`, `radicle-manager`, `bee-manager`, `service-registry`
+- **Networking & protocols**: `bzz-protocol`, `swarm-probe`, `swarm-service`, `swarm-provider-ipc`, `request-rewriter`, `ens-resolver`, `ipfs-manager`, `radicle-manager`, `ant-manager`, `service-registry`
 - **Renderer navigation & UI**: `navigation`, `navigation-utils`, `tabs`, `tabs-ui`, `bookmarks-ui`, `autocomplete`, `menus`, `page-context-menu`, `settings-ui`, `wallet/*`
 - **Identity, vault & wallet**: `identity/derivation`, `identity/vault`, `identity/formats`, `wallet/dapp-permissions`, `wallet/transaction-service`
 - **Parsing & utilities**: `url-utils`, `cid-utils`, `origin-utils`, `ethereum-uri`, `page-urls`, `brand`

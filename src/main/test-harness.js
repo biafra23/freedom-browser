@@ -230,7 +230,7 @@ function overrideProbeIpc() {
 // Stub responses match the production IPC shape `{ status, error }`
 // — the renderer destructures these fields directly
 // (`src/renderer/lib/bee-ui.js`, `src/renderer/lib/ipfs-ui.js`).
-const stubNodeStatus = { bee: 'running', ipfs: 'running', radicle: 'running' };
+const stubNodeStatus = { ant: 'running', ipfs: 'running', radicle: 'running' };
 
 function overrideNodeIpc() {
   const setStatus = (service, status) => {
@@ -238,16 +238,16 @@ function overrideNodeIpc() {
     return { status, error: null };
   };
 
-  replaceHandler(IPC.BEE_START, async () => {
-    log.info('[test-harness] ignored bee:start (test mode)');
-    return setStatus('bee', 'running');
+  replaceHandler(IPC.ANT_START, async () => {
+    log.info('[test-harness] ignored ant:start (test mode)');
+    return setStatus('ant', 'running');
   });
-  replaceHandler(IPC.BEE_STOP, async () => {
-    log.info('[test-harness] ignored bee:stop (test mode)');
-    return setStatus('bee', 'stopped');
+  replaceHandler(IPC.ANT_STOP, async () => {
+    log.info('[test-harness] ignored ant:stop (test mode)');
+    return setStatus('ant', 'stopped');
   });
-  replaceHandler(IPC.BEE_GET_STATUS, async () => ({
-    status: stubNodeStatus.bee,
+  replaceHandler(IPC.ANT_GET_STATUS, async () => ({
+    status: stubNodeStatus.ant,
     error: null,
   }));
 
@@ -279,12 +279,12 @@ function overrideNodeIpc() {
 }
 
 function seedRegistry() {
-  updateService('bee', {
+  updateService('ant', {
     api: 'http://127.0.0.1:1633',
     gateway: 'http://127.0.0.1:1633',
     mode: MODE.BUNDLED,
   });
-  setStatusMessage('bee', 'Test mode (Swarm stub)');
+  setStatusMessage('ant', 'Test mode (Swarm stub)');
   updateService('ipfs', {
     api: 'http://127.0.0.1:5001',
     gateway: 'http://localhost:8080',

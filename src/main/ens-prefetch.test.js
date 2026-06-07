@@ -10,7 +10,7 @@ jest.mock('electron', () => ({
 }));
 
 jest.mock('./service-registry', () => ({
-  getBeeApiUrl: () => 'http://127.0.0.1:1633',
+  getAntApiUrl: () => 'http://127.0.0.1:1633',
   getIpfsGatewayUrl: () => 'http://localhost:8080',
   getRadicleApiUrl: () => 'http://127.0.0.1:8780',
 }));

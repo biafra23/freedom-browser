@@ -23,8 +23,8 @@ describe('service-registry', () => {
 
     expect(mod.getIpfsApiUrl()).toBe('http://127.0.0.1:5001');
     expect(mod.getIpfsGatewayUrl()).toBe('http://localhost:8080');
-    expect(mod.getBeeApiUrl()).toBe('http://127.0.0.1:1633');
-    expect(mod.getBeeGatewayUrl()).toBe('http://127.0.0.1:1633');
+    expect(mod.getAntApiUrl()).toBe('http://127.0.0.1:1633');
+    expect(mod.getAntGatewayUrl()).toBe('http://127.0.0.1:1633');
     expect(mod.getRadicleApiUrl()).toBe('http://127.0.0.1:8780');
   });
 
@@ -68,14 +68,14 @@ describe('service-registry', () => {
   test('temporary messages override status and auto-clear back to the permanent message', () => {
     const { mod } = loadServiceRegistry();
 
-    mod.setStatusMessage('bee', 'Bee ready');
-    mod.setTempStatusMessage('bee', 'Reconnecting', 50);
+    mod.setStatusMessage('ant', 'Bee ready');
+    mod.setTempStatusMessage('ant', 'Reconnecting', 50);
 
-    expect(mod.getDisplayMessage('bee')).toBe('Reconnecting');
+    expect(mod.getDisplayMessage('ant')).toBe('Reconnecting');
 
     jest.advanceTimersByTime(50);
 
-    expect(mod.getDisplayMessage('bee')).toBe('Bee ready');
+    expect(mod.getDisplayMessage('ant')).toBe('Bee ready');
   });
 
   test('error state can be cleared back to the permanent status message', () => {
@@ -92,16 +92,16 @@ describe('service-registry', () => {
   test('clearService resets service state back to defaults', () => {
     const { mod } = loadServiceRegistry();
 
-    mod.updateService('bee', {
+    mod.updateService('ant', {
       api: 'http://127.0.0.1:1999',
       gateway: 'http://127.0.0.1:1999',
       mode: mod.MODE.BUNDLED,
     });
-    mod.setStatusMessage('bee', 'Online');
+    mod.setStatusMessage('ant', 'Online');
 
-    mod.clearService('bee');
+    mod.clearService('ant');
 
-    expect(mod.getService('bee')).toEqual({
+    expect(mod.getService('ant')).toEqual({
       api: null,
       gateway: null,
       mode: mod.MODE.NONE,

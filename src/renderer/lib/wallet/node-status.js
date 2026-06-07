@@ -6,7 +6,7 @@
 
 import { state } from '../state.js';
 import { formatRawTokenBalance, truncateAddress, isChequebookDeployed } from './wallet-utils.js';
-import { fetchBeeJson } from './bee-api.js';
+import { fetchAntJson } from './ant-api.js';
 import {
   classifySwarmPublishState,
   normalizeSwarmMode,
@@ -155,7 +155,7 @@ function getDisplayedSwarmMode() {
     return actualSwarmMode;
   }
 
-  if (state.registry?.bee?.mode !== 'reused') {
+  if (state.registry?.ant?.mode !== 'reused') {
     return desiredSwarmMode;
   }
 
@@ -171,7 +171,7 @@ function updateSwarmModeUi() {
 async function syncDesiredSwarmMode() {
   try {
     const settings = await window.electronAPI?.getSettings?.();
-    desiredSwarmMode = settings?.beeNodeMode === 'light' ? 'light' : 'ultraLight';
+    desiredSwarmMode = settings?.antNodeMode === 'light' ? 'light' : 'ultraLight';
   } catch {
     desiredSwarmMode = 'ultraLight';
   }
@@ -180,7 +180,7 @@ async function syncDesiredSwarmMode() {
 }
 
 function handleSettingsUpdated(event) {
-  desiredSwarmMode = event.detail?.beeNodeMode === 'light' ? 'light' : 'ultraLight';
+  desiredSwarmMode = event.detail?.antNodeMode === 'light' ? 'light' : 'ultraLight';
   updateSwarmUi();
 }
 
@@ -188,8 +188,8 @@ function subscribeToNodeStatus() {
   nodeStatusUnsubscribers.forEach((unsub) => unsub?.());
   nodeStatusUnsubscribers = [];
 
-  if (window.bee?.onStatusUpdate) {
-    const unsubBee = window.bee.onStatusUpdate(({ status, error }) => {
+  if (window.ant?.onStatusUpdate) {
+    const unsubBee = window.ant.onStatusUpdate(({ status, error }) => {
       updateSwarmStatus(status, error);
     });
     if (unsubBee) nodeStatusUnsubscribers.push(unsubBee);
@@ -214,8 +214,8 @@ function subscribeToNodeStatus() {
 
 async function fetchInitialNodeStatus() {
   try {
-    if (window.bee?.getStatus) {
-      const { status, error } = await window.bee.getStatus();
+    if (window.ant?.getStatus) {
+      const { status, error } = await window.ant.getStatus();
       updateSwarmStatus(status, error);
     }
 
@@ -250,7 +250,7 @@ function getStatusBadgeState(status) {
 }
 
 function updateSwarmStatus(status, _error) {
-  state.currentBeeStatus = status;
+  state.currentAntStatus = status;
 
   if (swarmStatusBadge) {
     const badgeState = getStatusBadgeState(status);
@@ -316,18 +316,18 @@ function stopSwarmStartupBurst() {
 }
 
 async function refreshSwarmRuntimeInfo() {
-  if (state.currentBeeStatus !== 'running') {
+  if (state.currentAntStatus !== 'running') {
     return;
   }
 
   try {
     const [nodeResult, readinessResult, walletResult, stampsResult, chequebookAddrResult, chequebookBalResult] = await Promise.all([
-      fetchBeeJson('/node'),
-      fetchBeeJson('/readiness'),
-      fetchBeeJson('/wallet'),
-      fetchBeeJson('/stamps'),
-      fetchBeeJson('/chequebook/address'),
-      fetchBeeJson('/chequebook/balance'),
+      fetchAntJson('/node'),
+      fetchAntJson('/readiness'),
+      fetchAntJson('/wallet'),
+      fetchAntJson('/stamps'),
+      fetchAntJson('/chequebook/address'),
+      fetchAntJson('/chequebook/balance'),
     ]);
 
     const nodeInfo = nodeResult.ok ? nodeResult.data : null;
@@ -389,17 +389,17 @@ function handleSetupCtaClick() {
 
 function updateSwarmSetupCta() {
   const publishState = classifySwarmPublishState({
-    beeStatus: state.currentBeeStatus,
+    beeStatus: state.currentAntStatus,
     desiredMode: desiredSwarmMode,
     actualMode: actualSwarmMode,
-    registryMode: state.registry?.bee?.mode,
+    registryMode: state.registry?.ant?.mode,
     readiness: swarmRuntimeInfo.readiness,
     stamps: swarmRuntimeInfo.stamps,
     stampsKnown: swarmRuntimeInfo.stampsKnown,
   });
 
-  const inspectOnly = state.registry?.bee?.mode === 'reused';
-  const beeRunning = state.currentBeeStatus === 'running';
+  const inspectOnly = state.registry?.ant?.mode === 'reused';
+  const beeRunning = state.currentAntStatus === 'running';
   const isReady = publishState.key === 'ready';
   const isInitializing = publishState.key === 'initializing';
 

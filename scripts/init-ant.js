@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const SAMPLE_CONFIG = path.join(__dirname, '..', 'config', 'ant.yaml');
 // Matches bee-manager's dev data dir so `npm run ant:start` runs against the
 // same directory the app uses in development.
-const DATA_DIR = path.join(__dirname, '..', 'bee-data');
+const DATA_DIR = path.join(__dirname, '..', 'ant-data');
 const TARGET_CONFIG = path.join(DATA_DIR, 'config.yaml');
 
 function generatePassword(length = 32) {

@@ -7,7 +7,7 @@
  * - Bookmarks
  * - History
  * - Favicons cache
- * - Bee/IPFS node data
+ * - Ant/IPFS node data
  */
 
 const log = require('./logger');
@@ -44,7 +44,7 @@ function isEffectivelyEmpty(dir) {
  * Migrate user data from old "Freedom Browser" directory to new "Freedom" directory
  *
  * Uses move (rename) instead of copy for speed and to avoid doubling disk usage.
- * bee-data/ and ipfs-data/ can be gigabytes - moving is instant, copying takes minutes.
+ * ant-data/ and ipfs-data/ can be gigabytes - moving is instant, copying takes minutes.
  *
  * This function should be called early in app startup, before any modules
  * try to access userData.

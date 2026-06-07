@@ -39,7 +39,7 @@
  */
 
 const log = require('../logger');
-const { getBeeApiUrl } = require('../service-registry');
+const { getAntApiUrl } = require('../service-registry');
 const { resolveEnsContent } = require('../ens-resolver');
 const { isEnsHost } = require('../../shared/origin-utils');
 
@@ -134,7 +134,7 @@ async function buildGatewayUrl(bzzUrl) {
   if (BZZ_HASH_RE.test(host)) {
     return {
       ok: true,
-      url: `${getBeeApiUrl()}/bzz/${host}${parsed.pathname}${parsed.search}`,
+      url: `${getAntApiUrl()}/bzz/${host}${parsed.pathname}${parsed.search}`,
     };
   }
 
@@ -183,7 +183,7 @@ async function resolveEnsToGatewayUrl(host, parsed) {
     }
     return {
       ok: true,
-      url: `${getBeeApiUrl()}/bzz/${result.decoded}${parsed.pathname}${parsed.search}`,
+      url: `${getAntApiUrl()}/bzz/${result.decoded}${parsed.pathname}${parsed.search}`,
     };
   }
 

@@ -7,7 +7,7 @@ jest.mock('../logger', () => ({
 
 const mockGetBeeApiUrl = jest.fn();
 jest.mock('../service-registry', () => ({
-  getBeeApiUrl: mockGetBeeApiUrl,
+  getAntApiUrl: mockGetBeeApiUrl,
 }));
 
 const {
@@ -83,7 +83,7 @@ describe('swarm-probe', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  test('resolves bee_unreachable when getBeeApiUrl is empty', async () => {
+  test('resolves bee_unreachable when getAntApiUrl is empty', async () => {
     mockGetBeeApiUrl.mockReturnValue('');
     const fetchImpl = jest.fn();
     const { promise } = startProbe(VALID_HASH, { fetchImpl, sleep: noSleep });

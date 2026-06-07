@@ -1,7 +1,7 @@
 const log = require('./logger');
 const { net } = require('electron');
 const { sanitizeUrlForLog } = require('./request-rewriter');
-const { getBeeApiUrl, getIpfsGatewayUrl } = require('./service-registry');
+const { getAntApiUrl, getIpfsGatewayUrl } = require('./service-registry');
 
 // Hygiene timeout — not trust-critical. A misbehaving gateway shouldn't
 // hold a socket open forever for speculative content the user may never
@@ -45,7 +45,7 @@ function prefetchGatewayUrl(uri) {
       if (!hash || !/^[a-fA-F0-9]{64}([a-fA-F0-9]{64})?$/.test(hash)) {
         return NOOP_HANDLE;
       }
-      url = `${getBeeApiUrl()}/bzz/${afterScheme}`;
+      url = `${getAntApiUrl()}/bzz/${afterScheme}`;
     } else {
       const afterScheme = uri.slice(7).replace(/^\/+/, '');
       const cid = afterScheme.split(/[/?#]/)[0];

@@ -20,7 +20,7 @@ jest.mock('./swarm-permissions', () => ({
 
 const mockGetBeeApiUrl = jest.fn();
 jest.mock('../service-registry', () => ({
-  getBeeApiUrl: mockGetBeeApiUrl,
+  getAntApiUrl: mockGetBeeApiUrl,
 }));
 
 const mockPublishData = jest.fn();

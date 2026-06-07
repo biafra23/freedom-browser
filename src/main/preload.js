@@ -15,7 +15,7 @@ const defaultBeeApi = process.env.BEE_API || 'http://127.0.0.1:1633';
 const defaultIpfsGateway = process.env.IPFS_GATEWAY || 'http://localhost:8080';
 
 contextBridge.exposeInMainWorld('nodeConfig', {
-  beeApi: defaultBeeApi,
+  antApi: defaultBeeApi,
   ipfsGateway: defaultIpfsGateway,
 });
 
@@ -260,16 +260,16 @@ function reDispatchAsWindowEvent(channel) {
 reDispatchAsWindowEvent('settings:updated');
 reDispatchAsWindowEvent('payments:tx-recorded');
 
-contextBridge.exposeInMainWorld('bee', {
-  start: () => ipcRenderer.invoke('bee:start'),
-  stop: () => ipcRenderer.invoke('bee:stop'),
-  getStatus: () => ipcRenderer.invoke('bee:getStatus'),
-  checkBinary: () => ipcRenderer.invoke('bee:checkBinary'),
+contextBridge.exposeInMainWorld('ant', {
+  start: () => ipcRenderer.invoke('ant:start'),
+  stop: () => ipcRenderer.invoke('ant:stop'),
+  getStatus: () => ipcRenderer.invoke('ant:getStatus'),
+  checkBinary: () => ipcRenderer.invoke('ant:checkBinary'),
   onStatusUpdate: (callback) => {
     const handler = (_event, value) => callback(value);
-    ipcRenderer.on('bee:statusUpdate', handler);
-    ipcRenderer.invoke('bee:getStatus').then(callback);
-    return () => ipcRenderer.removeListener('bee:statusUpdate', handler);
+    ipcRenderer.on('ant:statusUpdate', handler);
+    ipcRenderer.invoke('ant:getStatus').then(callback);
+    return () => ipcRenderer.removeListener('ant:statusUpdate', handler);
   },
 });
 
@@ -475,7 +475,7 @@ contextBridge.exposeInMainWorld('swarmFeedStore', {
   getOriginIdentities: (origin) => ipcRenderer.invoke('swarm:get-origin-identities', origin),
   previewAppScopedIdentity: (origin, options) => ipcRenderer.invoke('swarm:preview-app-scoped-identity', origin, options),
   createAppScopedIdentity: (origin, options) => ipcRenderer.invoke('swarm:create-app-scoped-identity', origin, options),
-  ensureBeeWalletIdentity: (origin, options) => ipcRenderer.invoke('swarm:ensure-bee-wallet-identity', origin, options),
+  ensureAntWalletIdentity: (origin, options) => ipcRenderer.invoke('swarm:ensure-ant-wallet-identity', origin, options),
   ensureEthereumWalletIdentity: (origin, walletIndex, options) =>
     ipcRenderer.invoke('swarm:ensure-ethereum-wallet-identity', origin, walletIndex, options),
   activateFeedIdentity: (origin, identityId) => ipcRenderer.invoke('swarm:activate-feed-identity', origin, identityId),

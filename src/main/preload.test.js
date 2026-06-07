@@ -25,7 +25,7 @@ function loadPreloadModule(options = {}) {
         [IPC.GET_INTERNAL_PAGES]: internalPages,
       },
       invokeResponses: {
-        [IPC.BEE_GET_STATUS]: { status: 'running', error: null },
+        [IPC.ANT_GET_STATUS]: { status: 'running', error: null },
         [IPC.IPFS_GET_STATUS]: { status: 'stopped', error: null },
         [IPC.RADICLE_GET_STATUS]: { status: 'error', error: 'offline' },
         ...(options.invokeResponses || {}),
@@ -90,7 +90,7 @@ describe('preload', () => {
       'nodeConfig',
       'internalPages',
       'electronAPI',
-      'bee',
+      'ant',
       'ipfs',
       'radicle',
       'githubBridge',
@@ -110,7 +110,7 @@ describe('preload', () => {
     ]);
     expect(ipcRenderer.sendSync).toHaveBeenCalledWith(IPC.GET_INTERNAL_PAGES);
     expect(exposures.nodeConfig).toEqual({
-      beeApi: 'http://127.0.0.1:1700',
+      antApi: 'http://127.0.0.1:1700',
       ipfsGateway: 'http://127.0.0.1:9090',
     });
     expect(exposures.internalPages).toBe(internalPages);
@@ -146,10 +146,10 @@ describe('preload', () => {
       [exposures.electronAPI, 'getCachedFavicon', ['https://example.com'], IPC.FAVICON_GET_CACHED, ['https://example.com']],
       [exposures.electronAPI, 'fetchFavicon', ['https://example.com'], IPC.FAVICON_FETCH, ['https://example.com']],
       [exposures.electronAPI, 'fetchFaviconWithKey', ['https://example.com/icon.png', 'icon-key'], IPC.FAVICON_FETCH_WITH_KEY, ['https://example.com/icon.png', 'icon-key']],
-      [exposures.bee, 'start', [], IPC.BEE_START, []],
-      [exposures.bee, 'stop', [], IPC.BEE_STOP, []],
-      [exposures.bee, 'getStatus', [], IPC.BEE_GET_STATUS, []],
-      [exposures.bee, 'checkBinary', [], IPC.BEE_CHECK_BINARY, []],
+      [exposures.ant, 'start', [], IPC.ANT_START, []],
+      [exposures.ant, 'stop', [], IPC.ANT_STOP, []],
+      [exposures.ant, 'getStatus', [], IPC.ANT_GET_STATUS, []],
+      [exposures.ant, 'checkBinary', [], IPC.ANT_CHECK_BINARY, []],
       [exposures.ipfs, 'start', [], IPC.IPFS_START, []],
       [exposures.ipfs, 'stop', [], IPC.IPFS_STOP, []],
       [exposures.ipfs, 'getStatus', [], IPC.IPFS_GET_STATUS, []],
@@ -226,7 +226,7 @@ describe('preload', () => {
       [exposures.electronAPI, 'onToggleBookmarkBar', IPC.BOOKMARKS_TOGGLE_BAR, [], []],
       [exposures.electronAPI, 'onUpdateNotification', 'show-update-notification', [{ version: '1.2.3' }], [{ version: '1.2.3' }]],
       [exposures.githubBridge, 'onProgress', IPC.GITHUB_BRIDGE_PROGRESS, [{ step: 'cloning' }], [{ step: 'cloning' }]],
-      [exposures.serviceRegistry, 'onUpdate', IPC.SERVICE_REGISTRY_UPDATE, [{ bee: { mode: 'bundled' } }], [{ bee: { mode: 'bundled' } }]],
+      [exposures.serviceRegistry, 'onUpdate', IPC.SERVICE_REGISTRY_UPDATE, [{ ant: { mode: 'bundled' } }], [{ ant: { mode: 'bundled' } }]],
     ];
 
     for (const [target, method, channel, emittedArgs, expectedArgs] of listenerCases) {
@@ -248,14 +248,14 @@ describe('preload', () => {
     const radicleStatus = { status: 'error', error: 'offline' };
     const { exposures, ipcRenderer } = loadPreloadModule({
       invokeResponses: {
-        [IPC.BEE_GET_STATUS]: beeStatus,
+        [IPC.ANT_GET_STATUS]: beeStatus,
         [IPC.IPFS_GET_STATUS]: ipfsStatus,
         [IPC.RADICLE_GET_STATUS]: radicleStatus,
       },
     });
 
     const statusCases = [
-      [exposures.bee, IPC.BEE_STATUS_UPDATE, IPC.BEE_GET_STATUS, beeStatus, { status: 'starting', error: null }],
+      [exposures.ant, IPC.ANT_STATUS_UPDATE, IPC.ANT_GET_STATUS, beeStatus, { status: 'starting', error: null }],
       [exposures.ipfs, IPC.IPFS_STATUS_UPDATE, IPC.IPFS_GET_STATUS, ipfsStatus, { status: 'running', error: null }],
       [exposures.radicle, IPC.RADICLE_STATUS_UPDATE, IPC.RADICLE_GET_STATUS, radicleStatus, { status: 'running', error: null }],
     ];
@@ -287,7 +287,7 @@ describe('preload', () => {
     });
 
     expect(exposures.nodeConfig).toEqual({
-      beeApi: 'http://127.0.0.1:1633',
+      antApi: 'http://127.0.0.1:1633',
       ipfsGateway: 'http://localhost:8080',
     });
   });

@@ -1,6 +1,6 @@
 // Renderer process entry point
 import { updateRegistry, setRadicleIntegrationEnabled, setBlockUnverifiedEns } from './lib/state.js';
-import { initBeeUi, updateBeeStatusLine, updateBeeToggleState } from './lib/bee-ui.js';
+import { initAntUi, updateAntStatusLine, updateAntToggleState } from './lib/ant-ui.js';
 import { initIpfsUi, updateIpfsStatusLine, updateIpfsToggleState } from './lib/ipfs-ui.js';
 import {
   initRadicleUi,
@@ -68,8 +68,8 @@ initTheme();
 window.serviceRegistry?.onUpdate?.((registry) => {
   pushDebug(`[ServiceRegistry] Update received: ${JSON.stringify(registry)}`);
   updateRegistry(registry);
-  updateBeeStatusLine();
-  updateBeeToggleState();
+  updateAntStatusLine();
+  updateAntToggleState();
   updateIpfsStatusLine();
   updateIpfsToggleState();
   updateRadicleStatusLine();
@@ -213,7 +213,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   initMenuBackdrop(closeAllOverlays);
   initMenus();
-  initBeeUi();
+  initAntUi();
   initIpfsUi();
   initRadicleUi();
   initGithubBridgeUi();

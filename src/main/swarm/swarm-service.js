@@ -7,7 +7,7 @@
  */
 
 const { Bee } = require('@ethersphere/bee-js');
-const { getBeeApiUrl } = require('../service-registry');
+const { getAntApiUrl } = require('../service-registry');
 const log = require('electron-log');
 
 let beeClient = null;
@@ -17,11 +17,11 @@ let beeClientUrl = null;
  * Get or create the Bee client. Recreates if the Bee API URL has changed.
  */
 function getBee() {
-  const url = getBeeApiUrl();
+  const url = getAntApiUrl();
   if (!beeClient || beeClientUrl !== url) {
     beeClient = new Bee(url);
     beeClientUrl = url;
-    log.info(`[SwarmService] Bee client created for ${url}`);
+    log.info(`[SwarmService] Ant node client created for ${url}`);
   }
   return beeClient;
 }

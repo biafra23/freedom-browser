@@ -135,7 +135,7 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
   const savedEnv = {};
   const ENV_KEYS = [
     'FREEDOM_IDENTITY_DATA',
-    'FREEDOM_BEE_DATA',
+    'FREEDOM_ANT_DATA',
     'FREEDOM_IPFS_DATA',
     'FREEDOM_RADICLE_DATA',
   ];
@@ -155,7 +155,7 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
       savedEnv[key] = process.env[key];
     });
     process.env.FREEDOM_IDENTITY_DATA = dataDirs.identity;
-    process.env.FREEDOM_BEE_DATA = dataDirs.bee;
+    process.env.FREEDOM_ANT_DATA = dataDirs.bee;
     process.env.FREEDOM_IPFS_DATA = dataDirs.ipfs;
     process.env.FREEDOM_RADICLE_DATA = dataDirs.radicle;
   });
@@ -215,5 +215,33 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     const results = await mgr.injectAllIdentities('FreedomBrowser', false);
 
     expect(results.needsRestart).toEqual([]);
+  });
+
+  // antd self-generates identity.json + signing.key when it starts on a data
+  // dir without an injected keystore (e.g. auto-started at launch before the
+  // vault was unlocked). If the wipe leaves those behind, antd keeps the
+  // throwaway identity instead of the swarm.key we inject — running under the
+  // wrong wallet (no stamps/chequebook). The wipe must remove them while
+  // preserving the keystore that injection is about to (re)write.
+  test('wipeStaleBeeState removes antd self-generated identity but keeps swarm.key', async () => {
+    const beeDir = dataDirs.bee;
+    fs.mkdirSync(path.join(beeDir, 'keys'), { recursive: true });
+    fs.mkdirSync(path.join(beeDir, 'statestore'), { recursive: true });
+    fs.writeFileSync(path.join(beeDir, 'statestore', 'CURRENT'), 'x');
+    fs.writeFileSync(path.join(beeDir, 'identity.json'), '{"eth":"0xthrowaway"}');
+    fs.writeFileSync(path.join(beeDir, 'signing.key'), 'throwaway');
+    fs.writeFileSync(path.join(beeDir, 'keys', 'swarm.key'), '{}');
+    fs.writeFileSync(path.join(beeDir, 'keys', 'libp2p_v2.key'), 'old');
+
+    const mgr = loadIdentityManager(dataDirs);
+    const beeWasRunning = await mgr.wipeStaleBeeState(beeDir);
+
+    expect(beeWasRunning).toBe(false);
+    expect(fs.existsSync(path.join(beeDir, 'identity.json'))).toBe(false);
+    expect(fs.existsSync(path.join(beeDir, 'signing.key'))).toBe(false);
+    expect(fs.existsSync(path.join(beeDir, 'statestore'))).toBe(false);
+    expect(fs.existsSync(path.join(beeDir, 'keys', 'libp2p_v2.key'))).toBe(false);
+    // The keystore is preserved — injection rewrites it immediately after.
+    expect(fs.existsSync(path.join(beeDir, 'keys', 'swarm.key'))).toBe(true);
   });
 });

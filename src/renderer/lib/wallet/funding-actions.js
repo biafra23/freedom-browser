@@ -19,8 +19,8 @@ export const XBZZ_TOKEN_KEY = '100:0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da';
  * - Main wallet has xDAI → open send flow pre-filled to Bee wallet
  * - Main wallet empty → open receive screen (QR + address)
  */
-export function topUpXdai(beeWalletAddress) {
-  const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
+export function topUpXdai(antWalletAddress) {
+  const recipient = antWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
     return { error: 'Ant wallet address not available.' };
   }
@@ -47,8 +47,8 @@ export function topUpXdai(beeWalletAddress) {
  * - Main wallet has xDAI but no xBZZ → open CowSwap
  * - Main wallet empty → open receive screen
  */
-export function topUpXbzz(beeWalletAddress) {
-  const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
+export function topUpXbzz(antWalletAddress) {
+  const recipient = antWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
     return { error: 'Ant wallet address not available.' };
   }

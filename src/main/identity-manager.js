@@ -305,21 +305,21 @@ async function getUserWalletKey(walletIndex) {
 }
 
 /**
- * Get the Bee data directory
+ * Get the Ant data directory
  *
  * Must resolve to the same directory bee-manager uses, so the keys we inject
- * land where the running node reads them. The FREEDOM_BEE_DATA override
- * mirrors bee-manager.getBeeDataPath() and keeps a live E2E run isolated in a
- * temp dir instead of the developer's persistent `bee-data/`.
+ * land where the running node reads them. The FREEDOM_ANT_DATA override
+ * mirrors bee-manager.getAntDataPath() and keeps a live E2E run isolated in a
+ * temp dir instead of the developer's persistent `ant-data/`.
  */
-function getBeeDataDir() {
-  if (process.env.FREEDOM_BEE_DATA) {
-    return process.env.FREEDOM_BEE_DATA;
+function getAntDataDir() {
+  if (process.env.FREEDOM_ANT_DATA) {
+    return process.env.FREEDOM_ANT_DATA;
   }
   if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'bee-data');
+    return path.join(__dirname, '..', '..', 'ant-data');
   }
-  return path.join(app.getPath('userData'), 'bee-data');
+  return path.join(app.getPath('userData'), 'ant-data');
 }
 
 /**
@@ -359,7 +359,7 @@ function getRadicleDataDir() {
  * Check if Bee identity has been injected
  */
 function isBeeIdentityInjected() {
-  const dataDir = getBeeDataDir();
+  const dataDir = getAntDataDir();
   const keystorePath = path.join(dataDir, 'keys', 'swarm.key');
   return fs.existsSync(keystorePath);
 }
@@ -565,6 +565,19 @@ async function wipeStaleBeeState(dataDir) {
     }
   }
 
+  // antd self-generates a native node identity (identity.json + signing.key)
+  // whenever it starts on a data dir that has no injected `keys/swarm.key`
+  // (e.g. the node auto-started at launch before the vault was unlocked). If
+  // those files survive, antd keeps that throwaway identity instead of loading
+  // the swarm.key we're about to inject — so the node would run under the wrong
+  // wallet (different overlay, none of the user's postage stamps or chequebook).
+  // Remove them so the injected keystore becomes the sole identity on restart.
+  for (const idFile of ['identity.json', 'signing.key']) {
+    if (removePathWithRetry(path.join(dataDir, idFile))) {
+      console.log(`[IdentityManager] Removed antd self-generated ${idFile} (identity injection)`);
+    }
+  }
+
   return beeWasRunning;
 }
 
@@ -580,7 +593,7 @@ async function injectBeeIdentity() {
   }
 
   const identity = await loadIdentityModule();
-  const dataDir = getBeeDataDir();
+  const dataDir = getAntDataDir();
 
   // Ensure directory exists
   if (!fs.existsSync(dataDir)) {
@@ -1445,7 +1458,7 @@ module.exports = {
 
   // Data directories
   getIdentityDataDir,
-  getBeeDataDir,
+  getAntDataDir,
   getIpfsDataDir,
   getRadicleDataDir,
 };

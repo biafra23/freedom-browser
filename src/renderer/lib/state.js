@@ -11,7 +11,7 @@ export const state = {
       statusMessage: null,
       tempMessage: null,
     },
-    bee: {
+    ant: {
       api: null,
       gateway: null,
       mode: 'none',
@@ -28,9 +28,9 @@ export const state = {
   },
 
   // Bee/Swarm Gateway config (defaults from env or hardcoded, updated from registry)
-  beeBase: (window.nodeConfig?.beeApi || 'http://127.0.0.1:1633').replace(/\/$/, ''),
+  antBase: (window.nodeConfig?.antApi || 'http://127.0.0.1:1633').replace(/\/$/, ''),
   get bzzRoutePrefix() {
-    return `${this.beeBase}/bzz/`;
+    return `${this.antBase}/bzz/`;
   },
 
   // IPFS Gateway config (defaults from env or hardcoded, updated from registry)
@@ -71,14 +71,14 @@ export const state = {
 
   // UI state
   menuOpen: false,
-  beeMenuOpen: false,
+  antMenuOpen: false,
 
   // Bee/Swarm state
-  currentBeeStatus: 'stopped',
-  beePeersInterval: null,
-  beeVisibleInterval: null,
-  beeVersionFetched: false,
-  beeVersionValue: '',
+  currentAntStatus: 'stopped',
+  antPeersInterval: null,
+  antVisibleInterval: null,
+  antVersionFetched: false,
+  antVersionValue: '',
   suppressRunningStatus: false,
 
   // IPFS state
@@ -110,8 +110,8 @@ export const state = {
 };
 
 // Build Bee URL using registry or fallback to defaults
-export const buildBeeUrl = (endpoint) => {
-  const base = state.registry.bee.api || state.beeBase;
+export const buildAntUrl = (endpoint) => {
+  const base = state.registry.ant.api || state.antBase;
   return `${base}${endpoint}`;
 };
 
@@ -132,8 +132,8 @@ export const updateRegistry = (newRegistry) => {
   state.registry = newRegistry;
 
   // Update base URLs from registry if available
-  if (newRegistry.bee.api) {
-    state.beeBase = newRegistry.bee.api.replace(/\/$/, '');
+  if (newRegistry.ant.api) {
+    state.antBase = newRegistry.ant.api.replace(/\/$/, '');
   }
   if (newRegistry.ipfs.gateway) {
     state.ipfsBase = newRegistry.ipfs.gateway.replace(/\/$/, '');

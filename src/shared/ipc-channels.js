@@ -8,12 +8,12 @@ module.exports = {
   BOOKMARKS_REMOVE: 'bookmarks:remove',
   BOOKMARKS_BAR_TOGGLE: 'bookmarks-bar:toggle',
 
-  // Bee node management
-  BEE_START: 'bee:start',
-  BEE_STOP: 'bee:stop',
-  BEE_GET_STATUS: 'bee:getStatus',
-  BEE_STATUS_UPDATE: 'bee:statusUpdate',
-  BEE_CHECK_BINARY: 'bee:checkBinary',
+  // Ant node management
+  ANT_START: 'ant:start',
+  ANT_STOP: 'ant:stop',
+  ANT_GET_STATUS: 'ant:getStatus',
+  ANT_STATUS_UPDATE: 'ant:statusUpdate',
+  ANT_CHECK_BINARY: 'ant:checkBinary',
 
   // IPFS node management
   IPFS_START: 'ipfs:start',
@@ -229,7 +229,7 @@ module.exports = {
   SWARM_GET_ORIGIN_IDENTITIES: 'swarm:get-origin-identities',
   SWARM_PREVIEW_APP_SCOPED_IDENTITY: 'swarm:preview-app-scoped-identity',
   SWARM_CREATE_APP_SCOPED_IDENTITY: 'swarm:create-app-scoped-identity',
-  SWARM_ENSURE_BEE_WALLET_IDENTITY: 'swarm:ensure-bee-wallet-identity',
+  SWARM_ENSURE_ANT_WALLET_IDENTITY: 'swarm:ensure-ant-wallet-identity',
   SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY: 'swarm:ensure-ethereum-wallet-identity',
   SWARM_ACTIVATE_FEED_IDENTITY: 'swarm:activate-feed-identity',
   SWARM_REVOKE_FEED_ACCESS: 'swarm:revoke-feed-access',

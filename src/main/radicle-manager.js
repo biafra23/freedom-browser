@@ -113,7 +113,7 @@ function getRadicleBinaryPath(binary) {
 function getRadicleDataPath() {
   // Explicit override for tests / advanced users — keeps a live E2E run from
   // clobbering the developer's persistent dev `radicle-data/`. Honoured in both
-  // dev and packaged modes; mirrors the FREEDOM_BEE_DATA / FREEDOM_IPFS_DATA
+  // dev and packaged modes; mirrors the FREEDOM_ANT_DATA / FREEDOM_IPFS_DATA
   // overrides and the matching one in identity-manager.getRadicleDataDir().
   if (process.env.FREEDOM_RADICLE_DATA) {
     const overrideDir = process.env.FREEDOM_RADICLE_DATA;

@@ -11,7 +11,7 @@
 // stopped before the wipe and restarted with the injected key, so the wizard
 // completes and identities are reported as injected on every platform.
 //
-// Requires the Bee and IPFS binaries (npm run bee:download / ipfs:download);
+// Requires the Ant and IPFS binaries (npm run ant:download / ipfs:download);
 // skipped if either is absent.
 
 const { test, expect, HAS_BINARIES } = require('../onboarding-fixtures');
@@ -19,7 +19,7 @@ const { test, expect, HAS_BINARIES } = require('../onboarding-fixtures');
 const STRONG_PASSWORD = 'Freedom-E2E-Test-Passphrase-2026!';
 
 test.describe('Onboarding wizard creates node identities (issue #90)', () => {
-  test.skip(!HAS_BINARIES, 'Bee and/or IPFS binary missing — run npm run bee:download && npm run ipfs:download');
+  test.skip(!HAS_BINARIES, 'Ant and/or IPFS binary missing — run npm run ant:download && npm run ipfs:download');
 
   test('completes the password setup with a running Bee node', async ({ window: win }) => {
     // Surface any wizard error dialog (alert) instead of letting Playwright
@@ -33,7 +33,7 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     // 1) Wait for the real Bee node to come up — once healthy it has opened and
     //    LOCKed its statestore, which is the precondition for the bug.
     await expect
-      .poll(async () => (await win.evaluate(() => window.bee.getStatus())).status, {
+      .poll(async () => (await win.evaluate(() => window.ant.getStatus())).status, {
         timeout: 120_000,
         intervals: [1000],
       })
@@ -93,7 +93,7 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
 
     // Bee was restarted and is healthy again with the injected identity.
     await expect
-      .poll(async () => (await win.evaluate(() => window.bee.getStatus())).status, {
+      .poll(async () => (await win.evaluate(() => window.ant.getStatus())).status, {
         timeout: 120_000,
         intervals: [1000],
       })

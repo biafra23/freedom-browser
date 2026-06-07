@@ -18,12 +18,20 @@ function applyNativeTheme(theme) {
 
 const SETTINGS_FILE = 'settings.json';
 
+// Bee-era settings keys renamed to their ant-named replacements. Migrated on
+// load (for users upgrading from a bee-based build): the value is copied to the
+// new key and the old key is dropped from the live file.
+const RENAMED_KEYS = {
+  beeNodeMode: 'antNodeMode',
+  startBeeAtLaunch: 'startAntAtLaunch',
+};
+
 const DEFAULT_SETTINGS = {
   theme: 'system',
   enableRadicleIntegration: false,
   enableIdentityWallet: true,
-  beeNodeMode: 'ultraLight',
-  startBeeAtLaunch: true,
+  antNodeMode: 'ultraLight',
+  startAntAtLaunch: true,
   startIpfsAtLaunch: true,
   startRadicleAtLaunch: false,
   autoUpdate: true,
@@ -44,6 +52,21 @@ function getSettingsPath() {
   return path.join(app.getPath('userData'), SETTINGS_FILE);
 }
 
+// Rewrites bee-era keys to their ant-named replacements in place. Returns true
+// when at least one key was migrated so the caller can persist the result.
+function migrateRenamedKeys(parsed) {
+  let migrated = false;
+  for (const [oldKey, newKey] of Object.entries(RENAMED_KEYS)) {
+    if (!Object.prototype.hasOwnProperty.call(parsed, oldKey)) continue;
+    if (!Object.prototype.hasOwnProperty.call(parsed, newKey)) {
+      parsed[newKey] = parsed[oldKey];
+    }
+    delete parsed[oldKey];
+    migrated = true;
+  }
+  return migrated;
+}
+
 function loadSettings() {
   if (cachedSettings) {
     return cachedSettings;
@@ -54,6 +77,13 @@ function loadSettings() {
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
       const parsed = JSON.parse(data);
+      if (migrateRenamedKeys(parsed)) {
+        try {
+          fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf-8');
+        } catch (err) {
+          log.error('Failed to persist migrated settings:', err);
+        }
+      }
       cachedSettings = { ...DEFAULT_SETTINGS, ...parsed };
     } else {
       cachedSettings = { ...DEFAULT_SETTINGS };

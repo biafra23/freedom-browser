@@ -135,14 +135,14 @@ All commands run via the `cmd.exe /c '… > log 2>&1'` + poll pattern from above
    Confirm `git -C C:\freedom-build\repo log --oneline -1` is the commit you expect.
 
 2. **Provide the Windows binaries.** `npm run check-binaries -- --win --arm64`
-   requires `bee-bin/win-arm64/bee.exe` and `ipfs-bin/win-arm64/ipfs.exe`
+   requires `ant-bin/win-arm64/antd.exe` and `ipfs-bin/win-arm64/ipfs.exe`
    (Radicle is intentionally skipped on Windows — see `scripts/check-binaries.js`).
-   The Bee fetch needs auth, so the reliable path is to **push the local
+   The Ant fetch needs auth, so the reliable path is to **push the local
    binaries** rather than download them in the guest:
 
    ```
-   "$UTMCTL" exec "<VM>" --cmd 'C:\Windows\System32\cmd.exe' '/c' 'mkdir C:\freedom-build\repo\bee-bin\win-arm64 2>nul & mkdir C:\freedom-build\repo\ipfs-bin\win-arm64 2>nul'
-   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\bee-bin\win-arm64\bee.exe'   < bee-bin/win-arm64/bee.exe
+   "$UTMCTL" exec "<VM>" --cmd 'C:\Windows\System32\cmd.exe' '/c' 'mkdir C:\freedom-build\repo\ant-bin\win-arm64 2>nul & mkdir C:\freedom-build\repo\ipfs-bin\win-arm64 2>nul'
+   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\ant-bin\win-arm64\antd.exe'   < ant-bin/win-arm64/antd.exe
    "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\ipfs-bin\win-arm64\ipfs.exe' < ipfs-bin/win-arm64/ipfs.exe
    ```
 

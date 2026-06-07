@@ -13,7 +13,7 @@ const loadIpfsModule = async (options = {}) => {
   jest.resetModules();
 
   const state = {
-    beeMenuOpen: options.beeMenuOpen ?? false,
+    antMenuOpen: options.antMenuOpen ?? false,
     currentIpfsStatus: options.currentIpfsStatus || 'stopped',
     ipfsPeersInterval: null,
     ipfsVersionFetched: options.ipfsVersionFetched ?? false,
@@ -161,7 +161,7 @@ describe('ipfs-ui', () => {
 
   test('starts and stops IPFS info polling and populates stats', async () => {
     const ctx = await loadIpfsModule({
-      beeMenuOpen: true,
+      antMenuOpen: true,
       currentIpfsStatus: 'running',
       windowIpfs: false,
     });
@@ -201,7 +201,7 @@ describe('ipfs-ui', () => {
 
   test('updates IPFS status lines, toggle state, and running transitions', async () => {
     const ctx = await loadIpfsModule({
-      beeMenuOpen: true,
+      antMenuOpen: true,
       currentIpfsStatus: 'stopped',
       statusMessage: 'IPFS: Connected',
       windowIpfs: false,
@@ -244,7 +244,7 @@ describe('ipfs-ui', () => {
 
   test('initializes IPFS controls, handles binary availability, and toggles start and stop', async () => {
     const ctx = await loadIpfsModule({
-      beeMenuOpen: true,
+      antMenuOpen: true,
       currentIpfsStatus: 'stopped',
       binaryAvailable: false,
       statusResult: { status: 'stopped', error: null },

@@ -573,7 +573,7 @@
               </div>
               <div class="row-control">
                 <label class="toggle">
-                  <input type="checkbox" id="start-bee-at-launch" />
+                  <input type="checkbox" id="start-ant-at-launch" />
                   <span class="slider"></span>
                 </label>
               </div>
@@ -732,7 +732,7 @@
 
       const fields = {
         themeMode: $('theme-mode'),
-        startBee: $('start-bee-at-launch'),
+        startAnt: $('start-ant-at-launch'),
         startIpfs: $('start-ipfs-at-launch'),
         blockUnverifiedEns: $('block-unverified-ens'),
         enableRadicle: $('enable-radicle-integration'),
@@ -812,7 +812,7 @@
 
       const currentFormState = () => ({
         theme: fields.themeMode.value || 'system',
-        startBeeAtLaunch: fields.startBee.checked,
+        startAntAtLaunch: fields.startAnt.checked,
         startIpfsAtLaunch: fields.startIpfs.checked,
         enableRadicleIntegration: isWindows ? false : fields.enableRadicle.checked,
         startRadicleAtLaunch: isWindows ? false : fields.startRadicle.checked,
@@ -824,7 +824,7 @@
       const applyFormState = (settings) => {
         if (!settings) return;
         fields.themeMode.value = settings.theme || 'system';
-        fields.startBee.checked = settings.startBeeAtLaunch !== false;
+        fields.startAnt.checked = settings.startAntAtLaunch !== false;
         fields.startIpfs.checked = settings.startIpfsAtLaunch !== false;
         fields.enableRadicle.checked = settings.enableRadicleIntegration === true;
         fields.startRadicle.checked = settings.startRadicleAtLaunch === true;
@@ -837,14 +837,14 @@
       let cachedSettings = null;
       let cachedRegistry = null;
 
-      // Render the Swarm-mode row based on (beeNodeMode, registry.bee.mode).
+      // Render the Swarm-mode row based on (antNodeMode, registry.ant.mode).
       // The toggle metaphor doesn't fit here: turning light mode ON requires a
       // multi-step funding/chequebook/stamp flow (handled by the wallet
       // sidebar's publish-setup checklist), while turning it OFF is a one-click
       // revert. So we render an asymmetric row: setup-link vs revert-button.
       const renderSwarmModeRow = (settings, registry) => {
-        const beeMode = settings?.beeNodeMode === 'light' ? 'light' : 'ultraLight';
-        const registryMode = registry?.bee?.mode || 'none';
+        const beeMode = settings?.antNodeMode === 'light' ? 'light' : 'ultraLight';
+        const registryMode = registry?.ant?.mode || 'none';
 
         // Use onclick (not addEventListener) so each render atomically replaces
         // the prior handler — handler closes over the current state, and we
@@ -887,7 +887,7 @@
           swarmModeHelp.textContent = 'Light — node can publish to Swarm.';
           showAction('Switch back to ultra-light', async () => {
             swarmModeBtn.disabled = true;
-            const ok = await freedomAPI.saveSettings({ beeNodeMode: 'ultraLight' });
+            const ok = await freedomAPI.saveSettings({ antNodeMode: 'ultraLight' });
             if (!ok) swarmModeBtn.disabled = false;
           });
           return;
@@ -925,7 +925,7 @@
       };
 
       fields.themeMode.addEventListener('change', save);
-      fields.startBee.addEventListener('change', save);
+      fields.startAnt.addEventListener('change', save);
       fields.startIpfs.addEventListener('change', save);
       fields.enableRadicle.addEventListener('change', () => {
         setFieldEnabled(fields.enableRadicle, fields.startRadicleRow, fields.startRadicle);
@@ -944,7 +944,7 @@
       // Broadcasts from main keep a second open settings tab in sync; skip the
       // form re-render when the payload matches what's already on screen so we
       // don't clobber an in-flight edit (e.g. the ENS RPC input mid-type).
-      // Always refresh the Swarm-mode row — beeNodeMode lives outside the form
+      // Always refresh the Swarm-mode row — antNodeMode lives outside the form
       // and a flip changes the registry too.
       freedomAPI.onSettingsUpdated?.((settings) => {
         if (!settings) return;

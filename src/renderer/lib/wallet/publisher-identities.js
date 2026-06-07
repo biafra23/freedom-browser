@@ -197,7 +197,7 @@ async function activateIdentityForDetail(identity) {
   if (identity.id === activeDetailState?.activeIdentityId) return;
 
   if (identity.id === BEE_WALLET_IDENTITY_ID) {
-    activeDetailState = await window.swarmFeedStore.ensureBeeWalletIdentity(activeDetailOrigin, { activate: true });
+    activeDetailState = await window.swarmFeedStore.ensureAntWalletIdentity(activeDetailOrigin, { activate: true });
   } else if (identity.mode === 'ethereum-wallet') {
     activeDetailState = await window.swarmFeedStore.ensureEthereumWalletIdentity(
       activeDetailOrigin,

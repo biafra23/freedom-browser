@@ -51,7 +51,7 @@ const {
   getOriginIdentityState,
   previewAppScopedIdentity,
   createAppScopedIdentity,
-  ensureBeeWalletIdentity,
+  ensureAntWalletIdentity,
   ensureEthereumWalletIdentity,
   activateIdentity,
   getFeed,
@@ -210,10 +210,10 @@ describe('feed-store', () => {
       expect(allocatePublisherKeyIndex()).toBe(2);
     });
 
-    test('ensureBeeWalletIdentity can add Bee wallet without activating it', () => {
+    test('ensureAntWalletIdentity can add Bee wallet without activating it', () => {
       setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
 
-      const entry = ensureBeeWalletIdentity('myapp.eth');
+      const entry = ensureAntWalletIdentity('myapp.eth');
 
       expect(entry.activeIdentityId).toBe('app-scoped:0');
       expect(entry.identities['bee-wallet']).toMatchObject({
@@ -222,10 +222,10 @@ describe('feed-store', () => {
       });
     });
 
-    test('ensureBeeWalletIdentity can activate Bee wallet identity', () => {
+    test('ensureAntWalletIdentity can activate Bee wallet identity', () => {
       setOriginEntry('myapp.eth', { identityMode: 'app-scoped', publisherKeyIndex: 0 });
 
-      const entry = ensureBeeWalletIdentity('myapp.eth', { activate: true });
+      const entry = ensureAntWalletIdentity('myapp.eth', { activate: true });
 
       expect(entry.activeIdentityId).toBe('bee-wallet');
       expect(entry.identityMode).toBe('bee-wallet');
@@ -657,7 +657,7 @@ describe('feed-store', () => {
       expect(ipcHandlers[IPC.SWARM_GET_ORIGIN_IDENTITIES]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_PREVIEW_APP_SCOPED_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_CREATE_APP_SCOPED_IDENTITY]).toBeDefined();
-      expect(ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]).toBeDefined();
+      expect(ipcHandlers[IPC.SWARM_ENSURE_ANT_WALLET_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_ENSURE_ETHEREUM_WALLET_IDENTITY]).toBeDefined();
       expect(ipcHandlers[IPC.SWARM_ACTIVATE_FEED_IDENTITY]).toBeDefined();
     });
@@ -749,7 +749,7 @@ describe('feed-store', () => {
         stored: true,
       });
 
-      const withBeeIdentity = await ipcHandlers[IPC.SWARM_ENSURE_BEE_WALLET_IDENTITY]({}, 'ipc-manage.eth');
+      const withBeeIdentity = await ipcHandlers[IPC.SWARM_ENSURE_ANT_WALLET_IDENTITY]({}, 'ipc-manage.eth');
       expect(withBeeIdentity.activeIdentityId).toBe('app-scoped:1');
       expect(withBeeIdentity.identities.find((identity) => identity.id === 'bee-wallet')).toMatchObject({
         owner: '0xBee0000000000000000000000000000000000000',

@@ -1,5 +1,5 @@
 jest.mock('../service-registry', () => ({
-  getBeeApiUrl: jest.fn(() => 'http://127.0.0.1:1633'),
+  getAntApiUrl: jest.fn(() => 'http://127.0.0.1:1633'),
 }));
 
 jest.mock('../logger', () => ({

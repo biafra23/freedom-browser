@@ -1,8 +1,8 @@
 // Bee/Swarm node UI controls
-import { state, buildBeeUrl, getDisplayMessage } from './state.js';
+import { state, buildAntUrl, getDisplayMessage } from './state.js';
 import { pushDebug } from './debug.js';
 
-// DOM elements (initialized in initBeeUi)
+// DOM elements (initialized in initAntUi)
 let beeToggleBtn = null;
 let beeToggleSwitch = null;
 let beePeersCount = null;
@@ -16,32 +16,32 @@ let beeStatusValue = null;
 // Binary availability state
 let beeBinaryAvailable = true;
 
-export const stopBeeInfoPolling = () => {
-  if (state.beePeersInterval) {
-    clearInterval(state.beePeersInterval);
-    state.beePeersInterval = null;
+export const stopAntInfoPolling = () => {
+  if (state.antPeersInterval) {
+    clearInterval(state.antPeersInterval);
+    state.antPeersInterval = null;
   }
-  if (state.beeVisibleInterval) {
-    clearInterval(state.beeVisibleInterval);
-    state.beeVisibleInterval = null;
+  if (state.antVisibleInterval) {
+    clearInterval(state.antVisibleInterval);
+    state.antVisibleInterval = null;
   }
   beeInfoPanel?.classList.remove('visible');
   if (beePeersCount) beePeersCount.textContent = '0';
   if (beeNetworkPeers) beeNetworkPeers.textContent = '0';
   if (beeVersionText)
-    beeVersionText.textContent = state.beeVersionFetched ? state.beeVersionValue : '';
+    beeVersionText.textContent = state.antVersionFetched ? state.antVersionValue : '';
 };
 
 const fetchConnectedPeers = async () => {
-  if (!state.beeMenuOpen) return;
-  if (state.currentBeeStatus === 'stopped') {
-    stopBeeInfoPolling();
+  if (!state.antMenuOpen) return;
+  if (state.currentAntStatus === 'stopped') {
+    stopAntInfoPolling();
     return;
   }
   if (!beeInfoPanel?.classList.contains('visible')) return;
 
   try {
-    const response = await fetch(buildBeeUrl('/peers'));
+    const response = await fetch(buildAntUrl('/peers'));
     if (!beeInfoPanel?.classList.contains('visible')) return;
     if (response.ok) {
       const peersData = await response.json();
@@ -57,15 +57,15 @@ const fetchConnectedPeers = async () => {
 };
 
 const fetchVisiblePeers = async () => {
-  if (!state.beeMenuOpen) return;
-  if (state.currentBeeStatus === 'stopped') {
-    stopBeeInfoPolling();
+  if (!state.antMenuOpen) return;
+  if (state.currentAntStatus === 'stopped') {
+    stopAntInfoPolling();
     return;
   }
   if (!beeInfoPanel?.classList.contains('visible')) return;
 
   try {
-    const response = await fetch(buildBeeUrl('/topology'));
+    const response = await fetch(buildAntUrl('/topology'));
     if (!beeInfoPanel?.classList.contains('visible')) return;
     if (response.ok) {
       const topologyData = await response.json();
@@ -82,15 +82,15 @@ const fetchVisiblePeers = async () => {
   }
 };
 
-const fetchBeeVersionOnce = async () => {
-  if (state.beeVersionFetched) return;
+const fetchAntVersionOnce = async () => {
+  if (state.antVersionFetched) return;
   try {
-    const healthResponse = await fetch(buildBeeUrl('/health'));
+    const healthResponse = await fetch(buildAntUrl('/health'));
     if (healthResponse.ok) {
       const healthData = await healthResponse.json();
-      state.beeVersionValue = (healthData?.version || '').split('-')[0];
-      state.beeVersionFetched = true;
-      if (beeVersionText) beeVersionText.textContent = state.beeVersionValue;
+      state.antVersionValue = (healthData?.version || '').split('-')[0];
+      state.antVersionFetched = true;
+      if (beeVersionText) beeVersionText.textContent = state.antVersionValue;
     } else if (beeVersionText) {
       beeVersionText.textContent = '';
     }
@@ -99,9 +99,9 @@ const fetchBeeVersionOnce = async () => {
   }
 };
 
-export const startBeeInfoPolling = () => {
-  if (!state.beeMenuOpen || state.currentBeeStatus === 'stopped') {
-    stopBeeInfoPolling();
+export const startAntInfoPolling = () => {
+  if (!state.antMenuOpen || state.currentAntStatus === 'stopped') {
+    stopAntInfoPolling();
     return;
   }
 
@@ -109,16 +109,16 @@ export const startBeeInfoPolling = () => {
 
   fetchConnectedPeers();
   fetchVisiblePeers();
-  if (!state.beeVersionFetched) fetchBeeVersionOnce();
+  if (!state.antVersionFetched) fetchAntVersionOnce();
 
-  if (state.beePeersInterval) clearInterval(state.beePeersInterval);
-  state.beePeersInterval = setInterval(fetchConnectedPeers, 500);
+  if (state.antPeersInterval) clearInterval(state.antPeersInterval);
+  state.antPeersInterval = setInterval(fetchConnectedPeers, 500);
 
-  if (state.beeVisibleInterval) clearInterval(state.beeVisibleInterval);
-  state.beeVisibleInterval = setInterval(fetchVisiblePeers, 1000);
+  if (state.antVisibleInterval) clearInterval(state.antVisibleInterval);
+  state.antVisibleInterval = setInterval(fetchVisiblePeers, 1000);
 };
 
-export const updateBeeUi = (status, error) => {
+export const updateAntUi = (status, error) => {
   if (state.suppressRunningStatus && status === 'running') {
     return;
   }
@@ -126,16 +126,16 @@ export const updateBeeUi = (status, error) => {
     state.suppressRunningStatus = false;
   }
 
-  state.currentBeeStatus = status;
+  state.currentAntStatus = status;
 
   // Fetch version immediately when Bee becomes running (don't wait for polling)
-  if (status === 'running' && !state.beeVersionFetched) {
-    fetchBeeVersionOnce();
+  if (status === 'running' && !state.antVersionFetched) {
+    fetchAntVersionOnce();
   }
 
   // Update status line and toggle state from registry
-  updateBeeStatusLine();
-  updateBeeToggleState();
+  updateAntStatusLine();
+  updateAntToggleState();
 
   if (!beeToggleBtn || !beeToggleSwitch) return;
 
@@ -156,22 +156,22 @@ export const updateBeeUi = (status, error) => {
       break;
   }
 
-  if (state.beeMenuOpen) {
+  if (state.antMenuOpen) {
     if (status === 'stopped') {
-      stopBeeInfoPolling();
+      stopAntInfoPolling();
     } else if (
-      !state.beePeersInterval &&
-      !state.beeVisibleInterval &&
+      !state.antPeersInterval &&
+      !state.antVisibleInterval &&
       beeToggleSwitch?.classList.contains('running')
     ) {
-      startBeeInfoPolling();
+      startAntInfoPolling();
     }
   }
 };
 
-export const resetBeeVersion = () => {
-  state.beeVersionFetched = false;
-  state.beeVersionValue = '';
+export const resetAntVersion = () => {
+  state.antVersionFetched = false;
+  state.antVersionValue = '';
   if (beeVersionText) beeVersionText.textContent = '';
 };
 
@@ -190,10 +190,10 @@ const setToggleDisabled = (disabled) => {
 };
 
 // Update the status row from registry
-export const updateBeeStatusLine = () => {
+export const updateAntStatusLine = () => {
   if (!beeStatusRow || !beeStatusLabel || !beeStatusValue) return;
 
-  const message = getDisplayMessage('bee');
+  const message = getDisplayMessage('ant');
 
   if (message) {
     // Parse "Label: value" format
@@ -215,10 +215,10 @@ export const updateBeeStatusLine = () => {
 };
 
 // Update toggle disabled state based on node mode
-export const updateBeeToggleState = () => {
+export const updateAntToggleState = () => {
   if (!beeToggleBtn) return;
 
-  const mode = state.registry?.bee?.mode;
+  const mode = state.registry?.ant?.mode;
   const isReused = mode === 'reused';
 
   if (isReused) {
@@ -230,7 +230,7 @@ export const updateBeeToggleState = () => {
   }
 };
 
-export const initBeeUi = () => {
+export const initAntUi = () => {
   // Initialize DOM elements
   beeToggleBtn = document.getElementById('bee-toggle-btn');
   beeToggleSwitch = document.getElementById('bee-toggle-switch');
@@ -243,8 +243,8 @@ export const initBeeUi = () => {
   beeStatusValue = document.getElementById('bee-status-value');
 
   // Check binary availability
-  if (window.bee) {
-    window.bee.checkBinary().then(({ available }) => {
+  if (window.ant) {
+    window.ant.checkBinary().then(({ available }) => {
       beeBinaryAvailable = available;
       setToggleDisabled(!available);
       if (!available) {
@@ -258,17 +258,17 @@ export const initBeeUi = () => {
     if (!beeBinaryAvailable) return;
 
     // Don't allow toggling when using an external node
-    const mode = state.registry?.bee?.mode;
+    const mode = state.registry?.ant?.mode;
     if (mode === 'reused') return;
 
-    if (state.currentBeeStatus === 'running' || state.currentBeeStatus === 'starting') {
+    if (state.currentAntStatus === 'running' || state.currentAntStatus === 'starting') {
       state.suppressRunningStatus = true;
       beeToggleSwitch?.classList.remove('running');
-      stopBeeInfoPolling();
+      stopAntInfoPolling();
       pushDebug('User toggled Swarm Off');
-      window.bee
+      window.ant
         .stop()
-        .then(({ status, error }) => updateBeeUi(status, error))
+        .then(({ status, error }) => updateAntUi(status, error))
         .catch((err) => {
           console.error('Failed to toggle Ant', err);
           pushDebug(`Failed to toggle Ant: ${err.message}`);
@@ -276,11 +276,11 @@ export const initBeeUi = () => {
     } else {
       state.suppressRunningStatus = false;
       beeToggleSwitch?.classList.add('running');
-      startBeeInfoPolling();
+      startAntInfoPolling();
       pushDebug('User toggled Swarm On');
-      window.bee
+      window.ant
         .start()
-        .then(({ status, error }) => updateBeeUi(status, error))
+        .then(({ status, error }) => updateAntUi(status, error))
         .catch((err) => {
           console.error('Failed to toggle Ant', err);
           pushDebug(`Failed to toggle Ant: ${err.message}`);
@@ -289,17 +289,17 @@ export const initBeeUi = () => {
   });
 
   // Listen for status updates from main process
-  if (window.bee) {
+  if (window.ant) {
     const handleStatus = ({ status, error }) => {
       pushDebug(`Ant Status Update: ${status} ${error ? `(${error})` : ''}`);
-      updateBeeUi(status, error);
+      updateAntUi(status, error);
     };
-    window.bee.onStatusUpdate(handleStatus);
+    window.ant.onStatusUpdate(handleStatus);
 
     // Initial status check
     const refreshBeeStatus = () => {
-      window.bee.getStatus().then(({ status, error }) => {
-        updateBeeUi(status, error);
+      window.ant.getStatus().then(({ status, error }) => {
+        updateAntUi(status, error);
       });
     };
     refreshBeeStatus();
