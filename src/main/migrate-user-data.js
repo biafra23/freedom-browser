@@ -182,7 +182,14 @@ const BEE_ONLY_DIRS = ['statestore', 'localstore', 'kademlia-metrics'];
 // whole-directory rename isn't possible. `keys/` holds the injected Web3 v3
 // keystore (swarm.key); `config.yaml` holds the password that decrypts it
 // (ant-manager's ensureConfig preserves that password on rewrite).
-const BEE_CARRY_ITEMS = ['keys', 'config.yaml', 'stamperstore'];
+//
+// ORDER MATTERS: `keys` must move LAST. The retry precondition is "bee-data
+// still has keys/swarm.key and ant-data doesn't" — if an earlier item's move
+// fails (e.g. Windows EPERM on a locked handle), the keystore hasn't moved
+// yet, so the next launch retries cleanly. Moving keys first would let a
+// later failure strand a keystore in ant-data whose password is still in
+// bee-data, with no retry.
+const BEE_CARRY_ITEMS = ['config.yaml', 'stamperstore', 'keys'];
 
 /**
  * Migrate the Bee-era node data directory (`bee-data/`) to the Ant location
@@ -229,13 +236,28 @@ function migrateBeeDataToAntData() {
   log.info('[Migration] To:', newDir);
 
   try {
+    let renamed = false;
     if (!fs.existsSync(newDir)) {
       // Fast path: same parent directory, so rename the whole thing.
-      fs.renameSync(oldDir, newDir);
-      log.info('[Migration] Renamed bee-data to ant-data (fast path)');
-    } else {
+      try {
+        fs.renameSync(oldDir, newDir);
+        renamed = true;
+        log.info('[Migration] Renamed bee-data to ant-data (fast path)');
+      } catch (renameErr) {
+        // E.g. a stray lock or cross-filesystem userData. Fall through to the
+        // item-by-item carry below instead of failing the same way forever.
+        log.warn(
+          '[Migration] Whole-directory rename failed, falling back to item-by-item carry:',
+          renameErr.message
+        );
+        fs.mkdirSync(newDir, { recursive: true });
+      }
+    }
+
+    if (!renamed) {
       // ant-data exists (e.g. antd already ran and self-generated a throwaway
-      // identity). Carry over the identity-critical items, then drop antd's
+      // identity, or the rename above failed). Carry over the identity-critical
+      // items — keys last, see BEE_CARRY_ITEMS — then drop antd's
       // self-generated identity so the injected keystore wins on next start.
       for (const item of BEE_CARRY_ITEMS) {
         const src = path.join(oldDir, item);

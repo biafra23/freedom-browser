@@ -145,4 +145,73 @@ describe('migrateBeeDataToAntData (bee → ant upgrade)', () => {
     expect(mod.migrateBeeDataToAntData()).toBe(true);
     expect(mod.migrateBeeDataToAntData()).toBe(false);
   });
+
+  test('a mid-merge failure before the keystore moves is retried cleanly on next launch', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore'] });
+    // Force the merge path by pre-creating ant-data.
+    const antData = path.join(userDataDir, 'ant-data');
+    fs.mkdirSync(antData, { recursive: true });
+    fs.writeFileSync(path.join(antData, 'identity.json'), '{}');
+
+    const mod = loadMigrationModule(userDataDir);
+
+    // Simulate a Windows-EPERM-style failure on the stamperstore move. The
+    // keystore moves last, so it must still be in bee-data afterwards and the
+    // retry precondition must hold.
+    const realRename = fs.renameSync.bind(fs);
+    const spy = jest.spyOn(fs, 'renameSync').mockImplementation((src, dest) => {
+      if (String(src).includes('stamperstore')) {
+        const err = new Error('EPERM: operation not permitted');
+        err.code = 'EPERM';
+        throw err;
+      }
+      return realRename(src, dest);
+    });
+
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data', 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(false);
+    // config.yaml moved before the failure — the retry must tolerate that.
+    expect(fs.readFileSync(path.join(antData, 'config.yaml'), 'utf-8')).toContain(
+      'bee-era-password'
+    );
+
+    // Next launch: the lock is gone and the migration completes.
+    spy.mockRestore();
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+    expect(fs.readFileSync(path.join(antData, 'config.yaml'), 'utf-8')).toContain(
+      'bee-era-password'
+    );
+    expect(fs.existsSync(path.join(antData, 'identity.json'))).toBe(false);
+  });
+
+  test('falls back to item-by-item carry when the whole-directory rename fails', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore', 'statestore'] });
+    const mod = loadMigrationModule(userDataDir);
+
+    const antData = path.join(userDataDir, 'ant-data');
+    const realRename = fs.renameSync.bind(fs);
+    const spy = jest.spyOn(fs, 'renameSync').mockImplementation((src, dest) => {
+      // Fail only the whole-directory rename, not the per-item carries.
+      if (String(src).endsWith('bee-data') && String(dest).endsWith('ant-data')) {
+        const err = new Error('EXDEV: cross-device link not permitted');
+        err.code = 'EXDEV';
+        throw err;
+      }
+      return realRename(src, dest);
+    });
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    spy.mockRestore();
+
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+    expect(fs.readFileSync(path.join(antData, 'config.yaml'), 'utf-8')).toContain(
+      'bee-era-password'
+    );
+    // Bee-only state is never carried by the item list.
+    expect(fs.existsSync(path.join(antData, 'statestore'))).toBe(false);
+  });
 });

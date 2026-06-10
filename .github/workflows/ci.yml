@@ -87,6 +87,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      # Upgrade-path proof on every desktop platform: antd must adopt a
+      # migrated bee-era identity (decrypt keys/swarm.key with the carried-over
+      # config password) instead of self-generating a throwaway wallet. The
+      # Windows leg matters most — EPERM-on-locked-handle is the historical
+      # failure class for these data-dir moves (issue #90).
+      - name: Run bee-data → ant-data migration integration test
+        run: npx jest --forceExit src/main/identity/__tests__/integration/bee-to-ant-migration.test.js
+
       - name: Run onboarding identity E2E
         shell: bash
         run: |
@@ -143,13 +151,6 @@ jobs:
         run: npm run ipfs:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
-
-      # Upgrade-path proof: antd must adopt a migrated bee-era identity
-      # (decrypt keys/swarm.key with the carried-over config password) instead
-      # of self-generating a throwaway wallet. Skipped in the unit-test job
-      # because it needs the real antd binary downloaded above.
-      - name: Run bee-data → ant-data migration integration test
-        run: npx jest --forceExit src/main/identity/__tests__/integration/bee-to-ant-migration.test.js
 
       - name: Run Ant live download E2E (headless)
         run: xvfb-run -a npm run test:e2e:live -- test-e2e/live/eth-sites.spec.js
