@@ -1,0 +1,148 @@
+const fs = require('fs');
+const path = require('path');
+const {
+  createAppMock,
+  createTempUserDataDir,
+  removeTempUserDataDir,
+  loadMainModule,
+} = require('../../test/helpers/main-process-test-utils');
+
+function loadMigrationModule(userDataDir) {
+  return loadMainModule(require.resolve('./migrate-user-data'), {
+    app: createAppMock({ isPackaged: true, userDataDir }),
+    extraMocks: {
+      [require.resolve('./logger')]: () => ({
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+      }),
+    },
+  }).mod;
+}
+
+function writeBeeData(userDataDir, { withKeystore = true, extras = [] } = {}) {
+  const beeData = path.join(userDataDir, 'bee-data');
+  fs.mkdirSync(path.join(beeData, 'keys'), { recursive: true });
+  if (withKeystore) {
+    fs.writeFileSync(path.join(beeData, 'keys', 'swarm.key'), '{"version":3}');
+  }
+  fs.writeFileSync(path.join(beeData, 'config.yaml'), 'password: bee-era-password\n');
+  for (const extra of extras) {
+    fs.mkdirSync(path.join(beeData, extra), { recursive: true });
+    fs.writeFileSync(path.join(beeData, extra, 'data'), 'x');
+  }
+  return beeData;
+}
+
+describe('migrateBeeDataToAntData (bee → ant upgrade)', () => {
+  let userDataDir;
+
+  beforeEach(() => {
+    userDataDir = createTempUserDataDir();
+    delete process.env.FREEDOM_ANT_DATA;
+  });
+
+  afterEach(() => {
+    removeTempUserDataDir(userDataDir);
+    delete process.env.FREEDOM_ANT_DATA;
+  });
+
+  test('renames bee-data to ant-data when ant-data does not exist', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore'] });
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+
+    const antData = path.join(userDataDir, 'ant-data');
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.readFileSync(path.join(antData, 'config.yaml'), 'utf-8')).toContain(
+      'bee-era-password'
+    );
+    expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(false);
+  });
+
+  test('drops Bee-only LevelDB state but keeps stamperstore', () => {
+    writeBeeData(userDataDir, {
+      extras: ['statestore', 'localstore', 'kademlia-metrics', 'stamperstore'],
+    });
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+
+    const antData = path.join(userDataDir, 'ant-data');
+    expect(fs.existsSync(path.join(antData, 'statestore'))).toBe(false);
+    expect(fs.existsSync(path.join(antData, 'localstore'))).toBe(false);
+    expect(fs.existsSync(path.join(antData, 'kademlia-metrics'))).toBe(false);
+    expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+  });
+
+  test('merges into existing ant-data and removes antd self-generated identity', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore'] });
+    // antd already ran once on the empty dir and self-initialized.
+    const antData = path.join(userDataDir, 'ant-data');
+    fs.mkdirSync(antData, { recursive: true });
+    fs.writeFileSync(path.join(antData, 'identity.json'), '{}');
+    fs.writeFileSync(path.join(antData, 'signing.key'), 'throwaway');
+    fs.writeFileSync(path.join(antData, 'config.yaml'), 'password: throwaway-password\n');
+
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+    // The injected keystore's password must win over the throwaway config.
+    expect(fs.readFileSync(path.join(antData, 'config.yaml'), 'utf-8')).toContain(
+      'bee-era-password'
+    );
+    expect(fs.existsSync(path.join(antData, 'identity.json'))).toBe(false);
+    expect(fs.existsSync(path.join(antData, 'signing.key'))).toBe(false);
+  });
+
+  test('does nothing when bee-data has no injected keystore', () => {
+    writeBeeData(userDataDir, { withKeystore: false });
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, 'ant-data'))).toBe(false);
+  });
+
+  test('does nothing when bee-data does not exist', () => {
+    const mod = loadMigrationModule(userDataDir);
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+  });
+
+  test('never clobbers an already-injected ant-data identity', () => {
+    writeBeeData(userDataDir);
+    const antData = path.join(userDataDir, 'ant-data');
+    fs.mkdirSync(path.join(antData, 'keys'), { recursive: true });
+    fs.writeFileSync(path.join(antData, 'keys', 'swarm.key'), '{"version":3,"already":"injected"}');
+
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+    expect(fs.readFileSync(path.join(antData, 'keys', 'swarm.key'), 'utf-8')).toContain(
+      'already'
+    );
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data', 'keys', 'swarm.key'))).toBe(true);
+  });
+
+  test('is skipped entirely under the FREEDOM_ANT_DATA test override', () => {
+    writeBeeData(userDataDir);
+    process.env.FREEDOM_ANT_DATA = path.join(userDataDir, 'throwaway');
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(true);
+  });
+
+  test('is idempotent: second run is a no-op', () => {
+    writeBeeData(userDataDir);
+    const mod = loadMigrationModule(userDataDir);
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+  });
+});

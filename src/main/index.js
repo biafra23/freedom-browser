@@ -103,7 +103,7 @@ const { registerFeedStoreIpc } = require('./swarm/feed-store');
 const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
 const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
-const { migrateUserData } = require('./migrate-user-data');
+const { migrateUserData, migrateBeeDataToAntData } = require('./migrate-user-data');
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
 const { registerWebContentsHandlers } = require('./webcontents-setup');
@@ -132,6 +132,11 @@ async function bootstrap() {
   // Migrate user data from old "Freedom Browser" directory if needed
   // This must run before any modules access userData
   migrateUserData();
+
+  // Carry the injected Swarm identity from the Bee-era bee-data/ into
+  // ant-data/. Must run before the Ant node is started below, or antd
+  // self-generates a throwaway identity on the empty directory.
+  migrateBeeDataToAntData();
 
   const defaultSession = session.defaultSession;
   await defaultSession.clearCache();

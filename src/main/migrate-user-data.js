@@ -1,13 +1,14 @@
 /**
  * User data migration module
  *
- * Migrates user data from "Freedom Browser" to "Freedom" directory
- * when the app name changes. This ensures users don't lose their:
- * - Settings
- * - Bookmarks
- * - History
- * - Favicons cache
- * - Ant/IPFS node data
+ * One-time startup migrations, run before any other module touches userData:
+ *
+ * 1. "Freedom Browser" → "Freedom" directory rename (app name change).
+ *    Preserves settings, bookmarks, history, favicons, and node data.
+ *
+ * 2. `bee-data/` → `ant-data/` (Bee → Ant node swap). Carries over the
+ *    injected node identity so upgrading users keep their Swarm wallet
+ *    (overlay address, postage stamps, chequebook funds).
  */
 
 const log = require('./logger');
@@ -171,7 +172,109 @@ function migrateUserData() {
   }
 }
 
+// Bee-only LevelDB state antd cannot read. Dropped during bee-data → ant-data
+// migration so users don't carry gigabytes of dead cache. `stamperstore` is
+// deliberately KEPT: antd's bee-recover feature reads a carried-over bee
+// stamperstore to seed the bucket counters of rediscovered postage batches.
+const BEE_ONLY_DIRS = ['statestore', 'localstore', 'kademlia-metrics'];
+
+// Identity-critical items carried over when ant-data already exists and a
+// whole-directory rename isn't possible. `keys/` holds the injected Web3 v3
+// keystore (swarm.key); `config.yaml` holds the password that decrypts it
+// (ant-manager's ensureConfig preserves that password on rewrite).
+const BEE_CARRY_ITEMS = ['keys', 'config.yaml', 'stamperstore'];
+
+/**
+ * Migrate the Bee-era node data directory (`bee-data/`) to the Ant location
+ * (`ant-data/`) so an upgrading user's injected Swarm identity survives the
+ * Bee → Ant node swap. Without this, antd starts on an empty ant-data/ and
+ * self-generates a throwaway identity — a different overlay address with none
+ * of the user's postage stamps or chequebook funds — and nothing re-injects
+ * the real key outside the onboarding wizard.
+ *
+ * Idempotent without a marker file: it only acts when bee-data/ holds an
+ * injected keystore (`keys/swarm.key`) and ant-data/ does not. Either path
+ * (rename or item-by-item carry) makes the precondition false afterwards.
+ *
+ * Must run before the Ant node starts.
+ *
+ * @returns {boolean} true if a migration was performed
+ */
+function migrateBeeDataToAntData() {
+  // Set only by tests/E2E runs that want a throwaway data dir — never migrate
+  // real user data into those.
+  if (process.env.FREEDOM_ANT_DATA) {
+    return false;
+  }
+
+  const baseDir = app.isPackaged
+    ? app.getPath('userData')
+    : path.join(__dirname, '..', '..');
+  const oldDir = path.join(baseDir, 'bee-data');
+  const newDir = path.join(baseDir, 'ant-data');
+
+  // Only an injected keystore is worth carrying over; everything else in
+  // bee-data is disposable node cache.
+  if (!fs.existsSync(path.join(oldDir, 'keys', 'swarm.key'))) {
+    return false;
+  }
+
+  // Never clobber an identity that has already been injected into ant-data.
+  if (fs.existsSync(path.join(newDir, 'keys', 'swarm.key'))) {
+    log.info('[Migration] ant-data already has an injected identity, leaving bee-data untouched');
+    return false;
+  }
+
+  log.info('[Migration] Migrating Bee node data from:', oldDir);
+  log.info('[Migration] To:', newDir);
+
+  try {
+    if (!fs.existsSync(newDir)) {
+      // Fast path: same parent directory, so rename the whole thing.
+      fs.renameSync(oldDir, newDir);
+      log.info('[Migration] Renamed bee-data to ant-data (fast path)');
+    } else {
+      // ant-data exists (e.g. antd already ran and self-generated a throwaway
+      // identity). Carry over the identity-critical items, then drop antd's
+      // self-generated identity so the injected keystore wins on next start.
+      for (const item of BEE_CARRY_ITEMS) {
+        const src = path.join(oldDir, item);
+        const dest = path.join(newDir, item);
+        if (!fs.existsSync(src)) continue;
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.renameSync(src, dest);
+        log.info(`[Migration] Carried over ${item} from bee-data`);
+      }
+      for (const idFile of ['identity.json', 'signing.key']) {
+        const stale = path.join(newDir, idFile);
+        if (fs.existsSync(stale)) {
+          fs.rmSync(stale, { force: true });
+          log.info(`[Migration] Removed antd self-generated ${idFile}`);
+        }
+      }
+    }
+
+    // Drop Bee-only LevelDB state antd can't use (can be gigabytes).
+    for (const dir of BEE_ONLY_DIRS) {
+      const stale = path.join(newDir, dir);
+      if (fs.existsSync(stale)) {
+        fs.rmSync(stale, { recursive: true, force: true });
+        log.info(`[Migration] Removed Bee-only ${dir}/`);
+      }
+    }
+
+    log.info('[Migration] Bee → Ant node data migration complete');
+    return true;
+  } catch (err) {
+    // Leave whatever state we reached in place; the preconditions above make a
+    // retry on next launch safe.
+    log.error('[Migration] bee-data → ant-data migration failed:', err);
+    return false;
+  }
+}
+
 module.exports = {
   migrateUserData,
+  migrateBeeDataToAntData,
   getOldUserDataPath,
 };
