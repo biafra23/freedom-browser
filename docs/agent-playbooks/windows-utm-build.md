@@ -16,7 +16,7 @@ ships the darwin `.node` and crashes on launch under Windows.
 
 Build **natively inside the VM** when you need an app that actually launches on
 Windows. The VM compiles/fetches the correct native-module ABI and bundles the
-correct-arch Bee/IPFS binaries.
+correct-arch Ant/IPFS binaries.
 
 ## Prerequisites
 
@@ -184,9 +184,9 @@ All commands run via the `cmd.exe /c '… > log 2>&1'` + poll pattern from above
 
 - The build is **unsigned**, so Windows SmartScreen/Defender shows
   "Windows protected your PC" → **More info → Run anyway**.
-- It is an **arm64** build; the bundled Bee/IPFS are the arm64 binaries.
+- It is an **arm64** build; the bundled Ant/IPFS are the arm64 binaries.
 - For issue-#90-class checks: onboarding → create a new wallet → "Setting up node
-  identities" should complete without the `EPERM … statestore` error.
+  identities" should complete without a "node data still in use" error.
 
 ## Cleanup / VM lifecycle
 

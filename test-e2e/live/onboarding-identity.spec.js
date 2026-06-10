@@ -1,15 +1,15 @@
 // End-to-end regression for the issue #90 follow-up.
 //
-// Boots the real app (no test harness) so an actual Bee node starts and holds
-// the LevelDB `statestore` LOCK, then drives the password onboarding wizard to
-// completion. The wizard's force-reinjection wipes Bee's statestore while it is
-// running — the exact scenario that produced "Failed to inject identity: Could
-// not reset node data because it is still in use." on Windows.
+// Boots the real app (no test harness) so an actual Ant (antd) node starts,
+// then drives the password onboarding wizard to completion. The wizard's
+// force-reinjection stops the running node, wipes its stale state, reinjects
+// the keystore, and restarts it. (The original Bee-era bug was an EPERM on
+// Windows wiping the LevelDB statestore while the node held its LOCK; antd
+// has no statestore, but this stop → wipe → reinject → restart flow is still
+// the cross-platform proof that identity injection works against a live node.)
 //
-// Before the fix this fails (the wizard never reaches the success screen and an
-// error dialog fires, on Windows because of EPERM). After the fix Bee is
-// stopped before the wipe and restarted with the injected key, so the wizard
-// completes and identities are reported as injected on every platform.
+// On success the wizard reaches the success screen with no error dialog and
+// identities are reported as injected on every platform.
 //
 // Requires the Ant and IPFS binaries (npm run ant:download / ipfs:download);
 // skipped if either is absent.
@@ -21,7 +21,7 @@ const STRONG_PASSWORD = 'Freedom-E2E-Test-Passphrase-2026!';
 test.describe('Onboarding wizard creates node identities (issue #90)', () => {
   test.skip(!HAS_BINARIES, 'Ant and/or IPFS binary missing — run npm run ant:download && npm run ipfs:download');
 
-  test('completes the password setup with a running Bee node', async ({ window: win }) => {
+  test('completes the password setup with a running Ant node', async ({ window: win }) => {
     // Surface any wizard error dialog (alert) instead of letting Playwright
     // silently auto-dismiss it — these are how onboarding reports failures.
     const dialogMessages = [];
@@ -30,8 +30,8 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
       dialog.dismiss().catch(() => {});
     });
 
-    // 1) Wait for the real Bee node to come up — once healthy it has opened and
-    //    LOCKed its statestore, which is the precondition for the bug.
+    // 1) Wait for the real Ant node to come up — the wizard must inject the
+    //    identity while a live node is running, which is what issue #90 broke.
     await expect
       .poll(async () => (await win.evaluate(() => window.ant.getStatus())).status, {
         timeout: 120_000,
@@ -73,7 +73,7 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
 
     // 6) Acknowledge the recovery phrase and finish. This is what triggers
     //    saveVault + injectAll(force) → injectBeeIdentity, which stops the
-    //    running Bee, wipes statestore, reinjects, and restarts it.
+    //    running Ant node, wipes its stale state, reinjects, and restarts it.
     await backupStep.waitFor({ state: 'visible' });
     await win.check('#backup-confirmed');
     const finishBtn = win.locator('[data-step="backup"] [data-action="continue-to-verify"]');
@@ -91,7 +91,7 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     expect(status.beeInjected).toBe(true);
     expect(status.ipfsInjected).toBe(true);
 
-    // Bee was restarted and is healthy again with the injected identity.
+    // The Ant node was restarted and is healthy again with the injected identity.
     await expect
       .poll(async () => (await win.evaluate(() => window.ant.getStatus())).status, {
         timeout: 120_000,
