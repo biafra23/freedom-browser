@@ -89,7 +89,7 @@ The other fetch scripts resolve the latest from a **vendor-specific** upstream â
 To check whether the bundled binary is stale, compare its self-reported version against the source above:
 
 ```
-./ant-bin/<arch>/antd version
+./ant-bin/<arch>/antd --version
 ./ipfs-bin/<arch>/ipfs --version
 ./radicle-bin/<arch>/rad --version
 ./radicle-bin/<arch>/radicle-httpd --version
