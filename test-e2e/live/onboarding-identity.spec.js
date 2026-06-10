@@ -45,11 +45,24 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
 
     // 3) Choose the password ("secure setup") path. Works whether the welcome
     //    screen shows the Touch-ID layout (link) or the standard layout (button).
-    await win.locator('[data-step="welcome"] [data-action="create"]:visible').first().click();
+    //    On macOS runners the first click after showModal() is occasionally
+    //    swallowed by the dialog's open/focus handling: Playwright reports the
+    //    click as performed but the wizard stays on the welcome step (the only
+    //    flaky failure this suite has ever had — create-password never becomes
+    //    visible while welcome remains on screen). Retry the click until the
+    //    step actually transitions instead of trusting the first dispatch.
+    const createPasswordStep = win.locator('[data-step="create-password"]');
+    await expect(async () => {
+      if (await createPasswordStep.isVisible()) return;
+      await win
+        .locator('[data-step="welcome"] [data-action="create"]:visible')
+        .first()
+        .click({ timeout: 5_000 });
+      await createPasswordStep.waitFor({ state: 'visible', timeout: 2_000 });
+    }).toPass({ timeout: 60_000 });
 
     // 4) Enter a strong password; the confirm field only appears once the
     //    password is strong enough.
-    await win.locator('[data-step="create-password"]').waitFor({ state: 'visible' });
     await win.fill('#create-password', STRONG_PASSWORD);
     await win.locator('#create-password-confirm').waitFor({ state: 'visible' });
     await win.fill('#create-password-confirm', STRONG_PASSWORD);
