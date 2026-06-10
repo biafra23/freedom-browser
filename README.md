@@ -46,13 +46,13 @@ When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the m
 
 ## Swarm Content Retrieval
 
-A fresh Bee node pulls chunks on-demand through the DHT, and any individual chunk lookup can transiently fail with `HTTP 404` even when the content is healthy and peers are connected. Across a page with 10–30 sub-resources (JS, CSS, fonts, images, video), a modest per-request failure rate compounds into visibly broken CSS, missing images, and videos that don't load. Retries almost always succeed — the problem is strictly first contact with cold content.
+A fresh Swarm node pulls chunks on-demand through the DHT, and any individual chunk lookup can transiently fail with `HTTP 404` even when the content is healthy and peers are connected. Across a page with 10–30 sub-resources (JS, CSS, fonts, images, video), a modest per-request failure rate compounds into visibly broken CSS, missing images, and videos that don't load. Retries almost always succeed — the problem is strictly first contact with cold content.
 
 Freedom mitigates this in two layers:
 
-1. **Navigation probe** (`src/main/swarm/swarm-probe.js`) — before loading a `bzz://` URL, the main process HEAD-polls `/bzz/<hash>` on the local Bee gateway with exponential backoff (30 s per attempt, 5 min overall). The tab spinner runs during the probe, so the user never sees Bee's raw 404 JSON; on timeout or Bee-unreachable we route to `error.html` with the original URL preserved and a **Try Again** button. Probes are cancellable.
+1. **Navigation probe** (`src/main/swarm/swarm-probe.js`) — before loading a `bzz://` URL, the main process HEAD-polls `/bzz/<hash>` on the local node's gateway with exponential backoff (30 s per attempt, 5 min overall). The tab spinner runs during the probe, so the user never sees the node's raw 404 JSON; on timeout or node-unreachable we route to `error.html` with the original URL preserved and a **Try Again** button. Probes are cancellable.
 
-2. **Custom `bzz:` scheme** (`src/main/swarm/bzz-protocol.js`) — `bzz` is registered as a privileged standard scheme, so `bzz://<hash>/` becomes the page origin in Chromium. Every `bzz://` request (top-level, sub-resources, `fetch`, media `Range`, CSS descendants, service workers) routes through a main-process handler that proxies to the local Bee gateway, always sets `Swarm-Chunk-Retrieval-Timeout` + `Swarm-Redundancy-Strategy: 3` + `Swarm-Redundancy-Fallback-Mode: true`, retries transient `5xx` on idempotent methods with bounded exponential backoff (~50 s total) with a 30 s per-attempt deadline, and streams the response back. `404` responses are surfaced immediately so SPAs that feature-detect missing endpoints don't stall — the cold-start case that 404 retries used to absorb is now handled upstream by the navigation probe. Because `bzz://<hash>/` is the origin, same-origin relative paths (`/foo.js`, `url(/bg.png)`) resolve naturally with no URL rewriting.
+2. **Custom `bzz:` scheme** (`src/main/swarm/bzz-protocol.js`) — `bzz` is registered as a privileged standard scheme, so `bzz://<hash>/` becomes the page origin in Chromium. Every `bzz://` request (top-level, sub-resources, `fetch`, media `Range`, CSS descendants, service workers) routes through a main-process handler that proxies to the local node's gateway, always sets `Swarm-Chunk-Retrieval-Timeout` + `Swarm-Redundancy-Strategy: 3` + `Swarm-Redundancy-Fallback-Mode: true`, retries transient `5xx` on idempotent methods with bounded exponential backoff (~50 s total) with a 30 s per-attempt deadline, and streams the response back. `404` responses are surfaced immediately so SPAs that feature-detect missing endpoints don't stall — the cold-start case that 404 retries used to absorb is now handled upstream by the navigation probe. Because `bzz://<hash>/` is the origin, same-origin relative paths (`/foo.js`, `url(/bg.png)`) resolve naturally with no URL rewriting.
 
 The handler also accepts ENS-named hosts: `bzz://swarm.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after address-bar resolution) and proxies the same way. The page's URL/origin stays `bzz://<name>/` rather than the resolved hash, so DevTools, `window.location`, storage, and subresource fetches like `fetch('bzz://swarm.eth/data')` see the ENS name. Cross-transport mismatches (e.g. `bzz://name.eth` whose contenthash is IPFS) return `404` with an explanatory body — the typed scheme is treated as an assertion. The renderer's address-bar pipeline applies the same assertion before navigating, so both layers agree.
 
@@ -68,7 +68,7 @@ With the custom scheme, pages now see:
 - `window.location.host === '<hash>'`
 - `window.location.pathname === '/path'` (the `/bzz/<hash>/` prefix is gone — it's encoded in the host)
 
-Most sites work without changes — relative URLs (`./assets/...`, `/foo.js`, `url(bar.png)`) resolve naturally because `bzz://<hash>/` is the origin. Sites break only when they sniff `window.location` to construct absolute Bee URLs.
+Most sites work without changes — relative URLs (`./assets/...`, `/foo.js`, `url(bar.png)`) resolve naturally because `bzz://<hash>/` is the origin. Sites break only when they sniff `window.location` to construct absolute gateway URLs.
 
 **Anti-pattern 1: protocol/pathname sniffing** (e.g. tile servers, Leaflet maps):
 
@@ -109,7 +109,7 @@ const bzzRoot =
     : `/bzz/${window.location.pathname.match(/^\/bzz\/([\dA-Fa-f]{64})\//)?.[1]}/`;
 ```
 
-Don't hardcode `http://localhost:1633` — Freedom users may have Bee on a different port, and external visitors via a public Swarm gateway certainly do.
+Don't hardcode `http://localhost:1633` — Freedom users may have their Swarm node on a different port, and external visitors via a public Swarm gateway certainly do.
 
 ---
 
@@ -119,7 +119,7 @@ Don't hardcode `http://localhost:1633` — Freedom users may have Bee on a diffe
 
 The handler issues its upstream fetches at `http://localhost:8080/ipfs/<cid>/...` (note: `localhost`, not `127.0.0.1`) on purpose. Kubo's built-in subdomain gateway only emits its `_redirects`-friendly redirect — `301 Location: http://<cidv1>.ipfs.localhost:8080/...` — when the request hostname is `localhost`. The protocol handler then follows the redirect itself with `redirect: 'follow'` and returns the final body to Chromium. Surfacing the 301 to Chromium would put the page back on the gateway origin, defeating the entire scheme — the integration test in `src/main/__tests__/integration/ipfs-subdomain-gateway.test.js` guards against both halves of this contract.
 
-ENS-named hosts work the same way as for `bzz`: `ipfs://vitalik.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after the address-bar resolution) and proxies the same way. The page's URL/origin stays `ipfs://<name>/` rather than the resolved CID. Cross-transport mismatches (e.g. `ipfs://name.eth` whose contenthash is Swarm or IPNS) return `404` with an explanatory body — the typed scheme is treated as an assertion, matching the `bzz` handler's behaviour. Unlike `bzz`, the IPFS handler doesn't wrap its requests in a retry loop; Kubo doesn't exhibit the cold-content transient-5xx pattern Bee does, and `4xx` / `5xx` responses pass through to the page so SPAs that feature-detect missing endpoints can render their own fallback.
+ENS-named hosts work the same way as for `bzz`: `ipfs://vitalik.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after the address-bar resolution) and proxies the same way. The page's URL/origin stays `ipfs://<name>/` rather than the resolved CID. Cross-transport mismatches (e.g. `ipfs://name.eth` whose contenthash is Swarm or IPNS) return `404` with an explanatory body — the typed scheme is treated as an assertion, matching the `bzz` handler's behaviour. Unlike `bzz`, the IPFS handler doesn't wrap its requests in a retry loop; Kubo doesn't exhibit the cold-content transient-5xx pattern the Swarm node does, and `4xx` / `5xx` responses pass through to the page so SPAs that feature-detect missing endpoints can render their own fallback.
 
 > **Origin model.** Same as `bzz`: `ipfs://vitalik.eth` and `ipfs://<resolved-cid>` are different origins from Chromium's perspective. Pinning storage to the ENS name keeps state stable across contenthash updates.
 
@@ -203,13 +203,13 @@ Freedom intelligently manages node connections:
 This means Freedom works seamlessly whether you:
 
 - Run it standalone (bundled Swarm and IPFS nodes start automatically; Radicle is optional and behind an Experimental setting)
-- Already have system-wide Bee/IPFS/Radicle daemons running (Freedom reuses them)
+- Already have system-wide Swarm (Bee or Ant)/IPFS/Radicle daemons running (Freedom reuses them)
 - Have port conflicts with other software (Freedom finds available ports)
 
-### Integrated Swarm Bee Node
+### Integrated Swarm Node (Ant)
 
 - **Toolbar Toggle**: Click the network icon to access the Nodes panel with independent on/off switches.
-- **Live Statistics**: View connected peers, visible network peers, and Bee version in real-time.
+- **Live Statistics**: View connected peers, visible network peers, and the Ant node version in real-time.
 - **DHT Client Mode**: Runs in ultra-light mode for minimal bandwidth and resource usage.
 - **Automatic Configuration**: First-run setup generates keys and config automatically.
 
@@ -366,7 +366,7 @@ Access built-in browser pages using the `freedom://` protocol:
 
 Freedom automatically manages node connections. By default:
 
-- **Swarm Bee**: `http://127.0.0.1:1633`
+- **Swarm (Ant)**: `http://127.0.0.1:1633`
 - **IPFS Gateway**: `http://localhost:8080` (`localhost`, not `127.0.0.1`, so Kubo's built-in subdomain gateway kicks in — required for `_redirects` SPA support)
 - **IPFS API**: `http://127.0.0.1:5001`
 - **Radicle httpd**: `http://127.0.0.1:8780`
@@ -450,12 +450,12 @@ The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with option
 
 | Directory             | Contents                                                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `src/main/`           | Electron main process — node managers (Bee, IPFS, Radicle), ENS resolver, IPC, settings, history, bookmarks, auto-updater |
+| `src/main/`           | Electron main process — node managers (Ant, IPFS, Radicle), ENS resolver, IPC, settings, history, bookmarks, auto-updater |
 | `src/renderer/`       | UI — tabs, navigation, address bar, menus, context menus, bookmarks bar, debug console, settings modal                    |
 | `src/renderer/pages/` | Internal pages (home, history, error, links, protocol-test, rad-browser)                                                  |
 | `src/shared/`         | Constants shared between main and renderer                                                                                |
-| `config/`             | Bee config template, default bookmarks, macOS entitlements                                                                |
-| `scripts/`            | Build and setup helpers (binary downloads, Bee/IPFS/Radicle init)                                                         |
+| `config/`             | Ant config template, default bookmarks, macOS entitlements                                                                |
+| `scripts/`            | Build and setup helpers (binary downloads, Ant/IPFS/Radicle init)                                                         |
 | `assets/`             | App icons                                                                                                                 |
 
 ---
@@ -486,10 +486,10 @@ Two Playwright projects live under `test-e2e/`. The harness suite is run manuall
 
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
-| `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Bee/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
+| `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Ant/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
 | `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + IPFS spawn, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. Currently one spec (`eth-sites.spec.js`) cold-starts both nodes, waits for >20 connected peers on each, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS) and asserts the rendered pages. Requires `npm run ant:download` and `npm run ipfs:download` first; Swarm/IPFS cold-start can take a few minutes on a fresh repo. The Ant check is skipped if the binary is missing; the IPFS check fails loudly. |
 
-Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Bee port detection don't tolerate parallel app instances.
+Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Ant port detection don't tolerate parallel app instances.
 
 ### Logging
 
@@ -513,7 +513,7 @@ DEBUG=1 /Applications/Freedom.app/Contents/MacOS/Freedom
 
 - Toggle the debug panel via **Menu (☰) > Debug Console**.
 - Check the terminal for main process logs (visible at `info` level and above in development):
-  - Bee/IPFS/Radicle stdout and stderr
+  - Ant/IPFS/Radicle stdout and stderr
   - IPC events
   - Request rewrites
   - ENS resolution
@@ -539,8 +539,8 @@ Output goes to the `dist/` folder as DMG and ZIP archives.
 
 The build includes:
 
-- Bundled Bee, Kubo, and Radicle binaries
-- Bee configuration template
+- Bundled Ant, Kubo, and Radicle binaries
+- Ant configuration template
 - All renderer assets
 
 #### Linux
@@ -690,7 +690,7 @@ npm run start:test-updater
 - **Context Isolation**: Uses `contextIsolation: true` and `nodeIntegration: false`.
 - **Remote Module Disabled**: The remote module is not available.
 - **Minimal API Surface**: Only necessary IPC methods are exposed to the renderer. The `freedomAPI` (history, bookmarks, etc.) is restricted to internal `freedom://` pages — external websites cannot call it.
-- **Local Nodes**: Bee, IPFS, and Radicle run locally; no external services required for basic operation.
+- **Local Nodes**: Ant, IPFS, and Radicle run locally; no external services required for basic operation.
 - **Permission Handling**: Pointer lock and fullscreen permissions are granted for better UX in Swarm/IPFS apps.
 - **Public RPC Fallback**: ENS resolution uses public RPCs by default. For trustless verification, use a local Helios client.
 
@@ -698,7 +698,7 @@ npm run start:test-updater
 
 ## Troubleshooting
 
-### Bee fails to start
+### Swarm node (Ant) fails to start
 
 - Freedom automatically detects port conflicts and uses fallback ports
 - If the node still fails, check terminal output for specific error messages
@@ -720,7 +720,7 @@ npm run start:test-updater
 
 ### Using an external node
 
-- If you have a system-wide Bee, IPFS, or Radicle daemon running, Freedom will detect and reuse it
+- If you have a system-wide Swarm (Bee or Ant), IPFS, or Radicle daemon running, Freedom will detect and reuse it
 - The Nodes panel will show "Node: localhost:PORT" when connected to an external node
 - The toggle switch is disabled for external nodes (can't stop a node Freedom didn't start)
 
@@ -732,6 +732,6 @@ npm run start:test-updater
 
 ### Content not loading
 
-- Ensure the respective node (Bee, IPFS, or Radicle) is running (check Nodes panel, for Radicle, first enable it in **Settings → Experimental**)
+- Ensure the respective node (Ant, IPFS, or Radicle) is running (check Nodes panel, for Radicle, first enable it in **Settings → Experimental**)
 - Verify the Swarm reference (64 or 128 hex), CID, or Radicle ID is correct
 - Check the debug console for error messages
