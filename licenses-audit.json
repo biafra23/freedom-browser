@@ -336,7 +336,7 @@
     },
     {
       "name": "ant (Swarm)",
-      "version": "v0.5.17",
+      "version": "v0.5.18",
       "type": "binary",
       "scope": "runtime",
       "source": {

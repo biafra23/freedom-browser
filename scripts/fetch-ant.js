@@ -15,7 +15,7 @@ const ANT_REPO = process.env.ANT_REPO || 'solardev-xyz/ant';
 // could ship a different Ant than CI validated. Override via ANT_RELEASE_TAG
 // for local testing of newer releases; set it to `latest` to resolve the
 // repo's most recent published release.
-const PINNED_RELEASE_TAG = 'v0.5.17';
+const PINNED_RELEASE_TAG = 'v0.5.18';
 const ANT_RELEASE_TAG = process.env.ANT_RELEASE_TAG || PINNED_RELEASE_TAG;
 
 function fetchReleaseOnce() {
