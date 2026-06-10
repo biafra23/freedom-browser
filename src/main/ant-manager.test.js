@@ -292,6 +292,9 @@ function loadBeeManagerModule(options = {}) {
         Socket,
       }),
       [require.resolve('./logger')]: () => log,
+      [require.resolve('./migrate-user-data')]: () => ({
+        isBeeDataMigrationPending: options.isBeeDataMigrationPending || jest.fn(() => false),
+      }),
       [require.resolve('./settings-store')]: () => ({
         loadSettings,
       }),
@@ -370,6 +373,27 @@ describe('bee-manager', () => {
     await expect(ctx.ipcMain.invoke(IPC.ANT_CHECK_BINARY)).resolves.toEqual({
       available: false,
     });
+  });
+
+  test('refuses to spawn the bundled node while the bee-data migration is pending', async () => {
+    const isBeeDataMigrationPending = jest.fn(() => true);
+    const ctx = loadBeeManagerModule({
+      isBeeDataMigrationPending,
+      portSequence: [false],
+    });
+
+    await ctx.mod.startAnt();
+
+    expect(isBeeDataMigrationPending).toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getStatus()).toEqual({
+      status: 'error',
+      error: expect.stringContaining('identity migration has not completed'),
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'ant',
+      'Node start deferred (identity migration pending)'
+    );
   });
 
   test('reuses an existing daemon and clears the health-check interval on stop', async () => {

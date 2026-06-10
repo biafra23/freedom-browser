@@ -191,6 +191,33 @@ const BEE_ONLY_DIRS = ['statestore', 'localstore', 'kademlia-metrics'];
 // bee-data, with no retry.
 const BEE_CARRY_ITEMS = ['config.yaml', 'stamperstore', 'keys'];
 
+function getNodeDataBaseDir() {
+  return app.isPackaged ? app.getPath('userData') : path.join(__dirname, '..', '..');
+}
+
+/**
+ * Whether a bee-data → ant-data identity migration is still required: bee-data/
+ * holds an injected keystore that ant-data/ doesn't have yet. While this is
+ * true the Ant node must NOT be started — antd would self-generate a throwaway
+ * identity (wrong overlay address, none of the user's postage stamps or
+ * chequebook funds) instead of the about-to-be-migrated one.
+ *
+ * @returns {boolean}
+ */
+function isBeeDataMigrationPending() {
+  // Set only by tests/E2E runs that want a throwaway data dir — those never
+  // participate in the migration.
+  if (process.env.FREEDOM_ANT_DATA) {
+    return false;
+  }
+
+  const baseDir = getNodeDataBaseDir();
+  return (
+    fs.existsSync(path.join(baseDir, 'bee-data', 'keys', 'swarm.key')) &&
+    !fs.existsSync(path.join(baseDir, 'ant-data', 'keys', 'swarm.key'))
+  );
+}
+
 /**
  * Migrate the Bee-era node data directory (`bee-data/`) to the Ant location
  * (`ant-data/`) so an upgrading user's injected Swarm identity survives the
@@ -199,38 +226,22 @@ const BEE_CARRY_ITEMS = ['config.yaml', 'stamperstore', 'keys'];
  * of the user's postage stamps or chequebook funds — and nothing re-injects
  * the real key outside the onboarding wizard.
  *
- * Idempotent without a marker file: it only acts when bee-data/ holds an
- * injected keystore (`keys/swarm.key`) and ant-data/ does not. Either path
- * (rename or item-by-item carry) makes the precondition false afterwards.
+ * Idempotent without a marker file: it only acts while isBeeDataMigrationPending()
+ * holds. Either path (rename or item-by-item carry) makes the precondition
+ * false afterwards.
  *
  * Must run before the Ant node starts.
  *
  * @returns {boolean} true if a migration was performed
  */
 function migrateBeeDataToAntData() {
-  // Set only by tests/E2E runs that want a throwaway data dir — never migrate
-  // real user data into those.
-  if (process.env.FREEDOM_ANT_DATA) {
+  if (!isBeeDataMigrationPending()) {
     return false;
   }
 
-  const baseDir = app.isPackaged
-    ? app.getPath('userData')
-    : path.join(__dirname, '..', '..');
+  const baseDir = getNodeDataBaseDir();
   const oldDir = path.join(baseDir, 'bee-data');
   const newDir = path.join(baseDir, 'ant-data');
-
-  // Only an injected keystore is worth carrying over; everything else in
-  // bee-data is disposable node cache.
-  if (!fs.existsSync(path.join(oldDir, 'keys', 'swarm.key'))) {
-    return false;
-  }
-
-  // Never clobber an identity that has already been injected into ant-data.
-  if (fs.existsSync(path.join(newDir, 'keys', 'swarm.key'))) {
-    log.info('[Migration] ant-data already has an injected identity, leaving bee-data untouched');
-    return false;
-  }
 
   log.info('[Migration] Migrating Bee node data from:', oldDir);
   log.info('[Migration] To:', newDir);
@@ -298,5 +309,6 @@ function migrateBeeDataToAntData() {
 module.exports = {
   migrateUserData,
   migrateBeeDataToAntData,
+  isBeeDataMigrationPending,
   getOldUserDataPath,
 };

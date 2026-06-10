@@ -408,7 +408,23 @@ async function startAnt() {
     return;
   }
 
-  // Step 2: Start bundled node
+  // Step 2: Start bundled node — but never on a data dir whose identity
+  // migration hasn't completed. If the bee-data → ant-data migration failed
+  // (it retries on next launch), spawning antd now would self-generate a
+  // throwaway identity and the user's first post-upgrade session would run
+  // under the wrong overlay address. This guards every start path: launch
+  // auto-start, the IPC handler, and onboarding. (Reusing an external daemon
+  // above is fine — it has its own data dir.)
+  const { isBeeDataMigrationPending } = require('./migrate-user-data');
+  if (isBeeDataMigrationPending()) {
+    const msg =
+      'Node start blocked: the Bee → Ant identity migration has not completed. Restart Freedom to retry.';
+    log.error(`[Ant] ${msg}`);
+    updateState(STATUS.ERROR, msg);
+    setStatusMessage('ant', 'Node start deferred (identity migration pending)');
+    return;
+  }
+
   const binPath = getAntBinaryPath();
   if (!fs.existsSync(binPath)) {
     updateState(STATUS.ERROR, `Ant binary not found at ${binPath}`);

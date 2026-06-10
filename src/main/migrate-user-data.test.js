@@ -187,6 +187,26 @@ describe('migrateBeeDataToAntData (bee → ant upgrade)', () => {
     expect(fs.existsSync(path.join(antData, 'identity.json'))).toBe(false);
   });
 
+  test('isBeeDataMigrationPending tracks the migration lifecycle', () => {
+    const mod = loadMigrationModule(userDataDir);
+
+    // Nothing to migrate yet.
+    expect(mod.isBeeDataMigrationPending()).toBe(false);
+
+    // Bee-era keystore present, ant-data empty → pending.
+    writeBeeData(userDataDir);
+    expect(mod.isBeeDataMigrationPending()).toBe(true);
+
+    // Suppressed under the throwaway-data-dir test override.
+    process.env.FREEDOM_ANT_DATA = path.join(userDataDir, 'throwaway');
+    expect(mod.isBeeDataMigrationPending()).toBe(false);
+    delete process.env.FREEDOM_ANT_DATA;
+
+    // Cleared once the migration completes.
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    expect(mod.isBeeDataMigrationPending()).toBe(false);
+  });
+
   test('falls back to item-by-item carry when the whole-directory rename fails', () => {
     writeBeeData(userDataDir, { extras: ['stamperstore', 'statestore'] });
     const mod = loadMigrationModule(userDataDir);
