@@ -34,7 +34,7 @@ Freedom Browser is distributed as:
 - **Bundled node_modules** in `app.asar` archive
 - **Native addon** (`better-sqlite3`) unpacked from asar
 - **External binaries** shipped in `resources/`:
-  - Bee (Swarm node)
+  - Ant (antd, Swarm node)
   - Kubo (IPFS node)
   - Radicle (rad, radicle-node, radicle-httpd)
 
@@ -89,13 +89,13 @@ Freedom Browser is distributed as:
 
 ## Downloaded Binaries
 
-### Bee (Swarm Node)
+### Ant (antd, Swarm Node)
 
-- **Source:** https://github.com/ethersphere/bee
+- **Source:** https://github.com/solardev-xyz/ant
 - **License:** BSD-3-Clause
 - **Risk:** Green
 - **Integration:** Separate process via IPC
-- **Action Required:** Include BSD notice in THIRD_PARTY_NOTICES
+- **Action Required:** Include BSD notice in THIRD_PARTY_NOTICES; upstream repo must publish its LICENSE file
 
 ### Kubo (IPFS Node)
 
@@ -196,7 +196,7 @@ Include attributions for:
 
 1. **Electron** - MIT License, Copyright (c) Electron contributors
 2. **Chromium** - BSD-style license (reference LICENSES.chromium.html)
-3. **Bee (Swarm)** - BSD-3-Clause, Copyright (c) Ethereum Swarm
+3. **Ant (Swarm)** - BSD-3-Clause, Copyright (c) solardev-xyz contributors
 4. **Kubo (IPFS)** - MIT OR Apache-2.0, Copyright (c) Protocol Labs
 5. **Radicle** - MIT OR Apache-2.0, Copyright (c) Radicle Foundation
 6. **All npm production dependencies** with MIT/ISC/BSD/Apache licenses

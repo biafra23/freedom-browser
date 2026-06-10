@@ -7,7 +7,7 @@
     "bundles_in_asar": true,
     "ships_external_binaries": true,
     "native_addons": ["better-sqlite3"],
-    "notes": "Electron desktop app bundled as DMG/DEB/NSIS. Node modules bundled in app.asar. Native addon better-sqlite3 unpacked. External binaries (Bee, Kubo, Radicle) shipped in resources/."
+    "notes": "Electron desktop app bundled as DMG/DEB/NSIS. Node modules bundled in app.asar. Native addon better-sqlite3 unpacked. External binaries (Ant, Kubo, Radicle) shipped in resources/."
   },
   "dependencies": [
     {
@@ -335,18 +335,18 @@
       "issues": []
     },
     {
-      "name": "bee (Swarm)",
-      "version": "latest",
+      "name": "ant (Swarm)",
+      "version": "v0.5.8",
       "type": "binary",
       "scope": "runtime",
       "source": {
         "ecosystem": "github",
-        "url": "https://github.com/ethersphere/bee"
+        "url": "https://github.com/solardev-xyz/ant"
       },
       "license": {
         "spdx": ["BSD-3-Clause"],
         "raw": "BSD-3-Clause",
-        "license_files": ["LICENSE"],
+        "license_files": [],
         "notice_required": true
       },
       "bundled_with_app": true,
@@ -356,7 +356,12 @@
         {
           "kind": "notice",
           "details": "BSD-3-Clause requires attribution in documentation and advertising materials",
-          "recommended_fix": "Include Bee's license notice in THIRD_PARTY_NOTICES"
+          "recommended_fix": "Include Ant's license notice in THIRD_PARTY_NOTICES"
+        },
+        {
+          "kind": "missing-license-file",
+          "details": "The upstream repository does not yet publish a LICENSE file; BSD-3-Clause is the declared license",
+          "recommended_fix": "Add a BSD-3-Clause LICENSE file to solardev-xyz/ant"
         }
       ]
     },
@@ -549,7 +554,7 @@
     {
       "priority": "required",
       "action": "Create THIRD_PARTY_NOTICES.md file",
-      "details": "Include attribution for Electron/Chromium, Bee, and all bundled npm dependencies with their license texts"
+      "details": "Include attribution for Electron/Chromium, Ant, and all bundled npm dependencies with their license texts"
     },
     {
       "priority": "required",
