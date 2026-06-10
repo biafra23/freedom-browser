@@ -411,7 +411,7 @@ async function startAnt() {
   // Step 2: Start bundled node
   const binPath = getAntBinaryPath();
   if (!fs.existsSync(binPath)) {
-    updateState(STATUS.ERROR, `Bee binary not found at ${binPath}`);
+    updateState(STATUS.ERROR, `Ant binary not found at ${binPath}`);
     setStatusMessage('ant', 'Node failed to start');
     return;
   }
@@ -427,7 +427,7 @@ async function startAnt() {
   if (existing.conflict) {
     const newApiPort = await findAvailablePort(apiPort + 1);
     if (!newApiPort) {
-      updateState(STATUS.ERROR, 'No available ports for Bee API');
+      updateState(STATUS.ERROR, 'No available ports for Ant API');
       setStatusMessage('ant', 'Node failed to start');
       return;
     }

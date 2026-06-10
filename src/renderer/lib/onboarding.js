@@ -285,23 +285,17 @@ function generateRandomPassword() {
 }
 
 /**
- * Restart nodes that were reinjected with new identity
- * @param {string[]} nodeNames - Array of node names to restart ('bee', 'ipfs', 'radicle')
+ * Restart nodes that were reinjected with new identity. Ant is never in this
+ * list — its restart is owned by the identity lifecycle hook in the main
+ * process (stop → wipe → reinject → start).
+ * @param {string[]} nodeNames - Array of node names to restart ('ipfs', 'radicle')
  */
 async function restartNodes(nodeNames) {
   console.log('[Onboarding] Restarting nodes:', nodeNames);
 
   for (const nodeName of nodeNames) {
     try {
-      if (nodeName === 'bee') {
-        // Check if Bee is running
-        const beeStatus = await window.ant.getStatus();
-        if (beeStatus.status === 'running') {
-          console.log('[Onboarding] Restarting Bee node...');
-          await window.ant.stop();
-          await window.ant.start();
-        }
-      } else if (nodeName === 'ipfs') {
+      if (nodeName === 'ipfs') {
         // Check if IPFS is running
         const ipfsStatus = await window.ipfs.getStatus();
         if (ipfsStatus.status === 'running') {
