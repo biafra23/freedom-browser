@@ -77,10 +77,10 @@ jobs:
         run: npx playwright install-deps
 
       - name: Download Ant (antd) binary
+        # Version pinned in scripts/fetch-ant.js so CI tests exactly what releases ship.
         run: npm run ant:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ANT_RELEASE_TAG: v0.5.8
 
       - name: Download IPFS binary
         run: npm run ipfs:download
@@ -134,10 +134,10 @@ jobs:
         run: npx playwright install-deps
 
       - name: Download Ant (antd) binary
+        # Version pinned in scripts/fetch-ant.js so CI tests exactly what releases ship.
         run: npm run ant:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ANT_RELEASE_TAG: v0.5.8
 
       - name: Download IPFS binary
         run: npm run ipfs:download

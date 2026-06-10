@@ -75,11 +75,13 @@ After updating, run `npm audit` and decide per advisory:
 
 ### Bundled binaries (Ant, Kubo / IPFS, Radicle)
 
-Each fetch script resolves the latest from a **vendor-specific** upstream — do **not** use GitHub tags as a stand-in, they can lag the actual release pointer (Radicle in particular publishes new releases to `files.radicle.xyz` first; GitHub `/tags` showed `1.7.1` as the latest stable while `1.9.1` was already shipping).
+Ant is the exception to the "resolve latest" rule: `scripts/fetch-ant.js` pins a known-good tag (`PINNED_RELEASE_TAG` in the script) so CI and releases install the exact version that was tested. To bump Ant, change the pin in the script and let CI validate it; `ANT_RELEASE_TAG` (a tag, or `latest`) overrides for local testing only.
+
+The other fetch scripts resolve the latest from a **vendor-specific** upstream — do **not** use GitHub tags as a stand-in, they can lag the actual release pointer (Radicle in particular publishes new releases to `files.radicle.xyz` first; GitHub `/tags` showed `1.7.1` as the latest stable while `1.9.1` was already shipping).
 
 | Binary | Authoritative source the fetch script reads |
 |---|---|
-| Ant (`scripts/fetch-ant.js`) | `https://api.github.com/repos/solardev-xyz/ant/releases/latest` (or the tag pinned via `ANT_RELEASE_TAG`) |
+| Ant (`scripts/fetch-ant.js`) | `https://api.github.com/repos/solardev-xyz/ant/releases/tags/<PINNED_RELEASE_TAG>` (pinned in the script; `ANT_RELEASE_TAG` overrides) |
 | Kubo (`scripts/fetch-ipfs.js`) | `https://dist.ipfs.tech/kubo/versions` |
 | Radicle main (`scripts/fetch-radicle.js`) | `https://files.radicle.xyz/releases/latest` |
 | Radicle httpd (same script) | `https://files.radicle.xyz/releases/radicle-httpd/latest` |
@@ -93,7 +95,7 @@ To check whether the bundled binary is stale, compare its self-reported version 
 ./radicle-bin/<arch>/radicle-httpd --version
 ```
 
-For each binary that's behind, re-run its fetch script (`npm run ant:download` / `ipfs:download` / `radicle:download` — each fetches every supported arch) and verify the result still passes `npm run check-binaries`. Note: `*-bin/` directories are gitignored, so the binary refresh produces no file-tree change. The build pipeline (§5) re-fetches at artifact-build time, so what ends up shipping is whatever upstream `latest` resolves to then — document the version in the changelog and in the `chore(build): update bundled <name> to <version>` commit body.
+For each binary that's behind, re-run its fetch script (`npm run ant:download` / `ipfs:download` / `radicle:download` — each fetches every supported arch) and verify the result still passes `npm run check-binaries`. Note: `*-bin/` directories are gitignored, so the binary refresh produces no file-tree change. The build pipeline (§5) re-fetches at artifact-build time — Ant installs its pinned tag, while Kubo/Radicle ship whatever upstream `latest` resolves to then — document the versions in the changelog and in the `chore(build): update bundled <name> to <version>` commit body.
 
 ### Commit style
 
@@ -185,7 +187,7 @@ npm run dist -- --win --x64
 Cross-built artifacts have **never been run** by the time §5 finishes. The Linux container can package the AppImage and `.deb`, and the mac host can cross-build the Windows NSIS installer, but neither can execute the result on its actual target platform. Smoke testing each artifact on a real instance of its target OS catches packaging-class bugs that `npm test` and the on-host `npm start` smoke (§4) cannot:
 
 - Wrong native-module ABI for the target arch (e.g. `better-sqlite3.node` linked for the wrong NODE_MODULE_VERSION, or a x64 binary in an arm64 package)
-- Missing or wrong-arch bundled binary in `extraResources` (`bee.exe`, `ipfs`, `rad`, `radicle-httpd`)
+- Missing or wrong-arch bundled binary in `extraResources` (`antd.exe`, `ipfs`, `rad`, `radicle-httpd`)
 - `electron-builder` configuration mistakes (asar unpack rules, `extraResources` paths, NSIS installer flags, Gatekeeper / SmartScreen interaction)
 - Platform-specific code paths (file system paths, native menus, IPC permissions, system trust store, default-browser hooks)
 
@@ -235,7 +237,7 @@ For each platform, run through:
 2. **Version**: About / `freedom://settings` shows `<version>` from `package.json`
 3. **Navigation**: type `https://example.com`, confirm a basic HTTPS page renders and the address-bar shield is in its default state
 4. **Headline feature**: spot-check whatever the release leads with. For releases that touch ENS / Swarm / IPFS / Radicle, that means opening an `ens://`, `bzz://`, `ipfs://`, or `rad://` URI and confirming the documented behaviour (e.g. for `0.7.2`: Colibri verification surfaces in the address-bar shield popover)
-5. **Bundled nodes**: confirm Bee, IPFS / Kubo, and (Linux only) Radicle start cleanly. The nodes manager or the relevant `freedom://` settings page surfaces this — a "node failed to start" red badge or a missing local API port is the failure mode
+5. **Bundled nodes**: confirm Ant, IPFS / Kubo, and (Linux only) Radicle start cleanly. The nodes manager or the relevant `freedom://` settings page surfaces this — a "node failed to start" red badge or a missing local API port is the failure mode
 6. **Persistence**: change one trivial setting (e.g. theme), close the app fully, reopen, confirm the change stuck
 
 If any platform fails:

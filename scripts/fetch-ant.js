@@ -10,9 +10,13 @@ const { execSync } = require('child_process');
 // shipped is `antd` (not `bee`) and it installs into `ant-bin/<os>-<arch>/`.
 const OUTPUT_DIR = path.join(__dirname, '..', 'ant-bin');
 const ANT_REPO = process.env.ANT_REPO || 'solardev-xyz/ant';
-// Pin a specific tag via ANT_RELEASE_TAG (e.g. `v0.5.7`); otherwise resolve
-// the repo's latest published release.
-const ANT_RELEASE_TAG = process.env.ANT_RELEASE_TAG || '';
+// The known-good Ant release this app version is built and CI-tested against.
+// Bump deliberately (with a CI run) — do NOT float on `latest`, or releases
+// could ship a different Ant than CI validated. Override via ANT_RELEASE_TAG
+// for local testing of newer releases; set it to `latest` to resolve the
+// repo's most recent published release.
+const PINNED_RELEASE_TAG = 'v0.5.8';
+const ANT_RELEASE_TAG = process.env.ANT_RELEASE_TAG || PINNED_RELEASE_TAG;
 
 function fetchReleaseOnce() {
   return new Promise((resolve, reject) => {
@@ -25,9 +29,10 @@ function fetchReleaseOnce() {
       headers.Authorization = `Bearer ${token}`;
     }
 
-    const releasePath = ANT_RELEASE_TAG
-      ? `/repos/${ANT_REPO}/releases/tags/${ANT_RELEASE_TAG}`
-      : `/repos/${ANT_REPO}/releases/latest`;
+    const releasePath =
+      ANT_RELEASE_TAG === 'latest'
+        ? `/repos/${ANT_REPO}/releases/latest`
+        : `/repos/${ANT_REPO}/releases/tags/${ANT_RELEASE_TAG}`;
 
     const options = {
       hostname: 'api.github.com',
@@ -152,9 +157,7 @@ function parseChecksums(text) {
 
 async function main() {
   try {
-    console.log(
-      `Fetching Ant release info from ${ANT_REPO}${ANT_RELEASE_TAG ? ` @ ${ANT_RELEASE_TAG}` : ' (latest)'}...`
-    );
+    console.log(`Fetching Ant release info from ${ANT_REPO} @ ${ANT_RELEASE_TAG}...`);
     const release = await fetchRelease();
     console.log(`Ant version: ${release.tag_name}`);
 
@@ -164,15 +167,15 @@ async function main() {
     // extraction. Missing checksums are a hard error (a published Ant release
     // always ships SHA256SUMS — see the release workflow).
     const sumsAsset = assets.find((a) => a.name === 'SHA256SUMS');
-    let checksums = null;
-    if (sumsAsset) {
-      const sumsPath = path.join(OUTPUT_DIR, 'SHA256SUMS');
-      if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-      await downloadFile(sumsAsset.browser_download_url, sumsPath);
-      checksums = parseChecksums(fs.readFileSync(sumsPath, 'utf-8'));
-    } else {
-      console.warn('No SHA256SUMS asset found in the release — skipping checksum verification.');
+    if (!sumsAsset) {
+      throw new Error(
+        `Release ${release.tag_name} has no SHA256SUMS asset — refusing to install unverified binaries.`
+      );
     }
+    const sumsPath = path.join(OUTPUT_DIR, 'SHA256SUMS');
+    if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    await downloadFile(sumsAsset.browser_download_url, sumsPath);
+    const checksums = parseChecksums(fs.readFileSync(sumsPath, 'utf-8'));
 
     const targets = [
       { os: 'mac', arch: 'arm64', keywords: ['darwin', 'arm64'] },
@@ -191,8 +194,9 @@ async function main() {
       );
 
       if (!asset) {
-        console.warn(`Could not find asset for ${target.os}-${target.arch}`);
-        continue;
+        throw new Error(
+          `Release ${release.tag_name} has no asset for ${target.os}-${target.arch} — refusing to produce an incomplete install.`
+        );
       }
 
       const targetDir = path.join(OUTPUT_DIR, `${target.os}-${target.arch}`);
@@ -206,19 +210,17 @@ async function main() {
       const tempDest = path.join(targetDir, asset.name);
       await downloadFile(asset.browser_download_url, tempDest);
 
-      if (checksums) {
-        const expected = checksums[asset.name];
-        if (!expected) {
-          throw new Error(`No checksum entry for ${asset.name} in SHA256SUMS`);
-        }
-        const actual = sha256File(tempDest);
-        if (actual !== expected) {
-          throw new Error(
-            `Checksum mismatch for ${asset.name}: expected ${expected}, got ${actual}`
-          );
-        }
-        console.log(`Verified checksum for ${asset.name}`);
+      const expected = checksums[asset.name];
+      if (!expected) {
+        throw new Error(`No checksum entry for ${asset.name} in SHA256SUMS`);
       }
+      const actual = sha256File(tempDest);
+      if (actual !== expected) {
+        throw new Error(
+          `Checksum mismatch for ${asset.name}: expected ${expected}, got ${actual}`
+        );
+      }
+      console.log(`Verified checksum for ${asset.name}`);
 
       if (asset.name.endsWith('.tar.gz') || asset.name.endsWith('.tgz')) {
         console.log(`Extracting ${asset.name}...`);
@@ -250,15 +252,14 @@ async function main() {
         };
 
         const foundBin = findAnt(targetDir);
-        if (foundBin) {
-          fs.renameSync(foundBin, destFile);
-          if (!target.exe) fs.chmodSync(destFile, '755');
-          console.log(`Found and installed Ant binary for ${target.os}-${target.arch}`);
-        } else {
-          console.error(
+        if (!foundBin) {
+          throw new Error(
             `Failed to locate 'antd' binary after download/extraction for ${target.os}-${target.arch}`
           );
         }
+        fs.renameSync(foundBin, destFile);
+        if (!target.exe) fs.chmodSync(destFile, '755');
+        console.log(`Found and installed Ant binary for ${target.os}-${target.arch}`);
       }
     }
 
