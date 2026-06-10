@@ -396,6 +396,69 @@ describe('bee-manager', () => {
     );
   });
 
+  test('defers the bundled node start in injected-identity mode until a key is injected', async () => {
+    const ctx = loadBeeManagerModule({
+      portSequence: [false],
+    });
+
+    ctx.mod.setUseInjectedIdentity(true);
+    await ctx.mod.startAnt();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.fsMock.writeFileSync).not.toHaveBeenCalled();
+    expect(ctx.mod.getStatus()).toEqual({
+      status: 'error',
+      error: expect.stringContaining('no node key injected'),
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'ant',
+      'Node start deferred (waiting for identity injection)'
+    );
+  });
+
+  test('starts the bundled node in injected-identity mode once keys/swarm.key exists', async () => {
+    jest.useFakeTimers();
+
+    const swarmKeyPath = path.join(DEV_BEE_DATA_DIR, 'keys', 'swarm.key');
+    const platformMap = {
+      darwin: 'mac',
+      linux: 'linux',
+      win32: 'win',
+    };
+    const platform = platformMap[process.platform] || process.platform;
+    const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+    const beeBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
+    const ctx = loadBeeManagerModule({
+      existsSync: (target) => target === beeBinPath || target === swarmKeyPath,
+      portSequence: [false],
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:1633/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return { statusCode: 500, body: '' };
+      },
+    });
+
+    ctx.mod.setUseInjectedIdentity(true);
+    await ctx.mod.startAnt();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.spawnedProcesses).toHaveLength(1);
+    expect(ctx.spawnedProcesses[0].binary).toBe(ctx.beeBinPath);
+    expect(ctx.mod.getStatus()).toEqual({ status: 'running', error: null });
+
+    const stopPromise = ctx.mod.stopAnt();
+    await jest.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    await stopPromise;
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   test('reuses an existing daemon and clears the health-check interval on stop', async () => {
     const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(123);
     const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});

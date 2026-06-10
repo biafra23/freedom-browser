@@ -204,15 +204,13 @@ function ensureConfig(dataDir, apiPort, nodeMode = ANT_NODE_MODE.ULTRA_LIGHT) {
   // injected Web3 v3 keystore exists at `keys/swarm.key` antd loads its
   // identity from it; otherwise antd self-generates a native identity
   // (`identity.json`) on start. So there is no separate init step to run —
-  // we only log which path will be taken.
+  // we only log which path will be taken. (startAnt never reaches this point
+  // in injected-identity mode without the keystore — it defers instead.)
   const keysDir = path.join(dataDir, 'keys');
   const swarmKeyPath = path.join(keysDir, 'swarm.key');
 
   if (fs.existsSync(swarmKeyPath)) {
     log.info('[Ant] Using injected keys from', keysDir);
-  } else if (useInjectedIdentity) {
-    log.info('[Ant] Waiting for identity injection (useInjectedIdentity=true)');
-    // Keys should be injected by identity-manager before starting
   } else {
     log.info('[Ant] No injected keystore; antd will self-initialize its node identity on start');
   }
@@ -433,6 +431,21 @@ async function startAnt() {
   }
 
   const dataDir = getAntDataPath();
+
+  // In injected-identity mode (an identity vault exists) never spawn antd
+  // without the injected keystore: antd would self-generate a throwaway
+  // native identity — wrong overlay address, none of the user's postage
+  // stamps or chequebook funds. IPFS and Radicle defer the same way. The
+  // identity lifecycle start hook retries this start after injection, and
+  // launch auto-start picks it up once keys/swarm.key exists.
+  if (useInjectedIdentity && !fs.existsSync(path.join(dataDir, 'keys', 'swarm.key'))) {
+    const msg =
+      'Node start deferred: identity vault present but no node key injected yet. Complete identity setup to start the node.';
+    log.warn(`[Ant] ${msg}`);
+    updateState(STATUS.ERROR, msg);
+    setStatusMessage('ant', 'Node start deferred (waiting for identity injection)');
+    return;
+  }
 
   // Step 3: Resolve ports (handle conflicts)
   // Always try default port first

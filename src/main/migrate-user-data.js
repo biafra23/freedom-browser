@@ -267,9 +267,20 @@ function migrateBeeDataToAntData() {
 
     if (!renamed) {
       // ant-data exists (e.g. antd already ran and self-generated a throwaway
-      // identity, or the rename above failed). Carry over the identity-critical
-      // items — keys last, see BEE_CARRY_ITEMS — then drop antd's
-      // self-generated identity so the injected keystore wins on next start.
+      // identity, or the rename above failed). Drop antd's self-generated
+      // identity FIRST, then carry over the identity-critical items (keys
+      // last, see BEE_CARRY_ITEMS). Moving keys/swarm.key into ant-data is
+      // the commit point that clears the retry precondition
+      // (isBeeDataMigrationPending), so every step that must succeed has to
+      // happen before it — a stale identity.json left behind would otherwise
+      // win over the migrated keystore with no retry on next launch.
+      for (const idFile of ['identity.json', 'signing.key']) {
+        const stale = path.join(newDir, idFile);
+        if (fs.existsSync(stale)) {
+          fs.rmSync(stale, { force: true });
+          log.info(`[Migration] Removed antd self-generated ${idFile}`);
+        }
+      }
       for (const item of BEE_CARRY_ITEMS) {
         const src = path.join(oldDir, item);
         const dest = path.join(newDir, item);
@@ -278,21 +289,21 @@ function migrateBeeDataToAntData() {
         fs.renameSync(src, dest);
         log.info(`[Migration] Carried over ${item} from bee-data`);
       }
-      for (const idFile of ['identity.json', 'signing.key']) {
-        const stale = path.join(newDir, idFile);
-        if (fs.existsSync(stale)) {
-          fs.rmSync(stale, { force: true });
-          log.info(`[Migration] Removed antd self-generated ${idFile}`);
-        }
-      }
     }
 
     // Drop Bee-only LevelDB state antd can't use (can be gigabytes).
+    // Best-effort: this runs after the keystore landed (the commit point
+    // above, or the whole-directory rename), so a stray lock here must not
+    // report the already-complete identity migration as failed.
     for (const dir of BEE_ONLY_DIRS) {
       const stale = path.join(newDir, dir);
-      if (fs.existsSync(stale)) {
-        fs.rmSync(stale, { recursive: true, force: true });
-        log.info(`[Migration] Removed Bee-only ${dir}/`);
+      try {
+        if (fs.existsSync(stale)) {
+          fs.rmSync(stale, { recursive: true, force: true });
+          log.info(`[Migration] Removed Bee-only ${dir}/`);
+        }
+      } catch (err) {
+        log.warn(`[Migration] Could not remove Bee-only ${dir}/ (continuing):`, err.message);
       }
     }
 

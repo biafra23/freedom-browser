@@ -187,6 +187,69 @@ describe('migrateBeeDataToAntData (bee → ant upgrade)', () => {
     expect(fs.existsSync(path.join(antData, 'identity.json'))).toBe(false);
   });
 
+  test('a failure removing the stale antd identity keeps the migration retryable', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore'] });
+    // antd already self-initialized on the existing ant-data → merge path.
+    const antData = path.join(userDataDir, 'ant-data');
+    fs.mkdirSync(antData, { recursive: true });
+    fs.writeFileSync(path.join(antData, 'identity.json'), '{}');
+    fs.writeFileSync(path.join(antData, 'signing.key'), 'throwaway');
+
+    const mod = loadMigrationModule(userDataDir);
+
+    // Simulate a locked identity.json (Windows EPERM). The stale identity is
+    // removed before the keystore moves — the commit point that clears the
+    // retry precondition — so the migration must still be pending afterwards.
+    // If it weren't, antd would keep the throwaway identity with no retry.
+    const realRm = fs.rmSync.bind(fs);
+    const spy = jest.spyOn(fs, 'rmSync').mockImplementation((target, opts) => {
+      if (String(target).endsWith('identity.json')) {
+        const err = new Error('EPERM: operation not permitted');
+        err.code = 'EPERM';
+        throw err;
+      }
+      return realRm(target, opts);
+    });
+
+    expect(mod.migrateBeeDataToAntData()).toBe(false);
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data', 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(false);
+    expect(mod.isBeeDataMigrationPending()).toBe(true);
+
+    // Next launch: the lock is gone and the migration completes.
+    spy.mockRestore();
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'identity.json'))).toBe(false);
+    expect(fs.existsSync(path.join(antData, 'signing.key'))).toBe(false);
+    expect(mod.isBeeDataMigrationPending()).toBe(false);
+  });
+
+  test('a locked Bee-only directory does not fail the completed migration', () => {
+    writeBeeData(userDataDir, { extras: ['statestore', 'stamperstore'] });
+    const mod = loadMigrationModule(userDataDir);
+
+    // The Bee-only cleanup runs after the keystore landed; a stray lock on
+    // dead LevelDB cache must not report the identity migration as failed.
+    const realRm = fs.rmSync.bind(fs);
+    const spy = jest.spyOn(fs, 'rmSync').mockImplementation((target, opts) => {
+      if (String(target).endsWith('statestore')) {
+        const err = new Error('EBUSY: resource busy or locked');
+        err.code = 'EBUSY';
+        throw err;
+      }
+      return realRm(target, opts);
+    });
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    spy.mockRestore();
+
+    const antData = path.join(userDataDir, 'ant-data');
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(true);
+    expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+    expect(mod.isBeeDataMigrationPending()).toBe(false);
+  });
+
   test('isBeeDataMigrationPending tracks the migration lifecycle', () => {
     const mod = loadMigrationModule(userDataDir);
 
