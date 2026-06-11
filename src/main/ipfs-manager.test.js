@@ -8,6 +8,7 @@ const {
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const DEV_IPFS_DATA_DIR = path.join(PROJECT_ROOT, 'ipfs-data', 'freedom-ipfs');
+const loadedContexts = [];
 
 function createWindowMock() {
   return {
@@ -88,7 +89,7 @@ function loadIpfsManagerModule(options = {}) {
     },
   });
 
-  return {
+  const context = {
     app,
     BrowserWindow,
     clearService,
@@ -103,10 +104,15 @@ function loadIpfsManagerModule(options = {}) {
     updateService,
     windows,
   };
+  loadedContexts.push(context);
+  return context;
 }
 
 describe('ipfs-manager', () => {
-  afterEach(() => {
+  afterEach(async () => {
+    for (const ctx of loadedContexts.splice(0)) {
+      await ctx.mod.stopIpfs();
+    }
     jest.clearAllMocks();
     jest.restoreAllMocks();
   });
