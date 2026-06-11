@@ -2,15 +2,14 @@ const fs = require('fs');
 const path = require('path');
 
 const BEE_BIN_DIR = path.join(__dirname, '..', 'bee-bin');
-const FREEDOM_IPFS_NATIVE_ADDON = path.join(
+const FREEDOM_IPFS_NATIVE_PREBUILDS_DIR = path.join(
   __dirname,
   '..',
   'native',
   'freedom-ipfs-node',
-  'build',
-  'Release',
-  'freedom_ipfs_native.node'
+  'prebuilds'
 );
+const FREEDOM_IPFS_NATIVE_ADDON = 'freedom_ipfs_native.node';
 const RADICLE_BIN_DIR = path.join(__dirname, '..', 'radicle-bin');
 
 function getPlatformArch() {
@@ -89,6 +88,15 @@ function checkBinaries(platforms) {
       missing.push(`bee binary for ${platformDir}: ${beePath}`);
     }
 
+    const freedomIpfsAddonPath = path.join(
+      FREEDOM_IPFS_NATIVE_PREBUILDS_DIR,
+      platformDir,
+      FREEDOM_IPFS_NATIVE_ADDON
+    );
+    if (!fs.existsSync(freedomIpfsAddonPath)) {
+      missing.push(`freedom-ipfs native addon for ${platformDir}: ${freedomIpfsAddonPath}`);
+    }
+
     // Radicle: no official Windows binaries yet — skip check for win targets
     if (os !== 'win') {
       const nodePath = path.join(RADICLE_BIN_DIR, platformDir, 'radicle-node');
@@ -101,10 +109,6 @@ function checkBinaries(platforms) {
         missing.push(`radicle-httpd binary for ${platformDir}: ${httpdPath}`);
       }
     }
-  }
-
-  if (!fs.existsSync(FREEDOM_IPFS_NATIVE_ADDON)) {
-    missing.push(`freedom-ipfs native addon: ${FREEDOM_IPFS_NATIVE_ADDON}`);
   }
 
   return missing;

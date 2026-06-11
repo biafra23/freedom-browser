@@ -556,7 +556,10 @@ describe('navigation', () => {
     ctx.mod.setOnHistoryRecorded(onHistoryRecorded);
     await ctx.mod.initNavigation();
 
-    ctx.tabsMocks.webviewEventHandler('did-start-loading', { tabId: ctx.activeRef.tab.id });
+    ctx.tabsMocks.webviewEventHandler('did-start-loading', {
+      tabId: ctx.activeRef.tab.id,
+      pendingNavigationUrl: 'ipfs://bafybeigdyrzt',
+    });
 
     expect(ctx.tabsMocks.setTabLoading).toHaveBeenCalledWith(true);
     expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).toHaveBeenCalled();
@@ -822,6 +825,31 @@ describe('navigation', () => {
 
       expect(ctx.activeRef.tab.webview.loadURL).not.toHaveBeenCalled();
     });
+  });
+
+  test('starts IPFS progress polling only for IPFS/IPNS navigations', async () => {
+    const ctx = await loadNavigationModule();
+    await ctx.mod.initNavigation();
+
+    ctx.tabsMocks.webviewEventHandler('did-start-loading', {
+      tabId: ctx.activeRef.tab.id,
+      pendingNavigationUrl: 'https://example.com',
+      url: 'https://example.com',
+    });
+
+    expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).not.toHaveBeenCalled();
+    expect(ctx.ipfsProgressMocks.stopIpfsProgressStatus).toHaveBeenCalledWith({
+      immediate: true,
+    });
+
+    ctx.ipfsProgressMocks.stopIpfsProgressStatus.mockClear();
+    ctx.tabsMocks.webviewEventHandler('did-start-loading', {
+      tabId: ctx.activeRef.tab.id,
+      pendingNavigationUrl: 'ipns://docs.ipfs.tech',
+    });
+
+    expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).toHaveBeenCalled();
+    expect(ctx.ipfsProgressMocks.stopIpfsProgressStatus).not.toHaveBeenCalled();
   });
 
   test('restores tab state on tab switches and updates navigation display', async () => {

@@ -48,6 +48,7 @@ let injectedNodes = {
 
 // Vault metadata file
 const VAULT_META_FILE = 'vault-meta.json';
+const IPFS_IDENTITY_META_FILE = 'ipfs-identity.json';
 
 /**
  * Get the app data directory for identity storage
@@ -325,8 +326,9 @@ function getBeeDataDir() {
 /**
  * Get the IPFS data directory
  *
- * Mirrors ipfs-manager.getIpfsDataPath()'s FREEDOM_IPFS_DATA override so
- * injection targets the same repo the node uses (and stays isolated in E2E).
+ * Legacy Kubo-compatible location. The native freedom-ipfs node uses a
+ * dedicated child directory managed by ipfs-manager and does not consume Kubo
+ * config identity fields.
  */
 function getIpfsDataDir() {
   if (process.env.FREEDOM_IPFS_DATA) {
@@ -336,6 +338,36 @@ function getIpfsDataDir() {
     return path.join(__dirname, '..', '..', 'ipfs-data');
   }
   return path.join(app.getPath('userData'), 'ipfs-data');
+}
+
+function getIpfsIdentityMetaPath() {
+  return path.join(getIdentityDataDir(), IPFS_IDENTITY_META_FILE);
+}
+
+function readIpfsIdentityMeta() {
+  const metaPath = getIpfsIdentityMetaPath();
+  if (!fs.existsSync(metaPath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+  } catch (err) {
+    console.error('[IdentityManager] Failed to read IPFS identity metadata:', err.message);
+    return null;
+  }
+}
+
+function saveIpfsIdentityMeta(meta) {
+  const metaPath = getIpfsIdentityMetaPath();
+  const dir = path.dirname(metaPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+}
+
+function isIpfsIdentityPrepared() {
+  return !!readIpfsIdentityMeta()?.peerId;
 }
 
 /**
@@ -365,23 +397,15 @@ function isBeeIdentityInjected() {
 }
 
 /**
- * Check if the local freedom-ipfs metadata has an identity.
+ * Check if IPFS has an active injected runtime identity.
+ *
+ * The desktop app now uses the native freedom-ipfs node, which does not yet
+ * accept externally injected PeerIDs. A derived IPFS PeerID may be prepared in
+ * identity metadata, but it is not reported as injected until the native node
+ * can actually use it.
  */
 function isIpfsIdentityInjected() {
-  const dataDir = getIpfsDataDir();
-  const configPath = path.join(dataDir, 'config');
-
-  if (!fs.existsSync(configPath)) {
-    return false;
-  }
-
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    // Check if Identity.PeerID exists (indicates IPFS has been initialized with an identity)
-    return !!(config.Identity && config.Identity.PeerID);
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 /**
@@ -394,24 +418,14 @@ function isRadicleIdentityInjected() {
 }
 
 /**
- * Read IPFS PeerID from config file (no unlock required)
+ * Read the active native IPFS PeerID (no unlock required).
+ *
+ * Native freedom-ipfs does not yet expose/import the vault-derived PeerID, so
+ * there is no active PeerID to display here.
  * @returns {string|null}
  */
 function readIpfsPeerId() {
-  const dataDir = getIpfsDataDir();
-  const configPath = path.join(dataDir, 'config');
-
-  if (!fs.existsSync(configPath)) {
-    return null;
-  }
-
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    return config.Identity?.PeerID || null;
-  } catch (err) {
-    console.error('[IdentityManager] Failed to read IPFS PeerID:', err.message);
-    return null;
-  }
+  return null;
 }
 
 /**
@@ -617,8 +631,11 @@ async function injectBeeIdentity() {
 }
 
 /**
- * Inject IPFS identity
- * @returns {Promise<{peerId: string}>}
+ * Prepare an IPFS identity derived from the vault.
+ *
+ * Native freedom-ipfs does not yet support importing this identity, so this is
+ * metadata for future compatibility rather than an active runtime injection.
+ * @returns {Promise<{preparedPeerId: string, active: boolean, pendingNativeSupport: boolean}>}
  */
 async function injectIpfsIdentity() {
   if (!derivedKeys) {
@@ -626,34 +643,27 @@ async function injectIpfsIdentity() {
   }
 
   const identity = await loadIdentityModule();
-  const dataDir = getIpfsDataDir();
-
-  // Ensure directory exists
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  // The desktop app now uses freedom-ipfs directly, so there is no Kubo repo to
-  // initialize. Keep a tiny config file with the derived PeerID for identity UI
-  // and compatibility with existing status helpers.
-  const configPath = path.join(dataDir, 'config');
-  if (!fs.existsSync(configPath)) {
-    fs.writeFileSync(configPath, '{}');
-  }
-
-  const peerId = identity.injectIpfsKey(
-    dataDir,
+  const ipfsIdentity = identity.createIpfsIdentity(
     derivedKeys.ipfsKey.privateKey,
     derivedKeys.ipfsKey.publicKey
   );
 
-  // Write marker file to indicate we injected the identity
-  fs.writeFileSync(path.join(dataDir, '.identity-injected'), new Date().toISOString());
+  saveIpfsIdentityMeta({
+    peerId: ipfsIdentity.peerId,
+    activeWithNativeNode: false,
+    updatedAt: new Date().toISOString(),
+  });
 
-  injectedNodes.ipfs = true;
+  injectedNodes.ipfs = false;
 
-  console.log(`[IdentityManager] IPFS identity injected: ${peerId}`);
-  return { peerId };
+  console.log(
+    `[IdentityManager] IPFS identity prepared for future native support: ${ipfsIdentity.peerId}`
+  );
+  return {
+    preparedPeerId: ipfsIdentity.peerId,
+    active: false,
+    pendingNativeSupport: true,
+  };
 }
 
 /**
@@ -730,22 +740,22 @@ async function injectAllIdentities(radicleAlias = 'FreedomBrowser', force = fals
     results.bee = { address: derivedKeys.beeWallet.address, alreadyInjected: true };
   }
 
-  // Inject IPFS (only if not already injected OR force)
-  if (force || !isIpfsIdentityInjected()) {
-    const wasInjected = isIpfsIdentityInjected();
+  // Prepare IPFS identity metadata. Native freedom-ipfs does not consume this
+  // identity yet, so preparing it never requires an IPFS node restart.
+  if (force || !isIpfsIdentityPrepared()) {
+    const wasPrepared = isIpfsIdentityPrepared();
     results.ipfs = await injectIpfsIdentity();
-    if (wasInjected && force) {
-      results.ipfs.reinjected = true;
-      results.needsRestart.push('ipfs');
+    if (wasPrepared && force) {
+      results.ipfs.reprepared = true;
     }
   } else {
-    // Get PeerID from config
-    const identity = await loadIdentityModule();
-    const ipfsIdentity = identity.createIpfsIdentity(
-      derivedKeys.ipfsKey.privateKey,
-      derivedKeys.ipfsKey.publicKey
-    );
-    results.ipfs = { peerId: ipfsIdentity.peerId, alreadyInjected: true };
+    const meta = readIpfsIdentityMeta();
+    results.ipfs = {
+      preparedPeerId: meta?.peerId || null,
+      active: false,
+      pendingNativeSupport: true,
+      alreadyPrepared: true,
+    };
   }
 
   // Inject Radicle (only if not already injected OR force)
@@ -790,11 +800,6 @@ async function getIdentityStatus() {
     // Vault is unlocked - compute from derived keys (most accurate)
     const identity = await loadIdentityModule();
 
-    const ipfsIdentity = identity.createIpfsIdentity(
-      derivedKeys.ipfsKey.privateKey,
-      derivedKeys.ipfsKey.publicKey
-    );
-
     const radicleIdentity = identity.createRadicleIdentity(
       derivedKeys.radicleKey.privateKey,
       derivedKeys.radicleKey.publicKey,
@@ -804,7 +809,7 @@ async function getIdentityStatus() {
     addresses = {
       userWallet: derivedKeys.userWallet.address,
       beeWallet: derivedKeys.beeWallet.address,
-      ipfsPeerId: ipfsIdentity.peerId,
+      ipfsPeerId: null,
       radicleDid: radicleIdentity.did,
     };
   } else if (hasVaultResult) {
@@ -824,6 +829,8 @@ async function getIdentityStatus() {
     isUnlocked,
     beeInjected: isBeeIdentityInjected(),
     ipfsInjected: isIpfsIdentityInjected(),
+    ipfsIdentityPrepared: isIpfsIdentityPrepared(),
+    ipfsNativeIdentityActive: false,
     radicleInjected: isRadicleIdentityInjected(),
     addresses,
   };
@@ -1409,6 +1416,7 @@ module.exports = {
   getIdentityStatus,
   isBeeIdentityInjected,
   isIpfsIdentityInjected,
+  isIpfsIdentityPrepared,
   isRadicleIdentityInjected,
 
   // Data directories

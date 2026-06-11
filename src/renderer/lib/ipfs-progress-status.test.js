@@ -57,6 +57,30 @@ describe('ipfs-progress-status', () => {
     expect(mod.deriveIpfsProgressMessage({ active: [], events: [] })).toBeNull();
   });
 
+  test('ignores terminal events when no request is active', async () => {
+    const { mod } = await loadModule();
+
+    expect(
+      mod.deriveIpfsProgressMessage({
+        active: [],
+        events: [
+          { kind: 'gateway_request', phase: 'completed', status: 'completed' },
+          { kind: 'gateway_request', phase: 'failed', message: 'deadline elapsed' },
+        ],
+      })
+    ).toBeNull();
+
+    expect(
+      mod.deriveIpfsProgressMessage({
+        active: [],
+        events: [
+          { kind: 'gateway_request', phase: 'completed', status: 'completed' },
+          { kind: 'provider_lookup', phase: 'provider_lookup', status: 'active' },
+        ],
+      })
+    ).toBe('IPFS: Finding providers…');
+  });
+
   test('poller writes and clears the shared loading status surface', async () => {
     jest.useFakeTimers();
     const { mod, linkStatusMocks } = await loadModule();

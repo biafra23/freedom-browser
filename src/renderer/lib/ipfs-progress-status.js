@@ -43,6 +43,9 @@ const PHASE_SCORE = {
   completed: 0,
 };
 
+const TERMINAL_PHASES = new Set(['completed', 'failed']);
+const TERMINAL_STATUSES = new Set(['complete', 'completed', 'done', 'error', 'failed']);
+
 let pollTimer = null;
 let pollGeneration = 0;
 let pollInFlight = false;
@@ -62,6 +65,8 @@ const candidateStatus = (item) => normalizeToken(item?.status || item?.state);
 
 const isActiveCandidate = (item) => {
   const status = candidateStatus(item);
+  const phase = candidatePhase(item);
+  if (TERMINAL_PHASES.has(phase) || TERMINAL_STATUSES.has(status)) return false;
   return !status || status === 'active' || status === 'started' || status === 'running';
 };
 

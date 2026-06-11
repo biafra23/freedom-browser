@@ -7,7 +7,7 @@ const {
 } = require('../../test/helpers/main-process-test-utils');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const DEV_IPFS_DATA_DIR = path.join(PROJECT_ROOT, 'ipfs-data');
+const DEV_IPFS_DATA_DIR = path.join(PROJECT_ROOT, 'ipfs-data', 'freedom-ipfs');
 
 function createWindowMock() {
   return {
@@ -50,8 +50,12 @@ function loadIpfsManagerModule(options = {}) {
       this.start = jest.fn(() => options.startOk !== false);
       this.stop = jest.fn(async () => {});
       this.request = jest.fn(async () => new Response('native-body', { status: 200 }));
+      this.isHealthy = jest.fn(() => options.isHealthy !== false);
       this.progressSnapshotJson = jest.fn(() => '{"active":[],"events":[]}');
-      this.nativeGatewayStatsJson = jest.fn(() => '{"active_native_handles":0}');
+      this.nativeGatewayStatsJson = jest.fn(() => {
+        if (options.statsThrows) throw new Error('stats unavailable');
+        return '{"active_native_handles":0}';
+      });
       nativeInstances.push(this);
     }
 
@@ -94,6 +98,8 @@ function loadIpfsManagerModule(options = {}) {
     mod,
     nativeInstances,
     setStatusMessage,
+    setErrorState,
+    clearErrorState,
     updateService,
     windows,
   };
@@ -137,7 +143,10 @@ describe('ipfs-manager', () => {
 
     expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(DEV_IPFS_DATA_DIR, { recursive: true });
     expect(ctx.nativeInstances).toHaveLength(1);
-    expect(ctx.nativeInstances[0].config).toEqual({ dataDir: DEV_IPFS_DATA_DIR });
+    expect(ctx.nativeInstances[0].config).toEqual({
+      dataDir: DEV_IPFS_DATA_DIR,
+      onFailure: expect.any(Function),
+    });
     expect(ctx.nativeInstances[0].start).toHaveBeenCalled();
     expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
       api: null,
@@ -191,6 +200,49 @@ describe('ipfs-manager', () => {
 
     expect(ctx.nativeInstances[0].stop).toHaveBeenCalled();
     expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
+    expect(ctx.clearErrorState).toHaveBeenCalledWith('ipfs');
+  });
+
+  test('moves to error and cleans up when the native node reports failure', async () => {
+    const window = createWindowMock();
+    const ctx = loadIpfsManagerModule({ windows: [window] });
+
+    await ctx.mod.startIpfs();
+    ctx.nativeInstances[0].config.onFailure('dispatcher died', ctx.nativeInstances[0]);
+    await Promise.resolve();
+
+    expect(ctx.nativeInstances[0].stop).toHaveBeenCalled();
+    expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node unavailable');
+    expect(ctx.setErrorState).toHaveBeenCalledWith(
+      'ipfs',
+      'Node unavailable. Restart IPFS from the nodes menu.'
+    );
+    expect(window.webContents.send).toHaveBeenLastCalledWith(IPC.IPFS_STATUS_UPDATE, {
+      status: 'error',
+      error: 'dispatcher died',
+    });
+
+    const response = await ctx.mod.serveNativeGatewayRequest({
+      path: '/ipfs/bafy',
+      method: 'GET',
+      headers: new Headers(),
+    });
+    expect(response.status).toBe(503);
+  });
+
+  test('health check reflects native liveness and diagnostics availability', async () => {
+    const unhealthy = loadIpfsManagerModule({ isHealthy: false });
+    await unhealthy.mod.startIpfs();
+    expect(unhealthy.mod.checkHealth()).toBe(false);
+
+    const throwingStats = loadIpfsManagerModule({ statsThrows: true });
+    await throwingStats.mod.startIpfs();
+    expect(throwingStats.mod.checkHealth()).toBe(false);
+    expect(throwingStats.log.warn).toHaveBeenCalledWith(
+      '[IPFS] Native health check failed:',
+      'stats unavailable'
+    );
   });
 
   test('fails startup when the native addon is unavailable', async () => {

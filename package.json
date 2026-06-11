@@ -138,7 +138,7 @@
         ]
       },
       {
-        "from": "native/freedom-ipfs-node/build/Release/",
+        "from": "native/freedom-ipfs-node/prebuilds/${os}-${arch}/",
         "to": "freedom-ipfs-node",
         "filter": [
           "freedom_ipfs_native.node"
@@ -175,6 +175,7 @@
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
     "jest": "^30.4.2",
+    "node-addon-api": "^1.7.2",
     "prettier": "^3.8.3"
   },
   "dependencies": {
@@ -187,12 +188,10 @@
     "@x402/core": "^2.12.0",
     "@x402/evm": "^2.12.0",
     "better-sqlite3": "^12.10.0",
-    "bindings": "^1.5.0",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "ethers": "^6.16.0",
     "micro-key-producer": "^0.8.6",
-    "node-addon-api": "^1.7.2",
     "qrcode": "^1.5.4"
   },
   "overrides": {

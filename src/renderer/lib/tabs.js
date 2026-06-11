@@ -319,7 +319,11 @@ const createWebview = (tabId, initialUrl) => {
         renderTabs();
       }
       if (tabId === tabState.activeTabId && onWebviewEvent) {
-        onWebviewEvent('did-start-loading', { tabId });
+        onWebviewEvent('did-start-loading', {
+          tabId,
+          url: webview.getURL(),
+          pendingNavigationUrl: tab?.navigationState?.pendingNavigationUrl || '',
+        });
       }
     },
     'did-stop-loading': () => {

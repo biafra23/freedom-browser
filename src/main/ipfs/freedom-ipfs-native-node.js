@@ -70,8 +70,8 @@ class NativeGatewayController {
     }
 
     this.timeout = setTimeout(() => {
-      this.fail(new Error('freedom-ipfs native request timeout'));
       this.cancel();
+      this.fail(new Error('freedom-ipfs native request timeout'));
     }, ATTEMPT_TIMEOUT_MS);
   }
 
@@ -85,7 +85,7 @@ class NativeGatewayController {
       this.drain();
     }
     if (events & c.EVENT_HANDLE_FREED) {
-      this.finish();
+      this.finish({ freeNative: false });
     }
   }
 
@@ -110,6 +110,9 @@ class NativeGatewayController {
             this.streamController = controller;
             this.drain();
           },
+          pull: () => {
+            this.drain();
+          },
           cancel: () => {
             this.cancel();
           },
@@ -117,6 +120,7 @@ class NativeGatewayController {
       : null;
 
     this.responseSettled = true;
+    this.clearResponseTimeout();
     this.resolveResponse(
       new Response(body, {
         status,
@@ -135,7 +139,7 @@ class NativeGatewayController {
     const c = binding().constants;
 
     try {
-      while (!this.terminated) {
+      while (!this.terminated && this.hasStreamDemand()) {
         const buffer = Buffer.allocUnsafe(BUFFER_SIZE);
         const result = binding().gatewayRequestRead(this.owner.nodeHandle, this.handle, buffer);
         switch (result.status) {
@@ -167,6 +171,11 @@ class NativeGatewayController {
     }
   }
 
+  hasStreamDemand() {
+    const desiredSize = this.streamController?.desiredSize;
+    return desiredSize === null || desiredSize === undefined || desiredSize > 0;
+  }
+
   cancel() {
     if (this.terminated) return;
     try {
@@ -186,29 +195,40 @@ class NativeGatewayController {
     this.finish();
   }
 
-  finish() {
+  finish({ freeNative = true } = {}) {
     if (this.terminated) return;
     this.terminated = true;
-    if (this.timeout) clearTimeout(this.timeout);
+    this.clearResponseTimeout();
     if (this.signal) this.signal.removeEventListener('abort', this.abortListener);
-    try {
-      binding().gatewayRequestFree(this.owner.nodeHandle, this.handle);
-    } catch (err) {
-      log.warn('[IPFS] native request free failed:', err.message);
+    if (freeNative) {
+      try {
+        binding().gatewayRequestFree(this.owner.nodeHandle, this.handle);
+      } catch (err) {
+        log.warn('[IPFS] native request free failed:', err.message);
+      }
     }
     this.owner.unregister(this.handleKey);
+  }
+
+  clearResponseTimeout() {
+    if (!this.timeout) return;
+    clearTimeout(this.timeout);
+    this.timeout = null;
   }
 }
 
 class FreedomIpfsNativeNode {
-  constructor({ dataDir, maxCacheBytes = 256 * 1024 * 1024 } = {}) {
+  constructor({ dataDir, maxCacheBytes = 256 * 1024 * 1024, onFailure = null } = {}) {
     this.dataDir = dataDir;
     this.maxCacheBytes = maxCacheBytes;
+    this.onFailure = onFailure;
     this.nodeHandle = '0';
     this.dispatcher = null;
     this.requests = new Map();
     this.nextRequestId = 1;
     this.stoppingDispatcher = false;
+    this.failed = false;
+    this.failureError = null;
   }
 
   static isAvailable() {
@@ -221,6 +241,8 @@ class FreedomIpfsNativeNode {
 
   start() {
     if (this.nodeHandle !== '0') return true;
+    this.failed = false;
+    this.failureError = null;
     const handle = binding().nodeNewWithDataDir(this.dataDir, this.maxCacheBytes);
     if (handle === '0') return false;
     this.nodeHandle = handle;
@@ -258,6 +280,8 @@ class FreedomIpfsNativeNode {
       binding().nodeFree(this.nodeHandle);
       this.nodeHandle = '0';
     }
+    this.failed = false;
+    this.failureError = null;
   }
 
   startDispatcher() {
@@ -271,13 +295,18 @@ class FreedomIpfsNativeNode {
     this.dispatcher.on('message', (message) => this.onDispatcherMessage(message));
     this.dispatcher.on('error', (err) => {
       log.error('[IPFS] native dispatcher error:', err.message);
+      this.markFailed(`Native event dispatcher failed: ${err.message}`);
     });
     this.dispatcher.on('exit', (code) => {
-      if (code !== 0 && !this.stoppingDispatcher) {
+      const expectedStop = this.stoppingDispatcher;
+      if (!expectedStop) {
         log.warn('[IPFS] native dispatcher exited with code', code);
       }
       this.stoppingDispatcher = false;
       this.dispatcher = null;
+      if (!expectedStop) {
+        this.markFailed(`Native event dispatcher exited with code ${code}`);
+      }
     });
   }
 
@@ -302,6 +331,9 @@ class FreedomIpfsNativeNode {
   onDispatcherMessage(message) {
     if (message?.type === 'error') {
       log.error('[IPFS] native dispatcher failed:', message.error);
+      if (!this.stoppingDispatcher) {
+        this.markFailed(`Native event dispatcher failed: ${message.error}`);
+      }
       return;
     }
     if (message?.type !== 'event') return;
@@ -309,13 +341,35 @@ class FreedomIpfsNativeNode {
     const constants = binding().constants;
     if (event.status === constants.EVENT_STATUS_TIMEOUT) return;
     if (event.status === constants.EVENT_STATUS_GATEWAY_STOPPED) {
-      for (const request of this.requests.values()) request.cancel();
+      this.markFailed('Native gateway stopped unexpectedly');
       return;
     }
     if (event.status !== constants.EVENT_STATUS_OK) return;
     const request = this.requests.get(event.requestHandle);
     if (!request) return;
     request.handleEvent(event.events);
+  }
+
+  markFailed(reason) {
+    if (this.failed || this.stoppingDispatcher) return;
+    this.failed = true;
+    this.failureError = reason || 'Native node failed';
+    const err = new Error(this.failureError);
+    for (const request of [...this.requests.values()]) {
+      request.fail(err);
+    }
+    this.requests.clear();
+    if (typeof this.onFailure === 'function') {
+      try {
+        this.onFailure(this.failureError, this);
+      } catch (callbackErr) {
+        log.warn('[IPFS] native failure callback failed:', callbackErr.message);
+      }
+    }
+  }
+
+  isHealthy() {
+    return this.nodeHandle !== '0' && !this.failed && Boolean(this.dispatcher);
   }
 
   unregister(handleKey) {
@@ -325,6 +379,9 @@ class FreedomIpfsNativeNode {
   request({ method = 'GET', path: gatewayPath, headers, signal }) {
     if (this.nodeHandle === '0') {
       return Promise.reject(new Error('freedom-ipfs native node is not running'));
+    }
+    if (!this.isHealthy()) {
+      return Promise.reject(new Error(this.failureError || 'freedom-ipfs native node is unavailable'));
     }
     const requestId = this.nextRequestId++;
     const requestJson = JSON.stringify({
@@ -356,5 +413,6 @@ class FreedomIpfsNativeNode {
 
 module.exports = {
   FreedomIpfsNativeNode,
+  NativeGatewayController,
   ATTEMPT_TIMEOUT_MS,
 };

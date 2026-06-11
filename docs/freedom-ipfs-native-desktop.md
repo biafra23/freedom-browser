@@ -33,9 +33,14 @@ the `freedom-ipfs` `v0.4.0` GitHub release:
 https://github.com/solardev-xyz/freedom-ipfs/releases/tag/v0.4.0
 ```
 
-The output is:
+The output is staged in both places the app needs:
 
 - `native/freedom-ipfs-node/build/Release/freedom_ipfs_native.node`
+- `native/freedom-ipfs-node/prebuilds/mac-arm64/freedom_ipfs_native.node`
+
+`build/Release` is the local development load path. `prebuilds/<target>` is the
+Electron Builder packaging input, so cross-target builds cannot accidentally
+reuse a `.node` file built for the host machine.
 
 To build from a local Rust checkout instead, use:
 
@@ -49,14 +54,22 @@ Or point at a specific checkout:
 FREEDOM_IPFS_RUST_REPO=/path/to/freedom-ipfs npm run ipfs:build
 ```
 
+The checkout override is passed to both Cargo and node-gyp, so the addon links
+against the same Rust static library that was just built.
+
 The packaged app includes the `.node` addon via Electron Builder
-`extraResources`.
+`extraResources` from `native/freedom-ipfs-node/prebuilds/${os}-${arch}/`.
 
 ## Runtime Notes
 
 - Kubo is not downloaded, launched, configured, or packaged on this branch.
 - Existing local `ipfs-bin/` directories can remain on disk for other branches;
   they are not part of this branch's runtime path.
+- Native node data is stored under `ipfs-data/freedom-ipfs/` in development (or
+  the `freedom-ipfs/` child of `FREEDOM_IPFS_DATA` when that override is set).
+- Vault-derived IPFS PeerID metadata is prepared for future native support, but
+  it is not reported as the active native node identity until `freedom-ipfs`
+  can consume an injected identity.
 - `window.ipfs.getStatus()` now reports `freedom-ipfs` diagnostics, including
   native gateway stats, instead of polling Kubo's HTTP API.
 - The protocol handler keeps the existing URL canonicalization rules but routes

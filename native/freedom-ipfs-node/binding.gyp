@@ -1,4 +1,7 @@
 {
+  "variables": {
+    "freedom_ipfs_rust_repo%": "<(module_root_dir)/../../../nodes/freedom-ipfs"
+  },
   "targets": [
     {
       "target_name": "freedom_ipfs_native",
@@ -7,7 +10,7 @@
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
-        "<(module_root_dir)/../../../nodes/freedom-ipfs/ffi/include"
+        "<(freedom_ipfs_rust_repo)/ffi/include"
       ],
       "dependencies": [
         "<!(node -p \"require('node-addon-api').gyp\")"
@@ -27,7 +30,7 @@
           "OS=='mac'",
           {
             "libraries": [
-              "<(module_root_dir)/../../../nodes/freedom-ipfs/target/release/libfreedom_ipfs_mobile.a",
+              "<(freedom_ipfs_rust_repo)/target/release/libfreedom_ipfs_mobile.a",
               "-framework Security",
               "-framework SystemConfiguration",
               "-framework CoreFoundation",
@@ -43,7 +46,7 @@
           "OS=='linux'",
           {
             "libraries": [
-              "<(module_root_dir)/../../../nodes/freedom-ipfs/target/release/libfreedom_ipfs_mobile.a",
+              "<(freedom_ipfs_rust_repo)/target/release/libfreedom_ipfs_mobile.a",
               "-ldl",
               "-lpthread",
               "-lm"
@@ -54,7 +57,7 @@
           "OS=='win'",
           {
             "libraries": [
-              "<(module_root_dir)/../../../nodes/freedom-ipfs/target/release/freedom_ipfs_mobile.lib",
+              "<(freedom_ipfs_rust_repo)/target/release/freedom_ipfs_mobile.lib",
               "ws2_32.lib",
               "bcrypt.lib",
               "userenv.lib",

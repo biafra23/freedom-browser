@@ -29,18 +29,18 @@ let pendingStart = false;
 
 function getIpfsDataPath() {
   if (process.env.FREEDOM_IPFS_DATA) {
-    const overrideDir = process.env.FREEDOM_IPFS_DATA;
+    const overrideDir = path.join(process.env.FREEDOM_IPFS_DATA, 'freedom-ipfs');
     fs.mkdirSync(overrideDir, { recursive: true });
     return overrideDir;
   }
 
   if (!app.isPackaged) {
-    const devDataDir = path.join(__dirname, '..', '..', 'ipfs-data');
+    const devDataDir = path.join(__dirname, '..', '..', 'ipfs-data', 'freedom-ipfs');
     fs.mkdirSync(devDataDir, { recursive: true });
     return devDataDir;
   }
 
-  const dataDir = path.join(app.getPath('userData'), 'ipfs-data');
+  const dataDir = path.join(app.getPath('userData'), 'ipfs-data', 'freedom-ipfs');
   fs.mkdirSync(dataDir, { recursive: true });
   return dataDir;
 }
@@ -55,7 +55,41 @@ function updateState(newState, error = null) {
 }
 
 function checkHealth() {
-  return Boolean(activeNode && currentState === STATUS.RUNNING);
+  if (!activeNode || currentState !== STATUS.RUNNING) return false;
+  if (typeof activeNode.isHealthy === 'function' && !activeNode.isHealthy()) return false;
+  try {
+    activeNode.nativeGatewayStatsJson();
+    return true;
+  } catch (err) {
+    log.warn('[IPFS] Native health check failed:', err.message);
+    return false;
+  }
+}
+
+function stopHealthCheck() {
+  if (!healthCheckInterval) return;
+  clearInterval(healthCheckInterval);
+  healthCheckInterval = null;
+}
+
+function handleNativeNodeFailure(reason, node = activeNode) {
+  if (node && activeNode && node !== activeNode) return;
+  if (![STATUS.STARTING, STATUS.RUNNING].includes(currentState)) return;
+
+  const message = reason || 'Native node unavailable';
+  const failedNode = activeNode;
+  activeNode = null;
+  stopHealthCheck();
+  clearService('ipfs');
+  setStatusMessage('ipfs', 'Node unavailable');
+  setErrorState('ipfs', 'Node unavailable. Restart IPFS from the nodes menu.');
+  updateState(STATUS.ERROR, message);
+
+  if (failedNode) {
+    failedNode.stop().catch((err) => {
+      log.warn('[IPFS] Error while cleaning up failed freedom-ipfs native node:', err.message);
+    });
+  }
 }
 
 function startHealthCheck() {
@@ -63,13 +97,10 @@ function startHealthCheck() {
   healthCheckInterval = setInterval(() => {
     const isHealthy = checkHealth();
     if (!isHealthy && currentState === STATUS.RUNNING) {
-      updateState(STATUS.ERROR, 'Native node unavailable');
-      setErrorState('ipfs', 'Node unavailable. Restart IPFS from the nodes menu.');
-    } else if (isHealthy && currentState === STATUS.ERROR) {
-      clearErrorState('ipfs');
-      updateState(STATUS.RUNNING);
+      handleNativeNodeFailure('Native node unavailable');
     }
   }, 5000);
+  healthCheckInterval.unref?.();
 }
 
 function checkBinary() {
@@ -98,7 +129,10 @@ async function startIpfs() {
   }
 
   const dataDir = getIpfsDataPath();
-  const node = new FreedomIpfsNativeNode({ dataDir });
+  const node = new FreedomIpfsNativeNode({
+    dataDir,
+    onFailure: (reason, failedNode) => handleNativeNodeFailure(reason, failedNode),
+  });
 
   try {
     if (!node.start()) {
@@ -128,11 +162,12 @@ async function startIpfs() {
 
 async function stopIpfs() {
   pendingStart = false;
-  updateState(STATUS.STOPPING);
-  if (healthCheckInterval) {
-    clearInterval(healthCheckInterval);
-    healthCheckInterval = null;
+  if (currentState === STATUS.STOPPED && !activeNode) {
+    clearService('ipfs');
+    return;
   }
+  updateState(STATUS.STOPPING);
+  stopHealthCheck();
 
   const node = activeNode;
   activeNode = null;
@@ -145,6 +180,7 @@ async function stopIpfs() {
   }
 
   updateState(STATUS.STOPPED);
+  clearErrorState('ipfs');
   clearService('ipfs');
 
   if (pendingStart) {
@@ -154,7 +190,7 @@ async function stopIpfs() {
 }
 
 async function serveNativeGatewayRequest({ path: gatewayPath, method, headers, signal }) {
-  if (!activeNode || currentState !== STATUS.RUNNING) {
+  if (!activeNode || currentState !== STATUS.RUNNING || !checkHealth()) {
     return new Response(
       JSON.stringify({ code: 503, message: 'freedom-ipfs node is not running' }),
       {
@@ -168,10 +204,15 @@ async function serveNativeGatewayRequest({ path: gatewayPath, method, headers, s
 
 function getNativeDiagnostics() {
   if (!activeNode) return { progress: '{"active":[],"events":[]}', nativeGatewayStats: '{}' };
-  return {
-    progress: activeNode.progressSnapshotJson(),
-    nativeGatewayStats: activeNode.nativeGatewayStatsJson(),
-  };
+  try {
+    return {
+      progress: activeNode.progressSnapshotJson(),
+      nativeGatewayStats: activeNode.nativeGatewayStatsJson(),
+    };
+  } catch (err) {
+    log.warn('[IPFS] Failed to collect native diagnostics:', err.message);
+    return { progress: '{"active":[],"events":[]}', nativeGatewayStats: '{}' };
+  }
 }
 
 function setUseInjectedIdentity(enabled) {
@@ -221,5 +262,6 @@ module.exports = {
   hasInjectedIdentity,
   serveNativeGatewayRequest,
   getNativeDiagnostics,
+  checkHealth,
   STATUS,
 };

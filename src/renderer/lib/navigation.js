@@ -62,6 +62,23 @@ import { startIpfsProgressStatus, stopIpfsProgressStatus } from './ipfs-progress
 // Helper to get active tab's navigation state (with fallback to empty object)
 const getNavState = () => getActiveTabState() || {};
 
+const isIpfsProgressUrl = (value) => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized.startsWith('ipfs://') || normalized.startsWith('ipns://');
+};
+
+const shouldShowIpfsProgress = ({ data = {}, tab = null, navState = null } = {}) => {
+  const candidates = [
+    data.url,
+    data.pendingNavigationUrl,
+    navState?.pendingNavigationUrl,
+    tab?.navigationState?.pendingNavigationUrl,
+    tab?.url,
+    navState?.currentPageUrl,
+  ];
+  return candidates.some(isIpfsProgressUrl);
+};
+
 // Extract the bzz reference (64- or 128-char hex) from a Bee gateway URL.
 const extractBzzHash = (gatewayUrl) => {
   const match = /\/bzz\/([a-fA-F0-9]{64}(?:[a-fA-F0-9]{64})?)/.exec(gatewayUrl || '');
@@ -1858,7 +1875,11 @@ export const initNavigation = () => {
     switch (eventName) {
       case 'did-start-loading':
         setLoading(true);
-        startIpfsProgressStatus();
+        if (shouldShowIpfsProgress({ data, tab: getActiveTab(), navState })) {
+          startIpfsProgressStatus();
+        } else {
+          stopIpfsProgressStatus({ immediate: true });
+        }
         navState.isWebviewLoading = true;
         reloadBtn.dataset.state = 'stop';
         pushDebug('Webview started loading.');
@@ -2113,7 +2134,7 @@ export const initNavigation = () => {
           }
           // Sync loading state - use tab.isLoading as source of truth
           setLoading(isLoading);
-          if (isLoading) {
+          if (isLoading && shouldShowIpfsProgress({ data, tab: data.tab, navState: tabNavState })) {
             startIpfsProgressStatus();
           } else {
             stopIpfsProgressStatus({ immediate: true });
