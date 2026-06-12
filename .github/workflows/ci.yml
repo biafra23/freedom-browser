@@ -44,6 +44,42 @@ jobs:
           path: coverage/
           if-no-files-found: error
 
+  # freedom-ipfs native addon smoke for the platform we currently ship from
+  # the pinned prebuilt manifest (`darwin-arm64` in fetch-freedom-ipfs-native).
+  # This is intentionally startup/diagnostics-only: it proves the real addon
+  # downloads, loads, starts, and shuts down without making CI depend on live
+  # IPFS network retrieval.
+  freedom-ipfs-native-addon:
+    runs-on: macos-14
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Assert shipped native-addon target
+        run: |
+          node -e "const target = process.platform + '-' + process.arch; if (target !== 'darwin-arm64') { console.error('Expected darwin-arm64 runner, got ' + target); process.exit(1); } console.log(target);"
+
+      - name: Download IPFS native addon
+        run: npm run ipfs:download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Smoke test IPFS native addon
+        run: npm run ipfs:native:smoke
+        env:
+          FREEDOM_IPFS_NATIVE_SMOKE_TARGET: darwin-arm64
+
   # Issue #90 — Windows EPERM wiping bee-data/statestore during wallet creation.
   # Reproductions live in cross-platform Jest integration tests that spawn a
   # real Bee node; the Windows leg is what actually exercises the
@@ -112,7 +148,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Download IPFS binary
+      - name: Download IPFS native addon
         run: npm run ipfs:download
         env:
           GITHUB_TOKEN: ${{ github.token }}

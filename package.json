@@ -45,6 +45,7 @@
     "bee:reset": "rm -rf bee-data && echo 'Bee data reset.'",
     "ipfs:download": "node scripts/fetch-freedom-ipfs-native.js",
     "ipfs:build": "node scripts/fetch-freedom-ipfs-native.js --from-source",
+    "ipfs:native:smoke": "node scripts/smoke-freedom-ipfs-native.js",
     "ipfs:reset": "rm -rf ipfs-data && echo 'IPFS data reset.'",
     "radicle:download": "node scripts/fetch-radicle.js",
     "radicle:init": "node scripts/init-radicle.js",
