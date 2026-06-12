@@ -21,6 +21,19 @@ function parseJson(json, fallback = null) {
   }
 }
 
+function normalizeNativeHandle(handle) {
+  if (typeof handle === 'string') {
+    return /^[1-9]\d*$/.test(handle) ? handle : null;
+  }
+  if (typeof handle === 'number') {
+    return Number.isSafeInteger(handle) && handle > 0 ? String(handle) : null;
+  }
+  if (typeof handle === 'bigint') {
+    return handle > 0n ? handle.toString() : null;
+  }
+  return null;
+}
+
 function headersToNativeArray(headers) {
   const out = [];
   for (const [name, value] of headers.entries()) {
@@ -49,7 +62,7 @@ class NativeGatewayController {
   constructor(owner, handle, method, signal) {
     this.owner = owner;
     this.handle = handle;
-    this.handleKey = handle.toString();
+    this.handleKey = handle;
     this.method = method;
     this.signal = signal;
     this.responseSettled = false;
@@ -255,11 +268,13 @@ class FreedomIpfsNativeNode {
   }
 
   start() {
-    if (this.nodeHandle !== '0') return true;
+    if (normalizeNativeHandle(this.nodeHandle)) return true;
     this.failed = false;
     this.failureError = null;
-    const handle = binding().nodeNewWithDataDir(this.dataDir, this.maxCacheBytes);
-    if (handle === '0') return false;
+    const handle = normalizeNativeHandle(
+      binding().nodeNewWithDataDir(this.dataDir, this.maxCacheBytes)
+    );
+    if (!handle) return false;
     this.nodeHandle = handle;
 
     const ok = binding().nodeStartNativeGatewayOnline(
@@ -360,7 +375,9 @@ class FreedomIpfsNativeNode {
       return;
     }
     if (event.status !== constants.EVENT_STATUS_OK) return;
-    const request = this.requests.get(event.requestHandle);
+    const requestHandle = normalizeNativeHandle(event.requestHandle);
+    if (!requestHandle) return;
+    const request = this.requests.get(requestHandle);
     if (!request) return;
     request.handleEvent(event.events);
   }
@@ -384,15 +401,17 @@ class FreedomIpfsNativeNode {
   }
 
   isHealthy() {
-    return this.nodeHandle !== '0' && !this.failed && Boolean(this.dispatcher);
+    return Boolean(normalizeNativeHandle(this.nodeHandle)) && !this.failed && Boolean(this.dispatcher);
   }
 
   unregister(handleKey) {
-    this.requests.delete(handleKey);
+    const requestHandle = normalizeNativeHandle(handleKey);
+    if (requestHandle) this.requests.delete(requestHandle);
   }
 
   request({ method = 'GET', path: gatewayPath, headers, signal }) {
-    if (this.nodeHandle === '0') {
+    const nodeHandle = normalizeNativeHandle(this.nodeHandle);
+    if (!nodeHandle) {
       return Promise.reject(new Error('freedom-ipfs native node is not running'));
     }
     if (!this.isHealthy()) {
@@ -406,8 +425,10 @@ class FreedomIpfsNativeNode {
       request_id: requestId,
       top_level_path: gatewayPath,
     });
-    const handle = binding().gatewayRequestStart(this.nodeHandle, requestJson);
-    if (handle === '0') {
+    const handle = normalizeNativeHandle(
+      binding().gatewayRequestStart(nodeHandle, requestJson)
+    );
+    if (!handle) {
       return Promise.reject(new Error('freedom-ipfs native request could not be started'));
     }
     const controller = new NativeGatewayController(this, handle, method, signal);

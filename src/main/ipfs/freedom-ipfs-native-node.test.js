@@ -18,19 +18,25 @@ const createConstants = () => ({
   ROUTING_MODE_AUTO: 20,
 });
 
-function createBindingMock({ readResults = [], response = null, buildInfoJson = null } = {}) {
+function createBindingMock({
+  readResults = [],
+  response = null,
+  buildInfoJson = null,
+  nodeHandle = '1',
+  requestHandle = '2',
+} = {}) {
   const constants = createConstants();
   const defaultResponse = { state: 'ready', status: 200, headers: [] };
   const binding = {
     constants,
     version: jest.fn(() => 'freedom-ipfs-test'),
-    nodeNewWithDataDir: jest.fn(() => 'node-1'),
+    nodeNewWithDataDir: jest.fn(() => nodeHandle),
     nodeStartNativeGatewayOnline: jest.fn(() => true),
     nodeStopGateway: jest.fn(() => true),
     nodeFree: jest.fn(),
     nodeProgressSnapshotJson: jest.fn(() => '{"active":[],"events":[]}'),
     nodeNativeGatewayStatsJson: jest.fn(() => '{}'),
-    gatewayRequestStart: jest.fn(() => 'request-1'),
+    gatewayRequestStart: jest.fn(() => requestHandle),
     gatewayRequestResponseJson: jest.fn(() => JSON.stringify(response || defaultResponse)),
     gatewayRequestRead: jest.fn((_nodeHandle, _requestHandle, buffer) => {
       const result = readResults.length
@@ -67,7 +73,7 @@ function loadModule(binding) {
 
 function createStartedNode(FreedomIpfsNativeNode, onFailure) {
   const node = new FreedomIpfsNativeNode({ dataDir: '/tmp/freedom-ipfs-test', onFailure });
-  node.nodeHandle = 'node-1';
+  node.nodeHandle = '1';
   node.dispatcher = {};
   return node;
 }
@@ -90,7 +96,7 @@ describe('FreedomIpfsNativeNode', () => {
       event: {
         status: binding.constants.EVENT_STATUS_OK,
         events: binding.constants.EVENT_RESPONSE_READY,
-        requestHandle: 'request-1',
+        requestHandle: '2',
       },
     });
 
@@ -139,6 +145,27 @@ describe('FreedomIpfsNativeNode', () => {
     });
   });
 
+  test('rejects invalid native node handles during startup', () => {
+    const binding = createBindingMock({ nodeHandle: 'not-a-handle' });
+    const { FreedomIpfsNativeNode } = loadModule(binding);
+    const node = new FreedomIpfsNativeNode({ dataDir: '/tmp/freedom-ipfs-test' });
+
+    expect(node.start()).toBe(false);
+    expect(binding.nodeStartNativeGatewayOnline).not.toHaveBeenCalled();
+    expect(node.nodeHandle).toBe('0');
+  });
+
+  test('rejects invalid native request handles without registering a controller', async () => {
+    const binding = createBindingMock({ requestHandle: 'not-a-handle' });
+    const { FreedomIpfsNativeNode } = loadModule(binding);
+    const node = createStartedNode(FreedomIpfsNativeNode);
+
+    await expect(node.request({ path: '/ipfs/bafy', headers: new Headers() })).rejects.toThrow(
+      'freedom-ipfs native request could not be started'
+    );
+    expect(node.requests.size).toBe(0);
+  });
+
   test('cancels a timed-out request before freeing the native handle', async () => {
     jest.useFakeTimers();
     const binding = createBindingMock();
@@ -149,8 +176,8 @@ describe('FreedomIpfsNativeNode', () => {
     jest.advanceTimersByTime(ATTEMPT_TIMEOUT_MS);
 
     await expect(responsePromise).rejects.toThrow('freedom-ipfs native request timeout');
-    expect(binding.gatewayRequestCancel).toHaveBeenCalledWith('node-1', 'request-1');
-    expect(binding.gatewayRequestFree).toHaveBeenCalledWith('node-1', 'request-1');
+    expect(binding.gatewayRequestCancel).toHaveBeenCalledWith('1', '2');
+    expect(binding.gatewayRequestFree).toHaveBeenCalledWith('1', '2');
     expect(binding.gatewayRequestCancel.mock.invocationCallOrder[0]).toBeLessThan(
       binding.gatewayRequestFree.mock.invocationCallOrder[0]
     );
@@ -172,7 +199,7 @@ describe('FreedomIpfsNativeNode', () => {
       event: {
         status: binding.constants.EVENT_STATUS_OK,
         events: binding.constants.EVENT_RESPONSE_READY,
-        requestHandle: 'request-1',
+        requestHandle: '2',
       },
     });
 
@@ -195,7 +222,7 @@ describe('FreedomIpfsNativeNode', () => {
       event: {
         status: binding.constants.EVENT_STATUS_OK,
         events: binding.constants.EVENT_RESPONSE_READY,
-        requestHandle: 'request-1',
+        requestHandle: '2',
       },
     });
     await responsePromise;
@@ -205,12 +232,12 @@ describe('FreedomIpfsNativeNode', () => {
       event: {
         status: binding.constants.EVENT_STATUS_OK,
         events: binding.constants.EVENT_HANDLE_FREED,
-        requestHandle: 'request-1',
+        requestHandle: '2',
       },
     });
 
     expect(binding.gatewayRequestFree).not.toHaveBeenCalled();
-    expect(node.requests.has('request-1')).toBe(false);
+    expect(node.requests.has('2')).toBe(false);
   });
 
   test('marks the node failed and rejects in-flight requests when the gateway stops', async () => {
@@ -225,7 +252,7 @@ describe('FreedomIpfsNativeNode', () => {
       event: {
         status: binding.constants.EVENT_STATUS_GATEWAY_STOPPED,
         events: 0,
-        requestHandle: 'request-1',
+        requestHandle: '2',
       },
     });
 
