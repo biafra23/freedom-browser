@@ -135,15 +135,16 @@ All commands run via the `cmd.exe /c '… > log 2>&1'` + poll pattern from above
    Confirm `git -C C:\freedom-build\repo log --oneline -1` is the commit you expect.
 
 2. **Provide the Windows binaries.** `npm run check-binaries -- --win --arm64`
-   requires `bee-bin/win-arm64/bee.exe` and `ipfs-bin/win-arm64/ipfs.exe`
+   requires `bee-bin/win-arm64/bee.exe` and
+   `native/freedom-ipfs-node/prebuilds/win-arm64/freedom_ipfs_native.node`
    (Radicle is intentionally skipped on Windows — see `scripts/check-binaries.js`).
    The Bee fetch needs auth, so the reliable path is to **push the local
-   binaries** rather than download them in the guest:
+   binaries/addons** rather than download them in the guest:
 
    ```
-   "$UTMCTL" exec "<VM>" --cmd 'C:\Windows\System32\cmd.exe' '/c' 'mkdir C:\freedom-build\repo\bee-bin\win-arm64 2>nul & mkdir C:\freedom-build\repo\ipfs-bin\win-arm64 2>nul'
-   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\bee-bin\win-arm64\bee.exe'   < bee-bin/win-arm64/bee.exe
-   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\ipfs-bin\win-arm64\ipfs.exe' < ipfs-bin/win-arm64/ipfs.exe
+   "$UTMCTL" exec "<VM>" --cmd 'C:\Windows\System32\cmd.exe' '/c' 'mkdir C:\freedom-build\repo\bee-bin\win-arm64 2>nul & mkdir C:\freedom-build\repo\native\freedom-ipfs-node\prebuilds\win-arm64 2>nul'
+   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\bee-bin\win-arm64\bee.exe' < bee-bin/win-arm64/bee.exe
+   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\native\freedom-ipfs-node\prebuilds\win-arm64\freedom_ipfs_native.node' < native/freedom-ipfs-node/prebuilds/win-arm64/freedom_ipfs_native.node
    ```
 
    Verify each pushed file's byte size matches the source (`dir` in guest vs.

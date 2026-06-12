@@ -236,7 +236,7 @@ For each platform, run through:
 2. **Version**: About / `freedom://settings` shows `<version>` from `package.json`
 3. **Navigation**: type `https://example.com`, confirm a basic HTTPS page renders and the address-bar shield is in its default state
 4. **Headline feature**: spot-check whatever the release leads with. For releases that touch ENS / Swarm / IPFS / Radicle, that means opening an `ens://`, `bzz://`, `ipfs://`, or `rad://` URI and confirming the documented behaviour (e.g. for `0.7.2`: Colibri verification surfaces in the address-bar shield popover)
-5. **Bundled nodes**: confirm Bee, IPFS / Kubo, and (Linux only) Radicle start cleanly. The nodes manager or the relevant `freedom://` settings page surfaces this — a "node failed to start" red badge or a missing local API port is the failure mode
+5. **Bundled nodes**: confirm Bee, native IPFS, and (Linux only) Radicle start cleanly. The nodes manager or the relevant `freedom://` settings page surfaces this — a "node failed to start" red badge or a missing native addon/API port is the failure mode
 6. **Persistence**: change one trivial setting (e.g. theme), close the app fully, reopen, confirm the change stuck
 
 If any platform fails:
