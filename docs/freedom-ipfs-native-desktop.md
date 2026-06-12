@@ -26,17 +26,19 @@ Install the pinned `freedom-ipfs` native addon:
 npm run ipfs:download
 ```
 
-By default this downloads and verifies the macOS arm64 / Electron 41 addon from
-the `freedom-ipfs` `v0.4.0` GitHub release:
+By default this downloads and verifies the Electron 41 addon for the current
+desktop target from the `freedom-ipfs` `v0.4.1` GitHub release:
 
 ```text
-https://github.com/solardev-xyz/freedom-ipfs/releases/tag/v0.4.0
+https://github.com/solardev-xyz/freedom-ipfs/releases/tag/v0.4.1
 ```
+
+Pinned release assets currently cover macOS arm64, Linux x64, and Windows x64.
 
 The output is staged in both places the app needs:
 
 - `native/freedom-ipfs-node/build/Release/freedom_ipfs_native.node`
-- `native/freedom-ipfs-node/prebuilds/mac-arm64/freedom_ipfs_native.node`
+- `native/freedom-ipfs-node/prebuilds/<target>/freedom_ipfs_native.node`
 
 `build/Release` is the local development load path. `prebuilds/<target>` is the
 Electron Builder packaging input, so cross-target builds cannot accidentally
@@ -71,7 +73,8 @@ The packaged app includes the `.node` addon via Electron Builder
   consume or expose a durable vault-derived PeerID for read-only retrieval in
   this release.
 - `window.ipfs.getStatus()` now reports `freedom-ipfs` diagnostics, including
-  native gateway stats, instead of polling Kubo's HTTP API.
+  native version/build metadata and native gateway stats, instead of polling
+  Kubo's HTTP API.
 - The protocol handler keeps the existing URL canonicalization rules but routes
   the final gateway path directly into the native node.
 
@@ -81,11 +84,10 @@ Useful checks:
 
 ```sh
 npm run ipfs:download
+npm run ipfs:native:smoke
 npm test
 ```
 
-For a live smoke from Node, run with network access enabled:
-
-```sh
-node -e 'const { FreedomIpfsNativeNode } = require("./src/main/ipfs/freedom-ipfs-native-node"); (async()=>{ const n = new FreedomIpfsNativeNode({ dataDir: "/private/tmp/freedom-ipfs-desktop-smoke-" + Date.now() }); if (!n.start()) throw new Error("start failed"); try { const r = await n.request({ method: "GET", path: "/ipns/ipfs.tech/", headers: new Headers() }); console.log(r.status, (await r.text()).slice(0, 80), n.nativeGatewayStatsJson()); } finally { await n.stop(); } })().catch(e=>{ console.error(e); process.exit(1); });'
-```
+`npm run ipfs:native:smoke` loads the real native addon, starts it, and retrieves
+`/ipns/ipfs.tech/` through the native request API. Set
+`FREEDOM_IPFS_NATIVE_SMOKE_LIVE=0` for startup/diagnostics-only checks.

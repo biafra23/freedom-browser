@@ -36,6 +36,26 @@ const formatBytes = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const parseNativeBuildInfo = (raw) => {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  if (typeof raw !== 'string') return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const formatNativeVersionLabel = (diagnostics = {}) => {
+  const buildInfo = parseNativeBuildInfo(diagnostics.nativeBuildInfo);
+  const version =
+    (typeof buildInfo?.version === 'string' && buildInfo.version) ||
+    (typeof diagnostics.nativeVersion === 'string' && diagnostics.nativeVersion) ||
+    '';
+  return version ? `freedom-ipfs ${version}` : 'freedom-ipfs';
+};
+
 const fetchPeersAndBandwidth = async () => {
   if (!state.beeMenuOpen) return;
   if (state.currentIpfsStatus === 'stopped') {
@@ -67,8 +87,15 @@ const fetchPeersAndBandwidth = async () => {
 
 const fetchVersionOnce = async () => {
   if (state.ipfsVersionFetched) return;
-  state.ipfsVersionValue = 'freedom-ipfs';
   state.ipfsVersionFetched = true;
+  let versionLabel = null;
+  try {
+    const status = await window.ipfs?.getStatus?.();
+    versionLabel = formatNativeVersionLabel(status?.diagnostics);
+  } catch {
+    // Fall back below; version display must not block status polling.
+  }
+  state.ipfsVersionValue = versionLabel || 'freedom-ipfs';
   if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 

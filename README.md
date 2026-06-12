@@ -416,6 +416,7 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | `npm run test:e2e:live`                                       | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
 | `npm run bee:download`                                        | Download the Bee binary for your platform                   |
 | `npm run ipfs:download`                                       | Download the pinned freedom-ipfs native addon               |
+| `npm run ipfs:native:smoke`                                   | Smoke test the real native addon and live IPFS retrieval    |
 | `npm run ipfs:build`                                          | Build the freedom-ipfs native addon from source             |
 | `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset` | Manage Bee outside the app                                  |
 | `npm run ipfs:reset`                                          | Reset IPFS data used by the bundled node                    |

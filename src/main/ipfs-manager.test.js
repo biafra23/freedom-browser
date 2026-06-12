@@ -52,6 +52,16 @@ function loadIpfsManagerModule(options = {}) {
       this.stop = jest.fn(async () => {});
       this.request = jest.fn(async () => new Response('native-body', { status: 200 }));
       this.isHealthy = jest.fn(() => options.isHealthy !== false);
+      this.version = options.nativeVersion || '0.4.1';
+      this.buildInfoJson = jest.fn(
+        () =>
+          options.nativeBuildInfoJson ||
+          JSON.stringify({
+            name: 'freedom-ipfs',
+            version: this.version,
+            release_tag: `v${this.version}`,
+          })
+      );
       this.progressSnapshotJson = jest.fn(() => '{"active":[],"events":[]}');
       this.nativeGatewayStatsJson = jest.fn(() => {
         if (options.statsThrows) throw new Error('stats unavailable');
@@ -134,6 +144,8 @@ describe('ipfs-manager', () => {
       diagnostics: {
         progress: '{"active":[],"events":[]}',
         nativeGatewayStats: '{}',
+        nativeVersion: null,
+        nativeBuildInfo: null,
       },
     });
     await expect(ctx.ipcMain.invoke(IPC.IPFS_CHECK_BINARY)).resolves.toEqual({
@@ -160,7 +172,7 @@ describe('ipfs-manager', () => {
       mode: 'bundled',
       backend: 'freedom-ipfs',
     });
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node: freedom-ipfs');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node: freedom-ipfs 0.4.1');
     expect(window.webContents.send).toHaveBeenCalledWith(IPC.IPFS_STATUS_UPDATE, {
       status: 'starting',
       error: null,
@@ -195,6 +207,32 @@ describe('ipfs-manager', () => {
       path: '/ipfs/bafy',
       headers: expect.any(Headers),
       signal: undefined,
+    });
+  });
+
+  test('reports native version and build metadata in diagnostics', async () => {
+    const ctx = loadIpfsManagerModule({
+      nativeVersion: '0.4.1',
+      nativeBuildInfoJson: JSON.stringify({
+        name: 'freedom-ipfs',
+        version: '0.4.1',
+        release_tag: 'v0.4.1',
+        target: 'linux-x64',
+      }),
+    });
+
+    await ctx.mod.startIpfs();
+
+    expect(ctx.mod.getNativeDiagnostics()).toEqual({
+      progress: '{"active":[],"events":[]}',
+      nativeGatewayStats: '{"active_native_handles":0}',
+      nativeVersion: '0.4.1',
+      nativeBuildInfo: JSON.stringify({
+        name: 'freedom-ipfs',
+        version: '0.4.1',
+        release_tag: 'v0.4.1',
+        target: 'linux-x64',
+      }),
     });
   });
 

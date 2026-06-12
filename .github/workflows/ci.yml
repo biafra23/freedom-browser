@@ -44,14 +44,23 @@ jobs:
           path: coverage/
           if-no-files-found: error
 
-  # freedom-ipfs native addon smoke for the platform we currently ship from
-  # the pinned prebuilt manifest (`darwin-arm64` in fetch-freedom-ipfs-native).
-  # This is intentionally startup/diagnostics-only: it proves the real addon
-  # downloads, loads, starts, and shuts down without making CI depend on live
-  # IPFS network retrieval.
+  # freedom-ipfs native addon smoke for every desktop addon target currently
+  # published in the pinned prebuilt manifest. This downloads the real release
+  # artifact, loads it in Node, starts native freedom-ipfs, and retrieves a real
+  # IPNS page through the native request API.
   freedom-ipfs-native-addon:
-    runs-on: macos-14
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-arm64
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: windows-latest
+            target: win32-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -67,8 +76,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Assert shipped native-addon target
-        run: |
-          node -e "const target = process.platform + '-' + process.arch; if (target !== 'darwin-arm64') { console.error('Expected darwin-arm64 runner, got ' + target); process.exit(1); } console.log(target);"
+        run: node -e "const target = process.platform + '-' + process.arch; const expected = process.env.EXPECTED_TARGET; if (target !== expected) { console.error('Expected ' + expected + ' runner, got ' + target); process.exit(1); } console.log(target);"
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
 
       - name: Download IPFS native addon
         run: npm run ipfs:download
@@ -78,7 +88,9 @@ jobs:
       - name: Smoke test IPFS native addon
         run: npm run ipfs:native:smoke
         env:
-          FREEDOM_IPFS_NATIVE_SMOKE_TARGET: darwin-arm64
+          FREEDOM_IPFS_NATIVE_SMOKE_TARGET: ${{ matrix.target }}
+          FREEDOM_IPFS_NATIVE_SMOKE_PATH: /ipns/ipfs.tech/
+          FREEDOM_IPFS_NATIVE_SMOKE_EXPECT: ipfs
 
   # Issue #90 — Windows EPERM wiping bee-data/statestore during wallet creation.
   # Reproductions live in cross-platform Jest integration tests that spawn a

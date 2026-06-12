@@ -165,6 +165,12 @@ describe('ipfs-ui', () => {
         status: 'running',
         error: null,
         diagnostics: {
+          nativeVersion: '0.4.1',
+          nativeBuildInfo: JSON.stringify({
+            name: 'freedom-ipfs',
+            version: '0.4.1',
+            release_tag: 'v0.4.1',
+          }),
           nativeGatewayStats: JSON.stringify({
             active_native_handles: 3,
             bytes_read: 1536,
@@ -183,7 +189,7 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsPeersCount.textContent).toBe('3');
     expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('read 1.5 KB');
     expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs 0.4.1');
     expect(ctx.state.ipfsVersionFetched).toBe(true);
     expect(ctx.state.ipfsPeersInterval).toBe(2);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 1000);
@@ -196,7 +202,7 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsPeersCount.textContent).toBe('0');
     expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('');
     expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs 0.4.1');
 
     ctx.mod.resetIpfsVersion();
     expect(ctx.state.ipfsVersionFetched).toBe(false);

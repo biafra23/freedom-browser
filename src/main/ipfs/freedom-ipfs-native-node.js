@@ -239,6 +239,21 @@ class FreedomIpfsNativeNode {
     return binding().version();
   }
 
+  buildInfoJson() {
+    const nativeBinding = binding();
+    if (typeof nativeBinding.buildInfoJson === 'function') {
+      return nativeBinding.buildInfoJson();
+    }
+    return JSON.stringify({
+      name: 'freedom-ipfs',
+      version: this.version,
+    });
+  }
+
+  get buildInfo() {
+    return parseJson(this.buildInfoJson(), null);
+  }
+
   start() {
     if (this.nodeHandle !== '0') return true;
     this.failed = false;

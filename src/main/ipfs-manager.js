@@ -27,6 +27,41 @@ let activeNode = null;
 let healthCheckInterval = null;
 let pendingStart = false;
 
+function defaultNativeDiagnostics() {
+  return {
+    progress: '{"active":[],"events":[]}',
+    nativeGatewayStats: '{}',
+    nativeVersion: null,
+    nativeBuildInfo: null,
+  };
+}
+
+function readNativeVersion(node) {
+  try {
+    const version = node?.version;
+    return typeof version === 'string' && version.length > 0 ? version : null;
+  } catch (err) {
+    log.warn('[IPFS] Failed to read native version:', err.message);
+    return null;
+  }
+}
+
+function readNativeBuildInfoJson(node) {
+  if (!node || typeof node.buildInfoJson !== 'function') return null;
+  try {
+    const buildInfo = node.buildInfoJson();
+    return typeof buildInfo === 'string' && buildInfo.length > 0 ? buildInfo : null;
+  } catch (err) {
+    log.warn('[IPFS] Failed to read native build info:', err.message);
+    return null;
+  }
+}
+
+function nativeNodeLabel(node) {
+  const version = readNativeVersion(node);
+  return version ? `freedom-ipfs ${version}` : 'freedom-ipfs';
+}
+
 function getIpfsDataPath() {
   if (process.env.FREEDOM_IPFS_DATA) {
     const overrideDir = path.join(process.env.FREEDOM_IPFS_DATA, 'freedom-ipfs');
@@ -148,16 +183,17 @@ async function startIpfs() {
   }
 
   activeNode = node;
+  const nodeLabel = nativeNodeLabel(node);
   updateService('ipfs', {
     api: null,
     gateway: null,
     mode: MODE.BUNDLED,
     backend: 'freedom-ipfs',
   });
-  setStatusMessage('ipfs', 'Node: freedom-ipfs');
+  setStatusMessage('ipfs', `Node: ${nodeLabel}`);
   updateState(STATUS.RUNNING);
   startHealthCheck();
-  log.info(`[IPFS] freedom-ipfs native node started at ${dataDir}`);
+  log.info(`[IPFS] ${nodeLabel} native node started at ${dataDir}`);
 }
 
 async function stopIpfs() {
@@ -203,16 +239,24 @@ async function serveNativeGatewayRequest({ path: gatewayPath, method, headers, s
 }
 
 function getNativeDiagnostics() {
-  if (!activeNode) return { progress: '{"active":[],"events":[]}', nativeGatewayStats: '{}' };
+  const diagnostics = defaultNativeDiagnostics();
+  if (!activeNode) return diagnostics;
+
   try {
-    return {
-      progress: activeNode.progressSnapshotJson(),
-      nativeGatewayStats: activeNode.nativeGatewayStatsJson(),
-    };
+    diagnostics.progress = activeNode.progressSnapshotJson();
   } catch (err) {
-    log.warn('[IPFS] Failed to collect native diagnostics:', err.message);
-    return { progress: '{"active":[],"events":[]}', nativeGatewayStats: '{}' };
+    log.warn('[IPFS] Failed to collect native progress diagnostics:', err.message);
   }
+
+  try {
+    diagnostics.nativeGatewayStats = activeNode.nativeGatewayStatsJson();
+  } catch (err) {
+    log.warn('[IPFS] Failed to collect native gateway diagnostics:', err.message);
+  }
+
+  diagnostics.nativeVersion = readNativeVersion(activeNode);
+  diagnostics.nativeBuildInfo = readNativeBuildInfoJson(activeNode);
+  return diagnostics;
 }
 
 function setUseInjectedIdentity(enabled) {

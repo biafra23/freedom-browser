@@ -18,10 +18,10 @@ const createConstants = () => ({
   ROUTING_MODE_AUTO: 20,
 });
 
-function createBindingMock({ readResults = [], response = null } = {}) {
+function createBindingMock({ readResults = [], response = null, buildInfoJson = null } = {}) {
   const constants = createConstants();
   const defaultResponse = { state: 'ready', status: 200, headers: [] };
-  return {
+  const binding = {
     constants,
     version: jest.fn(() => 'freedom-ipfs-test'),
     nodeNewWithDataDir: jest.fn(() => 'node-1'),
@@ -44,6 +44,10 @@ function createBindingMock({ readResults = [], response = null } = {}) {
     gatewayRequestCancel: jest.fn(() => true),
     gatewayRequestFree: jest.fn(() => true),
   };
+  if (buildInfoJson !== null) {
+    binding.buildInfoJson = jest.fn(() => buildInfoJson);
+  }
+  return binding;
 }
 
 function loadModule(binding) {
@@ -97,6 +101,42 @@ describe('FreedomIpfsNativeNode', () => {
     jest.advanceTimersByTime(ATTEMPT_TIMEOUT_MS + 1);
     expect(binding.gatewayRequestCancel).not.toHaveBeenCalled();
     expect(binding.gatewayRequestFree).not.toHaveBeenCalled();
+  });
+
+  test('exposes native build info when the addon provides it', () => {
+    const buildInfoJson = JSON.stringify({
+      name: 'freedom-ipfs',
+      version: '0.4.1',
+      release_tag: 'v0.4.1',
+      target: 'darwin-arm64',
+    });
+    const binding = createBindingMock({ buildInfoJson });
+    const { FreedomIpfsNativeNode } = loadModule(binding);
+    const node = new FreedomIpfsNativeNode({ dataDir: '/tmp/freedom-ipfs-test' });
+
+    expect(node.version).toBe('freedom-ipfs-test');
+    expect(node.buildInfoJson()).toBe(buildInfoJson);
+    expect(node.buildInfo).toMatchObject({
+      name: 'freedom-ipfs',
+      version: '0.4.1',
+      release_tag: 'v0.4.1',
+      target: 'darwin-arm64',
+    });
+  });
+
+  test('falls back to version-only build info for older addons', () => {
+    const binding = createBindingMock();
+    const { FreedomIpfsNativeNode } = loadModule(binding);
+    const node = new FreedomIpfsNativeNode({ dataDir: '/tmp/freedom-ipfs-test' });
+
+    expect(JSON.parse(node.buildInfoJson())).toEqual({
+      name: 'freedom-ipfs',
+      version: 'freedom-ipfs-test',
+    });
+    expect(node.buildInfo).toEqual({
+      name: 'freedom-ipfs',
+      version: 'freedom-ipfs-test',
+    });
   });
 
   test('cancels a timed-out request before freeing the native handle', async () => {
