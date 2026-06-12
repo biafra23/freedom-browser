@@ -166,13 +166,25 @@ function ensureConfig(dataDir, apiPort, nodeMode = ANT_NODE_MODE.ULTRA_LIGHT) {
       if (passwordMatch) {
         password = passwordMatch[1].trim();
       }
-    } catch {
-      log.warn('[Ant] Could not read existing password, generating new one');
+    } catch (err) {
+      log.warn('[Ant] Could not read existing config:', err.message);
     }
   }
 
-  // Generate new password if we couldn't read one
+  // Generate new password if we couldn't read one — but never while a
+  // keystore is present whose only decryption password is the one we just
+  // failed to recover (e.g. the bee-data migration carried over both
+  // config.yaml and keys/swarm.key). Silently minting a fresh password here
+  // would leave that keystore permanently undecryptable, so fail loudly and
+  // let startAnt surface the error instead.
   if (!password) {
+    if (fs.existsSync(path.join(dataDir, 'keys', 'swarm.key'))) {
+      throw new Error(
+        `A keystore exists at ${path.join(dataDir, 'keys', 'swarm.key')} but its password ` +
+          `could not be recovered from ${configPath} — refusing to generate a new password ` +
+          'that would make the keystore undecryptable.'
+      );
+    }
     password = crypto.randomBytes(32).toString('hex');
   }
 

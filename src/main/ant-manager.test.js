@@ -419,7 +419,12 @@ describe('bee-manager', () => {
   test('starts the bundled node in injected-identity mode once keys/swarm.key exists', async () => {
     jest.useFakeTimers();
 
+    // Injection always writes keys/swarm.key and config.yaml (with the
+    // keystore password) together, so the realistic injected state has both;
+    // a keystore without a readable password is the loud-failure case tested
+    // separately below.
     const swarmKeyPath = path.join(DEV_BEE_DATA_DIR, 'keys', 'swarm.key');
+    const configPath = path.join(DEV_BEE_DATA_DIR, 'config.yaml');
     const platformMap = {
       darwin: 'mac',
       linux: 'linux',
@@ -429,7 +434,9 @@ describe('bee-manager', () => {
     const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
     const beeBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
     const ctx = loadBeeManagerModule({
-      existsSync: (target) => target === beeBinPath || target === swarmKeyPath,
+      existsSync: (target) =>
+        target === beeBinPath || target === swarmKeyPath || target === configPath,
+      configContents: 'api-addr: 127.0.0.1:1633\npassword: injected-keystore-password\n',
       portSequence: [false],
       httpResponse: (url) => {
         if (url === 'http://127.0.0.1:1633/health') {
@@ -690,6 +697,48 @@ describe('bee-manager', () => {
     const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
+  });
+
+  // A keystore whose config password can't be recovered must fail the start
+  // loudly: silently minting a fresh password would leave keys/swarm.key
+  // (e.g. a migrated bee-era identity) permanently undecryptable.
+  test('refuses to mint a new password while a keystore exists with an unreadable config password', async () => {
+    const platformMap = {
+      darwin: 'mac',
+      linux: 'linux',
+      win32: 'win',
+    };
+    const platform = platformMap[process.platform] || process.platform;
+    const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+    const antBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
+    const dataDir = DEV_BEE_DATA_DIR;
+    const configPath = path.join(dataDir, 'config.yaml');
+    const swarmKeyPath = path.join(dataDir, 'keys', 'swarm.key');
+
+    const ctx = loadBeeManagerModule({
+      configContents: 'api-addr: 127.0.0.1:1633\n',
+      existsSync: (target) =>
+        target === antBinPath ||
+        target === dataDir ||
+        target === configPath ||
+        target === swarmKeyPath,
+      portSequence: [false],
+      httpResponse: () => ({
+        statusCode: 500,
+        body: '',
+      }),
+    });
+
+    await ctx.mod.startAnt();
+    await flushMicrotasks();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.fsMock.writeFileSync).not.toHaveBeenCalled();
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Node failed to start');
+    expect(ctx.log.error).toHaveBeenCalledWith(
+      '[Ant] Failed to prepare config:',
+      expect.stringContaining('refusing to generate a new password')
+    );
   });
 
   test('fails startup when Ant light mode has no configured primary Gnosis RPC', async () => {
