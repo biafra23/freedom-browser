@@ -105,19 +105,9 @@ function getAntAddresses(port) {
   });
 }
 
-// Mirrors ant-manager's ensureConfig, which rewrites config.yaml on every
-// start: only the password is carried over from the existing (migrated)
-// config; data-dir and api-addr are re-derived. Ultra-light shape, matching
-// buildAntConfigContent's defaults.
-function rewriteConfigLikeEnsureConfig(antDataDir, apiPort) {
+// Ultra-light config shape matching ant-manager's buildAntConfigContent.
+function writeUltraLightConfig(antDataDir, apiPort, password) {
   const configPath = path.join(antDataDir, 'config.yaml');
-  const existing = fs.readFileSync(configPath, 'utf-8');
-  const passwordMatch = existing.match(/^password:\s*(.+)$/m);
-  if (!passwordMatch) {
-    throw new Error('No password found in migrated config.yaml');
-  }
-  const password = passwordMatch[1].trim();
-
   const content = `# Ant node configuration (bee-compatible keys)
 api-addr: 127.0.0.1:${apiPort}
 swap-enable: false
@@ -132,6 +122,20 @@ data-dir: ${antDataDir}
 password: ${password}
 `;
   fs.writeFileSync(configPath, content);
+  return configPath;
+}
+
+// Mirrors ant-manager's ensureConfig, which rewrites config.yaml on every
+// start: only the password is carried over from the existing (migrated)
+// config; data-dir and api-addr are re-derived.
+function rewriteConfigLikeEnsureConfig(antDataDir, apiPort) {
+  const existing = fs.readFileSync(path.join(antDataDir, 'config.yaml'), 'utf-8');
+  const passwordMatch = existing.match(/^password:\s*(.+)$/m);
+  if (!passwordMatch) {
+    throw new Error('No password found in migrated config.yaml');
+  }
+  const password = passwordMatch[1].trim();
+  const configPath = writeUltraLightConfig(antDataDir, apiPort, password);
   return { configPath, password };
 }
 
@@ -236,6 +240,32 @@ describe('bee-data → ant-data migration (real antd)', () => {
 
       // antd loaded the keystore, so it must not have minted a native identity.
       expect(fs.existsSync(path.join(antDataDir, 'identity.json'))).toBe(false);
+    },
+    120000
+  );
+
+  maybeTest(
+    'a fresh antd start with no injected key never creates keys/swarm.key',
+    async () => {
+      // Guards the invariant isBeeDataMigrationPending() keys off (see
+      // migrate-user-data.js): antd's self-generated identity must live in
+      // identity.json/signing.key — keys/swarm.key only ever appears via
+      // Freedom's injection or the bee-data migration. If a future antd
+      // version wrote keys/swarm.key on self-init, the migration precondition
+      // would turn false on the first post-upgrade start and a funded
+      // bee-era identity would be silently abandoned with no retry.
+      const antDataDir = path.join(userDataDir, 'ant-data');
+      fs.mkdirSync(antDataDir, { recursive: true });
+      const configPath = writeUltraLightConfig(antDataDir, TEST_PORT, 'fresh-start-password');
+
+      antProcess = spawn(antBinary, [`--config=${configPath}`], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      await waitForAntReady(TEST_PORT, 60000);
+
+      expect(fs.existsSync(path.join(antDataDir, 'keys', 'swarm.key'))).toBe(false);
+      // The self-generated identity must take antd's native shape instead.
+      expect(fs.existsSync(path.join(antDataDir, 'identity.json'))).toBe(true);
     },
     120000
   );

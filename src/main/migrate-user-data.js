@@ -202,6 +202,16 @@ function getNodeDataBaseDir() {
  * identity (wrong overlay address, none of the user's postage stamps or
  * chequebook funds) instead of the about-to-be-migrated one.
  *
+ * INVARIANT this check depends on: antd must NEVER create `keys/swarm.key`
+ * itself — its self-generated identity lives in `identity.json`/`signing.key`,
+ * and `keys/swarm.key` only ever appears via Freedom's injection or this
+ * migration. If a future antd version wrote that path on self-init, this
+ * precondition would become permanently false and a funded bee-era identity
+ * would be silently abandoned with no retry. The real-binary integration test
+ * (src/main/identity/__tests__/integration/bee-to-ant-migration.test.js)
+ * asserts this invariant on a fresh antd start and runs in CI on every
+ * platform — re-validate it on every antd version bump.
+ *
  * @returns {boolean}
  */
 function isBeeDataMigrationPending() {
