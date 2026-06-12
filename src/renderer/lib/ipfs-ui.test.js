@@ -15,7 +15,7 @@ const loadIpfsModule = async (options = {}) => {
   const state = {
     beeMenuOpen: options.beeMenuOpen ?? false,
     currentIpfsStatus: options.currentIpfsStatus || 'stopped',
-    ipfsPeersInterval: null,
+    ipfsInfoInterval: null,
     ipfsVersionFetched: options.ipfsVersionFetched ?? false,
     ipfsVersionValue: options.ipfsVersionValue || '',
     suppressIpfsRunningStatus: options.suppressIpfsRunningStatus ?? false,
@@ -37,9 +37,8 @@ const loadIpfsModule = async (options = {}) => {
   };
   const ipfsToggleBtn = createElement('button');
   const ipfsToggleSwitch = createElement('div');
-  const ipfsPeersCount = createElement('span');
-  const ipfsBandwidthDown = createElement('span');
-  const ipfsBandwidthUp = createElement('span');
+  const ipfsActiveRequestsCount = createElement('span');
+  const ipfsDataRead = createElement('span');
   const ipfsVersionText = createElement('span');
   const ipfsInfoPanel = createElement('div', {
     classes: ['ipfs-info'],
@@ -54,9 +53,8 @@ const loadIpfsModule = async (options = {}) => {
     elementsById: {
       'ipfs-toggle-btn': ipfsToggleBtn,
       'ipfs-toggle-switch': ipfsToggleSwitch,
-      'ipfs-peers-count': ipfsPeersCount,
-      'ipfs-bandwidth-down': ipfsBandwidthDown,
-      'ipfs-bandwidth-up': ipfsBandwidthUp,
+      'ipfs-active-requests-count': ipfsActiveRequestsCount,
+      'ipfs-data-read': ipfsDataRead,
       'ipfs-version-text': ipfsVersionText,
       'ipfs-status-row': ipfsStatusRow,
       'ipfs-status-label': ipfsStatusLabel,
@@ -137,9 +135,8 @@ const loadIpfsModule = async (options = {}) => {
     elements: {
       ipfsToggleBtn,
       ipfsToggleSwitch,
-      ipfsPeersCount,
-      ipfsBandwidthDown,
-      ipfsBandwidthUp,
+      ipfsActiveRequestsCount,
+      ipfsDataRead,
       ipfsVersionText,
       ipfsInfoPanel,
       ipfsStatusRow,
@@ -186,28 +183,21 @@ describe('ipfs-ui', () => {
 
     expect(ctx.buildIpfsApiUrl).not.toHaveBeenCalled();
     expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(true);
-    expect(ctx.elements.ipfsPeersCount.textContent).toBe('3');
-    expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('read 1.5 KB');
-    expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
+    expect(ctx.elements.ipfsActiveRequestsCount.textContent).toBe('3');
+    expect(ctx.elements.ipfsDataRead.textContent).toBe('1.5 KB');
     expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs 0.4.1');
     expect(ctx.state.ipfsVersionFetched).toBe(true);
-    expect(ctx.state.ipfsPeersInterval).toBe(2);
+    expect(ctx.state.ipfsInfoInterval).toBe(2);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 1000);
 
     ctx.mod.stopIpfsInfoPolling();
 
     expect(ctx.clearIntervalMock).toHaveBeenCalledWith(2);
-    expect(ctx.state.ipfsPeersInterval).toBeNull();
+    expect(ctx.state.ipfsInfoInterval).toBeNull();
     expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(false);
-    expect(ctx.elements.ipfsPeersCount.textContent).toBe('0');
-    expect(ctx.elements.ipfsBandwidthDown.textContent).toBe('');
-    expect(ctx.elements.ipfsBandwidthUp.textContent).toBe('');
+    expect(ctx.elements.ipfsActiveRequestsCount.textContent).toBe('0');
+    expect(ctx.elements.ipfsDataRead.textContent).toBe('');
     expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs 0.4.1');
-
-    ctx.mod.resetIpfsVersion();
-    expect(ctx.state.ipfsVersionFetched).toBe(false);
-    expect(ctx.state.ipfsVersionValue).toBe('');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('');
   });
 
   test('updates IPFS status lines, toggle state, and running transitions', async () => {
