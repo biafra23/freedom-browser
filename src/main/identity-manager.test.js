@@ -99,8 +99,8 @@ describe('identity-manager wallet deletion', () => {
  * injectBeeIdentity via the lifecycle hook (stop → wipe → start), so Bee must
  * NOT also be reported in `needsRestart` — otherwise the renderer restarts it a
  * second time. Radicle has no lifecycle hook and must still be reported. Native
- * IPFS identity import is not active yet, so IPFS preparation must not report a
- * restart.
+ * IPFS uses ephemeral identities for retrieval today, so it must not report a
+ * restart or a durable injected identity.
  *
  * The lazily-loaded `./identity` module is mocked so the test exercises the
  * orchestration/branch logic without real key derivation or node binaries.
@@ -119,8 +119,6 @@ function createIdentityMock() {
     })),
     injectBeeKey: jest.fn(async () => {}),
     createBeeConfig: jest.fn(() => {}),
-    injectIpfsKey: jest.fn(() => 'QmTestPeerId'),
-    createIpfsIdentity: jest.fn(() => ({ peerId: 'QmTestPeerId' })),
     injectRadicleKey: jest.fn(() => 'did:key:zTest'),
     createRadicleIdentity: jest.fn(() => ({ did: 'did:key:zTest' })),
   };
@@ -196,9 +194,10 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     fs.writeFileSync(path.join(dataDirs.radicle, 'keys', 'radicle'), 'key');
   }
 
-  test('force reinjection reports IPFS/Radicle but NOT Bee for restart', async () => {
-    // Bee/Radicle are injected and IPFS identity metadata is already prepared,
-    // so force=true takes the reinjection/reprepare branch.
+  test('force reinjection reports Radicle but NOT Bee/IPFS for restart', async () => {
+    // Bee/Radicle are injected. A stale IPFS identity metadata file from older
+    // builds must be ignored because native freedom-ipfs now reports ephemeral
+    // identity mode instead of a prepared durable PeerID.
     seedBeeInjected();
     seedIpfsIdentityMetadata();
     seedRadicleInjected();
@@ -213,10 +212,10 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     expect(results.needsRestart).toEqual(expect.arrayContaining(['radicle']));
     expect(results.bee.reinjected).toBe(true);
     expect(results.ipfs).toMatchObject({
-      preparedPeerId: 'QmTestPeerId',
+      mode: 'ephemeral',
       active: false,
-      pendingNativeSupport: true,
-      reprepared: true,
+      peerId: null,
+      stableIdentitySupported: false,
     });
   });
 
@@ -228,13 +227,14 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
 
     expect(results.needsRestart).toEqual([]);
     expect(results.ipfs).toMatchObject({
-      preparedPeerId: 'QmTestPeerId',
+      mode: 'ephemeral',
       active: false,
-      pendingNativeSupport: true,
+      peerId: null,
+      stableIdentitySupported: false,
     });
   });
 
-  test('status separates prepared IPFS metadata from active native identity', async () => {
+  test('status reports native IPFS ephemeral identity mode', async () => {
     seedIpfsIdentityMetadata();
 
     const mgr = loadIdentityManager(dataDirs);
@@ -242,7 +242,9 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
 
     await expect(mgr.getIdentityStatus()).resolves.toMatchObject({
       ipfsInjected: false,
-      ipfsIdentityPrepared: true,
+      ipfsIdentityPrepared: false,
+      ipfsIdentityMode: 'ephemeral',
+      ipfsStableIdentitySupported: false,
       ipfsNativeIdentityActive: false,
       addresses: {
         ipfsPeerId: null,

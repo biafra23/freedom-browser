@@ -48,7 +48,6 @@ let injectedNodes = {
 
 // Vault metadata file
 const VAULT_META_FILE = 'vault-meta.json';
-const IPFS_IDENTITY_META_FILE = 'ipfs-identity.json';
 
 /**
  * Get the app data directory for identity storage
@@ -340,34 +339,8 @@ function getIpfsDataDir() {
   return path.join(app.getPath('userData'), 'ipfs-data');
 }
 
-function getIpfsIdentityMetaPath() {
-  return path.join(getIdentityDataDir(), IPFS_IDENTITY_META_FILE);
-}
-
-function readIpfsIdentityMeta() {
-  const metaPath = getIpfsIdentityMetaPath();
-  if (!fs.existsSync(metaPath)) {
-    return null;
-  }
-  try {
-    return JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-  } catch (err) {
-    console.error('[IdentityManager] Failed to read IPFS identity metadata:', err.message);
-    return null;
-  }
-}
-
-function saveIpfsIdentityMeta(meta) {
-  const metaPath = getIpfsIdentityMetaPath();
-  const dir = path.dirname(metaPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
-}
-
 function isIpfsIdentityPrepared() {
-  return !!readIpfsIdentityMeta()?.peerId;
+  return false;
 }
 
 /**
@@ -399,10 +372,9 @@ function isBeeIdentityInjected() {
 /**
  * Check if IPFS has an active injected runtime identity.
  *
- * The desktop app now uses the native freedom-ipfs node, which does not yet
- * accept externally injected PeerIDs. A derived IPFS PeerID may be prepared in
- * identity metadata, but it is not reported as injected until the native node
- * can actually use it.
+ * The desktop app now uses native freedom-ipfs as a read-oriented retrieval
+ * node. It deliberately uses ephemeral libp2p identities today, so there is no
+ * durable vault-derived PeerID to report as injected.
  */
 function isIpfsIdentityInjected() {
   return false;
@@ -420,8 +392,8 @@ function isRadicleIdentityInjected() {
 /**
  * Read the active native IPFS PeerID (no unlock required).
  *
- * Native freedom-ipfs does not yet expose/import the vault-derived PeerID, so
- * there is no active PeerID to display here.
+ * Native freedom-ipfs uses ephemeral libp2p identities for retrieval today and
+ * does not expose a stable app/node PeerID.
  * @returns {string|null}
  */
 function readIpfsPeerId() {
@@ -631,38 +603,26 @@ async function injectBeeIdentity() {
 }
 
 /**
- * Prepare an IPFS identity derived from the vault.
+ * Report IPFS identity mode.
  *
- * Native freedom-ipfs does not yet support importing this identity, so this is
- * metadata for future compatibility rather than an active runtime injection.
- * @returns {Promise<{preparedPeerId: string, active: boolean, pendingNativeSupport: boolean}>}
+ * Native freedom-ipfs currently uses ephemeral identities by design. Keep IPFS
+ * visible in onboarding/status, but do not derive or persist a stable PeerID
+ * that the runtime cannot consume.
+ * @returns {Promise<{mode: string, active: boolean, peerId: null, stableIdentitySupported: boolean}>}
  */
 async function injectIpfsIdentity() {
   if (!derivedKeys) {
     throw new Error(VAULT_LOCKED_MESSAGE);
   }
 
-  const identity = await loadIdentityModule();
-  const ipfsIdentity = identity.createIpfsIdentity(
-    derivedKeys.ipfsKey.privateKey,
-    derivedKeys.ipfsKey.publicKey
-  );
-
-  saveIpfsIdentityMeta({
-    peerId: ipfsIdentity.peerId,
-    activeWithNativeNode: false,
-    updatedAt: new Date().toISOString(),
-  });
-
   injectedNodes.ipfs = false;
 
-  console.log(
-    `[IdentityManager] IPFS identity prepared for future native support: ${ipfsIdentity.peerId}`
-  );
+  console.log('[IdentityManager] IPFS uses ephemeral native identities for retrieval');
   return {
-    preparedPeerId: ipfsIdentity.peerId,
+    mode: 'ephemeral',
     active: false,
-    pendingNativeSupport: true,
+    peerId: null,
+    stableIdentitySupported: false,
   };
 }
 
@@ -740,23 +700,10 @@ async function injectAllIdentities(radicleAlias = 'FreedomBrowser', force = fals
     results.bee = { address: derivedKeys.beeWallet.address, alreadyInjected: true };
   }
 
-  // Prepare IPFS identity metadata. Native freedom-ipfs does not consume this
-  // identity yet, so preparing it never requires an IPFS node restart.
-  if (force || !isIpfsIdentityPrepared()) {
-    const wasPrepared = isIpfsIdentityPrepared();
-    results.ipfs = await injectIpfsIdentity();
-    if (wasPrepared && force) {
-      results.ipfs.reprepared = true;
-    }
-  } else {
-    const meta = readIpfsIdentityMeta();
-    results.ipfs = {
-      preparedPeerId: meta?.peerId || null,
-      active: false,
-      pendingNativeSupport: true,
-      alreadyPrepared: true,
-    };
-  }
+  // Native freedom-ipfs uses ephemeral libp2p identities for read-only
+  // retrieval today. Keep this in the result so onboarding can show IPFS as an
+  // intentional identity mode rather than a failed injection.
+  results.ipfs = await injectIpfsIdentity();
 
   // Inject Radicle (only if not already injected OR force)
   if (force || !isRadicleIdentityInjected()) {
@@ -785,7 +732,7 @@ async function injectAllIdentities(radicleAlias = 'FreedomBrowser', force = fals
  * Get identity status
  * Returns addresses without requiring vault unlock by reading from:
  * - vault-meta.json for wallet addresses (stored at vault creation)
- * - IPFS config for PeerID
+ * - native IPFS mode (ephemeral; no durable PeerID today)
  * - Radicle public key for DID
  * @returns {Promise<Object>}
  */
@@ -830,6 +777,8 @@ async function getIdentityStatus() {
     beeInjected: isBeeIdentityInjected(),
     ipfsInjected: isIpfsIdentityInjected(),
     ipfsIdentityPrepared: isIpfsIdentityPrepared(),
+    ipfsIdentityMode: 'ephemeral',
+    ipfsStableIdentitySupported: false,
     ipfsNativeIdentityActive: false,
     radicleInjected: isRadicleIdentityInjected(),
     addresses,

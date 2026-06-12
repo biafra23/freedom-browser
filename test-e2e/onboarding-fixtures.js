@@ -10,8 +10,8 @@
 // FREEDOM_*_DATA overrides so a live run never touches the developer's
 // persistent `bee-data/`, `ipfs-data/`, `radicle-data/`, or `identity-data/`.
 // Settings are seeded so only Bee auto-starts (the node relevant to issue #90).
-// IPFS native identity import is not active yet, so the wizard only prepares
-// IPFS metadata and does not need a Kubo binary or running daemon.
+// IPFS reports ephemeral native identity mode and does not need a Kubo binary
+// or running daemon for this regression.
 
 const { test: base, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');

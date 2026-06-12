@@ -67,9 +67,9 @@ The packaged app includes the `.node` addon via Electron Builder
   they are not part of this branch's runtime path.
 - Native node data is stored under `ipfs-data/freedom-ipfs/` in development (or
   the `freedom-ipfs/` child of `FREEDOM_IPFS_DATA` when that override is set).
-- Vault-derived IPFS PeerID metadata is prepared for future native support, but
-  it is not reported as the active native node identity until `freedom-ipfs`
-  can consume an injected identity.
+- IPFS identity status is reported as ephemeral. Native `freedom-ipfs` does not
+  consume or expose a durable vault-derived PeerID for read-only retrieval in
+  this release.
 - `window.ipfs.getStatus()` now reports `freedom-ipfs` diagnostics, including
   native gateway stats, instead of polling Kubo's HTTP API.
 - The protocol handler keeps the existing URL canonicalization rules but routes
