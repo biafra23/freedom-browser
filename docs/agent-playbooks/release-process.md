@@ -75,7 +75,7 @@ After updating, run `npm audit` and decide per advisory:
 
 ### Bundled binaries (Ant, Kubo / IPFS, Radicle)
 
-Ant is the exception to the "resolve latest" rule: `scripts/fetch-ant.js` pins a known-good tag (`PINNED_RELEASE_TAG` in the script) so CI and releases install the exact version that was tested. To bump Ant, change the pin in the script and let CI validate it; `ANT_RELEASE_TAG` (a tag, or `latest`) overrides for local testing only.
+Ant is the exception to the "resolve latest" rule: `scripts/fetch-ant.js` pins a known-good tag (`PINNED_RELEASE_TAG` in the script) so CI and releases install the exact version that was tested. To bump Ant, change the pin in the script **together with** `PINNED_SHA256SUMS_DIGEST` (the sha256 of the new release's `SHA256SUMS` asset — the in-repo trust root that makes a later swap of the release assets detectable; compute it with `shasum -a 256` on the freshly downloaded file) and let CI validate it; `ANT_RELEASE_TAG` (a tag, or `latest`) overrides for local testing only and skips the digest check. Every bump must also keep the real-binary integration test green (`src/main/identity/__tests__/integration/bee-to-ant-migration.test.js`, run in the `e2e-onboarding-identity` CI job) — it guards the invariant that antd never self-creates `keys/swarm.key`, which the upgrade-path identity migration depends on.
 
 The other fetch scripts resolve the latest from a **vendor-specific** upstream — do **not** use GitHub tags as a stand-in, they can lag the actual release pointer (Radicle in particular publishes new releases to `files.radicle.xyz` first; GitHub `/tags` showed `1.7.1` as the latest stable while `1.9.1` was already shipping).
 
@@ -138,6 +138,8 @@ npm run lint
 npm test
 npm run check-binaries
 ```
+
+**License gate (blocking).** `NOTICES` and `LICENSE_AUDIT.md` attribute the bundled Ant binary as BSD-3-Clause, but the upstream repo has not yet published its LICENSE file. Before building release artifacts, confirm `https://github.com/solardev-xyz/ant` ships a LICENSE matching the attribution (and update `NOTICES` / `LICENSE_AUDIT.md` / `licenses-audit.json` if it differs). Do not ship a release that bundles `antd` without a published upstream license. Remove this gate once the upstream LICENSE lands.
 
 Spot-check the app once (`npm start`) and confirm the About/version surface reflects the new number.
 
