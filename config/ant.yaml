@@ -3,7 +3,9 @@ api-addr: 127.0.0.1:1633
 swap-enable: 'false'
 mainnet: 'true'
 full-node: 'false'
-cors-allowed-origins: '*'
+# "null" (the literal Origin value, not YAML null) matches what ant-manager
+# writes at runtime — keep the dev sample as tight as production.
+cors-allowed-origins: 'null'
 skip-postage-snapshot: 'true'
 resolver-options: https://ethereum.publicnode.com
 data-dir: DATA_DIR
