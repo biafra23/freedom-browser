@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // Fetches the Ant (`antd`) Swarm light node. Ant is a bee-compatible drop-in
 // published at solardev-xyz/ant; its release assets follow a bee-style os/arch
@@ -16,6 +16,15 @@ const ANT_REPO = process.env.ANT_REPO || 'solardev-xyz/ant';
 // for local testing of newer releases; set it to `latest` to resolve the
 // repo's most recent published release.
 const PINNED_RELEASE_TAG = 'v0.5.18';
+// In-repo trust root for the pinned release: the sha256 of its SHA256SUMS
+// asset, recorded at pin time (trust-on-first-use by the author). The release
+// downloads its SHA256SUMS from the same GitHub release as the binaries, so
+// without this pin a compromised release could swap binaries *and* checksums
+// together. Verifying the sums file against a digest committed here makes
+// that tampering detectable. Update alongside PINNED_RELEASE_TAG on every
+// deliberate bump: `shasum -a 256` the freshly downloaded SHA256SUMS.
+const PINNED_SHA256SUMS_DIGEST =
+  '6e5597dc2aa8f8c96d2be731d792e938890abf67e607f45358f9858bf7a364d4';
 const ANT_RELEASE_TAG = process.env.ANT_RELEASE_TAG || PINNED_RELEASE_TAG;
 
 function fetchReleaseOnce() {
@@ -175,6 +184,26 @@ async function main() {
     const sumsPath = path.join(OUTPUT_DIR, 'SHA256SUMS');
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     await downloadFile(sumsAsset.browser_download_url, sumsPath);
+
+    // Anchor the downloaded checksums to the in-repo trust root. Only applies
+    // to the pinned tag — an ANT_RELEASE_TAG override is a local-testing
+    // escape hatch with no committed digest to check against.
+    if (ANT_RELEASE_TAG === PINNED_RELEASE_TAG) {
+      const sumsDigest = sha256File(sumsPath);
+      if (sumsDigest !== PINNED_SHA256SUMS_DIGEST) {
+        throw new Error(
+          `SHA256SUMS for ${PINNED_RELEASE_TAG} does not match the digest pinned in this repo ` +
+            `(expected ${PINNED_SHA256SUMS_DIGEST}, got ${sumsDigest}). ` +
+            'The release assets may have been re-published or tampered with — refusing to install.'
+        );
+      }
+      console.log('Verified SHA256SUMS against the in-repo pinned digest');
+    } else {
+      console.warn(
+        `ANT_RELEASE_TAG=${ANT_RELEASE_TAG} overrides the pinned release — ` +
+          'skipping the in-repo SHA256SUMS digest check (local testing only).'
+      );
+    }
     const checksums = parseChecksums(fs.readFileSync(sumsPath, 'utf-8'));
 
     const targets = [
@@ -207,7 +236,7 @@ async function main() {
       const binName = target.exe ? 'antd.exe' : 'antd';
       const destFile = path.join(targetDir, binName);
 
-      const tempDest = path.join(targetDir, asset.name);
+      const tempDest = path.join(targetDir, path.basename(asset.name));
       await downloadFile(asset.browser_download_url, tempDest);
 
       const expected = checksums[asset.name];
@@ -222,13 +251,16 @@ async function main() {
       }
       console.log(`Verified checksum for ${asset.name}`);
 
+      // execFileSync with an args vector: the asset name is attacker-influenced
+      // (the checksum above covers content, not filename) and must never reach
+      // a shell.
       if (asset.name.endsWith('.tar.gz') || asset.name.endsWith('.tgz')) {
         console.log(`Extracting ${asset.name}...`);
-        execSync(`tar -xzf "${tempDest}" -C "${targetDir}"`);
+        execFileSync('tar', ['-xzf', tempDest, '-C', targetDir]);
         fs.unlinkSync(tempDest);
       } else if (asset.name.endsWith('.zip')) {
         console.log(`Extracting ${asset.name}...`);
-        execSync(`unzip -o "${tempDest}" -d "${targetDir}"`);
+        execFileSync('unzip', ['-o', tempDest, '-d', targetDir]);
         fs.unlinkSync(tempDest);
       } else {
         fs.renameSync(tempDest, destFile);
