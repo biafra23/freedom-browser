@@ -10,6 +10,12 @@ extern "C" {
 #include "freedom_ipfs.h"
 }
 
+// This copy is a local from-source fallback for desktop addon development.
+// Release artifacts consumed by scripts/fetch-freedom-ipfs-native.js are built
+// and versioned in solardev-xyz/freedom-ipfs, which is the source of truth for
+// exported addon capabilities. CI smokes those prebuilt artifacts; keep this
+// fallback in sync deliberately when touching native bindings.
+
 namespace {
 
 constexpr uint64_t kDefaultMaxCacheBytes = 256ull * 1024ull * 1024ull;

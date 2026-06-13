@@ -186,7 +186,7 @@ class NativeGatewayController {
 
   hasStreamDemand() {
     const desiredSize = this.streamController?.desiredSize;
-    return desiredSize === null || desiredSize === undefined || desiredSize > 0;
+    return desiredSize === undefined || desiredSize > 0;
   }
 
   cancel() {

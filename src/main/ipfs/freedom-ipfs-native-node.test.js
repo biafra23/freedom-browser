@@ -211,6 +211,44 @@ describe('FreedomIpfsNativeNode', () => {
     expect(binding.gatewayRequestRead).toHaveBeenCalledTimes(2);
   });
 
+  test('does not drain into a cancelled response stream', async () => {
+    const binding = createBindingMock({
+      readResults: [
+        { status: createConstants().READ_PENDING, bytesRead: 0 },
+        { status: createConstants().READ_BYTES, bytesRead: 4 },
+      ],
+    });
+    const { FreedomIpfsNativeNode } = loadModule(binding);
+    const node = createStartedNode(FreedomIpfsNativeNode);
+
+    const responsePromise = node.request({ path: '/ipfs/bafy', headers: new Headers() });
+    node.onDispatcherMessage({
+      type: 'event',
+      event: {
+        status: binding.constants.EVENT_STATUS_OK,
+        events: binding.constants.EVENT_RESPONSE_READY,
+        requestHandle: '2',
+      },
+    });
+
+    const response = await responsePromise;
+    const readsBeforeCancel = binding.gatewayRequestRead.mock.calls.length;
+
+    await response.body.getReader().cancel();
+
+    expect(() => {
+      node.onDispatcherMessage({
+        type: 'event',
+        event: {
+          status: binding.constants.EVENT_STATUS_OK,
+          events: binding.constants.EVENT_BODY_READY,
+          requestHandle: '2',
+        },
+      });
+    }).not.toThrow();
+    expect(binding.gatewayRequestRead).toHaveBeenCalledTimes(readsBeforeCancel);
+  });
+
   test('does not double-free when native reports the handle was already freed', async () => {
     const binding = createBindingMock();
     const { FreedomIpfsNativeNode } = loadModule(binding);
