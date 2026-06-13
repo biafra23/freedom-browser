@@ -1,12 +1,9 @@
-// Real-network E2E: Swarm + IPFS cold-start → ENS resolution → page render.
+// Real-network E2E: Swarm + native IPFS cold-start → ENS resolution → page render.
 //
 // Steps:
-//   1. Open the Nodes menu, which starts the bee + ipfs peer-info polling
-//      loops.
-//   2. Wait for both Swarm and IPFS connected-peer counts to climb past
-//      PEER_TARGET. The menu MUST stay open for this — closing it stops
-//      the polling and resets the counters to 0
-//      (src/renderer/lib/bee-ui.js, src/renderer/lib/ipfs-ui.js).
+//   1. Open the Nodes menu, which starts Bee peer-info polling.
+//   2. Wait for Swarm connected-peer count to climb past PEER_TARGET and for
+//      the native IPFS manager to report running.
 //   3. Close the menu so it doesn't sit over the address bar.
 //   4. Navigate to `meinhard.eth` (Swarm-hosted), assert a play-button-
 //      shaped element exists in the active <webview>.
@@ -18,8 +15,8 @@ const {
   expect,
   HAS_BEE_BINARY,
   BEE_BINARY_PATH,
-  HAS_IPFS_BINARY,
-  IPFS_BINARY_PATH,
+  HAS_IPFS_NATIVE_ADDON,
+  IPFS_NATIVE_ADDON_PATH,
 } = require('../live-fixtures');
 
 const PEER_TARGET = 20;
@@ -28,11 +25,12 @@ const PEER_TARGET = 20;
 // see live-fixtures.js), so peerstores are empty and gossip starts
 // from the hardcoded bootstrap nodes every time. Bee in DHT client
 // mode typically crosses 20 peers in 30–180 s on a warm bootstrap
-// network; IPFS (Kubo) usually in 10–60 s. 7 min keeps headroom for
-// slow home connections without making the test feel infinite.
+// network. 7 min keeps headroom for slow home connections without making the
+// test feel infinite.
 const PEER_TIMEOUT_MS = 7 * 60_000;
 const NAVIGATION_TIMEOUT_MS = 90_000;
 const PAGE_RENDER_TIMEOUT_MS = 60_000;
+const IPFS_START_TIMEOUT_MS = 60_000;
 
 const PLAY_BUTTON_SNIFFER = `
   (() => {
@@ -74,10 +72,9 @@ const readPeerCount = async (locator) => {
   return Number.isFinite(n) ? n : -1;
 };
 
-// Wait for a peer-count <span> to exceed PEER_TARGET. Polling cadence
-// is tuned to the renderer's underlying fetch loops (Bee: 500 ms,
-// IPFS: 1 s, see bee-ui.js / ipfs-ui.js) — coarser polls would add
-// dead air between the count crossing the threshold and Playwright
+// Wait for a peer-count <span> to exceed PEER_TARGET. Polling cadence is tuned
+// to the renderer's Bee fetch loop (500 ms, see bee-ui.js) — coarser polls
+// would add dead air between the count crossing the threshold and Playwright
 // noticing.
 const waitForPeers = (locator, label) =>
   expect
@@ -142,35 +139,31 @@ test.describe('live cold-start sites', () => {
     !HAS_BEE_BINARY,
     `Live E2E needs the Bee binary at ${BEE_BINARY_PATH}. Run \`npm run bee:download\` to fetch it.`
   );
-  // IPFS is required (not skipped) per test design — throw at module
-  // load so the runner reports a clear setup error instead of letting
-  // the app launch and time out on "Connected Peers" never updating.
-  if (!HAS_IPFS_BINARY) {
-    throw new Error(
-      `Live E2E requires the IPFS binary at ${IPFS_BINARY_PATH}. Run \`npm run ipfs:download\` to fetch it.`
-    );
-  }
+  test.skip(
+    !HAS_IPFS_NATIVE_ADDON,
+    `Live E2E needs the freedom-ipfs native addon at ${IPFS_NATIVE_ADDON_PATH}. Run \`npm run ipfs:download\` to fetch it.`
+  );
 
-  test('cold-start: Bee + IPFS reach >20 peers, meinhard.eth & vitalik.eth render', async ({
+  test('cold-start: Bee reaches peers, native IPFS starts, meinhard.eth & vitalik.eth render', async ({
     window,
   }) => {
     const beeMenuButton = window.locator('#bee-menu-button');
     const beeDropdown = window.locator('#bee-menu-dropdown');
     const beePeersCount = window.locator('#bee-peers-count');
-    const ipfsPeersCount = window.locator('#ipfs-peers-count');
 
-    // (1) Open the Nodes menu — kicks off bee/ipfs/radicle status
-    // polling in the renderer. Both peer counters live inside this
-    // single dropdown so we only need one open/close cycle.
+    // (1) Open the Nodes menu — kicks off Bee status polling in the renderer.
     await beeMenuButton.click();
     await expect(beeDropdown).toHaveClass(/open/);
 
-    // (2) Wait for both networks to come up. Run sequentially: in
-    // practice IPFS gossips faster than Bee, so by the time Bee crosses
-    // 20 peers IPFS is usually already there and the second poll
-    // returns on its first sample.
+    // (2) Wait for Swarm peers and the native IPFS manager.
     await waitForPeers(beePeersCount, 'Swarm');
-    await waitForPeers(ipfsPeersCount, 'IPFS');
+    await expect
+      .poll(async () => (await window.evaluate(() => window.ipfs.getStatus())).status, {
+        message: 'Waiting for native IPFS manager to start',
+        timeout: IPFS_START_TIMEOUT_MS,
+        intervals: [500, 1000],
+      })
+      .toBe('running');
 
     // (3) Close the menu before driving the address bar. Polling stops
     // and the visible counters reset to 0 — that's expected.

@@ -9,9 +9,9 @@
 // All node data dirs are redirected into a per-run temp root via the
 // FREEDOM_*_DATA overrides so a live run never touches the developer's
 // persistent `bee-data/`, `ipfs-data/`, `radicle-data/`, or `identity-data/`.
-// Settings are seeded so only Bee auto-starts (the node relevant to issue #90);
-// IPFS/Radicle identities are still injected by the wizard but don't need a
-// running daemon.
+// Settings are seeded so only Bee auto-starts (the node relevant to issue #90).
+// IPFS reports ephemeral native identity mode and does not need a Kubo binary
+// or running daemon for this regression.
 
 const { test: base, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -29,16 +29,11 @@ function resolveBinary(dir, base) {
 }
 
 const BEE_BINARY_PATH = resolveBinary('bee-bin', 'bee');
-const IPFS_BINARY_PATH = resolveBinary('ipfs-bin', 'ipfs');
 const HAS_BEE_BINARY = fs.existsSync(BEE_BINARY_PATH);
-const HAS_IPFS_BINARY = fs.existsSync(IPFS_BINARY_PATH);
-// The wizard injects Bee (needs a running node to reproduce #90) and IPFS
-// (its injection runs `ipfs init`, which needs the binary).
-const HAS_BINARIES = HAS_BEE_BINARY && HAS_IPFS_BINARY;
+const HAS_BINARIES = HAS_BEE_BINARY;
 
 // Start only Bee at launch: it's the node whose locked statestore drives the
-// issue #90 wipe. Keeping IPFS/Radicle daemons off reduces flakiness; their
-// identities are still injected by the wizard.
+// issue #90 wipe. Keeping IPFS/Radicle daemons off reduces flakiness.
 const SEED_SETTINGS = {
   enableIdentityWallet: true,
   startBeeAtLaunch: true,
@@ -114,7 +109,5 @@ module.exports = {
   expect,
   HAS_BINARIES,
   HAS_BEE_BINARY,
-  HAS_IPFS_BINARY,
   BEE_BINARY_PATH,
-  IPFS_BINARY_PATH,
 };

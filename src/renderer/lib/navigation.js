@@ -57,9 +57,27 @@ import { parseEthereumUri } from './ethereum-uri.js';
 import { openSendFlow } from './wallet-ui.js';
 import { walletState } from './wallet/wallet-state.js';
 import { formatWeiToDecimal } from './wallet/send.js';
+import { startIpfsProgressStatus, stopIpfsProgressStatus } from './ipfs-progress-status.js';
 
 // Helper to get active tab's navigation state (with fallback to empty object)
 const getNavState = () => getActiveTabState() || {};
+
+const isIpfsProgressUrl = (value) => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return normalized.startsWith('ipfs://') || normalized.startsWith('ipns://');
+};
+
+const shouldShowIpfsProgress = ({ data = {}, tab = null, navState = null } = {}) => {
+  const candidates = [
+    data.url,
+    data.pendingNavigationUrl,
+    navState?.pendingNavigationUrl,
+    tab?.navigationState?.pendingNavigationUrl,
+    tab?.url,
+    navState?.currentPageUrl,
+  ];
+  return candidates.some(isIpfsProgressUrl);
+};
 
 // Extract the bzz reference (64- or 128-char hex) from a Bee gateway URL.
 const extractBzzHash = (gatewayUrl) => {
@@ -1857,6 +1875,11 @@ export const initNavigation = () => {
     switch (eventName) {
       case 'did-start-loading':
         setLoading(true);
+        if (shouldShowIpfsProgress({ data, tab: getActiveTab(), navState })) {
+          startIpfsProgressStatus();
+        } else {
+          stopIpfsProgressStatus({ immediate: true });
+        }
         navState.isWebviewLoading = true;
         reloadBtn.dataset.state = 'stop';
         pushDebug('Webview started loading.');
@@ -1864,6 +1887,7 @@ export const initNavigation = () => {
 
       case 'did-stop-loading':
         setLoading(false);
+        stopIpfsProgressStatus({ immediate: true });
         navState.isWebviewLoading = false;
         navState.hasNavigatedDuringCurrentLoad = false;
         navState.pendingNavigationUrl = '';
@@ -1949,6 +1973,7 @@ export const initNavigation = () => {
         }
         if (webview) webview.classList.remove('hidden');
         setLoading(false);
+        stopIpfsProgressStatus({ immediate: true });
         navState.isWebviewLoading = false;
         navState.hasNavigatedDuringCurrentLoad = false;
         reloadBtn.dataset.state = 'reload';
@@ -2109,6 +2134,11 @@ export const initNavigation = () => {
           }
           // Sync loading state - use tab.isLoading as source of truth
           setLoading(isLoading);
+          if (isLoading && shouldShowIpfsProgress({ data, tab: data.tab, navState: tabNavState })) {
+            startIpfsProgressStatus();
+          } else {
+            stopIpfsProgressStatus({ immediate: true });
+          }
           tabNavState.isWebviewLoading = isLoading;
           reloadBtn.dataset.state = isLoading ? 'stop' : 'reload';
           // Focus address bar only for new empty tabs (home page)

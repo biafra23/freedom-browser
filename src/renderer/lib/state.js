@@ -83,7 +83,7 @@ export const state = {
 
   // IPFS state
   currentIpfsStatus: 'stopped',
-  ipfsPeersInterval: null,
+  ipfsInfoInterval: null,
   ipfsVersionFetched: false,
   ipfsVersionValue: '',
   suppressIpfsRunningStatus: false,

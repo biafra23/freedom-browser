@@ -1,9 +1,9 @@
 // Custom fixtures for the live-network E2E suite.
 //
 // Unlike `fixtures.js`, this launches the app WITHOUT FREEDOM_TEST_MODE,
-// so the actual Bee / IPFS managers start, ENS resolution hits the
+// so the actual Bee / native IPFS managers start, ENS resolution hits the
 // live Universal Resolver, and the production bzz:// / ipfs:// protocol
-// handlers stream from the local gateway. We still pass
+// handlers stream through local nodes. We still pass
 // FREEDOM_TEST_USER_DATA so the test session doesn't write to the
 // user's real settings/bookmarks/history files.
 
@@ -26,22 +26,22 @@ function resolveBeeBinaryPath() {
   return path.join(repoRoot, 'bee-bin', `${platform}-${arch}`, binName);
 }
 
-// Mirror ipfs-manager.js's binary-path resolution. Used by specs that
-// hard-require IPFS so they can fail with a clear message instead of
-// timing out on "Connected Peers" never updating.
-function resolveIpfsBinaryPath() {
-  const platformMap = { darwin: 'mac', linux: 'linux', win32: 'win' };
-  const platform = platformMap[process.platform] || process.platform;
-  const arch = process.arch;
-  const binName = process.platform === 'win32' ? 'ipfs.exe' : 'ipfs';
-  return path.join(repoRoot, 'ipfs-bin', `${platform}-${arch}`, binName);
+function resolveIpfsNativeAddonPath() {
+  return path.join(
+    repoRoot,
+    'native',
+    'freedom-ipfs-node',
+    'build',
+    'Release',
+    'freedom_ipfs_native.node'
+  );
 }
 
 const BEE_BINARY_PATH = resolveBeeBinaryPath();
 const HAS_BEE_BINARY = fs.existsSync(BEE_BINARY_PATH);
 
-const IPFS_BINARY_PATH = resolveIpfsBinaryPath();
-const HAS_IPFS_BINARY = fs.existsSync(IPFS_BINARY_PATH);
+const IPFS_NATIVE_ADDON_PATH = resolveIpfsNativeAddonPath();
+const HAS_IPFS_NATIVE_ADDON = fs.existsSync(IPFS_NATIVE_ADDON_PATH);
 
 const test = base.extend({
   // Playwright derives fixture dependencies from the first parameter's
@@ -53,7 +53,7 @@ const test = base.extend({
     // One temp root per run, with four subdirs:
     //   - userData/     → settings, bookmarks, history (FREEDOM_TEST_USER_DATA)
     //   - bee-data/     → Bee's identity, swarm key, peerstore (FREEDOM_BEE_DATA)
-    //   - ipfs-data/    → Kubo's repo, identity, peerstore (FREEDOM_IPFS_DATA)
+    //   - ipfs-data/    → native freedom-ipfs data base (FREEDOM_IPFS_DATA)
     //   - identity/     → vault meta + node-identity files (FREEDOM_IDENTITY_DATA)
     // All four overrides matter: in dev mode these directories default
     // to `<repoRoot>/bee-data`, `<repoRoot>/ipfs-data`, and
@@ -62,7 +62,7 @@ const test = base.extend({
     // state. The identity override is the most subtle of the three:
     // without it `hasVault()` would still find the developer's local
     // vault, set the node managers into injected-identity mode, and
-    // Bee/IPFS would hang waiting for keys the temp data dirs don't
+    // Bee would hang waiting for keys the temp data dirs don't
     // have.
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'freedom-live-e2e-'));
     const userDataDir = path.join(tmpRoot, 'userData');
@@ -118,6 +118,6 @@ module.exports = {
   expect,
   HAS_BEE_BINARY,
   BEE_BINARY_PATH,
-  HAS_IPFS_BINARY,
-  IPFS_BINARY_PATH,
+  HAS_IPFS_NATIVE_ADDON,
+  IPFS_NATIVE_ADDON_PATH,
 };
