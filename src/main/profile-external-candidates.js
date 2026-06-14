@@ -23,27 +23,6 @@ const DEFAULT_EXTERNAL_NODE_CANDIDATES = {
       },
     ],
   },
-  ipfs: {
-    label: 'IPFS',
-    endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
-    externalConfig: {
-      mode: 'external',
-      externalApi: 'http://127.0.0.1:5001',
-      externalGateway: 'http://localhost:8080',
-    },
-    probes: [
-      {
-        url: 'http://127.0.0.1:5001/api/v0/id',
-        method: 'POST',
-        expectJson: true,
-      },
-      {
-        url: 'http://localhost:8080/',
-        method: 'GET',
-        acceptAnyHttpResponse: true,
-      },
-    ],
-  },
   radicle: {
     label: 'Radicle',
     endpoints: ['http://127.0.0.1:8780'],

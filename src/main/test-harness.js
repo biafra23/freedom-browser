@@ -286,9 +286,10 @@ function seedRegistry() {
   });
   setStatusMessage('bee', 'Test mode (Swarm stub)');
   updateService('ipfs', {
-    api: 'http://127.0.0.1:15001',
-    gateway: 'http://localhost:18080',
+    api: null,
+    gateway: null,
     mode: MODE.BUNDLED,
+    backend: 'freedom-ipfs',
   });
   setStatusMessage('ipfs', 'Test mode (IPFS stub)');
 }

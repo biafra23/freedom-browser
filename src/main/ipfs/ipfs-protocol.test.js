@@ -1,14 +1,10 @@
 jest.mock('electron', () => ({
   // Production uses `net.fetch` (Chromium network stack) so `*.localhost`
   // resolves per RFC 6761 — the OS resolver on macOS doesn't, so the
-  // Kubo subdomain-redirect contract relies on this. Tests inject
+  // native gateway subdomain-redirect contract relies on this. Tests inject
   // `fetchImpl` explicitly so the default is never exercised here, but
   // we still need to satisfy the require.
   net: { fetch: jest.fn() },
-}));
-
-jest.mock('../service-registry', () => ({
-  getIpfsGatewayUrl: jest.fn(() => 'http://localhost:8080'),
 }));
 
 jest.mock('../logger', () => ({
@@ -26,22 +22,17 @@ jest.mock('../ens-resolver', () => ({
   resolveEnsContent: (...args) => mockResolveEnsContent(...args),
 }));
 
-const {
-  buildGatewayUrl,
-  sanitizeRequestHeaders,
-  handleRequest,
-} = require('./ipfs-protocol');
-const { getIpfsGatewayUrl } = require('../service-registry');
+const { buildGatewayUrl, sanitizeRequestHeaders, handleRequest } = require('./ipfs-protocol');
 
 const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 // Canonical CIDv1 base32 (`bafy...`) form of `CIDV0`; used to assert that
-// the handler converts mixed-case CIDv0 hosts before forwarding to Kubo.
+// the handler converts mixed-case CIDv0 hosts before forwarding to freedom-ipfs.
 const CIDV0_AS_BASE32 = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
 const CIDV1_BASE32 = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 const CIDV1_BASE58 = 'zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA';
 // Canonical CIDv1 base32 (`bafk…` raw) form of `CIDV1_BASE58`; used to
 // assert that the handler converts mixed-case `z…` hosts before forwarding
-// to Kubo (base58btc is case-sensitive and Chromium lowercases standard-
+// to native gateway (base58btc is case-sensitive and Chromium lowercases standard-
 // scheme hosts, so re-encoding to lowercase-canonical base32 is the only
 // way to round-trip cleanly).
 const CIDV1_BASE58_AS_BASE32 = 'bafkreidon73zkcrwdb5iafqtijxildoonbwnpv7dyd6ef3qdgads2jc4su';
@@ -58,17 +49,6 @@ const IPNS_KEY_BASE58_ED25519 = '12D3KooWGuQafLgPqRRRkRSUNqZNQwL2gMZcQ27GiNpoVxz
 describe('buildGatewayUrl(ipfs)', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
-    getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
-  });
-
-  test('returns 503 when the IPFS gateway endpoint is not hydrated', async () => {
-    getIpfsGatewayUrl.mockReturnValue(null);
-
-    await expect(buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE32}/index.html`)).resolves.toEqual({
-      ok: false,
-      status: 503,
-      message: 'IPFS node is not ready',
-    });
   });
 
   test.each([
@@ -86,10 +66,10 @@ describe('buildGatewayUrl(ipfs)', () => {
       CIDV1_BASE58_DAGJSON,
       CIDV1_BASE58_DAGJSON_AS_BASE32,
     ],
-  ])('converts ipfs://<%s>/path to the Kubo gateway URL', async (_label, host, expected) => {
+  ])('converts ipfs://<%s>/path to the native gateway-shaped URL', async (_label, host, expected) => {
     await expect(buildGatewayUrl('ipfs', `ipfs://${host}/index.html`)).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipfs/${expected}/index.html`,
+      url: `http://freedom-ipfs.localhost/ipfs/${expected}/index.html`,
     });
     expect(mockResolveEnsContent).not.toHaveBeenCalled();
   });
@@ -107,7 +87,7 @@ describe('buildGatewayUrl(ipfs)', () => {
       buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE58_DAGJSON_AS_BASE32}/index.html`)
     ).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipfs/${CIDV1_BASE58_DAGJSON_AS_BASE32}/index.html`,
+      url: `http://freedom-ipfs.localhost/ipfs/${CIDV1_BASE58_DAGJSON_AS_BASE32}/index.html`,
     });
   });
 
@@ -115,11 +95,8 @@ describe('buildGatewayUrl(ipfs)', () => {
     // Same Chromium-normalisation story as the CIDv0 case below — base58btc
     // is case-sensitive, and once the host segment has been lowercased the
     // original bytes are unrecoverable. Surface a 400 with an actionable
-    // message rather than forwarding garbage to Kubo.
-    const result = await buildGatewayUrl(
-      'ipfs',
-      `ipfs://${CIDV1_BASE58.toLowerCase()}/page`
-    );
+    // message rather than forwarding garbage to native gateway.
+    const result = await buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE58.toLowerCase()}/page`);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased CIDv1 base58btc/);
@@ -130,11 +107,11 @@ describe('buildGatewayUrl(ipfs)', () => {
   // can carry mixed-case CIDv0; in practice Chromium has already lowercased
   // the host before the handler runs (see the standard-scheme covered below).
   // Either way, the handler converts the recoverable form to CIDv1 base32
-  // before forwarding to Kubo.
+  // before forwarding to freedom-ipfs.
   test('canonicalises a properly-cased CIDv0 host to CIDv1 base32', async () => {
     await expect(buildGatewayUrl('ipfs', `ipfs://${CIDV0}/index.html`)).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipfs/${CIDV0_AS_BASE32}/index.html`,
+      url: `http://freedom-ipfs.localhost/ipfs/${CIDV0_AS_BASE32}/index.html`,
     });
   });
 
@@ -145,11 +122,8 @@ describe('buildGatewayUrl(ipfs)', () => {
     // for standard schemes and lowercases the host segment before
     // protocol.handle is invoked. We can't recover the original CIDv0
     // bytes, so we 400 ourselves rather than forwarding a guaranteed-bad
-    // reference to Kubo (whose 400 message is less actionable).
-    const result = await buildGatewayUrl(
-      'ipfs',
-      `ipfs://${CIDV0.toLowerCase()}/page`
-    );
+    // reference to native gateway (whose 400 message is less actionable).
+    const result = await buildGatewayUrl('ipfs', `ipfs://${CIDV0.toLowerCase()}/page`);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased CIDv0/);
@@ -159,7 +133,7 @@ describe('buildGatewayUrl(ipfs)', () => {
   test('preserves query string and drops fragment (Chromium never sends it)', async () => {
     await expect(buildGatewayUrl('ipfs', `ipfs://${CIDV0}/page?v=1`)).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipfs/${CIDV0_AS_BASE32}/page?v=1`,
+      url: `http://freedom-ipfs.localhost/ipfs/${CIDV0_AS_BASE32}/page?v=1`,
     });
   });
 
@@ -169,9 +143,7 @@ describe('buildGatewayUrl(ipfs)', () => {
   });
 
   test('returns null for DNSLink-style hosts under ipfs:// (only ipns:// accepts those)', async () => {
-    await expect(
-      buildGatewayUrl('ipfs', 'ipfs://docs.ipfs.tech/install')
-    ).resolves.toBeNull();
+    await expect(buildGatewayUrl('ipfs', 'ipfs://docs.ipfs.tech/install')).resolves.toBeNull();
     expect(mockResolveEnsContent).not.toHaveBeenCalled();
   });
 
@@ -179,7 +151,7 @@ describe('buildGatewayUrl(ipfs)', () => {
     // Sub-resource fetches that bypass the renderer's address-bar pipeline
     // can land here with the path-gateway shape `ipfs://<gateway-host>/ipfs/<cid>/...`
     // (typical source: protocol-relative URLs like
-    // `<img src="//localhost:8080/ipfs/<cid>/img.png">` in Kubo's HTML
+    // `<img src="//localhost:8080/ipfs/<cid>/img.png">` in native gateway's HTML
     // resolved against the page's `ipfs:` scheme). The handler must
     // recognise the embedded ref so the bytes load instead of 400-ing.
 
@@ -196,18 +168,16 @@ describe('buildGatewayUrl(ipfs)', () => {
           buildGatewayUrl('ipfs', `ipfs://${gatewayHost}/ipfs/${CIDV1_BASE32}/img.png`)
         ).resolves.toEqual({
           ok: true,
-          url: `http://localhost:8080/ipfs/${CIDV1_BASE32}/img.png`,
+          url: `http://freedom-ipfs.localhost/ipfs/${CIDV1_BASE32}/img.png`,
         });
       }
     );
 
     test('canonicalises an embedded CIDv0 to base32 for the upstream fetch', async () => {
       const expected = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
-      await expect(
-        buildGatewayUrl('ipfs', `ipfs://localhost/ipfs/${CIDV0}/sub`)
-      ).resolves.toEqual({
+      await expect(buildGatewayUrl('ipfs', `ipfs://localhost/ipfs/${CIDV0}/sub`)).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipfs/${expected}/sub`,
+        url: `http://freedom-ipfs.localhost/ipfs/${expected}/sub`,
       });
     });
 
@@ -216,7 +186,7 @@ describe('buildGatewayUrl(ipfs)', () => {
         buildGatewayUrl('ipfs', `ipfs://localhost/ipns/${IPNS_KEY_BASE36}/install`)
       ).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipns/${IPNS_KEY_BASE36}/install`,
+        url: `http://freedom-ipfs.localhost/ipns/${IPNS_KEY_BASE36}/install`,
       });
     });
 
@@ -226,13 +196,13 @@ describe('buildGatewayUrl(ipfs)', () => {
       // with `coverage` as the CID. The disambiguation is on the OUTER
       // host: only known public gateways / loopback hosts trigger the
       // rewrite. `docs.ipfs.tech` isn't in the gateway list so the path
-      // passes through unchanged for Kubo to resolve as a DNSLink path.
-      await expect(
-        buildGatewayUrl('ipns', 'ipns://docs.ipfs.tech/ipfs/coverage')
-      ).resolves.toEqual({
-        ok: true,
-        url: 'http://localhost:8080/ipns/docs.ipfs.tech/ipfs/coverage',
-      });
+      // passes through unchanged for native gateway to resolve as a DNSLink path.
+      await expect(buildGatewayUrl('ipns', 'ipns://docs.ipfs.tech/ipfs/coverage')).resolves.toEqual(
+        {
+          ok: true,
+          url: 'http://freedom-ipfs.localhost/ipns/docs.ipfs.tech/ipfs/coverage',
+        }
+      );
     });
 
     test('rewrites ipfs://<gw>/ipns/<dnslink-name>/path → IPNS branch with DNSLink host', async () => {
@@ -244,7 +214,7 @@ describe('buildGatewayUrl(ipfs)', () => {
         buildGatewayUrl('ipfs', 'ipfs://dweb.link/ipns/docs.ipfs.tech/install')
       ).resolves.toEqual({
         ok: true,
-        url: 'http://localhost:8080/ipns/docs.ipfs.tech/install',
+        url: 'http://freedom-ipfs.localhost/ipns/docs.ipfs.tech/install',
       });
     });
 
@@ -254,7 +224,7 @@ describe('buildGatewayUrl(ipfs)', () => {
         buildGatewayUrl('ipfs', `ipfs://localhost/ipns/${IPNS_KEY_BASE58_ED25519}/foo`)
       ).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipns/${expected}/foo`,
+        url: `http://freedom-ipfs.localhost/ipns/${expected}/foo`,
       });
     });
 
@@ -267,7 +237,7 @@ describe('buildGatewayUrl(ipfs)', () => {
         buildGatewayUrl('ipfs', `ipfs://localhost/ipfs/${CIDV1_BASE58}/img.png`)
       ).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipfs/${CIDV1_BASE58_AS_BASE32}/img.png`,
+        url: `http://freedom-ipfs.localhost/ipfs/${CIDV1_BASE58_AS_BASE32}/img.png`,
       });
     });
 
@@ -276,7 +246,7 @@ describe('buildGatewayUrl(ipfs)', () => {
         buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE32}/ipfs/somefile`)
       ).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipfs/${CIDV1_BASE32}/ipfs/somefile`,
+        url: `http://freedom-ipfs.localhost/ipfs/${CIDV1_BASE32}/ipfs/somefile`,
       });
     });
 
@@ -307,11 +277,9 @@ describe('buildGatewayUrl(ipfs)', () => {
         name: 'vitalik.eth',
       });
 
-      await expect(
-        buildGatewayUrl('ipfs', 'ipfs://vitalik.eth/page.html?v=1')
-      ).resolves.toEqual({
+      await expect(buildGatewayUrl('ipfs', 'ipfs://vitalik.eth/page.html?v=1')).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipfs/${CIDV0}/page.html?v=1`,
+        url: `http://freedom-ipfs.localhost/ipfs/${CIDV0}/page.html?v=1`,
       });
       expect(mockResolveEnsContent).toHaveBeenCalledWith('vitalik.eth');
     });
@@ -326,7 +294,7 @@ describe('buildGatewayUrl(ipfs)', () => {
 
       await expect(buildGatewayUrl('ipfs', 'ipfs://myapp.box/')).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipfs/${CIDV0}/`,
+        url: `http://freedom-ipfs.localhost/ipfs/${CIDV0}/`,
       });
     });
 
@@ -423,22 +391,18 @@ describe('buildGatewayUrl(ipfs)', () => {
 describe('buildGatewayUrl(ipns)', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
-    getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
   });
 
   test.each([
     ['libp2p key base36', IPNS_KEY_BASE36, IPNS_KEY_BASE36],
     ['DNSLink hostname', 'docs.ipfs.tech', 'docs.ipfs.tech'],
-  ])(
-    'converts ipns://<%s>/path to the Kubo gateway URL',
-    async (_label, host, expected) => {
-      await expect(buildGatewayUrl('ipns', `ipns://${host}/install`)).resolves.toEqual({
-        ok: true,
-        url: `http://localhost:8080/ipns/${expected}/install`,
-      });
-      expect(mockResolveEnsContent).not.toHaveBeenCalled();
-    }
-  );
+  ])('converts ipns://<%s>/path to the native gateway-shaped URL', async (_label, host, expected) => {
+    await expect(buildGatewayUrl('ipns', `ipns://${host}/install`)).resolves.toEqual({
+      ok: true,
+      url: `http://freedom-ipfs.localhost/ipns/${expected}/install`,
+    });
+    expect(mockResolveEnsContent).not.toHaveBeenCalled();
+  });
 
   test('canonicalises a properly-cased base58btc IPNS peer ID host to libp2p-key base36', async () => {
     const expected = 'k51qzi5uqu5dit2ibca2nikouuslvo21d3trnsklq7f1c3zdelrq38i7nahsgk';
@@ -446,7 +410,7 @@ describe('buildGatewayUrl(ipns)', () => {
       buildGatewayUrl('ipns', `ipns://${IPNS_KEY_BASE58_ED25519}/install`)
     ).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipns/${expected}/install`,
+      url: `http://freedom-ipfs.localhost/ipns/${expected}/install`,
     });
   });
 
@@ -465,19 +429,14 @@ describe('buildGatewayUrl(ipns)', () => {
   test('canonicalises a properly-cased CIDv1 base58btc (z…) IPNS host to base32', async () => {
     // IPNS keys can be published as CIDv1 base58btc with the libp2p-key
     // codec. Same Chromium-lowercasing problem as the IPFS z… case.
-    await expect(
-      buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58}/install`)
-    ).resolves.toEqual({
+    await expect(buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58}/install`)).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipns/${CIDV1_BASE58_AS_BASE32}/install`,
+      url: `http://freedom-ipfs.localhost/ipns/${CIDV1_BASE58_AS_BASE32}/install`,
     });
   });
 
   test('rejects a lowercased CIDv1 base58btc (z…) IPNS host with a clear 400', async () => {
-    const result = await buildGatewayUrl(
-      'ipns',
-      `ipns://${CIDV1_BASE58.toLowerCase()}/install`
-    );
+    const result = await buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58.toLowerCase()}/install`);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased CIDv1 base58btc IPNS/);
@@ -485,11 +444,9 @@ describe('buildGatewayUrl(ipns)', () => {
   });
 
   test('preserves query string', async () => {
-    await expect(
-      buildGatewayUrl('ipns', `ipns://${IPNS_KEY_BASE36}/page?v=1`)
-    ).resolves.toEqual({
+    await expect(buildGatewayUrl('ipns', `ipns://${IPNS_KEY_BASE36}/page?v=1`)).resolves.toEqual({
       ok: true,
-      url: `http://localhost:8080/ipns/${IPNS_KEY_BASE36}/page?v=1`,
+      url: `http://freedom-ipfs.localhost/ipns/${IPNS_KEY_BASE36}/page?v=1`,
     });
   });
 
@@ -497,7 +454,7 @@ describe('buildGatewayUrl(ipns)', () => {
     test('routes ENS hosts to the resolver, not the raw IPNS branch', async () => {
       // jalil.eth is a valid IPNS hostname per the regex AND an ENS host —
       // the order of checks must prefer ENS so the contenthash gets resolved
-      // rather than handed to Kubo as a literal DNSLink lookup.
+      // rather than handed to native gateway as a literal DNSLink lookup.
       mockResolveEnsContent.mockResolvedValue({
         type: 'ok',
         protocol: 'ipns',
@@ -508,7 +465,7 @@ describe('buildGatewayUrl(ipns)', () => {
 
       await expect(buildGatewayUrl('ipns', 'ipns://jalil.eth/')).resolves.toEqual({
         ok: true,
-        url: `http://localhost:8080/ipns/${IPNS_KEY_BASE58_ED25519}/`,
+        url: `http://freedom-ipfs.localhost/ipns/${IPNS_KEY_BASE58_ED25519}/`,
       });
       expect(mockResolveEnsContent).toHaveBeenCalledWith('jalil.eth');
     });
@@ -573,7 +530,6 @@ describe('sanitizeRequestHeaders', () => {
 describe('handleRequest', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
-    getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
   });
 
   const makeRequest = (url, { method = 'GET', headers = {} } = {}) => ({
@@ -604,17 +560,15 @@ describe('handleRequest', () => {
 
   test('proxies a 200 through untouched (raw CIDv1 base32)', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(new Response('hello', { status: 200 }));
-    const res = await handleRequest(
-      'ipfs',
-      makeRequest(`ipfs://${CIDV1_BASE32}/file.txt`),
-      { fetchImpl }
-    );
+    const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV1_BASE32}/file.txt`), {
+      fetchImpl,
+    });
     expect(res.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [calledUrl, init] = fetchImpl.mock.calls[0];
-    expect(calledUrl).toBe(`http://localhost:8080/ipfs/${CIDV1_BASE32}/file.txt`);
+    expect(calledUrl).toBe(`http://freedom-ipfs.localhost/ipfs/${CIDV1_BASE32}/file.txt`);
     expect(init.method).toBe('GET');
-    // The Kubo subdomain redirect must be followed inside this handler;
+    // The native gateway subdomain redirect must be followed inside this handler;
     // surfacing it to Chromium would re-introduce the gateway-origin bug.
     expect(init.redirect).toBe('follow');
   });
@@ -633,9 +587,7 @@ describe('handleRequest', () => {
     });
     expect(res.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0][0]).toBe(
-      `http://localhost:8080/ipfs/${CIDV0}/index.html`
-    );
+    expect(fetchImpl.mock.calls[0][0]).toBe(`http://freedom-ipfs.localhost/ipfs/${CIDV0}/index.html`);
   });
 
   test('resolves ENS-host ipns URLs and proxies to the gateway', async () => {
@@ -651,7 +603,7 @@ describe('handleRequest', () => {
     expect(res.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0][0]).toBe(
-      `http://localhost:8080/ipns/${IPNS_KEY_BASE58_ED25519}/`
+      `http://freedom-ipfs.localhost/ipns/${IPNS_KEY_BASE58_ED25519}/`
     );
   });
 
@@ -681,7 +633,7 @@ describe('handleRequest', () => {
   });
 
   test('passes 4xx and 5xx through to the page (no retry)', async () => {
-    // Unlike the bzz handler, we don't retry transient 5xx — Kubo doesn't
+    // Unlike the bzz handler, we don't retry transient 5xx — native gateway doesn't
     // have Bee's cold-content reliability characteristic, so 5xx surfaces
     // immediately and SPAs can fall back without a multi-second hang.
     const fetchImpl = jest.fn().mockResolvedValue(new Response('', { status: 503 }));
@@ -699,7 +651,7 @@ describe('handleRequest', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  test('returns 503 when Kubo is unreachable (ECONNREFUSED)', async () => {
+  test('returns 503 when the freedom-ipfs gateway is unreachable (ECONNREFUSED)', async () => {
     const err = new Error('connect failed');
     err.code = 'ECONNREFUSED';
     const fetchImpl = jest.fn().mockRejectedValue(err);
@@ -707,7 +659,7 @@ describe('handleRequest', () => {
     const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV0}/x`), { fetchImpl });
     expect(res.status).toBe(503);
     const body = await res.json();
-    expect(body.message).toBe('kubo gateway unreachable');
+    expect(body.message).toBe('freedom-ipfs gateway unreachable');
   });
 
   test('returns 502 for other fetch errors', async () => {
@@ -716,10 +668,10 @@ describe('handleRequest', () => {
     const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV0}/x`), { fetchImpl });
     expect(res.status).toBe(502);
     const body = await res.json();
-    expect(body.message).toBe('kubo gateway error');
+    expect(body.message).toBe('freedom-ipfs gateway error');
   });
 
-  test('returns 504 when Kubo accepts the connection but never responds', async () => {
+  test('returns 504 when the freedom-ipfs gateway accepts the connection but never responds', async () => {
     // P2 from the round-4 review: without a per-attempt timeout, a
     // stalled gateway hangs the page load indefinitely. The fetch is
     // resolved by the abort signal, so the test settles deterministically
@@ -746,7 +698,7 @@ describe('handleRequest', () => {
     });
     expect(res.status).toBe(504);
     const body = await res.json();
-    expect(body.message).toBe('kubo gateway timeout');
+    expect(body.message).toBe('freedom-ipfs gateway timeout');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 

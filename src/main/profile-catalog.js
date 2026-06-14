@@ -20,8 +20,6 @@ const DEFAULT_CATALOG_LOCK_RETRIES = {
 const PACKAGED_PORT_BASE = {
   beeApi: 11633,
   beeP2p: 12633,
-  ipfsApi: 15001,
-  ipfsGateway: 18080,
   radicleHttp: 18780,
   radicleP2p: 18776,
 };
@@ -29,8 +27,6 @@ const PACKAGED_PORT_BASE = {
 const DEV_PORT_BASE = {
   beeApi: 21633,
   beeP2p: 22633,
-  ipfsApi: 25001,
-  ipfsGateway: 28080,
   radicleHttp: 28780,
   radicleP2p: 28776,
 };
@@ -82,8 +78,6 @@ function getManagedPorts(slot, options = {}) {
   return {
     beeApi: base.beeApi + offset + slot,
     beeP2p: base.beeP2p + offset + slot,
-    ipfsApi: base.ipfsApi + offset + slot,
-    ipfsGateway: base.ipfsGateway + offset + slot,
     radicleHttp: base.radicleHttp + offset + slot,
     radicleP2p: base.radicleP2p + offset + slot,
   };
@@ -99,10 +93,7 @@ function buildNodeConfig(ports) {
     },
     ipfs: {
       mode: 'managed',
-      apiPort: ports.ipfsApi,
-      gatewayPort: ports.ipfsGateway,
-      externalApi: null,
-      externalGateway: null,
+      backend: 'freedom-ipfs',
     },
     radicle: {
       mode: 'managed',
@@ -123,9 +114,8 @@ function rebaseNodeConfig(nodes = {}, ports) {
     },
     ipfs: {
       ...defaults.ipfs,
-      mode: nodes.ipfs?.mode || defaults.ipfs.mode,
-      externalApi: nodes.ipfs?.externalApi || null,
-      externalGateway: nodes.ipfs?.externalGateway || null,
+      mode: nodes.ipfs?.mode === 'disabled' ? 'disabled' : defaults.ipfs.mode,
+      backend: 'freedom-ipfs',
     },
     radicle: {
       ...defaults.radicle,
@@ -152,16 +142,8 @@ function fillMissingNodeConfig(nodes = {}, ports) {
     },
     ipfs: {
       ...defaults.ipfs,
-      ...(nodes.ipfs || {}),
-      mode: nodes.ipfs?.mode || defaults.ipfs.mode,
-      apiPort: Number.isInteger(nodes.ipfs?.apiPort)
-        ? nodes.ipfs.apiPort
-        : defaults.ipfs.apiPort,
-      gatewayPort: Number.isInteger(nodes.ipfs?.gatewayPort)
-        ? nodes.ipfs.gatewayPort
-        : defaults.ipfs.gatewayPort,
-      externalApi: nodes.ipfs?.externalApi || null,
-      externalGateway: nodes.ipfs?.externalGateway || null,
+      mode: nodes.ipfs?.mode === 'disabled' ? 'disabled' : defaults.ipfs.mode,
+      backend: 'freedom-ipfs',
     },
     radicle: {
       ...defaults.radicle,
@@ -212,8 +194,6 @@ function getReservedManagedPorts(appRoot, options = {}) {
 
     addIntegerPort(reservedPorts, nodes.bee?.apiPort);
     addIntegerPort(reservedPorts, nodes.bee?.p2pPort);
-    addIntegerPort(reservedPorts, nodes.ipfs?.apiPort);
-    addIntegerPort(reservedPorts, nodes.ipfs?.gatewayPort);
     addIntegerPort(reservedPorts, nodes.radicle?.httpPort);
     addIntegerPort(reservedPorts, nodes.radicle?.p2pPort);
   }
@@ -753,16 +733,25 @@ function updateProfileNodeConfig(profile, protocol, updates) {
     throw new Error(`Unsupported profile node protocol: ${protocol}`);
   }
 
+  const normalizedUpdates = protocol === 'ipfs'
+    ? {
+        mode: updates?.mode === 'disabled' ? 'disabled' : 'managed',
+        backend: 'freedom-ipfs',
+      }
+    : updates;
+
   return withCatalogWriteLock(profile.appRoot, () => {
     const catalog = loadCatalog(profile.appRoot);
     const record = findProfile(catalog, profile.id);
 
     if (record) {
       record.nodes = record.nodes || {};
-      record.nodes[protocol] = {
-        ...(record.nodes[protocol] || {}),
-        ...updates,
-      };
+      record.nodes[protocol] = protocol === 'ipfs'
+        ? normalizedUpdates
+        : {
+            ...(record.nodes[protocol] || {}),
+            ...normalizedUpdates,
+          };
       saveCatalog(profile.appRoot, catalog);
     }
 
@@ -772,10 +761,12 @@ function updateProfileNodeConfig(profile, protocol, updates) {
       : { ...profile.metadata };
 
     metadata.nodes = metadata.nodes || {};
-    metadata.nodes[protocol] = {
-      ...(metadata.nodes[protocol] || {}),
-      ...updates,
-    };
+    metadata.nodes[protocol] = protocol === 'ipfs'
+      ? normalizedUpdates
+      : {
+          ...(metadata.nodes[protocol] || {}),
+          ...normalizedUpdates,
+        };
     writeProfileMetadata(profile.userDataDir, metadata);
 
     return {

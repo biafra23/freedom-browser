@@ -20,8 +20,8 @@ const MODE = {
 // Registry state
 const registry = {
   ipfs: {
-    api: null, // e.g., 'http://127.0.0.1:15001'
-    gateway: null, // e.g., 'http://localhost:18080'
+    api: null,
+    gateway: null,
     mode: MODE.NONE,
     statusMessage: null,
     tempMessage: null,
@@ -47,12 +47,6 @@ const registry = {
 
 // Default ports
 const DEFAULTS = {
-  ipfs: {
-    apiPort: 5001,
-    gatewayPort: 8080,
-    p2pPort: 4001,
-    fallbackRange: 10, // Try up to 10 ports above default
-  },
   bee: {
     apiPort: 1633,
     // Note: Newer Bee versions serve debug/gateway endpoints on the main API port

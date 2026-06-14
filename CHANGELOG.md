@@ -2,6 +2,18 @@
 
 All notable changes to Freedom will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Native `freedom-ipfs` IPFS runtime:
+  - `ipfs://` and `ipns://` pages load through the embedded native request API
+  - Node panels show ephemeral IPFS identity mode and native request diagnostics
+
+### Changed
+
+- Bundled IPFS runtime moves from Kubo 0.41.0 to `freedom-ipfs` 0.4.1 native addons for macOS, Linux, and Windows
+
 ## [0.7.4] - 2026-06-01
 
 ### Added

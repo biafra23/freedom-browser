@@ -405,7 +405,7 @@ describe('ipc-handlers', () => {
           slot: 2,
           nodes: {
             bee: { mode: 'managed', apiPort: 11635 },
-            ipfs: { mode: 'external', externalApi: 'http://127.0.0.1:5001' },
+            ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
             radicle: { mode: 'disabled' },
           },
         },
@@ -422,7 +422,7 @@ describe('ipc-handlers', () => {
       slot: 2,
       nodes: {
         bee: { mode: 'managed', apiPort: 11635 },
-        ipfs: { mode: 'external', externalApi: 'http://127.0.0.1:5001' },
+        ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
         radicle: { mode: 'disabled' },
       },
     });
@@ -675,7 +675,7 @@ describe('ipc-handlers', () => {
         slot: 1,
         nodes: {
           bee: { mode: 'managed', apiPort: 11634 },
-          ipfs: { mode: 'managed', apiPort: 15002, gatewayPort: 18081 },
+          ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
           radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
         },
       },
@@ -706,7 +706,7 @@ describe('ipc-handlers', () => {
           slot: 1,
           nodes: {
             bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
-            ipfs: { mode: 'managed', apiPort: 15002, gatewayPort: 18081 },
+            ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
             radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
           },
         },
@@ -725,7 +725,7 @@ describe('ipc-handlers', () => {
       slot: 1,
       nodes: {
         bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
-        ipfs: { mode: 'managed', apiPort: 15002, gatewayPort: 18081 },
+        ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
         radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
       },
     });
@@ -760,8 +760,8 @@ describe('ipc-handlers', () => {
         config: { mode: 'external', externalApi: '127.0.0.1:5001' },
       })
     ).resolves.toEqual(
-      failure('MISSING_PROFILE_NODE_ENDPOINT', 'External node mode requires endpoints', {
-        fields: ['externalGateway'],
+      failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
+        mode: 'external',
       })
     );
 

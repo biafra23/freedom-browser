@@ -11,20 +11,19 @@ describe('renderer state', () => {
     global.window = originalWindow;
   });
 
-  test('leaves route prefixes unset until env config or registry hydration', async () => {
+  test('uses a synthetic native IPFS base and leaves other prefixes unset until config', async () => {
     const defaults = await loadModule();
     expect(defaults.state.bzzRoutePrefix).toBeNull();
-    expect(defaults.state.ipfsRoutePrefix).toBeNull();
-    expect(defaults.state.ipnsRoutePrefix).toBeNull();
+    expect(defaults.state.ipfsRoutePrefix).toBe('http://freedom-ipfs.localhost/ipfs/');
+    expect(defaults.state.ipnsRoutePrefix).toBe('http://freedom-ipfs.localhost/ipns/');
     expect(defaults.state.radicleApiPrefix).toBeNull();
 
     const custom = await loadModule({
       beeApi: 'http://127.0.0.1:1733/',
-      ipfsGateway: 'http://127.0.0.1:8181/',
     });
     expect(custom.state.bzzRoutePrefix).toBe('http://127.0.0.1:1733/bzz/');
-    expect(custom.state.ipfsRoutePrefix).toBe('http://127.0.0.1:8181/ipfs/');
-    expect(custom.state.ipnsRoutePrefix).toBe('http://127.0.0.1:8181/ipns/');
+    expect(custom.state.ipfsRoutePrefix).toBe('http://freedom-ipfs.localhost/ipfs/');
+    expect(custom.state.ipnsRoutePrefix).toBe('http://freedom-ipfs.localhost/ipns/');
   });
 
   test('builds service urls from registry values and rejects missing endpoints', async () => {

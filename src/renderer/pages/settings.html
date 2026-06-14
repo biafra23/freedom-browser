@@ -1120,7 +1120,11 @@
         external: 'Use external node',
         disabled: 'Disabled',
       };
-      const EDITABLE_NODE_MODES = ['managed', 'external', 'disabled'];
+      const EDITABLE_NODE_MODES = {
+        bee: ['managed', 'external', 'disabled'],
+        ipfs: ['managed', 'disabled'],
+        radicle: ['managed', 'external', 'disabled'],
+      };
 
       const SERVICE_LABELS = {
         bee: 'Swarm',
@@ -1152,10 +1156,7 @@
           ].filter(Boolean);
         }
         if (protocol === 'ipfs') {
-          return [
-            config?.externalApi || service?.api || (config?.apiPort ? `http://127.0.0.1:${config.apiPort}` : null),
-            config?.externalGateway || service?.gateway || (config?.gatewayPort ? `http://localhost:${config.gatewayPort}` : null),
-          ].filter(Boolean);
+          return ['Embedded freedom-ipfs native node'];
         }
         return [
           config?.externalHttp || service?.api || (config?.httpPort ? `http://127.0.0.1:${config.httpPort}` : null),
@@ -1167,16 +1168,13 @@
           return [{ key: 'externalApi', label: 'API', value: config?.externalApi }];
         }
         if (protocol === 'ipfs') {
-          return [
-            { key: 'externalApi', label: 'API', value: config?.externalApi },
-            { key: 'externalGateway', label: 'Gateway', value: config?.externalGateway },
-          ];
+          return [];
         }
         return [{ key: 'externalHttp', label: 'HTTP', value: config?.externalHttp }];
       };
 
-      const renderModeOptions = (mode) =>
-        EDITABLE_NODE_MODES.map(
+      const renderModeOptions = (protocol, mode) =>
+        (EDITABLE_NODE_MODES[protocol] || EDITABLE_NODE_MODES.bee).map(
           (value) =>
             `<option value="${value}"${mode === value ? ' selected' : ''}>${NODE_MODE_LABELS[value]}</option>`
         ).join('');
@@ -1192,7 +1190,7 @@
                 data-endpoint-field="${field.key}"
                 type="text"
                 value="${esc(field.value || '')}"
-                placeholder="http://127.0.0.1:${protocol === 'bee' ? '1633' : protocol === 'ipfs' ? '5001' : '8780'}"
+                placeholder="http://127.0.0.1:${protocol === 'bee' ? '1633' : '8780'}"
                 spellcheck="false"
               />
             </div>`
@@ -1345,7 +1343,7 @@
               <div class="profile-node-main">
                 <p class="profile-node-name">${SERVICE_LABELS[protocol]}</p>
                 <select data-node-mode>
-                  ${renderModeOptions(mode)}
+                  ${renderModeOptions(protocol, mode)}
                 </select>
               </div>
               <div class="profile-node-status">

@@ -47,16 +47,10 @@
     "system-bee:stop": "pkill -SIGTERM bee || echo 'Bee not running or failed to stop'",
     "system-bee:status": "BEE_API=${BEE_API:-http://127.0.0.1:1633}; echo '--- HEALTH ---'; curl -s \"$BEE_API/health\"; echo '\n\n--- READINESS ---'; curl -s \"$BEE_API/readiness\"; echo '\n\n--- STATUS ---'; curl -s \"$BEE_API/status\"; echo '\n\n--- PEERS ---'; curl -s \"$BEE_API/peers\" | grep -o '\"address\":' | wc -l | xargs echo 'Peer Count:'; echo '\n--- ADDRESSES ---'; curl -s \"$BEE_API/addresses\"",
     "system-bee:reset": "rm -rf bee-data && echo 'System Bee data reset.'",
-    "ipfs:download": "node scripts/fetch-ipfs.js",
-    "ipfs:init": "node scripts/init-ipfs.js",
-    "ipfs:start": "echo 'ipfs:start is a legacy alias for system-ipfs:start (repo-root ipfs-data on ecosystem port 5001).'; npm run system-ipfs:start",
-    "ipfs:stop": "echo 'ipfs:stop is a legacy alias for system-ipfs:stop.'; npm run system-ipfs:stop",
-    "ipfs:status": "echo 'Checking the Freedom-managed default-profile IPFS API. For a default-port system IPFS daemon, use npm run system-ipfs:status.'; IPFS_API=${IPFS_API:-http://127.0.0.1:15001}; echo '--- ID ---'; curl -s -X POST \"$IPFS_API/api/v0/id\" | head -c 500; echo '\n\n--- PEERS ---'; curl -s -X POST \"$IPFS_API/api/v0/swarm/peers\" | grep -o '\"Peer\":' | wc -l | xargs echo 'Peer Count:'",
-    "ipfs:reset": "echo 'ipfs:reset is a legacy alias for system-ipfs:reset and removes repo-root ipfs-data.'; npm run system-ipfs:reset",
-    "system-ipfs:start": "test -d ipfs-data || npm run ipfs:init; IPFS_PATH=./ipfs-data ./ipfs-bin/mac-arm64/ipfs daemon",
-    "system-ipfs:stop": "pkill -SIGTERM ipfs || echo 'IPFS not running or failed to stop'",
-    "system-ipfs:status": "IPFS_API=${IPFS_API:-http://127.0.0.1:5001}; echo '--- ID ---'; curl -s -X POST \"$IPFS_API/api/v0/id\" | head -c 500; echo '\n\n--- PEERS ---'; curl -s -X POST \"$IPFS_API/api/v0/swarm/peers\" | grep -o '\"Peer\":' | wc -l | xargs echo 'Peer Count:'",
-    "system-ipfs:reset": "rm -rf ipfs-data && echo 'System IPFS data reset.'",
+    "ipfs:download": "node scripts/fetch-freedom-ipfs-native.js",
+    "ipfs:build": "node scripts/fetch-freedom-ipfs-native.js --from-source",
+    "ipfs:native:smoke": "node scripts/smoke-freedom-ipfs-native.js",
+    "ipfs:reset": "rm -rf ipfs-data && echo 'Legacy repo-root IPFS data reset.'",
     "radicle:download": "node scripts/fetch-radicle.js",
     "radicle:init": "node scripts/init-radicle.js",
     "radicle:status": "RADICLE_API=${RADICLE_API:-http://127.0.0.1:18780}; curl -s \"$RADICLE_API/\" | head -c 500",
@@ -140,7 +134,8 @@
       "!**/coverage/**"
     ],
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**"
+      "**/node_modules/better-sqlite3/**",
+      "**/*.node"
     ],
     "extraResources": [
       {
@@ -151,10 +146,10 @@
         ]
       },
       {
-        "from": "ipfs-bin/${os}-${arch}/",
-        "to": "ipfs-bin",
+        "from": "native/freedom-ipfs-node/prebuilds/${os}-${arch}/",
+        "to": "freedom-ipfs-node",
         "filter": [
-          "**/*"
+          "freedom_ipfs_native.node"
         ]
       },
       {
@@ -188,6 +183,7 @@
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
     "jest": "^30.4.2",
+    "node-addon-api": "^1.7.2",
     "prettier": "^3.8.3"
   },
   "dependencies": {

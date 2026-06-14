@@ -29,7 +29,6 @@ function createProfile(nodes = {}) {
 describe('profile external candidates', () => {
   test('detects compatible default-port nodes only for unprompted managed protocols', async () => {
     const profile = createProfile({
-      ipfs: { mode: 'external', externalApi: 'http://127.0.0.1:5001' },
       radicle: {
         mode: 'managed',
         [EXTERNAL_CANDIDATE_PROMPT_KEY]: { choice: 'managed' },
@@ -40,7 +39,6 @@ describe('profile external candidates', () => {
     const candidates = await detectDefaultExternalCandidates(profile, {
       enabledProtocols: {
         bee: true,
-        ipfs: true,
         radicle: true,
       },
       probeEndpoint,
@@ -60,7 +58,6 @@ describe('profile external candidates', () => {
     const candidates = await detectDefaultExternalCandidates(profile, {
       enabledProtocols: {
         bee: false,
-        ipfs: false,
         radicle: false,
       },
       probeEndpoint,
@@ -81,7 +78,6 @@ describe('profile external candidates', () => {
       dialog,
       enabledProtocols: {
         bee: true,
-        ipfs: false,
         radicle: false,
       },
       logger: { info: jest.fn() },
@@ -114,14 +110,13 @@ describe('profile external candidates', () => {
     const decisions = await promptForDefaultExternalCandidates(profile, {
       enabledProtocols: {
         bee: true,
-        ipfs: true,
-        radicle: false,
+        radicle: true,
       },
       logger: { info: jest.fn() },
       now: '2026-05-26T00:00:00.000Z',
       presentCandidates: jest.fn().mockResolvedValue({
         bee: 'external',
-        ipfs: 'managed',
+        radicle: 'managed',
       }),
       probeEndpoint: jest.fn().mockResolvedValue(true),
       updateNodeConfig,
@@ -134,9 +129,9 @@ describe('profile external candidates', () => {
         endpoints: ['http://127.0.0.1:1633'],
       },
       {
-        protocol: 'ipfs',
+        protocol: 'radicle',
         choice: 'managed',
-        endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+        endpoints: ['http://127.0.0.1:8780'],
       },
     ]);
     expect(updateNodeConfig).toHaveBeenCalledWith('bee', {
@@ -148,11 +143,11 @@ describe('profile external candidates', () => {
         endpoints: ['http://127.0.0.1:1633'],
       },
     });
-    expect(updateNodeConfig).toHaveBeenCalledWith('ipfs', {
+    expect(updateNodeConfig).toHaveBeenCalledWith('radicle', {
       [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
         choice: 'managed',
         checkedAt: '2026-05-26T00:00:00.000Z',
-        endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+        endpoints: ['http://127.0.0.1:8780'],
       },
     });
   });
@@ -168,7 +163,6 @@ describe('profile external candidates', () => {
       dialog,
       enabledProtocols: {
         bee: true,
-        ipfs: false,
         radicle: false,
       },
       logger: { info: jest.fn() },
@@ -236,7 +230,7 @@ describe('profile external candidates', () => {
           requestId: payload.requestId,
           choices: {
             bee: 'external',
-            ipfs: 'managed',
+            radicle: 'managed',
           },
         });
       });
@@ -249,9 +243,9 @@ describe('profile external candidates', () => {
       [
         { protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] },
         {
-          protocol: 'ipfs',
-          label: 'IPFS',
-          endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+          protocol: 'radicle',
+          label: 'Radicle',
+          endpoints: ['http://127.0.0.1:8780'],
         },
       ],
       {
@@ -270,15 +264,15 @@ describe('profile external candidates', () => {
       candidates: [
         { protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] },
         {
-          protocol: 'ipfs',
-          label: 'IPFS',
-          endpoints: ['http://127.0.0.1:5001', 'http://localhost:8080'],
+          protocol: 'radicle',
+          label: 'Radicle',
+          endpoints: ['http://127.0.0.1:8780'],
         },
       ],
     });
     expect(choices).toEqual({
       bee: 'external',
-      ipfs: 'managed',
+      radicle: 'managed',
     });
   });
 

@@ -4,8 +4,12 @@
 const normalizeBaseUrl = (value) =>
   typeof value === 'string' && value ? value.replace(/\/$/, '') : null;
 
+// Internal canonical base used by the renderer's URL parser and by tests that
+// expect a gateway-shaped intermediate. Freedom does not expose a desktop
+// Kubo-compatible loopback gateway; real loads go through ipfs:// / ipns://
+// and the main-process native freedom-ipfs request API.
+const NATIVE_IPFS_BASE = 'http://freedom-ipfs.localhost';
 const envBeeApi = normalizeBaseUrl(window.nodeConfig?.beeApi);
-const envIpfsGateway = normalizeBaseUrl(window.nodeConfig?.ipfsGateway);
 
 export const state = {
   // Service Registry (updated from main process)
@@ -39,8 +43,8 @@ export const state = {
     return this.beeBase ? `${this.beeBase}/bzz/` : null;
   },
 
-  // IPFS Gateway config (from env override or registry)
-  ipfsBase: envIpfsGateway,
+  // IPFS native gateway-shaped canonical base. This is not an external Kubo endpoint.
+  ipfsBase: NATIVE_IPFS_BASE,
   ipfsApiBase: null,
   get ipfsRoutePrefix() {
     return this.ipfsBase ? `${this.ipfsBase}/ipfs/` : null;
@@ -89,7 +93,7 @@ export const state = {
 
   // IPFS state
   currentIpfsStatus: 'stopped',
-  ipfsPeersInterval: null,
+  ipfsInfoInterval: null,
   ipfsVersionFetched: false,
   ipfsVersionValue: '',
   suppressIpfsRunningStatus: false,
@@ -145,7 +149,7 @@ export const updateRegistry = (newRegistry) => {
   state.registry = newRegistry;
 
   state.beeBase = normalizeBaseUrl(newRegistry.bee?.api) || envBeeApi;
-  state.ipfsBase = normalizeBaseUrl(newRegistry.ipfs?.gateway) || envIpfsGateway;
+  state.ipfsBase = normalizeBaseUrl(newRegistry.ipfs?.gateway) || NATIVE_IPFS_BASE;
   state.ipfsApiBase = normalizeBaseUrl(newRegistry.ipfs?.api);
   state.radicleBase = normalizeBaseUrl(newRegistry.radicle?.api);
 };

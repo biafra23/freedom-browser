@@ -1,29 +1,20 @@
 const log = require('./logger');
-const { ipcMain, app } = require('electron');
-const { spawn } = require('child_process');
+const { ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
-const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { getIpfsDataDir } = require('./profile-paths');
-const {
-  getActiveProfile,
-  getReservedProfilePorts,
-  updateActiveProfileNodeConfig,
-} = require('./profile-resolver');
+const { getActiveProfile } = require('./profile-resolver');
 const {
   MODE,
-  DEFAULTS,
   updateService,
   setStatusMessage,
   setErrorState,
   clearErrorState,
   clearService,
 } = require('./service-registry');
+const { FreedomIpfsNativeNode } = require('./ipfs/freedom-ipfs-native-node');
 
-// States
 const STATUS = {
   STOPPED: 'stopped',
   STARTING: 'starting',
@@ -34,315 +25,57 @@ const STATUS = {
 
 let currentState = STATUS.STOPPED;
 let lastError = null;
-let ipfsProcess = null;
+let activeNode = null;
 let healthCheckInterval = null;
 let pendingStart = false;
-let forceKillTimeout = null;
 
-// Identity injection flag - when true, skip ipfs init and use pre-injected identity
-let useInjectedIdentity = false;
-
-// Port configuration (resolved at startup)
-let currentApiPort = DEFAULTS.ipfs.apiPort;
-let currentGatewayPort = DEFAULTS.ipfs.gatewayPort;
-let currentApiUrl = `http://127.0.0.1:${DEFAULTS.ipfs.apiPort}`;
-let currentGatewayUrl = `http://localhost:${DEFAULTS.ipfs.gatewayPort}`;
-let currentMode = MODE.NONE;
-
-function getIpfsBinaryPath() {
-  const arch = process.arch;
-
-  // Map Node.js platform names to our folder names
-  const platformMap = {
-    darwin: 'mac',
-    linux: 'linux',
-    win32: 'win',
+function defaultNativeDiagnostics() {
+  return {
+    progress: '{"active":[],"events":[]}',
+    nativeGatewayStats: '{}',
+    nativeVersion: null,
+    nativeBuildInfo: null,
   };
-  const platform = platformMap[process.platform] || process.platform;
+}
 
-  let basePath = path.join(__dirname, '..', '..', 'ipfs-bin');
-
-  if (app.isPackaged) {
-    basePath = path.join(process.resourcesPath, 'ipfs-bin');
-    const binName = process.platform === 'win32' ? 'ipfs.exe' : 'ipfs';
-    return path.join(basePath, binName);
+function readNativeVersion(node) {
+  try {
+    const version = node?.version;
+    return typeof version === 'string' && version.length > 0 ? version : null;
+  } catch (err) {
+    log.warn('[IPFS] Failed to read native version:', err.message);
+    return null;
   }
+}
 
-  const binName = process.platform === 'win32' ? 'ipfs.exe' : 'ipfs';
-  return path.join(basePath, `${platform}-${arch}`, binName);
+function readNativeBuildInfoJson(node) {
+  if (!node || typeof node.buildInfoJson !== 'function') return null;
+  try {
+    const buildInfo = node.buildInfoJson();
+    return typeof buildInfo === 'string' && buildInfo.length > 0 ? buildInfo : null;
+  } catch (err) {
+    log.warn('[IPFS] Failed to read native build info:', err.message);
+    return null;
+  }
+}
+
+function nativeNodeLabel(node) {
+  const version = readNativeVersion(node);
+  return version ? `freedom-ipfs ${version}` : 'freedom-ipfs';
 }
 
 function getIpfsDataPath() {
-  return getIpfsDataDir();
+  const dataDir = path.join(getIpfsDataDir(), 'freedom-ipfs');
+  fs.mkdirSync(dataDir, { recursive: true });
+  return dataDir;
 }
 
 function getProfileIpfsConfig() {
   return getActiveProfile()?.metadata?.nodes?.ipfs || null;
 }
 
-function isManagedIpfsConfig(config = getProfileIpfsConfig()) {
-  return config?.mode === 'managed';
-}
-
-function isExternalIpfsConfig(config = getProfileIpfsConfig()) {
-  return config?.mode === 'external';
-}
-
 function isDisabledIpfsConfig(config = getProfileIpfsConfig()) {
   return config?.mode === 'disabled';
-}
-
-function hasUnknownIpfsMode(config) {
-  return Boolean(config?.mode) && !isManagedIpfsConfig(config)
-    && !isExternalIpfsConfig(config)
-    && !isDisabledIpfsConfig(config);
-}
-
-function getConfiguredIpfsApiPort(config = getProfileIpfsConfig()) {
-  return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.ipfs.apiPort;
-}
-
-function getConfiguredIpfsGatewayPort(config = getProfileIpfsConfig()) {
-  return Number.isInteger(config?.gatewayPort)
-    ? config.gatewayPort
-    : DEFAULTS.ipfs.gatewayPort;
-}
-
-function normalizeExternalUrl(rawUrl) {
-  if (typeof rawUrl !== 'string') return null;
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return null;
-
-  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
-    ? trimmed
-    : `http://${trimmed}`;
-
-  try {
-    const parsed = new URL(withProtocol);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return null;
-    }
-    parsed.hash = '';
-    parsed.search = '';
-    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
-    return parsed.toString().replace(/\/+$/, '');
-  } catch {
-    return null;
-  }
-}
-
-function getPortFromUrl(rawUrl) {
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.port) return Number(parsed.port);
-    return parsed.protocol === 'https:' ? 443 : 80;
-  } catch {
-    return null;
-  }
-}
-
-function getEndpointLabel(rawUrl) {
-  try {
-    return new URL(rawUrl).host;
-  } catch {
-    return rawUrl;
-  }
-}
-
-function buildApiRequestOptions(apiUrl, apiPath, options = {}) {
-  const endpoint = new URL(apiUrl);
-  const basePath = endpoint.pathname.replace(/\/+$/, '');
-  endpoint.pathname = `${basePath}${apiPath}`;
-  endpoint.search = '';
-  for (const [key, value] of Object.entries(options.searchParams || {})) {
-    endpoint.searchParams.set(key, value);
-  }
-  endpoint.hash = '';
-
-  const method = options.method || 'POST';
-  return {
-    protocol: endpoint.protocol,
-    hostname: endpoint.hostname,
-    port: endpoint.port ? Number(endpoint.port) : (endpoint.protocol === 'https:' ? 443 : 80),
-    path: `${endpoint.pathname}${endpoint.search}`,
-    method,
-    headers: method === 'POST'
-      ? { 'Content-Length': 0 }
-      : undefined,
-    timeout: 2000,
-  };
-}
-
-function getHttpClient(protocol) {
-  return protocol === 'https:' ? https : http;
-}
-
-function persistManagedIpfsPorts(apiPort, gatewayPort) {
-  const result = updateActiveProfileNodeConfig('ipfs', { apiPort, gatewayPort });
-  if (result) {
-    log.info('[IPFS] Persisted managed profile ports:', {
-      apiPort,
-      gatewayPort,
-    });
-  }
-}
-
-function isRepoInitialized(dataDir) {
-  return fs.existsSync(path.join(dataDir, 'config'));
-}
-
-// Clean up stale lock file from unclean shutdown
-function cleanupStaleLock(dataDir) {
-  const lockPath = path.join(dataDir, 'repo.lock');
-  if (fs.existsSync(lockPath)) {
-    log.info('[IPFS] Removing stale repo.lock file from previous unclean shutdown');
-    try {
-      fs.unlinkSync(lockPath);
-    } catch (err) {
-      log.warn('[IPFS] Failed to remove stale lock file:', err.message);
-    }
-  }
-}
-
-function initRepo(binPath, dataDir) {
-  if (isRepoInitialized(dataDir)) {
-    log.info('[IPFS] Repo already initialized');
-    return true;
-  }
-
-  // Check if identity was injected (identity-manager creates config with Identity fields)
-  const markerPath = path.join(dataDir, '.identity-injected');
-  if (useInjectedIdentity || fs.existsSync(markerPath)) {
-    log.info('[IPFS] Using injected identity, skipping ipfs init');
-    // Config should already exist with injected identity
-    if (isRepoInitialized(dataDir)) {
-      return true;
-    }
-    // If config doesn't exist yet, wait for identity injection
-    log.info('[IPFS] Waiting for identity injection...');
-    return false;
-  }
-
-  log.info('[IPFS] Initializing repo...');
-  try {
-    const { execSync } = require('child_process');
-    execSync(`"${binPath}" init`, {
-      env: { ...process.env, IPFS_PATH: dataDir },
-      stdio: 'pipe',
-    });
-
-    log.info('[IPFS] Repo initialized successfully');
-    return true;
-  } catch (err) {
-    log.error('[IPFS] Init failed:', err.message);
-    return false;
-  }
-}
-
-// Enforce our config settings on every startup (not just first init)
-function enforceConfig(dataDir, apiPort, gatewayPort) {
-  const configPath = path.join(dataDir, 'config');
-  if (!fs.existsSync(configPath)) {
-    log.error('[IPFS] Config file not found');
-    return false;
-  }
-
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-
-    // API settings - use resolved ports
-    config.Addresses = config.Addresses || {};
-    config.Addresses.API = `/ip4/127.0.0.1/tcp/${apiPort}`;
-    config.Addresses.Gateway = `/ip4/127.0.0.1/tcp/${gatewayPort}`;
-
-    config.API = config.API || {};
-    config.API.HTTPHeaders = config.API.HTTPHeaders || {};
-    config.API.HTTPHeaders['Access-Control-Allow-Origin'] = ['null'];
-    config.API.HTTPHeaders['Access-Control-Allow-Methods'] = ['GET', 'POST', 'PUT'];
-
-    // Delegated routing: autoclient (DHT client mode) + IPNI for fast provider discovery
-    // - autoclient: like dhtclient but with HTTP router support, never becomes DHT server
-    // - DelegatedRouters: adds IPNI (cid.contact) on top of DHT for find-providers
-    // This keeps full DHT connectivity (~150 peers) while adding fast IPNI lookups.
-    config.Routing = {
-      Type: 'autoclient',
-      DelegatedRouters: ['https://cid.contact'],
-    };
-
-    // Disable HTTPRetrieval (not needed with current setup)
-    if (config.HTTPRetrieval) {
-      delete config.HTTPRetrieval.Enabled;
-    }
-
-
-    // Connection limits - balanced for embedded use while still able to fetch content
-    config.Swarm = config.Swarm || {};
-    config.Swarm.ConnMgr = config.Swarm.ConnMgr || {};
-    config.Swarm.ConnMgr.LowWater = 50;
-    config.Swarm.ConnMgr.HighWater = 150;
-    config.Swarm.ConnMgr.GracePeriod = '60s';
-
-    // Don't relay for others
-    config.Swarm.RelayService = config.Swarm.RelayService || {};
-    config.Swarm.RelayService.Enabled = false;
-
-    // Disable reproviding (use new 'Provide' config)
-    config.Provide = config.Provide || {};
-    config.Provide.Enabled = false;
-
-    // Disable local discovery
-    config.Discovery = config.Discovery || {};
-    config.Discovery.MDNS = config.Discovery.MDNS || {};
-    config.Discovery.MDNS.Enabled = false;
-
-    // DNS-over-HTTPS for reliable resolution on networks with broken/slow local DNS
-    // (e.g. mobile hotspots). Required for dnsaddr resolution (Pinata) and DNSLink (IPNS).
-    config.DNS = config.DNS || {};
-    config.DNS.Resolvers = {
-      '.': 'https://cloudflare-dns.com/dns-query',
-      'eth.': 'https://dns.eth.limo/dns-query',
-    };
-
-    // Disable swarm listening on all interfaces to prevent macOS local network prompt
-    // As a DHT client, we only need outbound connections - we don't need to accept incoming
-    config.Addresses.Swarm = [];
-
-    // Disable AutoTLS since we have no swarm listeners
-    config.AutoTLS = config.AutoTLS || {};
-    config.AutoTLS.Enabled = false;
-    config.AutoTLS.AutoWSS = false;
-
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    log.info('[IPFS] Config enforced with API port:', apiPort, 'Gateway port:', gatewayPort);
-    log.info('[IPFS] Routing: autoclient + DelegatedRouters:', config.Routing.DelegatedRouters);
-    return true;
-  } catch (err) {
-    log.error('[IPFS] Failed to enforce config:', err.message);
-    return false;
-  }
-}
-
-function dumpConfig(dataDir) {
-  const configPath = path.join(dataDir, 'config');
-  if (!fs.existsSync(configPath)) {
-    log.info('[IPFS] No config file found');
-    return;
-  }
-
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    log.info('[IPFS] ========== CONFIG DUMP ==========');
-    log.info('[IPFS] Routing.Type:', config.Routing?.Type || 'default');
-    if (config.Routing?.DelegatedRouters?.length > 0) {
-      log.info('[IPFS] Routing.DelegatedRouters:', config.Routing.DelegatedRouters.join(', '));
-    }
-    log.info('[IPFS] Swarm.ConnMgr:', JSON.stringify(config.Swarm?.ConnMgr, null, 2));
-    log.info('[IPFS] Discovery.MDNS:', JSON.stringify(config.Discovery?.MDNS, null, 2));
-    log.info('[IPFS] Provide:', JSON.stringify(config.Provide, null, 2));
-    log.info('[IPFS] ====================================');
-  } catch (err) {
-    log.error('[IPFS] Failed to dump config:', err.message);
-  }
 }
 
 function updateState(newState, error = null) {
@@ -354,300 +87,66 @@ function updateState(newState, error = null) {
   }
 }
 
-/**
- * Check if a port is open (something is listening)
- */
-function isPortOpen(port, host = '127.0.0.1') {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    socket.setTimeout(1000);
-
-    socket.on('connect', () => {
-      socket.destroy();
-      resolve(true);
-    });
-
-    socket.on('timeout', () => {
-      socket.destroy();
-      resolve(false);
-    });
-
-    socket.on('error', () => {
-      socket.destroy();
-      resolve(false);
-    });
-
-    socket.connect(port, host);
-  });
-}
-
-function requestIpfsApiJson(apiUrl, apiPath, options = {}) {
-  return new Promise((resolve) => {
-    const requestOptions = buildApiRequestOptions(apiUrl, apiPath, options);
-
-    const req = getHttpClient(requestOptions.protocol).request(requestOptions, (res) => {
-      if (res.statusCode === 200) {
-        let data = '';
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-        res.on('end', () => {
-          try {
-            const parsed = JSON.parse(data);
-            resolve({ valid: true, data: parsed });
-          } catch {
-            resolve({ valid: false });
-          }
-        });
-      } else {
-        resolve({ valid: false });
-        res.resume();
-      }
-    });
-
-    req.on('error', () => resolve({ valid: false }));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ valid: false });
-    });
-    req.end();
-  });
-}
-
-/**
- * Probe IPFS API health endpoint
- */
-function probeIpfsApiUrl(apiUrl) {
-  return requestIpfsApiJson(apiUrl, '/api/v0/id');
-}
-
-function probeIpfsApi(port) {
-  return probeIpfsApiUrl(`http://127.0.0.1:${port}`);
-}
-
-function parseGatewayMultiaddr(rawAddress) {
-  if (typeof rawAddress !== 'string' || !rawAddress.trim()) {
-    return null;
+function checkHealth() {
+  if (!activeNode || currentState !== STATUS.RUNNING) return false;
+  if (typeof activeNode.isHealthy === 'function' && !activeNode.isHealthy()) return false;
+  try {
+    activeNode.nativeGatewayStatsJson();
+    return true;
+  } catch (err) {
+    log.warn('[IPFS] Native health check failed:', err.message);
+    return false;
   }
-
-  const match = rawAddress.match(/^\/(?:ip4|ip6|dns|dns4|dns6)\/([^/]+)\/tcp\/(\d+)(?:\/|$)/);
-  if (!match) {
-    return null;
-  }
-
-  const rawHost = match[1];
-  const port = Number(match[2]);
-  if (!Number.isInteger(port)) {
-    return null;
-  }
-
-  let host = rawHost;
-  if (rawHost === '127.0.0.1' || rawHost === '0.0.0.0' || rawHost === '::1' || rawHost === '::') {
-    host = 'localhost';
-  } else if (rawHost.includes(':') && !rawHost.startsWith('[')) {
-    host = `[${rawHost}]`;
-  }
-
-  return `http://${host}:${port}`;
 }
 
-async function readGatewayUrlFromIpfsApi(apiUrl) {
-  const response = await requestIpfsApiJson(apiUrl, '/api/v0/config', {
-    searchParams: { arg: 'Addresses.Gateway' },
-  });
-  if (!response.valid) {
-    return null;
-  }
-
-  const rawAddress = typeof response.data?.Value === 'string'
-    ? response.data.Value
-    : response.data;
-  return parseGatewayMultiaddr(rawAddress);
+function stopHealthCheck() {
+  if (!healthCheckInterval) return;
+  clearInterval(healthCheckInterval);
+  healthCheckInterval = null;
 }
 
-function probeIpfsGatewayUrl(gatewayUrl) {
-  return new Promise((resolve) => {
-    let endpoint;
-    try {
-      endpoint = new URL(gatewayUrl);
-    } catch {
-      resolve(false);
-      return;
-    }
+function handleNativeNodeFailure(reason, node = activeNode) {
+  if (node && activeNode && node !== activeNode) return;
+  if (![STATUS.STARTING, STATUS.RUNNING].includes(currentState)) return;
 
-    const basePath = endpoint.pathname.replace(/\/+$/, '');
-    endpoint.pathname = `${basePath}/`;
-    endpoint.search = '';
-    endpoint.hash = '';
+  const message = reason || 'Native node unavailable';
+  const failedNode = activeNode;
+  activeNode = null;
+  stopHealthCheck();
+  clearService('ipfs');
+  setStatusMessage('ipfs', 'Node unavailable');
+  setErrorState('ipfs', 'Node unavailable. Restart IPFS from the nodes menu.');
+  updateState(STATUS.ERROR, message);
 
-    const options = {
-      protocol: endpoint.protocol,
-      hostname: endpoint.hostname,
-      port: endpoint.port ? Number(endpoint.port) : (endpoint.protocol === 'https:' ? 443 : 80),
-      path: `${endpoint.pathname}${endpoint.search}`,
-      method: 'GET',
-      timeout: 2000,
-    };
-
-    const req = getHttpClient(options.protocol).request(options, (res) => {
-      resolve(true);
-      res.resume();
+  if (failedNode) {
+    failedNode.stop().catch((err) => {
+      log.warn('[IPFS] Error while cleaning up failed freedom-ipfs native node:', err.message);
     });
-
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.end();
-  });
-}
-
-async function resolveReusedIpfsGatewayUrl(apiUrl) {
-  const configuredGatewayUrl = await readGatewayUrlFromIpfsApi(apiUrl);
-  if (configuredGatewayUrl && await probeIpfsGatewayUrl(configuredGatewayUrl)) {
-    return configuredGatewayUrl;
   }
-
-  return null;
-}
-
-/**
- * Find an available port starting from the default
- */
-async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.ipfs.fallbackRange, options = {}) {
-  const reservedPorts = options.reservedPorts || new Set();
-  for (let i = 0; i < maxAttempts; i++) {
-    const port = defaultPort + i;
-    if (reservedPorts.has(port)) {
-      log.info(`[IPFS] Port ${port} is reserved by another profile, trying next...`);
-      continue;
-    }
-    const open = await isPortOpen(port);
-    if (!open) {
-      return port;
-    }
-    log.info(`[IPFS] Port ${port} is busy, trying next...`);
-  }
-  return null;
-}
-
-/**
- * Detect if an existing IPFS daemon is running and reusable
- * Always checks default port first to detect conflicts properly
- */
-async function detectExistingDaemon() {
-  const defaultPort = DEFAULTS.ipfs.apiPort;
-
-  // First check if anything is on the default API port
-  const portOpen = await isPortOpen(defaultPort);
-  if (!portOpen) {
-    return { found: false };
-  }
-
-  // Probe to see if it's actually IPFS
-  const probe = await probeIpfsApi(defaultPort);
-  if (probe.valid) {
-    log.info('[IPFS] Found existing daemon on port', defaultPort);
-    return {
-      found: true,
-      port: defaultPort,
-      peerId: probe.data?.ID,
-    };
-  }
-
-  // Port is open but not IPFS - conflict
-  log.info('[IPFS] Port', defaultPort, 'is busy (not an IPFS daemon)');
-  return { found: false, conflict: true, port: defaultPort };
-}
-
-async function checkHealth() {
-  return new Promise((resolve) => {
-    const options = buildApiRequestOptions(currentApiUrl, '/api/v0/id');
-
-    const req = getHttpClient(options.protocol).request(options, (res) => {
-      if (res.statusCode === 200) {
-        resolve(true);
-      } else {
-        resolve(false);
-      }
-      res.resume();
-    });
-
-    req.on('error', () => resolve(false));
-    req.setTimeout(2000, () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.end();
-  });
 }
 
 function startHealthCheck() {
   if (healthCheckInterval) clearInterval(healthCheckInterval);
-  healthCheckInterval = setInterval(async () => {
-    const isHealthy = await checkHealth();
+  healthCheckInterval = setInterval(() => {
+    const isHealthy = checkHealth();
     if (!isHealthy && currentState === STATUS.RUNNING) {
-      updateState(STATUS.ERROR, 'Health check failed');
-      setErrorState('ipfs', 'Node unreachable. Retrying…');
-    } else if (isHealthy && currentState === STATUS.ERROR) {
-      // Recovered - clear error state (reveals original statusMessage)
-      clearErrorState('ipfs');
-      updateState(STATUS.RUNNING);
+      handleNativeNodeFailure('Native node unavailable');
     }
   }, 5000);
+  healthCheckInterval.unref?.();
 }
 
-async function startExternalIpfs(config) {
-  const apiUrl = normalizeExternalUrl(config?.externalApi);
-  const gatewayUrl = normalizeExternalUrl(config?.externalGateway);
-  if (!apiUrl || !gatewayUrl) {
-    updateState(STATUS.ERROR, 'External IPFS endpoints are not configured');
-    setStatusMessage('ipfs', 'External node not configured');
-    return;
-  }
-
-  const probe = await probeIpfsApiUrl(apiUrl);
-  if (!probe.valid) {
-    updateState(STATUS.ERROR, 'External IPFS API endpoint is unreachable');
-    setStatusMessage('ipfs', 'External node unreachable');
-    return;
-  }
-
-  if (!await probeIpfsGatewayUrl(gatewayUrl)) {
-    updateState(STATUS.ERROR, 'External IPFS gateway endpoint is unreachable');
-    setStatusMessage('ipfs', 'External gateway unreachable');
-    return;
-  }
-
-  currentApiUrl = apiUrl;
-  currentGatewayUrl = gatewayUrl;
-  currentApiPort = getPortFromUrl(apiUrl);
-  currentGatewayPort = getPortFromUrl(gatewayUrl);
-  currentMode = MODE.EXTERNAL;
-
-  updateService('ipfs', {
-    api: currentApiUrl,
-    gateway: currentGatewayUrl,
-    mode: MODE.EXTERNAL,
-  });
-  setStatusMessage('ipfs', `External node: ${getEndpointLabel(currentApiUrl)}`);
-
-  updateState(STATUS.RUNNING);
-  startHealthCheck();
-  log.info('[IPFS] Connected to external API at', currentApiUrl);
+function checkBinary() {
+  return FreedomIpfsNativeNode.isAvailable();
 }
 
 function startDisabledIpfs() {
-  currentApiPort = null;
-  currentGatewayPort = null;
-  currentApiUrl = null;
-  currentGatewayUrl = null;
-  currentMode = MODE.DISABLED;
+  clearService('ipfs');
   updateService('ipfs', {
     api: null,
     gateway: null,
     mode: MODE.DISABLED,
+    backend: 'freedom-ipfs',
   });
   setStatusMessage('ipfs', 'Node disabled for this profile');
   updateState(STATUS.STOPPED);
@@ -669,328 +168,127 @@ async function startIpfs() {
   pendingStart = false;
   updateState(STATUS.STARTING);
 
-  const profileConfig = getProfileIpfsConfig();
-  const managedProfileNode = isManagedIpfsConfig(profileConfig);
-
-  if (hasUnknownIpfsMode(profileConfig)) {
-    updateState(STATUS.ERROR, `Unsupported IPFS node mode: ${profileConfig.mode}`);
-    setStatusMessage('ipfs', 'Node failed to start');
-    return;
-  }
-
-  if (isDisabledIpfsConfig(profileConfig)) {
+  if (isDisabledIpfsConfig()) {
     startDisabledIpfs();
     return;
   }
 
-  if (isExternalIpfsConfig(profileConfig)) {
-    await startExternalIpfs(profileConfig);
-    return;
-  }
-
-  // Step 1: Legacy/profile-dir launches may still opt into a system daemon.
-  const existing = managedProfileNode ? { found: false } : await detectExistingDaemon();
-
-  if (existing.found) {
-    // Reuse existing daemon
-    currentApiPort = existing.port;
-    currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
-    currentGatewayUrl = await resolveReusedIpfsGatewayUrl(currentApiUrl);
-    currentGatewayPort = currentGatewayUrl ? getPortFromUrl(currentGatewayUrl) : null;
-    currentMode = MODE.REUSED;
-
-    updateService('ipfs', {
-      api: currentApiUrl,
-      gateway: currentGatewayUrl,
-      mode: MODE.REUSED,
-    });
-    setStatusMessage(
-      'ipfs',
-      currentGatewayUrl
-        ? `Node: localhost:${currentApiPort}`
-        : `Node: localhost:${currentApiPort} (gateway not detected)`
-    );
-
-    updateState(STATUS.RUNNING);
-    startHealthCheck();
-    log.info('[IPFS] Reusing existing daemon:', {
-      api: currentApiUrl,
-      gateway: currentGatewayUrl,
-    });
-    return;
-  }
-
-  // Step 2: Start bundled node
-  const binPath = getIpfsBinaryPath();
-  if (!fs.existsSync(binPath)) {
-    updateState(STATUS.ERROR, `IPFS binary not found at ${binPath}`);
-    setStatusMessage('ipfs', 'Node failed to start');
+  if (!checkBinary()) {
+    updateState(STATUS.ERROR, 'freedom-ipfs native addon not built');
+    setStatusMessage('ipfs', 'Native node unavailable');
     return;
   }
 
   const dataDir = getIpfsDataPath();
-
-  // Clean up stale lock from previous unclean shutdown
-  cleanupStaleLock(dataDir);
-
-  // Initialize repo if needed
-  if (!initRepo(binPath, dataDir)) {
-    updateState(STATUS.ERROR, 'Failed to initialize IPFS repo');
-    setStatusMessage('ipfs', 'Node failed to start');
-    return;
-  }
-
-  // Step 3: Resolve ports (handle conflicts)
-  let apiPort = getConfiguredIpfsApiPort(profileConfig);
-  let gatewayPort = getConfiguredIpfsGatewayPort(profileConfig);
-  const configuredApiPort = apiPort;
-  const configuredGatewayPort = gatewayPort;
-  let usingFallbackPort = false;
-  const reservedProfilePorts = managedProfileNode ? getReservedProfilePorts() : new Set();
-
-  const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
-  if (existing.conflict || managedApiPortBusy) {
-    const newApiPort = await findAvailablePort(apiPort + 1, DEFAULTS.ipfs.fallbackRange, {
-      reservedPorts: reservedProfilePorts,
-    });
-    if (!newApiPort) {
-      updateState(STATUS.ERROR, 'No available ports for IPFS API');
-      setStatusMessage('ipfs', 'Node failed to start');
-      return;
-    }
-    usingFallbackPort = true;
-    apiPort = newApiPort;
-  }
-
-  // Check gateway port
-  const gatewayOpen = await isPortOpen(gatewayPort);
-  if (gatewayOpen) {
-    const newGatewayPort = await findAvailablePort(gatewayPort + 1, DEFAULTS.ipfs.fallbackRange, {
-      reservedPorts: reservedProfilePorts,
-    });
-    if (!newGatewayPort) {
-      updateState(STATUS.ERROR, 'No available ports for IPFS gateway');
-      setStatusMessage('ipfs', 'Node failed to start');
-      return;
-    }
-    usingFallbackPort = true;
-    gatewayPort = newGatewayPort;
-  }
-
-  if (
-    managedProfileNode
-    && (apiPort !== configuredApiPort || gatewayPort !== configuredGatewayPort)
-  ) {
-    try {
-      persistManagedIpfsPorts(apiPort, gatewayPort);
-    } catch (err) {
-      log.error('[IPFS] Failed to persist managed profile ports:', err.message);
-      updateState(STATUS.ERROR, 'Failed to save IPFS port assignment');
-      setStatusMessage('ipfs', 'Node failed to start');
-      return;
-    }
-  }
-
-  currentApiPort = apiPort;
-  currentGatewayPort = gatewayPort;
-  currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
-  currentGatewayUrl = `http://localhost:${currentGatewayPort}`;
-  currentMode = MODE.BUNDLED;
-
-  // Enforce our config settings on every startup
-  if (!enforceConfig(dataDir, apiPort, gatewayPort)) {
-    updateState(STATUS.ERROR, 'Failed to enforce IPFS config');
-    setStatusMessage('ipfs', 'Node failed to start');
-    return;
-  }
-
-  // Dump config at startup for debugging
-  dumpConfig(dataDir);
-
-  const args = ['daemon'];
-
-  log.info(`[IPFS] Starting: IPFS_PATH=${dataDir} ${binPath} ${args.join(' ')}`);
+  const node = new FreedomIpfsNativeNode({
+    dataDir,
+    onFailure: (reason, failedNode) => handleNativeNodeFailure(reason, failedNode),
+  });
 
   try {
-    ipfsProcess = spawn(binPath, args, {
-      env: { ...process.env, IPFS_PATH: dataDir },
-    });
-
-    ipfsProcess.stdout.on('data', (data) => {
-      log.info(`[IPFS stdout]: ${data}`);
-    });
-
-    ipfsProcess.stderr.on('data', (data) => {
-      log.error(`[IPFS stderr]: ${data}`);
-    });
-
-    ipfsProcess.on('close', (code) => {
-      log.info(`[IPFS] Process exited with code ${code}`);
-      ipfsProcess = null;
-
-      if (forceKillTimeout) {
-        clearTimeout(forceKillTimeout);
-        forceKillTimeout = null;
-      }
-      if (healthCheckInterval) {
-        clearInterval(healthCheckInterval);
-        healthCheckInterval = null;
-      }
-
-      if (currentState !== STATUS.STOPPING) {
-        updateState(STATUS.STOPPED, code !== 0 ? `Exited with code ${code}` : null);
-      } else {
-        updateState(STATUS.STOPPED);
-      }
-      clearService('ipfs');
-
-      if (pendingStart) {
-        log.info('[IPFS] Processing queued start request');
-        pendingStart = false;
-        setTimeout(() => startIpfs(), 100);
-      }
-    });
-
-    ipfsProcess.on('error', (err) => {
-      log.error('[IPFS] Failed to start process:', err);
-      updateState(STATUS.ERROR, err.message);
+    if (!node.start()) {
+      updateState(STATUS.ERROR, 'Failed to start freedom-ipfs native node');
       setStatusMessage('ipfs', 'Node failed to start');
-    });
-
-    // Poll for health until running
-    let attempts = 0;
-    const maxAttempts = 60;
-    const pollInterval = setInterval(async () => {
-      if (currentState === STATUS.STOPPED || currentState === STATUS.ERROR) {
-        clearInterval(pollInterval);
-        return;
-      }
-
-      const isHealthy = await checkHealth();
-      if (isHealthy) {
-        clearInterval(pollInterval);
-
-        // Update registry
-        updateService('ipfs', {
-          api: currentApiUrl,
-          gateway: currentGatewayUrl,
-          mode: MODE.BUNDLED,
-        });
-
-        // Only show status line if using fallback port
-        if (usingFallbackPort) {
-          setStatusMessage('ipfs', `Fallback Port: ${currentApiPort}`);
-        } else {
-          // Clear any previous status for normal healthy state
-          setStatusMessage('ipfs', null);
-        }
-
-        updateState(STATUS.RUNNING);
-        startHealthCheck();
-      } else {
-        attempts++;
-        if (attempts >= maxAttempts) {
-          clearInterval(pollInterval);
-          stopIpfs();
-          updateState(STATUS.ERROR, 'Startup timed out');
-          setStatusMessage('ipfs', 'Node failed to start');
-        }
-      }
-    }, 1000);
+      return;
+    }
   } catch (err) {
+    log.error('[IPFS] Failed to start freedom-ipfs native node:', err);
     updateState(STATUS.ERROR, err.message);
     setStatusMessage('ipfs', 'Node failed to start');
+    return;
+  }
+
+  activeNode = node;
+  const nodeLabel = nativeNodeLabel(node);
+  updateService('ipfs', {
+    api: null,
+    gateway: null,
+    mode: MODE.BUNDLED,
+    backend: 'freedom-ipfs',
+  });
+  setStatusMessage('ipfs', `Node: ${nodeLabel}`);
+  updateState(STATUS.RUNNING);
+  startHealthCheck();
+  log.info(`[IPFS] ${nodeLabel} native node started at ${dataDir}`);
+}
+
+async function stopIpfs() {
+  pendingStart = false;
+  if (currentState === STATUS.STOPPED && !activeNode) {
+    clearService('ipfs');
+    return;
+  }
+  updateState(STATUS.STOPPING);
+  stopHealthCheck();
+
+  const node = activeNode;
+  activeNode = null;
+  if (node) {
+    try {
+      await node.stop();
+    } catch (err) {
+      log.warn('[IPFS] Error while stopping freedom-ipfs native node:', err.message);
+    }
+  }
+
+  updateState(STATUS.STOPPED);
+  clearErrorState('ipfs');
+  clearService('ipfs');
+
+  if (pendingStart) {
+    pendingStart = false;
+    setTimeout(() => startIpfs(), 100);
   }
 }
 
-// Stop IPFS and return a Promise that resolves when the process exits
-function stopIpfs() {
-  return new Promise((resolve) => {
-    pendingStart = false;
-
-    // If this process does not own a daemon, just clear state.
-    if (currentMode === MODE.REUSED || currentMode === MODE.EXTERNAL || currentMode === MODE.DISABLED) {
-      if (healthCheckInterval) {
-        clearInterval(healthCheckInterval);
-        healthCheckInterval = null;
+async function serveNativeGatewayRequest({ path: gatewayPath, method, headers, signal }) {
+  if (!activeNode || currentState !== STATUS.RUNNING || !checkHealth()) {
+    return new Response(
+      JSON.stringify({ code: 503, message: 'freedom-ipfs node is not running' }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
       }
-      updateState(STATUS.STOPPED);
-      clearService('ipfs');
-      currentMode = MODE.NONE;
-      resolve();
-      return;
-    }
-
-    if (!ipfsProcess) {
-      updateState(STATUS.STOPPED);
-      clearService('ipfs');
-      resolve();
-      return;
-    }
-
-    // Listen for the process to exit
-    const onExit = () => {
-      if (healthCheckInterval) {
-        clearInterval(healthCheckInterval);
-        healthCheckInterval = null;
-      }
-      if (forceKillTimeout) {
-        clearTimeout(forceKillTimeout);
-        forceKillTimeout = null;
-      }
-      resolve();
-    };
-
-    ipfsProcess.once('close', onExit);
-
-    updateState(STATUS.STOPPING);
-    if (healthCheckInterval) {
-      clearInterval(healthCheckInterval);
-      healthCheckInterval = null;
-    }
-
-    if (forceKillTimeout) clearTimeout(forceKillTimeout);
-    forceKillTimeout = setTimeout(() => {
-      if (ipfsProcess) {
-        log.warn('[IPFS] Force killing process...');
-        ipfsProcess.kill('SIGKILL');
-      }
-      forceKillTimeout = null;
-    }, 5000);
-
-    ipfsProcess.kill('SIGTERM');
-  });
+    );
+  }
+  return activeNode.request({ method, path: gatewayPath, headers, signal });
 }
 
-function checkBinary() {
-  const binPath = getIpfsBinaryPath();
-  return fs.existsSync(binPath);
+function getNativeDiagnostics() {
+  const diagnostics = defaultNativeDiagnostics();
+  if (!activeNode) return diagnostics;
+
+  try {
+    diagnostics.progress = activeNode.progressSnapshotJson();
+  } catch (err) {
+    log.warn('[IPFS] Failed to collect native progress diagnostics:', err.message);
+  }
+
+  try {
+    diagnostics.nativeGatewayStats = activeNode.nativeGatewayStatsJson();
+  } catch (err) {
+    log.warn('[IPFS] Failed to collect native gateway diagnostics:', err.message);
+  }
+
+  diagnostics.nativeVersion = readNativeVersion(activeNode);
+  diagnostics.nativeBuildInfo = readNativeBuildInfoJson(activeNode);
+  return diagnostics;
 }
 
-/**
- * Enable injected identity mode - skip ipfs init and expect pre-injected identity
- * Call this before starting IPFS when using the unified identity system
- */
 function setUseInjectedIdentity(enabled) {
-  useInjectedIdentity = enabled;
-  log.info(`[IPFS] Injected identity mode: ${enabled}`);
+  log.info(`[IPFS] Ignoring injected identity mode for freedom-ipfs native node: ${enabled}`);
 }
 
-/**
- * Check if identity has been injected
- */
 function hasInjectedIdentity() {
-  const dataDir = getIpfsDataPath();
-  const markerPath = path.join(dataDir, '.identity-injected');
-  return fs.existsSync(markerPath);
+  return false;
 }
 
 function getActivePort() {
-  return currentApiPort;
+  return null;
 }
 
 function getActiveGatewayPort() {
-  return currentGatewayPort;
+  return null;
 }
 
 function registerIpfsIpc() {
@@ -1005,7 +303,7 @@ function registerIpfsIpc() {
   });
 
   ipcMain.handle(IPC.IPFS_GET_STATUS, () => {
-    return { status: currentState, error: lastError };
+    return { status: currentState, error: lastError, diagnostics: getNativeDiagnostics() };
   });
 
   ipcMain.handle(IPC.IPFS_CHECK_BINARY, () => {
@@ -1022,5 +320,8 @@ module.exports = {
   getIpfsDataPath,
   setUseInjectedIdentity,
   hasInjectedIdentity,
+  serveNativeGatewayRequest,
+  getNativeDiagnostics,
+  checkHealth,
   STATUS,
 };

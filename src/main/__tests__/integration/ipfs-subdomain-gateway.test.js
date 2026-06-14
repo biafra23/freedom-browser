@@ -199,7 +199,7 @@ describe('Kubo subdomain gateway redirect', () => {
     }
   });
 
-  const maybeTest = ipfsBinary ? test : test.skip;
+  const maybeTest = ipfsBinary && process.env.FREEDOM_TEST_KUBO_LEGACY ? test : test.skip;
 
   maybeTest(
     'redirects localhost path-gateway request to <cid>.ipfs.localhost subdomain form',
@@ -266,7 +266,7 @@ describe('Kubo subdomain gateway redirect', () => {
         error: () => {},
         debug: () => {},
       }));
-      // Production resolves Kubo's `<cid>.ipfs.localhost` redirect via
+      // Legacy Kubo mode resolved `<cid>.ipfs.localhost` redirects via
       // Electron's `net.fetch` (Chromium's network stack — RFC 6761
       // *.localhost resolution) because Node's getaddrinfo on macOS
       // returns ENOTFOUND for those hosts. Jest doesn't run inside an
@@ -279,6 +279,7 @@ describe('Kubo subdomain gateway redirect', () => {
         net: { fetch: fetchFollowingLocalhostRedirects },
       }));
       const { handleRequest } = require('../../ipfs/ipfs-protocol');
+      const fetchImpl = globalThis.fetch.bind(globalThis);
 
       const handlerReq = {
         url: `ipfs://${cid}/`,
@@ -287,7 +288,7 @@ describe('Kubo subdomain gateway redirect', () => {
         body: null,
         signal: new AbortController().signal,
       };
-      const handlerRes = await handleRequest('ipfs', handlerReq);
+      const handlerRes = await handleRequest('ipfs', handlerReq, { fetchImpl });
       expect(handlerRes.status).toBe(200);
       expect(handlerRes.headers.get('location')).toBeNull();
       const body = await handlerRes.text();

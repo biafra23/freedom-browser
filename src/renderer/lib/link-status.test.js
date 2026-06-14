@@ -222,4 +222,49 @@ describe('link-status', () => {
     expect(elements.linkStatusEl.classList.contains('visible')).toBe(true);
     expect(queuedFrames.size).toBe(0);
   });
+
+  test('shows loading status without waiting for hover delay', async () => {
+    const { mod, elements, flushFrames } = await loadModule();
+    mod.initLinkStatus();
+
+    mod.showLoadingStatus('IPFS: Finding providers…');
+    expect(elements.linkStatusUrlEl.textContent).toBe('IPFS: Finding providers…');
+    expect(elements.linkStatusEl.hidden).toBe(false);
+    expect(elements.linkStatusEl.classList.contains('visible')).toBe(false);
+
+    flushFrames();
+    expect(elements.linkStatusEl.classList.contains('visible')).toBe(true);
+  });
+
+  test('hover URL temporarily overrides loading status then restores it', async () => {
+    const { mod, elements, flushFrames } = await loadModule();
+    mod.initLinkStatus();
+
+    mod.showLoadingStatus('IPFS: Finding providers…');
+    flushFrames();
+    expect(elements.linkStatusUrlEl.textContent).toBe('IPFS: Finding providers…');
+
+    mod.showLinkStatus('https://hovered.example/');
+    expect(elements.linkStatusUrlEl.textContent).toBe('https://hovered.example/');
+
+    mod.clearHoverStatus();
+    expect(elements.linkStatusUrlEl.textContent).toBe('IPFS: Finding providers…');
+    expect(elements.linkStatusEl.hidden).toBe(false);
+    expect(elements.linkStatusEl.classList.contains('visible')).toBe(true);
+  });
+
+  test('pending hover does not hide loading status until hover delay elapses', async () => {
+    const { mod, elements } = await loadModule();
+    mod.initLinkStatus();
+
+    mod.showLoadingStatus('IPFS: Receiving content…');
+    mod.showLinkStatus('https://hovered.example/');
+
+    expect(elements.linkStatusUrlEl.textContent).toBe('IPFS: Receiving content…');
+
+    mod.clearHoverStatus();
+    jest.runAllTimers();
+    expect(elements.linkStatusUrlEl.textContent).toBe('IPFS: Receiving content…');
+    expect(elements.linkStatusEl.hidden).toBe(false);
+  });
 });

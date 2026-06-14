@@ -532,21 +532,13 @@
             </span>
           </button>
           <div class="ipfs-info">
-            <div class="ipfs-info-row node-status-row" id="ipfs-status-row">
-              <span class="ipfs-info-label" id="ipfs-status-label"></span>
-              <span id="ipfs-status-value"></span>
+            <div class="ipfs-info-row">
+              <span class="ipfs-info-label">Active Requests:</span>
+              <span id="ipfs-active-requests-count">--</span>
             </div>
             <div class="ipfs-info-row">
-              <span class="ipfs-info-label">Connected Peers:</span>
-              <span id="ipfs-peers-count">--</span>
-            </div>
-            <div class="ipfs-info-row">
-              <span class="ipfs-info-label">Bandwidth:</span>
-              <span id="ipfs-bandwidth-down"></span>
-            </div>
-            <div class="ipfs-info-row">
-              <span class="ipfs-info-label"></span>
-              <span id="ipfs-bandwidth-up"></span>
+              <span class="ipfs-info-label">Data Read:</span>
+              <span id="ipfs-data-read"></span>
             </div>
             <div class="ipfs-info-row">
               <span class="ipfs-info-label">Version:</span>
@@ -1007,7 +999,7 @@
                   </button>
                   <div class="node-card-content hidden" id="ipfs-card-content">
                     <div class="node-info-group">
-                      <span class="node-info-label">Peer ID</span>
+                      <span class="node-info-label">Identity Mode</span>
                       <div class="node-info-row">
                         <code class="node-info-value mono" id="sidebar-ipfs-id"></code>
                         <button type="button" class="node-copy-btn" data-copy="ipfs" title="Copy">

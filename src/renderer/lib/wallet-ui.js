@@ -46,10 +46,15 @@ export { getSelectedChainId, setSelectedChainId };
 let setupCta;
 let swarmIdEl;
 let ipfsIdEl;
+let ipfsCopyBtn;
 let radicleIdEl;
 let passwordValueEl;
 let touchIdValueEl;
 let createdValueEl;
+
+const IPFS_EPHEMERAL_LABEL = 'Ephemeral';
+const IPFS_EPHEMERAL_TITLE =
+  'freedom-ipfs uses ephemeral peer identities for read-only retrieval in this release.';
 
 /**
  * Initialize the wallet UI module
@@ -60,6 +65,7 @@ export function initWalletUi() {
   walletState.identityView = document.getElementById('sidebar-identity');
   swarmIdEl = document.getElementById('sidebar-swarm-id');
   ipfsIdEl = document.getElementById('sidebar-ipfs-id');
+  ipfsCopyBtn = document.querySelector('.node-copy-btn[data-copy="ipfs"]');
   radicleIdEl = document.getElementById('sidebar-radicle-id');
   passwordValueEl = document.getElementById('sidebar-password-value');
   touchIdValueEl = document.getElementById('sidebar-touchid-value');
@@ -214,15 +220,35 @@ async function loadIdentityData() {
       swarmIdEl.title = addr;
     }
 
-    // Display IPFS Peer ID
+    // Display IPFS identity mode / Peer ID
     if (status.addresses?.ipfsPeerId) {
       const peerId = status.addresses.ipfsPeerId;
       walletState.fullAddresses.ipfs = peerId;
       ipfsIdEl.textContent = truncateAddress(peerId, 8, 6);
       ipfsIdEl.title = peerId;
+      if (ipfsCopyBtn) {
+        ipfsCopyBtn.hidden = false;
+        ipfsCopyBtn.disabled = false;
+        ipfsCopyBtn.title = 'Copy';
+      }
+    } else if (status.ipfsIdentityMode === 'ephemeral') {
+      delete walletState.fullAddresses.ipfs;
+      ipfsIdEl.textContent = IPFS_EPHEMERAL_LABEL;
+      ipfsIdEl.title = IPFS_EPHEMERAL_TITLE;
+      if (ipfsCopyBtn) {
+        ipfsCopyBtn.hidden = true;
+        ipfsCopyBtn.disabled = true;
+        ipfsCopyBtn.title = 'No stable IPFS Peer ID to copy';
+      }
     } else {
+      delete walletState.fullAddresses.ipfs;
       ipfsIdEl.textContent = '--';
       ipfsIdEl.title = '';
+      if (ipfsCopyBtn) {
+        ipfsCopyBtn.hidden = false;
+        ipfsCopyBtn.disabled = true;
+        ipfsCopyBtn.title = 'No IPFS Peer ID to copy';
+      }
     }
 
     // Display Radicle DID

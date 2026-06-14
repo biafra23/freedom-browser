@@ -6,7 +6,6 @@ const {
 } = require('../../test/helpers/main-process-test-utils');
 
 const originalBeeApi = process.env.BEE_API;
-const originalIpfsGateway = process.env.IPFS_GATEWAY;
 
 const flushMicrotasks = async () => {
   await Promise.resolve();
@@ -41,14 +40,6 @@ function loadPreloadModule(options = {}) {
     }
   }
 
-  if (Object.prototype.hasOwnProperty.call(options, 'ipfsGatewayEnv')) {
-    if (options.ipfsGatewayEnv == null) {
-      delete process.env.IPFS_GATEWAY;
-    } else {
-      process.env.IPFS_GATEWAY = options.ipfsGatewayEnv;
-    }
-  }
-
   loadMainModule(require.resolve('./preload'), {
     ipcRenderer,
     contextBridge,
@@ -70,19 +61,12 @@ describe('preload', () => {
       process.env.BEE_API = originalBeeApi;
     }
 
-    if (originalIpfsGateway === undefined) {
-      delete process.env.IPFS_GATEWAY;
-    } else {
-      process.env.IPFS_GATEWAY = originalIpfsGateway;
-    }
-
     jest.restoreAllMocks();
   });
 
   test('exposes the preload bridges and routes direct wrappers to ipcRenderer', async () => {
     const { contextBridge, exposures, internalPages, ipcRenderer } = loadPreloadModule({
       beeApiEnv: 'http://127.0.0.1:1700',
-      ipfsGatewayEnv: 'http://127.0.0.1:9090',
     });
 
     expect(contextBridge.exposeInMainWorld).toHaveBeenCalledTimes(20);
@@ -111,7 +95,6 @@ describe('preload', () => {
     expect(ipcRenderer.sendSync).toHaveBeenCalledWith(IPC.GET_INTERNAL_PAGES);
     expect(exposures.nodeConfig).toEqual({
       beeApi: 'http://127.0.0.1:1700',
-      ipfsGateway: 'http://127.0.0.1:9090',
     });
     expect(exposures.internalPages).toBe(internalPages);
 
@@ -290,12 +273,10 @@ describe('preload', () => {
   test('does not expose default gateway URLs when overrides are absent', () => {
     const { exposures } = loadPreloadModule({
       beeApiEnv: null,
-      ipfsGatewayEnv: null,
     });
 
     expect(exposures.nodeConfig).toEqual({
       beeApi: null,
-      ipfsGateway: null,
     });
   });
 });

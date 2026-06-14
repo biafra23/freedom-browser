@@ -386,8 +386,8 @@ describe('page-context-menu', () => {
       'https://example.com/link',
       null,
       '',
-      null,
-      null
+      'http://freedom-ipfs.localhost/ipfs/',
+      'http://freedom-ipfs.localhost/ipns/'
     );
     expect(electronAPI.openUrlInNewWindow).toHaveBeenCalledWith(
       'ens:derived:https://example.com/link'

@@ -191,15 +191,18 @@ function serializeProfileMutationResult(result) {
   });
 }
 
-const PROFILE_NODE_MODES = new Set(['managed', 'external', 'disabled']);
+const PROFILE_NODE_MODES = {
+  bee: new Set(['managed', 'external', 'disabled']),
+  ipfs: new Set(['managed', 'disabled']),
+  radicle: new Set(['managed', 'external', 'disabled']),
+};
 const PROFILE_NODE_FIELDS = {
   bee: ['mode', 'externalApi'],
-  ipfs: ['mode', 'externalApi', 'externalGateway'],
+  ipfs: ['mode'],
   radicle: ['mode', 'externalHttp'],
 };
 const EXTERNAL_FIELDS = {
   bee: ['externalApi'],
-  ipfs: ['externalApi', 'externalGateway'],
   radicle: ['externalHttp'],
 };
 
@@ -250,7 +253,7 @@ function validateProfileNodeConfigUpdate(protocol, patch = {}) {
     if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
 
     if (field === 'mode') {
-      if (!PROFILE_NODE_MODES.has(patch.mode)) {
+      if (!PROFILE_NODE_MODES[protocol].has(patch.mode)) {
         return {
           ok: false,
           response: failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
@@ -282,7 +285,7 @@ function validateProfileNodeConfigUpdate(protocol, patch = {}) {
   }
 
   if (sanitized.mode === 'external') {
-    const missing = EXTERNAL_FIELDS[protocol].filter((field) => !sanitized[field]);
+    const missing = (EXTERNAL_FIELDS[protocol] || []).filter((field) => !sanitized[field]);
     if (missing.length) {
       return {
         ok: false,

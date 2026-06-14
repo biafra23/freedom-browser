@@ -297,7 +297,6 @@ async function bootstrap() {
       window: mainWindow,
       enabledProtocols: {
         bee: settings.startBeeAtLaunch !== false,
-        ipfs: settings.startIpfsAtLaunch !== false,
         radicle: settings.enableRadicleIntegration === true && settings.startRadicleAtLaunch !== false,
       },
       logger: log,

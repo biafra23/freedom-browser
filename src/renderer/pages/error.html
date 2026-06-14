@@ -209,18 +209,7 @@
 
       async function checkIpfsStatus() {
         const registry = await getRegistry();
-        const ipfsApi = registry?.ipfs?.api || null;
-        if (!ipfsApi) return { running: false };
-
-        try {
-          const res = await fetch(`${ipfsApi}/api/v0/id`, {
-            method: 'POST',
-            timeout: 2000,
-          });
-          return { running: res.ok };
-        } catch (e) {
-          return { running: false };
-        }
+        return { running: registry?.ipfs?.mode === 'bundled' };
       }
 
       // Format a host for display in the generic title (truncate very long

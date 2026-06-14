@@ -1,13 +1,12 @@
 // IPFS node UI controls
-import { state, buildIpfsApiUrl, getDisplayMessage } from './state.js';
+import { state, getDisplayMessage } from './state.js';
 import { pushDebug } from './debug.js';
 
 // DOM elements (initialized in initIpfsUi)
 let ipfsToggleBtn = null;
 let ipfsToggleSwitch = null;
-let ipfsPeersCount = null;
-let ipfsBandwidthDown = null;
-let ipfsBandwidthUp = null;
+let ipfsActiveRequestsCount = null;
+let ipfsDataRead = null;
 let ipfsVersionText = null;
 let ipfsInfoPanel = null;
 let ipfsStatusRow = null;
@@ -18,25 +17,44 @@ let ipfsStatusValue = null;
 let ipfsBinaryAvailable = true;
 
 export const stopIpfsInfoPolling = () => {
-  if (state.ipfsPeersInterval) {
-    clearInterval(state.ipfsPeersInterval);
-    state.ipfsPeersInterval = null;
+  if (state.ipfsInfoInterval) {
+    clearInterval(state.ipfsInfoInterval);
+    state.ipfsInfoInterval = null;
   }
   ipfsInfoPanel?.classList.remove('visible');
-  if (ipfsPeersCount) ipfsPeersCount.textContent = '0';
-  if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = '';
-  if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
+  if (ipfsActiveRequestsCount) ipfsActiveRequestsCount.textContent = '0';
+  if (ipfsDataRead) ipfsDataRead.textContent = '';
   if (ipfsVersionText)
     ipfsVersionText.textContent = state.ipfsVersionFetched ? state.ipfsVersionValue : '';
 };
 
-const formatBandwidth = (bytesPerSec) => {
-  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+const formatBytes = (bytes) => {
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const fetchPeersAndBandwidth = async () => {
+const parseNativeBuildInfo = (raw) => {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  if (typeof raw !== 'string') return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const formatNativeVersionLabel = (diagnostics = {}) => {
+  const buildInfo = parseNativeBuildInfo(diagnostics.nativeBuildInfo);
+  const version =
+    (typeof buildInfo?.version === 'string' && buildInfo.version) ||
+    (typeof diagnostics.nativeVersion === 'string' && diagnostics.nativeVersion) ||
+    '';
+  return version ? `freedom-ipfs ${version}` : 'freedom-ipfs';
+};
+
+const fetchNativeStats = async () => {
   if (!state.beeMenuOpen) return;
   if (state.currentIpfsStatus === 'stopped') {
     stopIpfsInfoPolling();
@@ -44,59 +62,34 @@ const fetchPeersAndBandwidth = async () => {
   }
   if (!ipfsInfoPanel?.classList.contains('visible')) return;
 
-  // Fetch version if not yet fetched
-  if (!state.ipfsVersionFetched) fetchVersionOnce();
-
-  // Fetch peers
   try {
-    const response = await fetch(buildIpfsApiUrl('/api/v0/swarm/peers'), { method: 'POST' });
+    const status = await window.ipfs?.getStatus?.();
     if (!ipfsInfoPanel?.classList.contains('visible')) return;
-    if (response.ok) {
-      const data = await response.json();
-      const peers = data?.Peers || [];
-      if (ipfsPeersCount) ipfsPeersCount.textContent = String(peers.length ?? 0);
-    } else if (ipfsPeersCount) {
-      ipfsPeersCount.textContent = '0';
+    const stats = JSON.parse(status?.diagnostics?.nativeGatewayStats || '{}');
+    if (ipfsActiveRequestsCount) {
+      ipfsActiveRequestsCount.textContent = String(stats.active_native_handles ?? 0);
+    }
+    if (ipfsDataRead) {
+      ipfsDataRead.textContent = formatBytes(stats.bytes_read || 0);
     }
   } catch {
-    if (ipfsPeersCount) ipfsPeersCount.textContent = '0';
-  }
-
-  // Fetch bandwidth stats
-  try {
-    const bwResponse = await fetch(buildIpfsApiUrl('/api/v0/stats/bw'), { method: 'POST' });
-    if (!ipfsInfoPanel?.classList.contains('visible')) return;
-    if (bwResponse.ok) {
-      const bwData = await bwResponse.json();
-      const rateIn = bwData?.RateIn || 0;
-      const rateOut = bwData?.RateOut || 0;
-      if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = `↓${formatBandwidth(rateIn)}`;
-      if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = `↑${formatBandwidth(rateOut)}`;
-    } else {
-      if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = '';
-      if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
-    }
-  } catch {
-    if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = '';
-    if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
+    if (ipfsActiveRequestsCount) ipfsActiveRequestsCount.textContent = '0';
+    if (ipfsDataRead) ipfsDataRead.textContent = '';
   }
 };
 
 const fetchVersionOnce = async () => {
   if (state.ipfsVersionFetched) return;
+  state.ipfsVersionFetched = true;
+  let versionLabel = null;
   try {
-    const response = await fetch(buildIpfsApiUrl('/api/v0/id'), { method: 'POST' });
-    if (response.ok) {
-      const data = await response.json();
-      state.ipfsVersionValue = data?.AgentVersion?.split('/')[1]?.split('-')[0] || '';
-      state.ipfsVersionFetched = true;
-      if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
-    } else {
-      if (ipfsVersionText) ipfsVersionText.textContent = '';
-    }
+    const status = await window.ipfs?.getStatus?.();
+    versionLabel = formatNativeVersionLabel(status?.diagnostics);
   } catch {
-    if (ipfsVersionText) ipfsVersionText.textContent = '';
+    // Fall back below; version display must not block status polling.
   }
+  state.ipfsVersionValue = versionLabel || 'freedom-ipfs';
+  if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 
 export const startIpfsInfoPolling = () => {
@@ -107,11 +100,11 @@ export const startIpfsInfoPolling = () => {
 
   ipfsInfoPanel?.classList.add('visible');
 
-  fetchPeersAndBandwidth();
+  fetchNativeStats();
   if (!state.ipfsVersionFetched) fetchVersionOnce();
 
-  if (state.ipfsPeersInterval) clearInterval(state.ipfsPeersInterval);
-  state.ipfsPeersInterval = setInterval(fetchPeersAndBandwidth, 1000);
+  if (state.ipfsInfoInterval) clearInterval(state.ipfsInfoInterval);
+  state.ipfsInfoInterval = setInterval(fetchNativeStats, 1000);
 };
 
 export const updateIpfsUi = (status, error) => {
@@ -150,18 +143,10 @@ export const updateIpfsUi = (status, error) => {
   if (state.beeMenuOpen) {
     if (status === 'stopped') {
       stopIpfsInfoPolling();
-    } else if (!state.ipfsPeersInterval && ipfsToggleSwitch?.classList.contains('running')) {
+    } else if (!state.ipfsInfoInterval && ipfsToggleSwitch?.classList.contains('running')) {
       startIpfsInfoPolling();
     }
   }
-};
-
-export const resetIpfsVersion = () => {
-  state.ipfsVersionFetched = false;
-  state.ipfsVersionValue = '';
-  if (ipfsVersionText) ipfsVersionText.textContent = '';
-  if (ipfsBandwidthDown) ipfsBandwidthDown.textContent = '';
-  if (ipfsBandwidthUp) ipfsBandwidthUp.textContent = '';
 };
 
 const setToggleDisabled = (disabled) => {
@@ -184,7 +169,7 @@ export const updateIpfsStatusLine = () => {
 
   const message = getDisplayMessage('ipfs');
 
-  if (message) {
+  if (message && ipfsStatusRow) {
     // Parse "Label: value" format
     const colonIndex = message.indexOf(':');
     if (colonIndex > 0) {
@@ -223,9 +208,8 @@ export const initIpfsUi = () => {
   // Initialize DOM elements
   ipfsToggleBtn = document.getElementById('ipfs-toggle-btn');
   ipfsToggleSwitch = document.getElementById('ipfs-toggle-switch');
-  ipfsPeersCount = document.getElementById('ipfs-peers-count');
-  ipfsBandwidthDown = document.getElementById('ipfs-bandwidth-down');
-  ipfsBandwidthUp = document.getElementById('ipfs-bandwidth-up');
+  ipfsActiveRequestsCount = document.getElementById('ipfs-active-requests-count');
+  ipfsDataRead = document.getElementById('ipfs-data-read');
   ipfsVersionText = document.getElementById('ipfs-version-text');
   ipfsInfoPanel = document.querySelector('.ipfs-info');
   ipfsStatusRow = document.getElementById('ipfs-status-row');

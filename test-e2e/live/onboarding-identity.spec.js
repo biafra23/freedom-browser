@@ -9,17 +9,18 @@
 // Before the fix this fails (the wizard never reaches the success screen and an
 // error dialog fires, on Windows because of EPERM). After the fix Bee is
 // stopped before the wipe and restarted with the injected key, so the wizard
-// completes and identities are reported as injected on every platform.
+// completes and Bee/Radicle identities are reported as injected on every
+// platform. IPFS reports ephemeral identity mode because native freedom-ipfs
+// does not use a durable injected PeerID for retrieval today.
 //
-// Requires the Bee and IPFS binaries (npm run bee:download / ipfs:download);
-// skipped if either is absent.
+// Requires the Bee binary (npm run bee:download); skipped if it is absent.
 
 const { test, expect, HAS_BINARIES } = require('../onboarding-fixtures');
 
 const STRONG_PASSWORD = 'Freedom-E2E-Test-Passphrase-2026!';
 
 test.describe('Onboarding wizard creates node identities (issue #90)', () => {
-  test.skip(!HAS_BINARIES, 'Bee and/or IPFS binary missing — run npm run bee:download && npm run ipfs:download');
+  test.skip(!HAS_BINARIES, 'Bee binary missing — run npm run bee:download');
 
   test('completes the password setup with a running Bee node', async ({ window: win }) => {
     // Surface any wizard error dialog (alert) instead of letting Playwright
@@ -86,10 +87,15 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     // No error dialog should have fired during setup.
     expect(dialogMessages.join('\n')).not.toMatch(/Failed to|still in use/i);
 
-    // Identities are reported as injected for the started/relevant nodes.
+    // Bee is injected. IPFS uses ephemeral native identities on this branch, so
+    // it must not be reported as a durable injected node identity.
     const status = await win.evaluate(() => window.identity.getStatus());
     expect(status.beeInjected).toBe(true);
-    expect(status.ipfsInjected).toBe(true);
+    expect(status.ipfsInjected).toBe(false);
+    expect(status.ipfsIdentityPrepared).toBe(false);
+    expect(status.ipfsIdentityMode).toBe('ephemeral');
+    expect(status.ipfsStableIdentitySupported).toBe(false);
+    expect(status.ipfsNativeIdentityActive).toBe(false);
 
     // Bee was restarted and is healthy again with the injected identity.
     await expect
