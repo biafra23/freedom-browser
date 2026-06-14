@@ -14,7 +14,7 @@ All notable changes to Freedom will be documented in this file.
 
 - Bundled Swarm node switched from Bee to Ant (antd), a bee-compatible light node — node status, menus, and wallet copy now read "Ant"
 - Existing Bee node data is migrated to Ant on first launch after upgrading, so the injected Swarm identity (overlay address, postage stamps, chequebook) is preserved
-- Updated the bundled Ant node to v0.5.20; runtime postage-batch management (added in v0.5.8) means publishing to Swarm (buying stamps, uploading data/files/sites) works end-to-end in light mode, and the Bee-compatible `/wallet` and stamp-purchase behavior (v0.5.19) means balance checks and feed/post retrieval work without Ant-specific browser logic
+- Updated the bundled Ant node to v0.5.21; runtime postage-batch management (added in v0.5.8) means publishing to Swarm (buying stamps, uploading data/files/sites) works end-to-end in light mode, and the Bee-compatible `/wallet` and stamp-purchase behavior (v0.5.19) means balance checks and feed/post retrieval work without Ant-specific browser logic
 - Bundled IPFS runtime moves from Kubo 0.41.0 to `freedom-ipfs` 0.4.1 native addons for macOS, Linux, and Windows
 
 ## [0.7.4] - 2026-06-01
