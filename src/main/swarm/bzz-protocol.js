@@ -132,14 +132,24 @@ async function buildGatewayUrl(bzzUrl) {
   const host = parsed.hostname;
 
   if (BZZ_HASH_RE.test(host)) {
+    const beeApiUrl = getBeeApiUrl();
+    if (!beeApiUrl) {
+      return { ok: false, status: 503, message: 'Bee node is not ready' };
+    }
+
     return {
       ok: true,
-      url: `${getBeeApiUrl()}/bzz/${host}${parsed.pathname}${parsed.search}`,
+      url: `${beeApiUrl}/bzz/${host}${parsed.pathname}${parsed.search}`,
     };
   }
 
   if (isEnsHost(host) && !hasEmptyLabel(host)) {
-    return resolveEnsToGatewayUrl(host, parsed);
+    const beeApiUrl = getBeeApiUrl();
+    if (!beeApiUrl) {
+      return { ok: false, status: 503, message: 'Bee node is not ready' };
+    }
+
+    return resolveEnsToGatewayUrl(host, parsed, beeApiUrl);
   }
 
   return null;
@@ -160,7 +170,7 @@ function hasEmptyLabel(host) {
 // is IPFS) return 404 with an explanatory body, mirroring the renderer's
 // transport assertion: a typed scheme is taken as user intent and we
 // don't silently switch transports.
-async function resolveEnsToGatewayUrl(host, parsed) {
+async function resolveEnsToGatewayUrl(host, parsed, beeApiUrl) {
   let result;
   try {
     result = await resolveEnsContent(host);
@@ -183,7 +193,7 @@ async function resolveEnsToGatewayUrl(host, parsed) {
     }
     return {
       ok: true,
-      url: `${getBeeApiUrl()}/bzz/${result.decoded}${parsed.pathname}${parsed.search}`,
+      url: `${beeApiUrl}/bzz/${result.decoded}${parsed.pathname}${parsed.search}`,
     };
   }
 

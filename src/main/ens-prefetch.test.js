@@ -10,8 +10,8 @@ jest.mock('electron', () => ({
 }));
 
 jest.mock('./service-registry', () => ({
-  getBeeApiUrl: () => 'http://127.0.0.1:1633',
-  getIpfsGatewayUrl: () => 'http://localhost:8080',
+  getBeeApiUrl: jest.fn(() => 'http://127.0.0.1:1633'),
+  getIpfsGatewayUrl: jest.fn(() => 'http://localhost:8080'),
   getRadicleApiUrl: () => 'http://127.0.0.1:8780',
 }));
 
@@ -23,6 +23,7 @@ jest.mock('./logger', () => ({
 }));
 
 const { prefetchGatewayUrl, PREFETCH_TIMEOUT_MS } = require('./ens-prefetch');
+const { getBeeApiUrl, getIpfsGatewayUrl } = require('./service-registry');
 
 const makeFakeRequest = () => {
   const listeners = new Map();
@@ -46,6 +47,8 @@ beforeEach(() => {
   jest.useFakeTimers();
   fakeRequest = makeFakeRequest();
   delete process.env.ENS_DISABLE_PREFETCH;
+  getBeeApiUrl.mockReturnValue('http://127.0.0.1:1633');
+  getIpfsGatewayUrl.mockReturnValue('http://localhost:8080');
 });
 
 afterEach(() => {
@@ -89,6 +92,16 @@ describe('prefetchGatewayUrl', () => {
     prefetchGatewayUrl('https://example.com');
     prefetchGatewayUrl('bzz://not-a-hash');
     prefetchGatewayUrl('ipfs://');
+    expect(mockNetRequest).not.toHaveBeenCalled();
+  });
+
+  test('missing gateway endpoints return a noop handle without any network call', () => {
+    getBeeApiUrl.mockReturnValue(null);
+    prefetchGatewayUrl('bzz://' + 'a'.repeat(64));
+
+    getIpfsGatewayUrl.mockReturnValue(null);
+    prefetchGatewayUrl('ipfs://QmW81r84Aihiqqi2Jw6nM1LnpeMfRCenRxtjwHNkXVkZYa');
+
     expect(mockNetRequest).not.toHaveBeenCalled();
   });
 

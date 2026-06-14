@@ -9,14 +9,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 const internalPages = ipcRenderer.sendSync('internal:get-pages');
 
 // Environment variable overrides for gateways (for advanced users)
-const defaultBeeApi = process.env.BEE_API || 'http://127.0.0.1:1633';
-// Gateway uses `localhost` (not 127.0.0.1) so Kubo's default subdomain-gateway
-// PublicGateways entry kicks in — required for `_redirects` file support.
-const defaultIpfsGateway = process.env.IPFS_GATEWAY || 'http://localhost:8080';
+const defaultBeeApi = process.env.BEE_API || null;
 
 contextBridge.exposeInMainWorld('nodeConfig', {
   beeApi: defaultBeeApi,
-  ipfsGateway: defaultIpfsGateway,
 });
 
 contextBridge.exposeInMainWorld('internalPages', internalPages);
@@ -40,6 +36,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openUrlInNewWindow: (url) => ipcRenderer.send('window:new-with-url', url),
   showAbout: () => ipcRenderer.send('app:show-about'),
   getPlatform: () => ipcRenderer.invoke('window:get-platform'),
+  getActiveProfile: () => ipcRenderer.invoke('profile:get-active'),
+  listProfiles: () => ipcRenderer.invoke('profile:list'),
+  createProfile: (input) => ipcRenderer.invoke('profile:create', input),
+  openProfile: (id) => ipcRenderer.invoke('profile:open', { id }),
+  resolveExternalNodeCandidates: (payload) =>
+    ipcRenderer.send('profile:external-candidates-decision', payload),
+  onExternalNodeCandidates: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('profile:external-candidates', handler);
+    return () => ipcRenderer.removeListener('profile:external-candidates', handler);
+  },
+  onProfileUpdated: (callback) => {
+    const handler = (_event, profile) => callback(profile);
+    ipcRenderer.on('profile:updated', handler);
+    return () => ipcRenderer.removeListener('profile:updated', handler);
+  },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   getBookmarks: () => ipcRenderer.invoke('bookmarks:get'),

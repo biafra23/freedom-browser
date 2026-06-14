@@ -121,8 +121,7 @@ describe('Bee statestore wipe lock (issue #90)', () => {
     'wiping statestore succeeds while a real Bee node holds the LOCK',
     async () => {
       const keys = deriveAllKeys(TEST_MNEMONIC);
-      const configPath = createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT);
-      fs.appendFileSync(configPath, `p2p-addr: 127.0.0.1:${TEST_P2P_PORT}\n`);
+      const configPath = createBeeConfig(tempDir, TEST_PASSWORD, TEST_PORT, TEST_P2P_PORT);
       // Pin a neighborhood so Bee doesn't query the external Swarmscan
       // suggester before going healthy — that lookup would make this required
       // CI job flaky on any DNS/service hiccup.

@@ -45,7 +45,6 @@
  */
 
 const log = require('../logger');
-const { getIpfsGatewayUrl } = require('../service-registry');
 const { resolveEnsContent } = require('../ens-resolver');
 const { serveNativeGatewayRequest } = require('../ipfs-manager');
 const { isEnsHost } = require('../../shared/origin-utils');
@@ -82,6 +81,7 @@ const IPNS_HOST_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$/;
 // request deadlines live in FreedomIpfsNativeNode. Single-shot — no retry loop
 // here, see file header.
 const ATTEMPT_TIMEOUT_MS = 30_000;
+const NATIVE_GATEWAY_BASE = 'http://freedom-ipfs.localhost';
 
 // Request headers we should not forward to the native gateway — either
 // Chromium-injected privileged-scheme noise or headers that refer to the
@@ -197,7 +197,7 @@ async function buildGatewayUrl(namespace, sourceUrl) {
     }
   }
 
-  const gw = getIpfsGatewayUrl();
+  const gw = NATIVE_GATEWAY_BASE;
 
   if (effectiveNs === 'ipfs' && CID_RE.test(host)) {
     // CIDv0 / CIDv1-base58btc hosts are case-sensitive. Sub-resource
@@ -590,4 +590,5 @@ module.exports = {
   gatewayPathFromUrl,
   sanitizeRequestHeaders,
   ATTEMPT_TIMEOUT_MS,
+  NATIVE_GATEWAY_BASE,
 };

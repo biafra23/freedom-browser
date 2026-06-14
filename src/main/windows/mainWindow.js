@@ -104,6 +104,39 @@ function createMainWindow(initialUrl = null) {
   return window;
 }
 
+function focusBrowserWindow(window) {
+  if (!window || window.isDestroyed()) {
+    return false;
+  }
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  if (!window.isVisible()) {
+    window.show();
+  }
+
+  try {
+    if (process.platform === 'darwin' && app.focus) {
+      app.focus({ steal: true });
+    }
+  } catch {
+    // Best-effort only; BrowserWindow.focus() below is the real fallback.
+  }
+
+  window.focus();
+  return true;
+}
+
+function focusOrCreateMainWindow(initialUrl = null) {
+  let window = [...mainWindows].find((candidate) => !candidate.isDestroyed());
+  if (!window) {
+    window = createMainWindow(initialUrl);
+  }
+  focusBrowserWindow(window);
+  return window;
+}
+
 function setWindowTitle(title) {
   currentWindowTitle = title;
 }
@@ -124,6 +157,7 @@ function getMainWindows() {
 
 module.exports = {
   createMainWindow,
+  focusOrCreateMainWindow,
   setWindowTitle,
   getWindowTitle,
   isMainBrowserWindow,

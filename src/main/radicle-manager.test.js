@@ -8,7 +8,8 @@ const {
 } = require('../../test/helpers/main-process-test-utils');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const DEV_RADICLE_DATA_DIR = path.join(PROJECT_ROOT, 'radicle-data');
+const DEFAULT_USER_DATA_DIR = '/tmp/freedom-user-data';
+const PROFILE_RADICLE_DATA_DIR = path.join(DEFAULT_USER_DATA_DIR, 'radicle-data');
 const DEFAULT_HOME_DIR = '/home/test';
 
 function flushMicrotasks() {
@@ -206,7 +207,7 @@ function loadRadicleManagerModule(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const app = options.app || createAppMock({
     isPackaged: options.isPackaged ?? false,
-    userDataDir: options.userDataDir || '/tmp/freedom-user-data',
+    userDataDir: options.userDataDir || DEFAULT_USER_DATA_DIR,
   });
   const windows = options.windows || [];
   const BrowserWindow = {
@@ -222,6 +223,7 @@ function loadRadicleManagerModule(options = {}) {
   const setErrorState = jest.fn();
   const clearErrorState = jest.fn();
   const clearService = jest.fn();
+  const updateActiveProfileNodeConfig = options.updateActiveProfileNodeConfig || jest.fn();
   const execFileSync = options.execFileSync || jest.fn();
   const execFileAsync = options.execFileAsync || jest.fn().mockResolvedValue({ stdout: '', stderr: '' });
   const spawnedProcesses = [];
@@ -273,7 +275,7 @@ function loadRadicleManagerModule(options = {}) {
         return options.httpdBinaryExists !== false;
       }
 
-      if (target === DEV_RADICLE_DATA_DIR) {
+      if (target === PROFILE_RADICLE_DATA_DIR) {
         return options.radicleDataDirExists === true;
       }
 
@@ -315,11 +317,17 @@ function loadRadicleManagerModule(options = {}) {
         promisify: jest.fn(() => execFileAsync),
       }),
       [require.resolve('./logger')]: () => log,
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: jest.fn(() => options.activeProfile || null),
+        getReservedProfilePorts: jest.fn(() => new Set(options.reservedPorts || [])),
+        updateActiveProfileNodeConfig,
+      }),
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
           REUSED: 'reused',
           EXTERNAL: 'external',
+          DISABLED: 'disabled',
           NONE: 'none',
         },
         DEFAULTS: {
@@ -359,6 +367,7 @@ function loadRadicleManagerModule(options = {}) {
     spawn,
     spawnedProcesses,
     updateService,
+    updateActiveProfileNodeConfig,
     windows,
   };
 }
@@ -385,9 +394,9 @@ describe('radicle-manager', () => {
     expect(ctx.mod.getRadicleBinaryPath('radicle-node')).toBe(
       path.join(PROJECT_ROOT, 'radicle-bin', `${platform}-${process.arch}`, binaryName)
     );
-    expect(ctx.mod.getRadicleDataPath()).toBe(DEV_RADICLE_DATA_DIR);
-    expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(DEV_RADICLE_DATA_DIR, { recursive: true });
-    expect(ctx.mod.getActiveRadHome()).toBe(DEV_RADICLE_DATA_DIR);
+    expect(ctx.mod.getRadicleDataPath()).toBe(PROFILE_RADICLE_DATA_DIR);
+    expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(PROFILE_RADICLE_DATA_DIR, { recursive: true });
+    expect(ctx.mod.getActiveRadHome()).toBe(PROFILE_RADICLE_DATA_DIR);
   });
 
   test('registers IPC handlers, blocks disabled integration, and validates missing RIDs', async () => {
@@ -640,27 +649,30 @@ describe('radicle-manager', () => {
       ['auth', '--alias', 'FreedomBrowser'],
       expect.objectContaining({
         env: expect.objectContaining({
-          RAD_HOME: DEV_RADICLE_DATA_DIR,
+          RAD_HOME: PROFILE_RADICLE_DATA_DIR,
           RAD_PASSPHRASE: '',
         }),
         stdio: 'pipe',
       })
     );
     expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
-      path.join(DEV_RADICLE_DATA_DIR, 'config.json'),
+      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
       JSON.stringify({
         preferredSeeds: [
-          'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.xyz:8776',
-          'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.xyz:8776',
+          'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.network:8776',
+          'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.network:8776',
         ],
         node: {
           alias: 'FreedomBrowser',
+          listen: ['0.0.0.0:8776'],
         },
       }, null, 2)
     );
     expect(ctx.spawnedProcesses).toHaveLength(2);
     expect(ctx.spawnedProcesses[0].binary).toContain('radicle-node');
     expect(ctx.spawnedProcesses[1].binary).toContain('radicle-httpd');
+    expect(ctx.spawnedProcesses[0].spawnOptions.env.RAD_HOME).toBe(PROFILE_RADICLE_DATA_DIR);
+    expect(ctx.spawnedProcesses[1].spawnOptions.env.RAD_HOME).toBe(PROFILE_RADICLE_DATA_DIR);
     expect(ctx.spawnedProcesses[1].args).toEqual(['--listen', '127.0.0.1:8781']);
     expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
       api: 'http://127.0.0.1:8781',
@@ -678,6 +690,283 @@ describe('radicle-manager', () => {
     expect(ctx.spawnedProcesses[1].kills).toContain('SIGTERM');
     expect(ctx.spawnedProcesses[0].kills).toContain('SIGTERM');
     expect(ctx.clearService).toHaveBeenCalledWith('radicle');
+  });
+
+  test('migrates legacy Radicle seed hostnames in existing config', async () => {
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: { mode: 'managed', httpPort: 18780, p2pPort: 18776 },
+          },
+        },
+      },
+      configExists: true,
+      configContents: JSON.stringify({
+        preferredSeeds: [
+          'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.xyz:8776',
+          'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.xyz:8776',
+          'z6Mcustom@local.example:8776',
+        ],
+        node: {
+          alias: 'CustomAlias',
+          listen: ['0.0.0.0:9999'],
+        },
+      }),
+      portResolver: (port) => port === 18780 || port === 18776,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:18781/') {
+          return { statusCode: 200, body: {} };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+
+    const configWrite = ctx.fsMock.writeFileSync.mock.calls.find(([target]) => (
+      target === path.join(PROFILE_RADICLE_DATA_DIR, 'config.json')
+    ));
+    const nextConfig = JSON.parse(configWrite[1]);
+
+    expect(nextConfig.preferredSeeds).toEqual([
+      'z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7@iris.radicle.network:8776',
+      'z6Mkmqogy2qEM2ummccUthFEaaHvyYmYBYh3dbe9W4ebScxo@rosa.radicle.network:8776',
+      'z6Mcustom@local.example:8776',
+    ]);
+    expect(nextConfig.node).toEqual({
+      alias: 'CustomAlias',
+      listen: ['0.0.0.0:18777'],
+    });
+
+    const stopPromise = ctx.mod.stopRadicle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stopPromise;
+  });
+
+  test('starts a managed profile node on profile ports without reusing defaults', async () => {
+    const checkedPorts = [];
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: { mode: 'managed', httpPort: 18780, p2pPort: 18776 },
+          },
+        },
+      },
+      configExists: false,
+      keyFiles: [],
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return false;
+      },
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:18780/') {
+          return { statusCode: 200, body: {} };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushMicrotasks();
+
+    expect(checkedPorts).toContain(18780);
+    expect(checkedPorts).toContain(18776);
+    expect(checkedPorts).not.toContain(8780);
+    expect(ctx.spawnedProcesses).toHaveLength(2);
+    expect(ctx.spawnedProcesses[0].binary).toContain('radicle-node');
+    expect(ctx.spawnedProcesses[1].binary).toContain('radicle-httpd');
+    expect(ctx.spawnedProcesses[1].args).toEqual(['--listen', '127.0.0.1:18780']);
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: 'http://127.0.0.1:18780',
+      gateway: 'http://127.0.0.1:18780',
+      mode: 'bundled',
+    });
+    expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
+      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      expect.stringContaining('"0.0.0.0:18776"')
+    );
+
+    const stopPromise = ctx.mod.stopRadicle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stopPromise;
+  });
+
+  test('persists reassigned managed profile ports before launching Radicle', async () => {
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            radicle: { mode: 'managed', httpPort: 18780, p2pPort: 18776 },
+          },
+        },
+      },
+      configExists: false,
+      keyFiles: [],
+      portResolver: (port) => port === 18780 || port === 18776,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:18781/') {
+          return { statusCode: 200, body: {} };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('radicle', {
+      httpPort: 18781,
+      p2pPort: 18777,
+    });
+    expect(ctx.spawnedProcesses).toHaveLength(2);
+    expect(ctx.spawnedProcesses[1].args).toEqual(['--listen', '127.0.0.1:18781']);
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: 'http://127.0.0.1:18781',
+      gateway: 'http://127.0.0.1:18781',
+      mode: 'bundled',
+    });
+    expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
+      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      expect.stringContaining('"0.0.0.0:18777"')
+    );
+
+    const stopPromise = ctx.mod.stopRadicle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stopPromise;
+  });
+
+  test('skips reserved sibling profile ports when reassigning Radicle ports', async () => {
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            radicle: { mode: 'managed', httpPort: 18780, p2pPort: 18776 },
+          },
+        },
+      },
+      configExists: false,
+      keyFiles: [],
+      reservedPorts: [18781, 18777],
+      portResolver: (port) => port === 18780 || port === 18776,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:18782/') {
+          return { statusCode: 200, body: {} };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('radicle', {
+      httpPort: 18782,
+      p2pPort: 18778,
+    });
+    expect(ctx.spawnedProcesses).toHaveLength(2);
+    expect(ctx.spawnedProcesses[1].args).toEqual(['--listen', '127.0.0.1:18782']);
+    expect(ctx.fsMock.writeFileSync).toHaveBeenCalledWith(
+      path.join(PROFILE_RADICLE_DATA_DIR, 'config.json'),
+      expect.stringContaining('"0.0.0.0:18778"')
+    );
+
+    const stopPromise = ctx.mod.stopRadicle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stopPromise;
+  });
+
+  test('connects to a configured external profile httpd without probing defaults or system node', async () => {
+    jest.spyOn(global, 'setInterval').mockReturnValue(987);
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const checkedPorts = [];
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: {
+              mode: 'external',
+              externalHttp: ' http://127.0.0.1:28780/ ',
+            },
+          },
+        },
+      },
+      systemSocketExists: true,
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:28780/') {
+          return { statusCode: 200, body: { version: '0.1.0' } };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(28780);
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: 'http://127.0.0.1:28780',
+      gateway: 'http://127.0.0.1:28780',
+      mode: 'external',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'radicle',
+      'External node: 127.0.0.1:28780'
+    );
+
+    await ctx.mod.stopRadicle();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(987);
+    expect(ctx.clearService).toHaveBeenCalledWith('radicle');
+  });
+
+  test('marks a disabled profile Radicle node without probing or spawning', async () => {
+    const checkedPorts = [];
+    const ctx = loadRadicleManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            radicle: { mode: 'disabled' },
+          },
+        },
+      },
+      systemSocketExists: true,
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+    });
+
+    await ctx.mod.startRadicle();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.httpGet).not.toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBeNull();
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: null,
+      gateway: null,
+      mode: 'disabled',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('radicle', 'Node disabled for this profile');
   });
 
   test('starts httpd against a detected system node and stops only that spawned process', async () => {

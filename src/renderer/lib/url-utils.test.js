@@ -15,6 +15,7 @@ import {
   normalizeLegacyEnsBookmarkUrl,
   isValidRadicleId,
   parseRadicleInput,
+  formatRadicleUrl,
   deriveRadBaseFromUrl,
   deriveRadicleDisplayValue,
 } from './url-utils.js';
@@ -47,6 +48,10 @@ describe('url-utils', () => {
     test('returns null for empty input after removing scheme', () => {
       expect(parseHashInput('bzz://', BZZ_ROUTE_PREFIX)).toBeNull();
       expect(parseHashInput('', BZZ_ROUTE_PREFIX)).toBeNull();
+    });
+
+    test('returns null when the bzz route prefix is not ready', () => {
+      expect(parseHashInput('bzz://abc123', null)).toBeNull();
     });
 
     test('parses hash with fragment', () => {
@@ -399,6 +404,10 @@ describe('url-utils', () => {
     // multiformats: CID.parse(CIDV0).toV1().toString().
     const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
     const CIDV1 = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
+
+    test('returns null when the IPFS route prefix is not ready', () => {
+      expect(parseIpfsInput(CIDV0, null)).toBeNull();
+    });
 
     test('canonicalises raw CIDv0 to CIDv1 base32', () => {
       const result = parseIpfsInput(CIDV0, IPFS_ROUTE_PREFIX);
@@ -1150,6 +1159,16 @@ describe('url-utils', () => {
     test('returns null for empty input after stripping scheme', () => {
       expect(parseRadicleInput('rad://', RAD_PREFIX)).toBeNull();
       expect(parseRadicleInput('rad:', RAD_PREFIX)).toBeNull();
+    });
+
+    test('returns null when the Radicle route prefix is not ready', () => {
+      expect(parseRadicleInput(`rad://${SAMPLE_RID}`, null)).toBeNull();
+    });
+  });
+
+  describe('formatRadicleUrl', () => {
+    test('returns null when the Radicle base is not ready', () => {
+      expect(formatRadicleUrl('rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5', null)).toBeNull();
     });
   });
 

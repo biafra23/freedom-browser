@@ -53,8 +53,8 @@ function convertProtocolUrl(url) {
   // handlers before webRequest sees them.
 
   // Handle rad: and rad:// protocols
-  // rad:RID or rad://RID -> http://127.0.0.1:8780/api/v1/repos/RID
-  // rad:RID/tree/branch/path -> http://127.0.0.1:8780/api/v1/repos/RID/tree/branch/path
+  // rad:RID or rad://RID -> <radicle-api>/api/v1/repos/RID
+  // rad:RID/tree/branch/path -> <radicle-api>/api/v1/repos/RID/tree/branch/path
   if (url.startsWith('rad:')) {
     if (loadSettings().enableRadicleIntegration !== true) {
       return { converted: false, url };
@@ -62,6 +62,10 @@ function convertProtocolUrl(url) {
     // Handle both rad:RID and rad://RID formats
     const remainder = url.startsWith('rad://') ? url.slice(6) : url.slice(4);
     const radicleApiUrl = getRadicleApiUrl();
+    if (!radicleApiUrl) {
+      log.warn('[rewrite] Radicle endpoint is not ready');
+      return { converted: false, url };
+    }
     // Parse the remainder to extract RID and optional path
     const slashIndex = remainder.indexOf('/');
     const rid = slashIndex === -1 ? remainder : remainder.slice(0, slashIndex);
@@ -125,7 +129,7 @@ function shouldRewriteRequest(requestUrl, baseUrl) {
 /**
  * Builds the rewritten URL for a request that should stay within the Swarm hash context.
  * @param {string} requestUrl - The URL being requested
- * @param {string} baseUrl - The current bzz base URL (e.g., http://127.0.0.1:1633/bzz/hash/)
+ * @param {string} baseUrl - The current bzz base URL (e.g., <bee-api>/bzz/hash/)
  * @returns {string|null} The rewritten URL, or null if URLs are invalid
  */
 function buildRewriteTarget(requestUrl, baseUrl) {

@@ -7,7 +7,7 @@ const {
 } = require('../../test/helpers/main-process-test-utils');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const DEV_BEE_DATA_DIR = path.join(PROJECT_ROOT, 'bee-data');
+const DEFAULT_USER_DATA_DIR = '/tmp/freedom-user-data';
 
 function flushMicrotasks() {
   return Promise.resolve().then(() => Promise.resolve());
@@ -195,7 +195,7 @@ function loadBeeManagerModule(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const app = options.app || createAppMock({
     isPackaged: options.isPackaged ?? false,
-    userDataDir: options.userDataDir || '/tmp/freedom-user-data',
+    userDataDir: options.userDataDir || DEFAULT_USER_DATA_DIR,
   });
   const windows = options.windows || [];
   const BrowserWindow = {
@@ -211,6 +211,7 @@ function loadBeeManagerModule(options = {}) {
   const setErrorState = jest.fn();
   const clearErrorState = jest.fn();
   const clearService = jest.fn();
+  const updateActiveProfileNodeConfig = options.updateActiveProfileNodeConfig || jest.fn();
   const spawnedProcesses = [];
   const execSync = options.execSync || jest.fn();
   const spawn = jest.fn((binary, args = [], spawnOptions = {}) => {
@@ -246,9 +247,7 @@ function loadBeeManagerModule(options = {}) {
   const platform = platformMap[process.platform] || process.platform;
   const binaryName = process.platform === 'win32' ? 'bee.exe' : 'bee';
   const beeBinPath = path.join(PROJECT_ROOT, 'bee-bin', `${platform}-${process.arch}`, binaryName);
-  const dataDir = options.isPackaged
-    ? path.join(options.userDataDir || '/tmp/freedom-user-data', 'bee-data')
-    : DEV_BEE_DATA_DIR;
+  const dataDir = path.join(options.userDataDir || DEFAULT_USER_DATA_DIR, 'bee-data');
   const configPath = path.join(dataDir, 'config.yaml');
   const keysPath = path.join(dataDir, 'keys');
 
@@ -296,10 +295,17 @@ function loadBeeManagerModule(options = {}) {
         loadSettings,
       }),
       [require.resolve('./networks/network-registry')]: () => registry,
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: jest.fn(() => options.activeProfile || null),
+        getReservedProfilePorts: jest.fn(() => new Set(options.reservedPorts || [])),
+        updateActiveProfileNodeConfig,
+      }),
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
           REUSED: 'reused',
+          EXTERNAL: 'external',
+          DISABLED: 'disabled',
           NONE: 'none',
         },
         DEFAULTS: {
@@ -340,6 +346,7 @@ function loadBeeManagerModule(options = {}) {
     spawn,
     spawnedProcesses,
     updateService,
+    updateActiveProfileNodeConfig,
     windows,
   };
 }
@@ -418,6 +425,235 @@ describe('bee-manager', () => {
     expect(ctx.clearService).toHaveBeenCalledWith('bee');
   });
 
+  test('starts a managed profile daemon on the profile port without reusing defaults', async () => {
+    jest.useFakeTimers();
+    const checkedPorts = [];
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11633, p2pPort: 12633 },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return false;
+      },
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:11633/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(checkedPorts).toContain(11633);
+    expect(checkedPorts).toContain(12633);
+    expect(checkedPorts).not.toContain(1633);
+    expect(checkedPorts).not.toContain(1634);
+    expect(ctx.spawnedProcesses).toHaveLength(1);
+    expect(ctx.mod.getActivePort()).toBe(11633);
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: 'http://127.0.0.1:11633',
+      gateway: 'http://127.0.0.1:11633',
+      mode: 'bundled',
+    });
+
+    const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
+    expect(configContent).toContain('api-addr: 127.0.0.1:11633');
+    expect(configContent).toContain('p2p-addr: :12633');
+
+    const stopPromise = ctx.mod.stopBee();
+    await jest.advanceTimersByTimeAsync(0);
+    await stopPromise;
+  });
+
+  test('persists a reassigned managed profile port before launching Bee', async () => {
+    jest.useFakeTimers();
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11633, p2pPort: 12633 },
+          },
+        },
+      },
+      portResolver: (port) => port === 11633,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:11634/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
+      apiPort: 11634,
+      p2pPort: 12633,
+    });
+    expect(ctx.mod.getActivePort()).toBe(11634);
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: 'http://127.0.0.1:11634',
+      gateway: 'http://127.0.0.1:11634',
+      mode: 'bundled',
+    });
+
+    const stopPromise = ctx.mod.stopBee();
+    await jest.advanceTimersByTimeAsync(0);
+    await stopPromise;
+  });
+
+  test('skips reserved sibling profile ports when reassigning Bee ports', async () => {
+    jest.useFakeTimers();
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        source: 'catalog',
+        metadata: {
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11633, p2pPort: 12633 },
+          },
+        },
+      },
+      reservedPorts: [11634],
+      portResolver: (port) => port === 11633,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:11635/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
+      apiPort: 11635,
+      p2pPort: 12633,
+    });
+    expect(ctx.mod.getActivePort()).toBe(11635);
+
+    const stopPromise = ctx.mod.stopBee();
+    await jest.advanceTimersByTimeAsync(0);
+    await stopPromise;
+  });
+
+  test('connects to a configured external profile API without probing default ports', async () => {
+    const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(456);
+    const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
+    const checkedPorts = [];
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            bee: {
+              mode: 'external',
+              externalApi: ' http://127.0.0.1:22633/ ',
+            },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:22633/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return {
+          statusCode: 500,
+          body: '',
+        };
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(22633);
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: 'http://127.0.0.1:22633',
+      gateway: 'http://127.0.0.1:22633',
+      mode: 'external',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'External node: 127.0.0.1:22633');
+    expect(setIntervalSpy).toHaveBeenCalled();
+
+    await ctx.mod.stopBee();
+
+    expect(clearIntervalSpy).toHaveBeenCalledWith(456);
+    expect(ctx.clearService).toHaveBeenCalledWith('bee');
+  });
+
+  test('marks a disabled profile Bee node without probing or spawning', async () => {
+    const checkedPorts = [];
+    const ctx = loadBeeManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            bee: { mode: 'disabled' },
+          },
+        },
+      },
+      portResolver: (port) => {
+        checkedPorts.push(port);
+        return true;
+      },
+    });
+
+    await ctx.mod.startBee();
+    await flushMicrotasks();
+
+    expect(checkedPorts).toEqual([]);
+    expect(ctx.httpGet).not.toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBeNull();
+    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+      api: null,
+      gateway: null,
+      mode: 'disabled',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node disabled for this profile');
+  });
+
   test('starts a bundled ultra-light daemon on a fallback port and writes ultra-light config', async () => {
     jest.useFakeTimers();
 
@@ -429,7 +665,7 @@ describe('bee-manager', () => {
     const platform = platformMap[process.platform] || process.platform;
     const binaryName = process.platform === 'win32' ? 'bee.exe' : 'bee';
     const beeBinPath = path.join(PROJECT_ROOT, 'bee-bin', `${platform}-${process.arch}`, binaryName);
-    const dataDir = DEV_BEE_DATA_DIR;
+    const dataDir = path.join(DEFAULT_USER_DATA_DIR, 'bee-data');
     const configPath = path.join(dataDir, 'config.yaml');
     const keysPath = path.join(dataDir, 'keys');
     const ctx = loadBeeManagerModule({
@@ -484,6 +720,7 @@ describe('bee-manager', () => {
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('api-addr: 127.0.0.1:1634');
+    expect(configContent).toContain('p2p-addr: :1634');
     expect(configContent).toContain('swap-enable: false');
     expect(configContent).toContain('blockchain-rpc-endpoint: ""');
     expect(configContent).toContain('resolver-options: "https://ethereum.publicnode.com"');

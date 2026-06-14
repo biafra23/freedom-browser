@@ -38,6 +38,10 @@ jest.mock('./publish-history', () => ({
   updateEntry: jest.fn(),
 }));
 
+jest.mock('../profile-paths', () => ({
+  createProfileTempDir: jest.fn(() => '/tmp/freedom-profile-swarm-publish'),
+}));
+
 // Mock fs for file operations
 jest.mock('fs', () => ({
   existsSync: jest.fn(),
