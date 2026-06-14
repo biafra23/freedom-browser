@@ -3,7 +3,7 @@ Third-Party Notices
 This software includes the following third-party components:
 
 Ant (antd, Swarm node)
-  License: BSD-3-Clause
+  License: MIT OR Apache-2.0
   Copyright (c) solardev-xyz contributors
   https://github.com/solardev-xyz/ant
 

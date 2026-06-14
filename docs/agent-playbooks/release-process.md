@@ -142,7 +142,7 @@ npm test
 npm run check-binaries
 ```
 
-**License gate (blocking).** `NOTICES` and `LICENSE_AUDIT.md` attribute the bundled Ant binary as BSD-3-Clause, but the upstream repo has not yet published its LICENSE file. Before building release artifacts, confirm `https://github.com/solardev-xyz/ant` ships a LICENSE matching the attribution (and update `NOTICES` / `LICENSE_AUDIT.md` / `licenses-audit.json` if it differs). Do not ship a release that bundles `antd` without a published upstream license. Remove this gate once the upstream LICENSE lands.
+**License check.** `NOTICES`, `LICENSE_AUDIT.md`, and `licenses-audit.json` attribute the bundled Ant binary as MIT OR Apache-2.0, matching the `LICENSE-MIT` / `LICENSE-APACHE` that `https://github.com/solardev-xyz/ant` now publishes. Before building release artifacts, confirm the upstream license is unchanged and update those three files if it differs.
 
 Spot-check the app once (`npm start`) and confirm the About/version surface reflects the new number.
 

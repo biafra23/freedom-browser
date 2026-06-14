@@ -1,6 +1,6 @@
 {
   "project_license": "MPL-2.0",
-  "generated_at": "2026-06-12T00:00:00.000Z",
+  "generated_at": "2026-06-14T00:00:00.000Z",
   "distribution_model": {
     "packaging": "electron-builder",
     "bundles_node_modules": true,
@@ -344,9 +344,9 @@
         "url": "https://github.com/solardev-xyz/ant"
       },
       "license": {
-        "spdx": ["BSD-3-Clause"],
-        "raw": "BSD-3-Clause",
-        "license_files": [],
+        "spdx": ["MIT", "Apache-2.0"],
+        "raw": "MIT OR Apache-2.0",
+        "license_files": ["LICENSE-MIT", "LICENSE-APACHE"],
         "notice_required": true
       },
       "bundled_with_app": true,
@@ -355,13 +355,8 @@
       "issues": [
         {
           "kind": "notice",
-          "details": "BSD-3-Clause requires attribution in documentation and advertising materials",
-          "recommended_fix": "Include Ant's license notice in THIRD_PARTY_NOTICES"
-        },
-        {
-          "kind": "missing-license-file",
-          "details": "The upstream repository does not yet publish a LICENSE file; BSD-3-Clause is the declared license",
-          "recommended_fix": "Add a BSD-3-Clause LICENSE file to solardev-xyz/ant"
+          "details": "MIT and Apache-2.0 both require attribution and inclusion of the license text",
+          "recommended_fix": "Include Ant's MIT/Apache notice in THIRD_PARTY_NOTICES"
         }
       ]
     },

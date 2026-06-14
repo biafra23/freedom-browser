@@ -1,7 +1,7 @@
 # License Audit Report for Freedom Browser
 
 **Intended License:** MPL-2.0 (Mozilla Public License 2.0)
-**Audit Date:** 2026-06-12
+**Audit Date:** 2026-06-14
 **Auditor:** Automated analysis (Codex)
 
 > **DISCLAIMER:** This is a practical engineering audit, not legal advice. For final licensing decisions, consult a qualified attorney.
@@ -92,10 +92,10 @@ Freedom Browser is distributed as:
 ### Ant (antd, Swarm Node)
 
 - **Source:** https://github.com/solardev-xyz/ant
-- **License:** BSD-3-Clause
+- **License:** MIT OR Apache-2.0 (upstream ships `LICENSE-MIT` and `LICENSE-APACHE`)
 - **Risk:** Green
 - **Integration:** Separate process via IPC
-- **Action Required:** Include BSD notice in THIRD_PARTY_NOTICES; upstream repo must publish its LICENSE file
+- **Action Required:** Include the MIT/Apache notice in THIRD_PARTY_NOTICES
 
 ### freedom-ipfs (Native IPFS Addon)
 
@@ -175,7 +175,7 @@ Include attributions for:
 
 1. **Electron** - MIT License, Copyright (c) Electron contributors
 2. **Chromium** - BSD-style license (reference LICENSES.chromium.html)
-3. **Ant (Swarm)** - BSD-3-Clause, Copyright (c) solardev-xyz contributors
+3. **Ant (Swarm)** - MIT OR Apache-2.0, Copyright (c) solardev-xyz contributors
 4. **freedom-ipfs** - MIT OR Apache-2.0, Copyright (c) 2026 Freedom IPFS contributors
 5. **Radicle** - MIT OR Apache-2.0, Copyright (c) Radicle Foundation
 6. **All npm production dependencies** with MIT/ISC/BSD/Apache licenses
