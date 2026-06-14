@@ -6,6 +6,8 @@ let hideTimer = null;
 let showTimer = null;
 let revealFrame = null;
 let currentSide = 'left';
+let hoverText = '';
+let loadingText = '';
 
 const SHOW_DELAY_MS = 150;
 const HIDE_DELAY_MS = 250;
@@ -41,6 +43,8 @@ const cancelScheduledFrame = () => {
 export const initLinkStatus = () => {
   linkStatusEl = document.getElementById('link-status');
   linkStatusUrlEl = document.getElementById('link-status-url');
+  hoverText = '';
+  loadingText = '';
 };
 
 const applySide = (side) => {
@@ -72,6 +76,12 @@ export const setLinkStatusSide = (side) => {
  *   so the previous tab's URL never visibly trails into the new tab.
  */
 export const clearLinkStatus = (options = {}) => {
+  hoverText = '';
+  loadingText = '';
+  hideStatus(options);
+};
+
+const hideStatus = (options = {}) => {
   if (!linkStatusEl || !linkStatusUrlEl) return;
 
   if (showTimer) {
@@ -117,6 +127,25 @@ export const clearLinkStatus = (options = {}) => {
   }, HIDE_DELAY_MS);
 };
 
+const swapVisibleText = (text) => {
+  if (!linkStatusEl || !linkStatusUrlEl) return;
+  if (showTimer) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  cancelScheduledFrame();
+  linkStatusUrlEl.textContent = text;
+  linkStatusEl.hidden = false;
+  applySide(currentSide);
+  if (!linkStatusEl.classList.contains('visible')) {
+    linkStatusEl.classList.add('visible');
+  }
+};
+
 const revealLinkStatus = (url) => {
   if (!linkStatusEl || !linkStatusUrlEl) return;
 
@@ -140,15 +169,32 @@ const revealLinkStatus = (url) => {
 const truncateUrl = (url) =>
   url.length > MAX_URL_LENGTH ? url.slice(0, MAX_URL_LENGTH) : url;
 
+export const clearHoverStatus = () => {
+  hoverText = '';
+  if (showTimer) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+  cancelScheduledFrame();
+
+  if (loadingText) {
+    swapVisibleText(loadingText);
+    return;
+  }
+
+  hideStatus();
+};
+
 export const showLinkStatus = (url) => {
   if (!linkStatusEl || !linkStatusUrlEl) return;
 
   const raw = typeof url === 'string' ? url.trim() : '';
   if (!raw) {
-    clearLinkStatus();
+    clearHoverStatus();
     return;
   }
   const trimmed = truncateUrl(raw);
+  hoverText = trimmed;
 
   // A pending hide means the bar was visible moments ago and is mid-fade.
   // Treat that as still visible so re-hovers within the fade window swap
@@ -166,12 +212,7 @@ export const showLinkStatus = (url) => {
       showTimer = null;
     }
     cancelScheduledFrame();
-    linkStatusUrlEl.textContent = trimmed;
-    linkStatusEl.hidden = false;
-    applySide(currentSide);
-    if (!linkStatusEl.classList.contains('visible')) {
-      linkStatusEl.classList.add('visible');
-    }
+    swapVisibleText(trimmed);
     return;
   }
 
@@ -183,4 +224,32 @@ export const showLinkStatus = (url) => {
     showTimer = null;
     revealLinkStatus(trimmed);
   }, SHOW_DELAY_MS);
+};
+
+export const showLoadingStatus = (message) => {
+  if (!linkStatusEl || !linkStatusUrlEl) return;
+
+  const raw = typeof message === 'string' ? message.trim() : '';
+  if (!raw) {
+    clearLoadingStatus();
+    return;
+  }
+  loadingText = truncateUrl(raw);
+
+  // Hover URLs are direct pointer feedback, so keep them above the
+  // background loading diagnostic until the hover clears.
+  if (hoverText || showTimer) return;
+
+  if (linkStatusEl.classList.contains('visible') || hideTimer) {
+    swapVisibleText(loadingText);
+    return;
+  }
+
+  revealLinkStatus(loadingText);
+};
+
+export const clearLoadingStatus = (options = {}) => {
+  loadingText = '';
+  if (hoverText || showTimer) return;
+  hideStatus(options);
 };

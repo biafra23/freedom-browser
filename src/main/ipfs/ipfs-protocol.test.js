@@ -26,11 +26,7 @@ jest.mock('../ens-resolver', () => ({
   resolveEnsContent: (...args) => mockResolveEnsContent(...args),
 }));
 
-const {
-  buildGatewayUrl,
-  sanitizeRequestHeaders,
-  handleRequest,
-} = require('./ipfs-protocol');
+const { buildGatewayUrl, sanitizeRequestHeaders, handleRequest } = require('./ipfs-protocol');
 
 const CIDV0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 // Canonical CIDv1 base32 (`bafy...`) form of `CIDV0`; used to assert that
@@ -104,10 +100,7 @@ describe('buildGatewayUrl(ipfs)', () => {
     // is case-sensitive, and once the host segment has been lowercased the
     // original bytes are unrecoverable. Surface a 400 with an actionable
     // message rather than forwarding garbage to Kubo.
-    const result = await buildGatewayUrl(
-      'ipfs',
-      `ipfs://${CIDV1_BASE58.toLowerCase()}/page`
-    );
+    const result = await buildGatewayUrl('ipfs', `ipfs://${CIDV1_BASE58.toLowerCase()}/page`);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased CIDv1 base58btc/);
@@ -134,10 +127,7 @@ describe('buildGatewayUrl(ipfs)', () => {
     // protocol.handle is invoked. We can't recover the original CIDv0
     // bytes, so we 400 ourselves rather than forwarding a guaranteed-bad
     // reference to Kubo (whose 400 message is less actionable).
-    const result = await buildGatewayUrl(
-      'ipfs',
-      `ipfs://${CIDV0.toLowerCase()}/page`
-    );
+    const result = await buildGatewayUrl('ipfs', `ipfs://${CIDV0.toLowerCase()}/page`);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased CIDv0/);
@@ -157,9 +147,7 @@ describe('buildGatewayUrl(ipfs)', () => {
   });
 
   test('returns null for DNSLink-style hosts under ipfs:// (only ipns:// accepts those)', async () => {
-    await expect(
-      buildGatewayUrl('ipfs', 'ipfs://docs.ipfs.tech/install')
-    ).resolves.toBeNull();
+    await expect(buildGatewayUrl('ipfs', 'ipfs://docs.ipfs.tech/install')).resolves.toBeNull();
     expect(mockResolveEnsContent).not.toHaveBeenCalled();
   });
 
@@ -191,9 +179,7 @@ describe('buildGatewayUrl(ipfs)', () => {
 
     test('canonicalises an embedded CIDv0 to base32 for the upstream fetch', async () => {
       const expected = 'bafybeie5nqv6kd3qnfjupgvz34woh3oksc3iau6abmyajn7qvtf6d2ho34';
-      await expect(
-        buildGatewayUrl('ipfs', `ipfs://localhost/ipfs/${CIDV0}/sub`)
-      ).resolves.toEqual({
+      await expect(buildGatewayUrl('ipfs', `ipfs://localhost/ipfs/${CIDV0}/sub`)).resolves.toEqual({
         ok: true,
         url: `http://localhost:8080/ipfs/${expected}/sub`,
       });
@@ -215,12 +201,12 @@ describe('buildGatewayUrl(ipfs)', () => {
       // host: only known public gateways / loopback hosts trigger the
       // rewrite. `docs.ipfs.tech` isn't in the gateway list so the path
       // passes through unchanged for Kubo to resolve as a DNSLink path.
-      await expect(
-        buildGatewayUrl('ipns', 'ipns://docs.ipfs.tech/ipfs/coverage')
-      ).resolves.toEqual({
-        ok: true,
-        url: 'http://localhost:8080/ipns/docs.ipfs.tech/ipfs/coverage',
-      });
+      await expect(buildGatewayUrl('ipns', 'ipns://docs.ipfs.tech/ipfs/coverage')).resolves.toEqual(
+        {
+          ok: true,
+          url: 'http://localhost:8080/ipns/docs.ipfs.tech/ipfs/coverage',
+        }
+      );
     });
 
     test('rewrites ipfs://<gw>/ipns/<dnslink-name>/path → IPNS branch with DNSLink host', async () => {
@@ -295,9 +281,7 @@ describe('buildGatewayUrl(ipfs)', () => {
         name: 'vitalik.eth',
       });
 
-      await expect(
-        buildGatewayUrl('ipfs', 'ipfs://vitalik.eth/page.html?v=1')
-      ).resolves.toEqual({
+      await expect(buildGatewayUrl('ipfs', 'ipfs://vitalik.eth/page.html?v=1')).resolves.toEqual({
         ok: true,
         url: `http://localhost:8080/ipfs/${CIDV0}/page.html?v=1`,
       });
@@ -416,16 +400,13 @@ describe('buildGatewayUrl(ipns)', () => {
   test.each([
     ['libp2p key base36', IPNS_KEY_BASE36, IPNS_KEY_BASE36],
     ['DNSLink hostname', 'docs.ipfs.tech', 'docs.ipfs.tech'],
-  ])(
-    'converts ipns://<%s>/path to the Kubo gateway URL',
-    async (_label, host, expected) => {
-      await expect(buildGatewayUrl('ipns', `ipns://${host}/install`)).resolves.toEqual({
-        ok: true,
-        url: `http://localhost:8080/ipns/${expected}/install`,
-      });
-      expect(mockResolveEnsContent).not.toHaveBeenCalled();
-    }
-  );
+  ])('converts ipns://<%s>/path to the Kubo gateway URL', async (_label, host, expected) => {
+    await expect(buildGatewayUrl('ipns', `ipns://${host}/install`)).resolves.toEqual({
+      ok: true,
+      url: `http://localhost:8080/ipns/${expected}/install`,
+    });
+    expect(mockResolveEnsContent).not.toHaveBeenCalled();
+  });
 
   test('canonicalises a properly-cased base58btc IPNS peer ID host to libp2p-key base36', async () => {
     const expected = 'k51qzi5uqu5dit2ibca2nikouuslvo21d3trnsklq7f1c3zdelrq38i7nahsgk';
@@ -452,19 +433,14 @@ describe('buildGatewayUrl(ipns)', () => {
   test('canonicalises a properly-cased CIDv1 base58btc (z…) IPNS host to base32', async () => {
     // IPNS keys can be published as CIDv1 base58btc with the libp2p-key
     // codec. Same Chromium-lowercasing problem as the IPFS z… case.
-    await expect(
-      buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58}/install`)
-    ).resolves.toEqual({
+    await expect(buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58}/install`)).resolves.toEqual({
       ok: true,
       url: `http://localhost:8080/ipns/${CIDV1_BASE58_AS_BASE32}/install`,
     });
   });
 
   test('rejects a lowercased CIDv1 base58btc (z…) IPNS host with a clear 400', async () => {
-    const result = await buildGatewayUrl(
-      'ipns',
-      `ipns://${CIDV1_BASE58.toLowerCase()}/install`
-    );
+    const result = await buildGatewayUrl('ipns', `ipns://${CIDV1_BASE58.toLowerCase()}/install`);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.message).toMatch(/lowercased CIDv1 base58btc IPNS/);
@@ -472,9 +448,7 @@ describe('buildGatewayUrl(ipns)', () => {
   });
 
   test('preserves query string', async () => {
-    await expect(
-      buildGatewayUrl('ipns', `ipns://${IPNS_KEY_BASE36}/page?v=1`)
-    ).resolves.toEqual({
+    await expect(buildGatewayUrl('ipns', `ipns://${IPNS_KEY_BASE36}/page?v=1`)).resolves.toEqual({
       ok: true,
       url: `http://localhost:8080/ipns/${IPNS_KEY_BASE36}/page?v=1`,
     });
@@ -590,11 +564,9 @@ describe('handleRequest', () => {
 
   test('proxies a 200 through untouched (raw CIDv1 base32)', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(new Response('hello', { status: 200 }));
-    const res = await handleRequest(
-      'ipfs',
-      makeRequest(`ipfs://${CIDV1_BASE32}/file.txt`),
-      { fetchImpl }
-    );
+    const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV1_BASE32}/file.txt`), {
+      fetchImpl,
+    });
     expect(res.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [calledUrl, init] = fetchImpl.mock.calls[0];
@@ -619,9 +591,7 @@ describe('handleRequest', () => {
     });
     expect(res.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0][0]).toBe(
-      `http://localhost:8080/ipfs/${CIDV0}/index.html`
-    );
+    expect(fetchImpl.mock.calls[0][0]).toBe(`http://localhost:8080/ipfs/${CIDV0}/index.html`);
   });
 
   test('resolves ENS-host ipns URLs and proxies to the gateway', async () => {
@@ -685,7 +655,7 @@ describe('handleRequest', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  test('returns 503 when Kubo is unreachable (ECONNREFUSED)', async () => {
+  test('returns 503 when the freedom-ipfs gateway is unreachable (ECONNREFUSED)', async () => {
     const err = new Error('connect failed');
     err.code = 'ECONNREFUSED';
     const fetchImpl = jest.fn().mockRejectedValue(err);
@@ -693,7 +663,7 @@ describe('handleRequest', () => {
     const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV0}/x`), { fetchImpl });
     expect(res.status).toBe(503);
     const body = await res.json();
-    expect(body.message).toBe('kubo gateway unreachable');
+    expect(body.message).toBe('freedom-ipfs gateway unreachable');
   });
 
   test('returns 502 for other fetch errors', async () => {
@@ -702,10 +672,10 @@ describe('handleRequest', () => {
     const res = await handleRequest('ipfs', makeRequest(`ipfs://${CIDV0}/x`), { fetchImpl });
     expect(res.status).toBe(502);
     const body = await res.json();
-    expect(body.message).toBe('kubo gateway error');
+    expect(body.message).toBe('freedom-ipfs gateway error');
   });
 
-  test('returns 504 when Kubo accepts the connection but never responds', async () => {
+  test('returns 504 when the freedom-ipfs gateway accepts the connection but never responds', async () => {
     // P2 from the round-4 review: without a per-attempt timeout, a
     // stalled gateway hangs the page load indefinitely. The fetch is
     // resolved by the abort signal, so the test settles deterministically
@@ -732,7 +702,7 @@ describe('handleRequest', () => {
     });
     expect(res.status).toBe(504);
     const body = await res.json();
-    expect(body.message).toBe('kubo gateway timeout');
+    expect(body.message).toBe('freedom-ipfs gateway timeout');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 

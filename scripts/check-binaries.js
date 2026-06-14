@@ -2,7 +2,14 @@ const fs = require('fs');
 const path = require('path');
 
 const BEE_BIN_DIR = path.join(__dirname, '..', 'bee-bin');
-const IPFS_BIN_DIR = path.join(__dirname, '..', 'ipfs-bin');
+const FREEDOM_IPFS_NATIVE_PREBUILDS_DIR = path.join(
+  __dirname,
+  '..',
+  'native',
+  'freedom-ipfs-node',
+  'prebuilds'
+);
+const FREEDOM_IPFS_NATIVE_ADDON = 'freedom_ipfs_native.node';
 const RADICLE_BIN_DIR = path.join(__dirname, '..', 'radicle-bin');
 
 function getPlatformArch() {
@@ -74,16 +81,20 @@ function checkBinaries(platforms) {
   for (const { os, arch } of platforms) {
     const platformDir = `${os}-${arch}`;
     const beeExt = os === 'win' ? '.exe' : '';
-    const ipfsExt = os === 'win' ? '.exe' : '';
 
     const beePath = path.join(BEE_BIN_DIR, platformDir, `bee${beeExt}`);
-    const ipfsPath = path.join(IPFS_BIN_DIR, platformDir, `ipfs${ipfsExt}`);
 
     if (!fs.existsSync(beePath)) {
       missing.push(`bee binary for ${platformDir}: ${beePath}`);
     }
-    if (!fs.existsSync(ipfsPath)) {
-      missing.push(`ipfs binary for ${platformDir}: ${ipfsPath}`);
+
+    const freedomIpfsAddonPath = path.join(
+      FREEDOM_IPFS_NATIVE_PREBUILDS_DIR,
+      platformDir,
+      FREEDOM_IPFS_NATIVE_ADDON
+    );
+    if (!fs.existsSync(freedomIpfsAddonPath)) {
+      missing.push(`freedom-ipfs native addon for ${platformDir}: ${freedomIpfsAddonPath}`);
     }
 
     // Radicle: no official Windows binaries yet — skip check for win targets

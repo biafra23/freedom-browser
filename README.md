@@ -40,7 +40,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
 
 Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`bee-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
 
-When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, or rewrites the URL to the active gateway URL via the registry (`rad`). `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the protocol handler — Kubo's path-gateway is fast on the first request, so no warm-up probe is needed.
+When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, or rewrites the URL to the active gateway URL via the registry (`rad`). `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the native IPFS protocol handler, so no renderer warm-up probe is needed.
 
 ---
 
@@ -115,17 +115,17 @@ Don't hardcode `http://localhost:1633` — Freedom users may have Bee on a diffe
 
 ## IPFS / IPNS Content Retrieval
 
-`ipfs` and `ipns` are registered as privileged standard schemes (`src/main/ipfs/ipfs-protocol.js`), mirroring how `bzz` is wired up. Every `ipfs://<cid|name>/...` and `ipns://<key|name>/...` request — top-level navigation, sub-resources, `fetch`, media `Range`, CSS `url(...)`, service workers — flows through a main-process handler that proxies to the local Kubo gateway and streams the response back. Because `ipfs://<cid>/` (or `ipfs://<name>/`) is the page origin, `window.location.protocol === 'ipfs:'`, same-origin relative paths Just Work, and storage (cookies, localStorage, IndexedDB, service workers) is keyed to the content reference.
+`ipfs` and `ipns` are registered as privileged standard schemes (`src/main/ipfs/ipfs-protocol.js`), mirroring how `bzz` is wired up. Every `ipfs://<cid|name>/...` and `ipns://<key|name>/...` request — top-level navigation, sub-resources, `fetch`, media `Range`, CSS `url(...)`, service workers — flows through a main-process handler that calls the embedded `freedom-ipfs` native request API and streams the response back. Because `ipfs://<cid>/` (or `ipfs://<name>/`) is the page origin, `window.location.protocol === 'ipfs:'`, same-origin relative paths Just Work, and storage (cookies, localStorage, IndexedDB, service workers) is keyed to the content reference.
 
-The handler issues its upstream fetches at `http://localhost:8080/ipfs/<cid>/...` (note: `localhost`, not `127.0.0.1`) on purpose. Kubo's built-in subdomain gateway only emits its `_redirects`-friendly redirect — `301 Location: http://<cidv1>.ipfs.localhost:8080/...` — when the request hostname is `localhost`. The protocol handler then follows the redirect itself with `redirect: 'follow'` and returns the final body to Chromium. Surfacing the 301 to Chromium would put the page back on the gateway origin, defeating the entire scheme — the integration test in `src/main/__tests__/integration/ipfs-subdomain-gateway.test.js` guards against both halves of this contract.
+The native request API accepts the same `/ipfs/...` and `/ipns/...` gateway-path shape, but Freedom no longer starts a loopback Kubo gateway or HTTP API for desktop IPFS. Status and progress shown in the UI come from native `freedom-ipfs` diagnostics.
 
-ENS-named hosts work the same way as for `bzz`: `ipfs://vitalik.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after the address-bar resolution) and proxies the same way. The page's URL/origin stays `ipfs://<name>/` rather than the resolved CID. Cross-transport mismatches (e.g. `ipfs://name.eth` whose contenthash is Swarm or IPNS) return `404` with an explanatory body — the typed scheme is treated as an assertion, matching the `bzz` handler's behaviour. Unlike `bzz`, the IPFS handler doesn't wrap its requests in a retry loop; Kubo doesn't exhibit the cold-content transient-5xx pattern Bee does, and `4xx` / `5xx` responses pass through to the page so SPAs that feature-detect missing endpoints can render their own fallback.
+ENS-named hosts work the same way as for `bzz`: `ipfs://vitalik.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after the address-bar resolution) and proxies the same way. The page's URL/origin stays `ipfs://<name>/` rather than the resolved CID. Cross-transport mismatches (e.g. `ipfs://name.eth` whose contenthash is Swarm or IPNS) return `404` with an explanatory body — the typed scheme is treated as an assertion, matching the `bzz` handler's behaviour. Unlike `bzz`, the IPFS handler doesn't wrap its requests in a retry loop, and `4xx` / `5xx` responses pass through to the page so SPAs that feature-detect missing endpoints can render their own fallback.
 
 > **Origin model.** Same as `bzz`: `ipfs://vitalik.eth` and `ipfs://<resolved-cid>` are different origins from Chromium's perspective. Pinning storage to the ENS name keeps state stable across contenthash updates.
 
 ### CID & IPNS-key canonicalisation
 
-Because `ipfs:` and `ipns:` are standard schemes, Chromium's URL parser treats the host segment as a hostname and lowercases it. The base58btc encodings used by CIDv0 (`Qm...`), CIDv1 base58btc (`z...`), and IPNS peer-ID multihashes (`12D3Koo...`, `16Uiu2H...`, `Qm...`) are case-sensitive, so a naïve `ipfs://Qm.../path` would arrive at the protocol handler as `ipfs://qm.../path` — different bytes, and Kubo correctly rejects it with `400 invalid cid: selected encoding not supported`.
+Because `ipfs:` and `ipns:` are standard schemes, Chromium's URL parser treats the host segment as a hostname and lowercases it. The base58btc encodings used by CIDv0 (`Qm...`), CIDv1 base58btc (`z...`), and IPNS peer-ID multihashes (`12D3Koo...`, `16Uiu2H...`, `Qm...`) are case-sensitive, so a naïve `ipfs://Qm.../path` would arrive at the protocol handler as `ipfs://qm.../path` — different bytes, and the IPFS backend rejects it.
 
 The address-bar / load pipeline in `src/renderer/lib/url-utils.js` (`formatIpfsUrl` → `parseIpfsInput`) canonicalises on the way in, before `new URL` sees the input:
 
@@ -137,15 +137,15 @@ All target encodings are lowercase, so subsequent host normalisation by Chromium
 
 If you click a `<a href="ipfs://Qm.../">` link inside a page (rather than typing into the address bar), the webview preload intercepts the click in capture phase and reads the raw DOM attribute (`getAttribute('href')`) before Chromium resolves and lowercases the URL. It then sends that original mixed-case href to the host renderer, which routes it through `formatIpfsUrl`, so embedded link clicks canonicalise the same way address-bar input does. The interceptor covers same-tab clicks (`click` event) **and** modified-click / middle-click / `target="_blank"` / named-target dispositions (`auxclick` for real middle-click, since modern Chromium dispatches `click` only for the primary button) — without that, the new-window code path (Chromium → `setWindowOpenHandler` → `tab:new-with-url`) would receive the URL after Chromium had already lowercased the host, and case-sensitive bytes would be lost. The renderer's `link:navigate` IPC handler dispatches by disposition: same-tab calls go through `loadTarget`, new-tab calls go through `openInNewTabWithTarget` (the same helper the IPC `tab:new-with-url` path uses), so a `target="docs"` named target reuses an existing `docs` tab the way it does for plain HTTPS links.
 
-Direct sub-resource fetches (`<img src>`, `<script src>`, `<video src>`, `fetch()`, CSS `url(...)`) cannot be intercepted in JS — by the time the request reaches the protocol handler, Chromium has already lowercased the host and the original CIDv0/base58btc bytes are gone. The handler detects this case and returns a clear `400` with an actionable message ("Publish the resource with its CIDv1 base32 (`bafy...`) form for sub-resource use.") rather than forwarding a guaranteed-bad reference to Kubo. The same `400`-with-explanation path covers lowercased CIDv1 base58btc (`z...`) hosts and lowercased base58btc IPNS keys. **Site-author guidance:** when emitting `<img src>` / `<script src>` / `fetch()` URLs in your own HTML, use CIDv1 base32 (`ipfs://bafy.../...`) and libp2p-key base36 (`ipns://k51.../...`) forms; both are case-insensitive and round-trip cleanly through Chromium's URL parser.
+Direct sub-resource fetches (`<img src>`, `<script src>`, `<video src>`, `fetch()`, CSS `url(...)`) cannot be intercepted in JS — by the time the request reaches the protocol handler, Chromium has already lowercased the host and the original CIDv0/base58btc bytes are gone. The handler detects this case and returns a clear `400` with an actionable message ("Publish the resource with its CIDv1 base32 (`bafy...`) form for sub-resource use.") rather than forwarding a guaranteed-bad reference to the native gateway. The same `400`-with-explanation path covers lowercased CIDv1 base58btc (`z...`) hosts and lowercased base58btc IPNS keys. **Site-author guidance:** when emitting `<img src>` / `<script src>` / `fetch()` URLs in your own HTML, use CIDv1 base32 (`ipfs://bafy.../...`) and libp2p-key base36 (`ipns://k51.../...`) forms; both are case-insensitive and round-trip cleanly through Chromium's URL parser.
 
 ### Path-gateway URL form (`ipfs://<gateway>/ipfs/<cid>/...`)
 
-Kubo's auto-generated directory listings emit protocol-relative anchors like `<a href="//localhost:8080/ipfs/<cid>">CID</a>`. When the page origin is `ipfs://<cid>/`, Chromium resolves these against the page scheme and ends up with `ipfs://localhost/ipfs/<cid>` — which is no longer a valid IPFS reference (`localhost` isn't a CID). The same shape appears for absolute public-gateway links (`ipfs://dweb.link/ipfs/<cid>/...`, `ipfs://ipfs.io/ipfs/<cid>/...`, `ipfs://cf-ipfs.com/ipfs/<cid>/...`, etc.).
+Gateway directory listings and gateway-authored pages can emit protocol-relative anchors like `<a href="//localhost:8080/ipfs/<cid>">CID</a>`. When the page origin is `ipfs://<cid>/`, Chromium resolves these against the page scheme and ends up with `ipfs://localhost/ipfs/<cid>` — which is no longer a valid IPFS reference (`localhost` isn't a CID). The same shape appears for absolute public-gateway links (`ipfs://dweb.link/ipfs/<cid>/...`, `ipfs://ipfs.io/ipfs/<cid>/...`, `ipfs://cf-ipfs.com/ipfs/<cid>/...`, etc.).
 
 `parseIpfsInput` (renderer) and `buildGatewayUrl` (main) both recognise this gateway-form path and rewrite it to the canonical `ipfs://<cid>/...` (or `ipns://<key>/...` for cross-namespace cases like `ipfs://localhost/ipns/...`, `ipfs://dweb.link/ipns/<dnslink-name>/...`). The disambiguation rule has two parts:
 
-1. The **outer host** must be a recognised gateway. We use an explicit allowlist (`localhost`, `127.0.0.1`, `::1`, `*.localhost`, plus the most common public gateways: `dweb.link`, `ipfs.io`, `gateway.ipfs.io`, `cf-ipfs.com`, `cloudflare-ipfs.com`, `gateway.pinata.cloud`, `nftstorage.link`, `w3s.link`, `4everland.io`, `ipfs.fleek.co`, `dweb.eu.org`). Earlier versions used a negative "host doesn't look like a content reference" heuristic, which over-fired for DNSLink hosts (e.g. `ipns://docs.ipfs.tech/ipfs/coverage` would try to rewrite even though `docs.ipfs.tech` is the actual content host). Self-hosted gateways aren't matched — content authors with private gateways should publish canonical `ipfs://<cid>/...` URLs directly. The renderer-side check strips a trailing `:<port>` before the allowlist comparison so `ipfs://localhost:8080/ipfs/<cid>` (Chromium's resolution of Kubo's protocol-relative anchors against the page's `ipfs://` origin — the port is preserved because `ipfs:` has no default port) rewrites the same way `ipfs://localhost/ipfs/<cid>` does.
+1. The **outer host** must be a recognised gateway. We use an explicit allowlist (`localhost`, `127.0.0.1`, `::1`, `*.localhost`, plus the most common public gateways: `dweb.link`, `ipfs.io`, `gateway.ipfs.io`, `cf-ipfs.com`, `cloudflare-ipfs.com`, `gateway.pinata.cloud`, `nftstorage.link`, `w3s.link`, `4everland.io`, `ipfs.fleek.co`, `dweb.eu.org`). Earlier versions used a negative "host doesn't look like a content reference" heuristic, which over-fired for DNSLink hosts (e.g. `ipns://docs.ipfs.tech/ipfs/coverage` would try to rewrite even though `docs.ipfs.tech` is the actual content host). Self-hosted gateways aren't matched — content authors with private gateways should publish canonical `ipfs://<cid>/...` URLs directly. The renderer-side check strips a trailing `:<port>` before the allowlist comparison so `ipfs://localhost:8080/ipfs/<cid>` (Chromium's resolution of a gateway-authored protocol-relative anchor against the page's `ipfs://` origin — the port is preserved because `ipfs:` has no default port) rewrites the same way `ipfs://localhost/ipfs/<cid>` does.
 2. The **embedded ref** must be a CID or IPNS key (`/ipfs/<ref>` and `/ipns/<ref>`), with the additional concession that `/ipns/` also accepts DNSLink-shaped names so `ipfs://dweb.link/ipns/docs.ipfs.tech/install` rewrites to `ipns://docs.ipfs.tech/install`. The legitimate `ipfs://<cid>/ipfs/<subfile>` shape (a real subdirectory named `ipfs`) keeps loading from the host CID — the host CID isn't in the gateway list, so the path stays as-is.
 
 For top-level navigation, the renderer rewrite means the address bar and page origin both end up canonical. For sub-resource fetches that go through the protocol handler directly, the bytes load but the URL Chromium associates with the resource stays in the gateway-host form — acceptable for sub-resources since they don't establish their own origin.
@@ -170,7 +170,7 @@ const apiBase = window.location.origin + '/ipfs/' + dataCid + '/';
 const apiBase = `ipfs://${dataCid}/`;
 ```
 
-Don't hardcode `http://localhost:8080` — Freedom users may have Kubo on a different port, and external visitors via a public IPFS gateway certainly do.
+Don't hardcode `http://localhost:8080` — Freedom no longer exposes a desktop IPFS loopback gateway, and external visitors via a public IPFS gateway may arrive through any gateway host.
 
 ---
 
@@ -183,27 +183,27 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 |                      | Swarm          | IPFS                                  | Radicle                        |
 | -------------------- | -------------- | ------------------------------------- | ------------------------------ |
 | **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       |
-| **Node Software**    | Bee            | Kubo                                  | radicle-node + radicle-httpd   |
+| **Node Software**    | Bee            | freedom-ipfs native                  | radicle-node + radicle-httpd   |
 | **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
-| **Gateway Port**     | 1633           | 8080                                  | 8780                           |
-| **API Port**         | 1633           | 5001                                  | 8780                           |
+| **Gateway Port**     | 1633           | internal native handler               | 8780                           |
+| **API Port**         | 1633           | internal native handler               | 8780                           |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
-| **Data Directory**   | `bee-data/`    | `ipfs-data/`                          | `radicle-data/`                |
-| **Binary Directory** | `bee-bin/`     | `ipfs-bin/`                           | `radicle-bin/`                 |
+| **Data Directory**   | `bee-data/`    | `ipfs-data/freedom-ipfs/`             | `radicle-data/`                |
+| **Binary Directory** | `bee-bin/`     | `native/freedom-ipfs-node/`           | `radicle-bin/`                 |
 
 ### Smart Node Connection
 
 Freedom intelligently manages node connections:
 
-1. **Detect Existing Nodes**: On launch, checks if Swarm, IPFS, or Radicle nodes are already running on default ports
+1. **Detect Existing Nodes**: On launch, checks if Swarm or Radicle nodes are already running on default ports; IPFS uses the embedded native node
 2. **Reuse When Available**: If a healthy node is detected, Freedom connects to it instead of starting a new one
 3. **Automatic Fallback**: If default ports are busy (but not by a compatible node), Freedom starts bundled nodes on alternative ports
 4. **Visual Feedback**: The Nodes panel shows connection status, including when using an external node or fallback port
 
 This means Freedom works seamlessly whether you:
 
-- Run it standalone (bundled Swarm and IPFS nodes start automatically; Radicle is optional and behind an Experimental setting)
-- Already have system-wide Bee/IPFS/Radicle daemons running (Freedom reuses them)
+- Run it standalone (bundled Swarm and native IPFS nodes start automatically; Radicle is optional and behind an Experimental setting)
+- Already have system-wide Bee/Radicle daemons running (Freedom reuses them)
 - Have port conflicts with other software (Freedom finds available ports)
 
 ### Integrated Swarm Bee Node
@@ -213,11 +213,11 @@ This means Freedom works seamlessly whether you:
 - **DHT Client Mode**: Runs in ultra-light mode for minimal bandwidth and resource usage.
 - **Automatic Configuration**: First-run setup generates keys and config automatically.
 
-### Integrated IPFS Kubo Node
+### Integrated IPFS Native Node
 
 - **Independent Toggle**: Start and stop IPFS separately from Swarm.
-- **Live Statistics**: View peer count, bandwidth usage, and Kubo version.
-- **Low-bandwidth Mode**: Configured as DHT client with reduced connection limits.
+- **Native Transport**: Uses the embedded `freedom-ipfs` native addon instead of a loopback Kubo process.
+- **Live Diagnostics**: View native gateway stats and request progress while IPFS/IPNS pages load.
 
 ### Integrated Radicle Node (macOS & Linux)
 
@@ -367,8 +367,7 @@ Access built-in browser pages using the `freedom://` protocol:
 Freedom automatically manages node connections. By default:
 
 - **Swarm Bee**: `http://127.0.0.1:1633`
-- **IPFS Gateway**: `http://localhost:8080` (`localhost`, not `127.0.0.1`, so Kubo's built-in subdomain gateway kicks in — required for `_redirects` SPA support)
-- **IPFS API**: `http://127.0.0.1:5001`
+- **IPFS**: embedded native `freedom-ipfs` handler; no desktop loopback gateway/API port is started
 - **Radicle httpd**: `http://127.0.0.1:8780`
 
 The browser automatically detects existing nodes and handles port conflicts. For advanced users who need to override the defaults (e.g., connecting to a remote node), use environment variables:
@@ -376,9 +375,6 @@ The browser automatically detects existing nodes and handles port conflicts. For
 ```bash
 # Connect to a remote Swarm node
 export BEE_API="http://remote-host:1633"
-
-# Connect to a remote IPFS gateway
-export IPFS_GATEWAY="http://remote-host:8080"
 
 npm start
 ```
@@ -412,26 +408,28 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 
 ## NPM Scripts
 
-| Script                                                            | Description                                  |
-| ----------------------------------------------------------------- | -------------------------------------------- |
-| `npm start`                                                       | Launch the Electron app                      |
-| `npm test`                                                        | Run unit tests (Jest)                        |
-| `npm run test:e2e`                                                | Run the harness E2E suite (stubbed nodes; fast, no network) |
-| `npm run test:e2e:live`                                           | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
-| `npm run bee:download`                                            | Download the Bee binary for your platform    |
-| `npm run ipfs:download`                                           | Download the Kubo binary for your platform   |
-| `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset`     | Manage Bee outside the app                   |
-| `npm run ipfs:start` / `ipfs:stop` / `ipfs:status` / `ipfs:reset` | Manage IPFS outside the app                  |
-| `npm run build -- --mac --unsigned`                               | Build unsigned macOS app (for local testing) |
-| `npm run dist -- --mac`                                           | Build signed macOS distributable (DMG + ZIP) |
-| `npm run dist:mac:prepare-notary`                                 | Build signed macOS artifacts without notarization wait |
-| `npm run dist:mac:submit-notary`                                  | Submit macOS artifacts to Apple asynchronously |
-| `npm run dist:mac:notary-status`                                  | Check notarization status from saved receipts |
-| `npm run dist:mac:notary-log -- <submission-id>`                  | Fetch notarization log JSON for a submission ID |
-| `npm run dist:mac:staple-notary`                                  | Staple and validate accepted notarized artifacts |
-| `npm run dist:linux:arm64:docker`                                 | Build Linux ARM64 via Docker (recommended)   |
-| `npm run dist:linux:x64:docker`                                   | Build Linux x64 via Docker                   |
-| `npm run dist -- --win`                                           | Build Windows x64 distributable (NSIS + ZIP) |
+| Script                                                        | Description                                                 |
+| ------------------------------------------------------------- | ----------------------------------------------------------- |
+| `npm start`                                                   | Launch the Electron app                                     |
+| `npm test`                                                    | Run unit tests (Jest)                                       |
+| `npm run test:e2e`                                            | Run the harness E2E suite (stubbed nodes; fast, no network) |
+| `npm run test:e2e:live`                                       | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
+| `npm run bee:download`                                        | Download the Bee binary for your platform                   |
+| `npm run ipfs:download`                                       | Download the pinned freedom-ipfs native addon               |
+| `npm run ipfs:native:smoke`                                   | Smoke test the real native addon and live IPFS retrieval    |
+| `npm run ipfs:build`                                          | Build the freedom-ipfs native addon from source             |
+| `npm run bee:start` / `bee:stop` / `bee:status` / `bee:reset` | Manage Bee outside the app                                  |
+| `npm run ipfs:reset`                                          | Reset IPFS data used by the bundled node                    |
+| `npm run build -- --mac --unsigned`                           | Build unsigned macOS app (for local testing)                |
+| `npm run dist -- --mac`                                       | Build signed macOS distributable (DMG + ZIP)                |
+| `npm run dist:mac:prepare-notary`                             | Build signed macOS artifacts without notarization wait      |
+| `npm run dist:mac:submit-notary`                              | Submit macOS artifacts to Apple asynchronously              |
+| `npm run dist:mac:notary-status`                              | Check notarization status from saved receipts               |
+| `npm run dist:mac:notary-log -- <submission-id>`              | Fetch notarization log JSON for a submission ID             |
+| `npm run dist:mac:staple-notary`                              | Staple and validate accepted notarized artifacts            |
+| `npm run dist:linux:arm64:docker`                             | Build Linux ARM64 via Docker (recommended)                  |
+| `npm run dist:linux:x64:docker`                               | Build Linux x64 via Docker                                  |
+| `npm run dist -- --win`                                       | Build Windows x64 distributable (NSIS + ZIP)                |
 
 The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with optional `--arm64`, `--x64`, `--unsigned`, `--no-notarize`, and `--verbose` flags. See `scripts/build.js` for details.
 
@@ -487,7 +485,7 @@ Two Playwright projects live under `test-e2e/`. The harness suite is run manuall
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
 | `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Bee/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
-| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Bee + IPFS spawn, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. Currently one spec (`eth-sites.spec.js`) cold-starts both nodes, waits for >20 connected peers on each, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS) and asserts the rendered pages. Requires `npm run bee:download` and `npm run ipfs:download` first; Swarm/IPFS cold-start can take a few minutes on a fresh repo. The Bee check is skipped if the binary is missing; the IPFS check fails loudly. |
+| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Bee + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). Requires `npm run bee:download` and `npm run ipfs:download` first; missing binaries/addons skip before Electron launches. |
 
 Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Bee port detection don't tolerate parallel app instances.
 
@@ -539,7 +537,7 @@ Output goes to the `dist/` folder as DMG and ZIP archives.
 
 The build includes:
 
-- Bundled Bee, Kubo, and Radicle binaries
+- Bundled Bee, freedom-ipfs native addon, and Radicle binaries
 - Bee configuration template
 - All renderer assets
 

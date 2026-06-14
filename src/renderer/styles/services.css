@@ -295,8 +295,9 @@
   color: var(--muted);
 }
 
-#ipfs-bandwidth-down,
-#ipfs-bandwidth-up {
+#ipfs-active-requests-count,
+#ipfs-data-read,
+#ipfs-version-text {
   text-align: right;
 }
 
