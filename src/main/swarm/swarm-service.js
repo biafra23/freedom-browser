@@ -18,6 +18,9 @@ let beeClientUrl = null;
  */
 function getBee() {
   const url = getBeeApiUrl();
+  if (!url) {
+    throw new Error('Bee node is not ready');
+  }
   if (!beeClient || beeClientUrl !== url) {
     beeClient = new Bee(url);
     beeClientUrl = url;

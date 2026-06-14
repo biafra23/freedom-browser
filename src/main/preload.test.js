@@ -6,7 +6,6 @@ const {
 } = require('../../test/helpers/main-process-test-utils');
 
 const originalBeeApi = process.env.BEE_API;
-const originalIpfsGateway = process.env.IPFS_GATEWAY;
 
 const flushMicrotasks = async () => {
   await Promise.resolve();
@@ -41,14 +40,6 @@ function loadPreloadModule(options = {}) {
     }
   }
 
-  if (Object.prototype.hasOwnProperty.call(options, 'ipfsGatewayEnv')) {
-    if (options.ipfsGatewayEnv == null) {
-      delete process.env.IPFS_GATEWAY;
-    } else {
-      process.env.IPFS_GATEWAY = options.ipfsGatewayEnv;
-    }
-  }
-
   loadMainModule(require.resolve('./preload'), {
     ipcRenderer,
     contextBridge,
@@ -70,19 +61,12 @@ describe('preload', () => {
       process.env.BEE_API = originalBeeApi;
     }
 
-    if (originalIpfsGateway === undefined) {
-      delete process.env.IPFS_GATEWAY;
-    } else {
-      process.env.IPFS_GATEWAY = originalIpfsGateway;
-    }
-
     jest.restoreAllMocks();
   });
 
   test('exposes the preload bridges and routes direct wrappers to ipcRenderer', async () => {
     const { contextBridge, exposures, internalPages, ipcRenderer } = loadPreloadModule({
       beeApiEnv: 'http://127.0.0.1:1700',
-      ipfsGatewayEnv: 'http://127.0.0.1:9090',
     });
 
     expect(contextBridge.exposeInMainWorld).toHaveBeenCalledTimes(20);
@@ -111,7 +95,6 @@ describe('preload', () => {
     expect(ipcRenderer.sendSync).toHaveBeenCalledWith(IPC.GET_INTERNAL_PAGES);
     expect(exposures.nodeConfig).toEqual({
       beeApi: 'http://127.0.0.1:1700',
-      ipfsGateway: 'http://127.0.0.1:9090',
     });
     expect(exposures.internalPages).toBe(internalPages);
 
@@ -124,6 +107,10 @@ describe('preload', () => {
       [exposures.electronAPI, 'setRadBase', [31, 'http://127.0.0.1:8780/api/v1/repos/rid/'], IPC.RAD_SET_BASE, [{ webContentsId: 31, baseUrl: 'http://127.0.0.1:8780/api/v1/repos/rid/' }]],
       [exposures.electronAPI, 'clearRadBase', [31], IPC.RAD_CLEAR_BASE, [{ webContentsId: 31 }]],
       [exposures.electronAPI, 'getPlatform', [], IPC.WINDOW_GET_PLATFORM, []],
+      [exposures.electronAPI, 'getActiveProfile', [], IPC.PROFILE_GET_ACTIVE, []],
+      [exposures.electronAPI, 'listProfiles', [], IPC.PROFILE_LIST, []],
+      [exposures.electronAPI, 'createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
+      [exposures.electronAPI, 'openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
       [exposures.electronAPI, 'getSettings', [], IPC.SETTINGS_GET, []],
       [exposures.electronAPI, 'saveSettings', [{ theme: 'dark' }], IPC.SETTINGS_SAVE, [{ theme: 'dark' }]],
       [exposures.electronAPI, 'getBookmarks', [], IPC.BOOKMARKS_GET, []],
@@ -191,6 +178,7 @@ describe('preload', () => {
       [exposures.electronAPI, 'updateTabMenuState', [{ canGoBack: true }], 'menu:update-tab-state', [{ canGoBack: true }]],
       [exposures.electronAPI, 'setBookmarkBarToggleEnabled', [true], 'menu:set-bookmark-bar-toggle-enabled', [true]],
       [exposures.electronAPI, 'setBookmarkBarChecked', [false], 'menu:set-bookmark-bar-checked', [false]],
+      [exposures.electronAPI, 'resolveExternalNodeCandidates', [{ requestId: 'req-1', choices: { bee: 'managed' } }], IPC.PROFILE_EXTERNAL_CANDIDATES_DECISION, [{ requestId: 'req-1', choices: { bee: 'managed' } }]],
       [exposures.electronAPI, 'restartAndInstallUpdate', [], 'update:restart-and-install', []],
       [exposures.electronAPI, 'checkForUpdates', [], 'update:check', []],
     ];
@@ -209,6 +197,8 @@ describe('preload', () => {
       [exposures.electronAPI, 'onNewTab', 'tab:new', [], []],
       [exposures.electronAPI, 'onCloseTab', 'tab:close', [], []],
       [exposures.electronAPI, 'onNewTabWithUrl', 'tab:new-with-url', ['https://example.com', 'named-target'], ['https://example.com', 'named-target']],
+      [exposures.electronAPI, 'onProfileUpdated', IPC.PROFILE_UPDATED, [{ id: 'work', displayName: 'Work' }], [{ id: 'work', displayName: 'Work' }]],
+      [exposures.electronAPI, 'onExternalNodeCandidates', IPC.PROFILE_EXTERNAL_CANDIDATES, [{ requestId: 'req-1' }], [{ requestId: 'req-1' }]],
       [exposures.electronAPI, 'onNavigateToUrl', 'navigate-to-url', ['bzz://hash'], ['bzz://hash']],
       [exposures.electronAPI, 'onLoadUrl', 'tab:load-url', ['https://load.example'], ['https://load.example']],
       [exposures.electronAPI, 'onToggleDevTools', 'devtools:toggle', [], []],
@@ -280,15 +270,13 @@ describe('preload', () => {
     }
   });
 
-  test('uses default gateway env values when overrides are absent', () => {
+  test('does not expose default gateway URLs when overrides are absent', () => {
     const { exposures } = loadPreloadModule({
       beeApiEnv: null,
-      ipfsGatewayEnv: null,
     });
 
     expect(exposures.nodeConfig).toEqual({
-      beeApi: 'http://127.0.0.1:1633',
-      ipfsGateway: 'http://localhost:8080',
+      beeApi: null,
     });
   });
 });

@@ -13,29 +13,30 @@ const MODE = {
   BUNDLED: 'bundled',
   REUSED: 'reused',
   EXTERNAL: 'external',
+  DISABLED: 'disabled',
   NONE: 'none',
 };
 
 // Registry state
 const registry = {
   ipfs: {
-    api: null, // e.g., 'http://127.0.0.1:5001'
-    gateway: null, // e.g., 'http://localhost:8080'
+    api: null,
+    gateway: null,
     mode: MODE.NONE,
     statusMessage: null,
     tempMessage: null,
     tempMessageTimeout: null,
   },
   bee: {
-    api: null, // e.g., 'http://127.0.0.1:1633'
-    gateway: null, // e.g., 'http://127.0.0.1:1635' (debug API serves as gateway)
+    api: null, // e.g., 'http://127.0.0.1:11633'
+    gateway: null, // Same as api for Bee
     mode: MODE.NONE,
     statusMessage: null,
     tempMessage: null,
     tempMessageTimeout: null,
   },
   radicle: {
-    api: null,        // e.g., 'http://127.0.0.1:8780'
+    api: null,        // e.g., 'http://127.0.0.1:18780'
     gateway: null,    // Same as api for radicle-httpd
     mode: MODE.NONE,
     statusMessage: null,
@@ -46,12 +47,6 @@ const registry = {
 
 // Default ports
 const DEFAULTS = {
-  ipfs: {
-    apiPort: 5001,
-    gatewayPort: 8080,
-    p2pPort: 4001,
-    fallbackRange: 10, // Try up to 10 ports above default
-  },
   bee: {
     apiPort: 1633,
     // Note: Newer Bee versions serve debug/gateway endpoints on the main API port
@@ -215,36 +210,35 @@ function getDisplayMessage(service) {
  * Get URL for IPFS API
  */
 function getIpfsApiUrl() {
-  return registry.ipfs.api || `http://127.0.0.1:${DEFAULTS.ipfs.apiPort}`;
+  return registry.ipfs.api;
 }
 
 /**
  * Get URL for IPFS Gateway
  */
 function getIpfsGatewayUrl() {
-  // `localhost` triggers Kubo's default subdomain gateway (required for `_redirects`).
-  return registry.ipfs.gateway || `http://localhost:${DEFAULTS.ipfs.gatewayPort}`;
+  return registry.ipfs.gateway;
 }
 
 /**
  * Get URL for Bee API
  */
 function getBeeApiUrl() {
-  return registry.bee.api || `http://127.0.0.1:${DEFAULTS.bee.apiPort}`;
+  return registry.bee.api;
 }
 
 /**
  * Get URL for Bee Gateway (same as API in newer Bee versions)
  */
 function getBeeGatewayUrl() {
-  return registry.bee.gateway || `http://127.0.0.1:${DEFAULTS.bee.apiPort}`;
+  return registry.bee.gateway;
 }
 
 /**
  * Get URL for Radicle API (radicle-httpd)
  */
 function getRadicleApiUrl() {
-  return registry.radicle.api || `http://127.0.0.1:${DEFAULTS.radicle.httpPort}`;
+  return registry.radicle.api;
 }
 
 /**

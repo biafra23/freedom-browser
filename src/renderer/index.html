@@ -42,7 +42,43 @@
           </svg>
         </button>
       </div>
-      <div class="title-bar-drag"></div>
+      <div class="title-bar-drag">
+        <button
+          id="profile-indicator"
+          class="profile-indicator"
+          type="button"
+          aria-label="Active profile"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          hidden
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21a8 8 0 0 0-16 0" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          <span id="profile-indicator-name" class="profile-indicator-name"></span>
+        </button>
+        <div id="profile-menu" class="profile-menu" role="menu" hidden>
+          <div class="profile-menu-header">
+            <span class="profile-menu-kicker">Profile</span>
+            <span id="profile-menu-name" class="profile-menu-name"></span>
+            <span id="profile-menu-meta" class="profile-menu-meta"></span>
+          </div>
+          <div class="profile-menu-divider"></div>
+          <div class="profile-menu-section-label">Profiles</div>
+          <div id="profile-menu-list" class="profile-menu-list">
+            <div class="profile-menu-empty">Loading...</div>
+          </div>
+          <div class="profile-menu-divider"></div>
+          <button id="profile-create-btn" class="profile-menu-item" type="button" role="menuitem">
+            Create Profile...
+          </button>
+          <button id="profile-manage-btn" class="profile-menu-item" type="button" role="menuitem">
+            Manage Profiles...
+          </button>
+          <div id="profile-menu-status" class="profile-menu-status" aria-live="polite"></div>
+        </div>
+      </div>
       <!-- Window controls for Linux (hidden by default, shown via JS) -->
       <div class="window-controls" id="window-controls">
         <button class="window-control-btn" id="minimize-btn" aria-label="Minimize">
@@ -2483,6 +2519,95 @@
         </div>
       </aside>
     </section>
+
+    <dialog
+      id="external-node-candidates-modal"
+      class="modal external-node-candidates-modal"
+      aria-labelledby="external-node-candidates-title"
+    >
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="external-node-candidates-title">External Nodes Detected</h2>
+          <button
+            id="external-node-candidates-close"
+            class="icon-btn close-modal"
+            type="button"
+            aria-label="Close"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="M6 6 18 18" />
+            </svg>
+          </button>
+        </div>
+        <p class="external-node-candidates-copy">
+          Freedom found existing nodes on standard local ports. Choose whether this profile
+          should use them, or keep its own managed nodes.
+        </p>
+        <div id="external-node-candidates-list" class="external-node-candidates-list"></div>
+        <div class="modal-actions">
+          <button type="button" id="external-node-candidates-managed" class="secondary-btn">
+            Keep Managed for All
+          </button>
+          <button type="button" id="external-node-candidates-submit" class="primary-btn">
+            Continue
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="profile-create-modal" class="modal profile-create-modal" aria-labelledby="profile-create-title">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="profile-create-title">Create Profile</h2>
+          <button id="profile-create-close" class="icon-btn close-modal" type="button" aria-label="Close">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="M6 6 18 18" />
+            </svg>
+          </button>
+        </div>
+        <form id="profile-create-form">
+          <div class="form-group">
+            <label for="profile-create-name">Profile name</label>
+            <input
+              type="text"
+              id="profile-create-name"
+              class="form-input"
+              placeholder="Work"
+              autocomplete="off"
+              spellcheck="false"
+              required
+            />
+          </div>
+          <p id="profile-create-status" class="modal-status" aria-live="polite" hidden></p>
+          <div class="modal-actions">
+            <button type="button" id="profile-create-cancel" class="secondary-btn">Cancel</button>
+            <button type="submit" id="profile-create-submit" class="primary-btn">Create and Open</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
 
     <dialog id="add-bookmark-modal" class="modal">
       <div class="modal-content">

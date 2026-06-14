@@ -10,7 +10,6 @@
  * - Bee/IPFS node data
  */
 
-const log = require('./logger');
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -51,7 +50,12 @@ function isEffectivelyEmpty(dir) {
  *
  * @returns {boolean} true if migration was performed, false otherwise
  */
-function migrateUserData() {
+function getLogger(logger) {
+  return logger || require('./logger');
+}
+
+function migrateUserData(options = {}) {
+  const log = getLogger(options.logger);
   const newPath = app.getPath('userData');
   const oldPath = getOldUserDataPath();
   const markerPath = path.join(newPath, MIGRATION_MARKER);

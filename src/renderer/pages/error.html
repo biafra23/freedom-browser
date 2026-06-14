@@ -186,9 +186,21 @@
       const descriptionEl = document.getElementById('description');
       const titleEl = document.getElementById('title');
 
-      async function checkSwarmStatus() {
+      async function getRegistry() {
         try {
-          const res = await fetch('http://127.0.0.1:1633/health', { timeout: 2000 });
+          return await window.serviceRegistry?.getRegistry?.();
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function checkSwarmStatus() {
+        const registry = await getRegistry();
+        const beeApi = registry?.bee?.api || window.nodeConfig?.beeApi || null;
+        if (!beeApi) return { running: false };
+
+        try {
+          const res = await fetch(`${beeApi}/health`, { timeout: 2000 });
           return { running: res.ok };
         } catch (e) {
           return { running: false };
@@ -196,15 +208,8 @@
       }
 
       async function checkIpfsStatus() {
-        try {
-          const res = await fetch('http://127.0.0.1:5001/api/v0/id', {
-            method: 'POST',
-            timeout: 2000,
-          });
-          return { running: res.ok };
-        } catch (e) {
-          return { running: false };
-        }
+        const registry = await getRegistry();
+        return { running: registry?.ipfs?.mode === 'bundled' };
       }
 
       // Format a host for display in the generic title (truncate very long
