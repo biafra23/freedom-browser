@@ -9,17 +9,18 @@
 // the cross-platform proof that identity injection works against a live node.)
 //
 // On success the wizard reaches the success screen with no error dialog and
-// identities are reported as injected on every platform.
+// Ant/Radicle identities are reported as injected on every platform. IPFS
+// reports ephemeral identity mode because native freedom-ipfs does not use a
+// durable injected PeerID for retrieval today.
 //
-// Requires the Ant and IPFS binaries (npm run ant:download / ipfs:download);
-// skipped if either is absent.
+// Requires the Ant binary (npm run ant:download); skipped if it is absent.
 
 const { test, expect, HAS_BINARIES } = require('../onboarding-fixtures');
 
 const STRONG_PASSWORD = 'Freedom-E2E-Test-Passphrase-2026!';
 
 test.describe('Onboarding wizard creates node identities (issue #90)', () => {
-  test.skip(!HAS_BINARIES, 'Ant and/or IPFS binary missing — run npm run ant:download && npm run ipfs:download');
+  test.skip(!HAS_BINARIES, 'Ant binary missing — run npm run ant:download');
 
   test('completes the password setup with a running Ant node', async ({ window: win }) => {
     // Surface any wizard error dialog (alert) instead of letting Playwright
@@ -99,10 +100,15 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     // No error dialog should have fired during setup.
     expect(dialogMessages.join('\n')).not.toMatch(/Failed to|still in use/i);
 
-    // Identities are reported as injected for the started/relevant nodes.
+    // Bee is injected. IPFS uses ephemeral native identities on this branch, so
+    // it must not be reported as a durable injected node identity.
     const status = await win.evaluate(() => window.identity.getStatus());
     expect(status.beeInjected).toBe(true);
-    expect(status.ipfsInjected).toBe(true);
+    expect(status.ipfsInjected).toBe(false);
+    expect(status.ipfsIdentityPrepared).toBe(false);
+    expect(status.ipfsIdentityMode).toBe('ephemeral');
+    expect(status.ipfsStableIdentitySupported).toBe(false);
+    expect(status.ipfsNativeIdentityActive).toBe(false);
 
     // The Ant node was restarted and is healthy again with the injected identity.
     await expect

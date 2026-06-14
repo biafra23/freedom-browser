@@ -1,8 +1,8 @@
 # License Audit Report for Freedom Browser
 
 **Intended License:** MPL-2.0 (Mozilla Public License 2.0)
-**Audit Date:** 2026-01-29
-**Auditor:** Automated analysis (Claude Code)
+**Audit Date:** 2026-06-12
+**Auditor:** Automated analysis (Codex)
 
 > **DISCLAIMER:** This is a practical engineering audit, not legal advice. For final licensing decisions, consult a qualified attorney.
 
@@ -20,8 +20,8 @@ All dependencies (npm packages, downloaded binaries, and bundled assets) use lic
 |----------|-------|--------|
 | Production npm dependencies | 67 | All permissive |
 | Dev npm dependencies | ~650 | All permissive (not bundled) |
-| Downloaded binaries | 3 | All permissive |
-| Native addons | 1 | MIT (better-sqlite3) |
+| Downloaded binaries | 2 | All permissive |
+| Native addons | 2 | All permissive |
 | Copyleft (GPL/AGPL/LGPL) | 0 | None found |
 
 ---
@@ -33,9 +33,9 @@ Freedom Browser is distributed as:
 - **Electron desktop application** (DMG for macOS, DEB for Linux, NSIS installer for Windows)
 - **Bundled node_modules** in `app.asar` archive
 - **Native addon** (`better-sqlite3`) unpacked from asar
+- **Native IPFS addon** (`freedom_ipfs_native.node`) shipped under `resources/freedom-ipfs-node/`
 - **External binaries** shipped in `resources/`:
   - Ant (antd, Swarm node)
-  - Kubo (IPFS node)
   - Radicle (rad, radicle-node, radicle-httpd)
 
 ---
@@ -58,9 +58,9 @@ Freedom Browser is distributed as:
 | Package | Version | License | Risk |
 |---------|---------|---------|------|
 | ethers | 6.16.0 | MIT | Green |
-| better-sqlite3 | 12.5.0 | MIT | Green |
-| electron-log | 5.4.3 | MIT | Green |
-| electron-updater | 6.6.2 | MIT | Green |
+| better-sqlite3 | 12.10.0 | MIT | Green |
+| electron-log | 5.4.4 | MIT | Green |
+| electron-updater | 6.8.3 | MIT | Green |
 | @ensdomains/content-hash | 3.0.0 | MIT | Green |
 
 ### Notable Transitive Dependencies
@@ -87,7 +87,7 @@ Freedom Browser is distributed as:
 
 ---
 
-## Downloaded Binaries
+## Downloaded Runtime Artifacts
 
 ### Ant (antd, Swarm Node)
 
@@ -97,13 +97,14 @@ Freedom Browser is distributed as:
 - **Integration:** Separate process via IPC
 - **Action Required:** Include BSD notice in THIRD_PARTY_NOTICES; upstream repo must publish its LICENSE file
 
-### Kubo (IPFS Node)
+### freedom-ipfs (Native IPFS Addon)
 
-- **Source:** https://dist.ipfs.tech/kubo
+- **Source:** https://github.com/solardev-xyz/freedom-ipfs
+- **Version:** 0.4.1
 - **License:** MIT OR Apache-2.0
 - **Risk:** Green
-- **Integration:** Separate process via IPC
-- **Action Required:** None (permissive dual-license)
+- **Integration:** Native addon loaded by the Electron main process
+- **Action Required:** Include MIT/Apache notice in third-party notices
 
 ### Radicle
 
@@ -125,16 +126,25 @@ Freedom Browser is distributed as:
 
 Electron generates a `LICENSES.chromium.html` file containing all Chromium third-party notices. This should be:
 1. Shipped with the application, OR
-2. Referenced in your THIRD_PARTY_NOTICES file with a link to Electron's upstream notices
+2. Referenced in the third-party notices file with a link to Electron's upstream notices
 
 ---
 
-## Native Addon: better-sqlite3
+## Native Addons
+
+### better-sqlite3
 
 - **License:** MIT
 - **Bundled Component:** SQLite (public domain)
 - **Risk:** Green
 - **Notes:** SQLite is in the public domain and creates no licensing obligations. The better-sqlite3 wrapper is MIT licensed.
+
+### freedom-ipfs native addon
+
+- **License:** MIT OR Apache-2.0
+- **Bundled Component:** Rust `freedom-ipfs` retrieval node exposed through a Node/Electron addon
+- **Risk:** Green
+- **Notes:** Desktop artifacts are pinned by release tag and SHA-256 checksums in `scripts/fetch-freedom-ipfs-native.js`.
 
 ---
 
@@ -159,53 +169,22 @@ Notable licenses in dev dependencies:
 
 ---
 
-## Required Actions Before Release
-
-### 1. Create LICENSE File (Required)
-
-Add `LICENSE` file to project root with full MPL-2.0 text:
-
-```
-Mozilla Public License Version 2.0
-==================================
-
-[Full MPL-2.0 text from https://mozilla.org/MPL/2.0/]
-```
-
-### 2. Update package.json (Required)
-
-Change:
-```json
-{
-  "license": "UNLICENSED",
-  "private": true
-}
-```
-
-To:
-```json
-{
-  "license": "MPL-2.0",
-  "private": false
-}
-```
-
-### 3. Create THIRD_PARTY_NOTICES.md (Required)
+## Notice Requirements
 
 Include attributions for:
 
 1. **Electron** - MIT License, Copyright (c) Electron contributors
 2. **Chromium** - BSD-style license (reference LICENSES.chromium.html)
 3. **Ant (Swarm)** - BSD-3-Clause, Copyright (c) solardev-xyz contributors
-4. **Kubo (IPFS)** - MIT OR Apache-2.0, Copyright (c) Protocol Labs
+4. **freedom-ipfs** - MIT OR Apache-2.0, Copyright (c) 2026 Freedom IPFS contributors
 5. **Radicle** - MIT OR Apache-2.0, Copyright (c) Radicle Foundation
 6. **All npm production dependencies** with MIT/ISC/BSD/Apache licenses
 
-### 4. Ship License Files (Recommended)
+## Ship License Files (Recommended)
 
 Consider bundling license files in the distributed app:
 - `resources/licenses/LICENSE` (MPL-2.0 for Freedom Browser)
-- `resources/licenses/THIRD_PARTY_NOTICES.md`
+- `resources/licenses/NOTICES`
 - Reference to Electron's LICENSES.chromium.html
 
 ---
@@ -217,7 +196,7 @@ Consider bundling license files in the distributed app:
 Searched all:
 - Production npm dependencies (67 packages)
 - Dev npm dependencies (~650 packages)
-- Downloaded binary licenses
+- Downloaded runtime artifact licenses
 - Bundled assets
 
 No copyleft licenses were detected.
@@ -258,19 +237,19 @@ Freedom Browser can be released under MPL-2.0 with confidence. The dependency st
 
 - **Zero GPL/AGPL/LGPL dependencies**
 - **All runtime dependencies are permissively licensed**
-- **Downloaded binaries are permissively licensed**
-- **Native addon (better-sqlite3) is MIT, bundles public domain SQLite**
+- **Downloaded runtime artifacts are permissively licensed**
+- **Native addons are permissively licensed**
 - **Assets appear to be original works**
 
 ### Checklist Before Release
 
-- [ ] Add `LICENSE` file with MPL-2.0 text
-- [ ] Update `package.json` license field to "MPL-2.0"
-- [ ] Remove `"private": true` from `package.json`
-- [ ] Create `THIRD_PARTY_NOTICES.md` with all attributions
+- [x] Add `LICENSE` file with MPL-2.0 text
+- [x] Update `package.json` license field to "MPL-2.0"
+- [x] Remove `"private": true` from `package.json`
+- [ ] Keep third-party notices current with Bee, freedom-ipfs, Radicle, Electron/Chromium, and npm dependencies
 - [ ] Add MPL-2.0 header comments to source files (optional but recommended)
 - [ ] Include or reference Electron's Chromium license notices
 
 ---
 
-*Generated by automated license audit. Last updated: 2026-01-29*
+*Generated by automated license audit. Last updated: 2026-06-12*

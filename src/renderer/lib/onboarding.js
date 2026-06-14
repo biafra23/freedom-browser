@@ -10,6 +10,10 @@ let currentPassword = null;
 let touchIdAvailable = false;
 let isImportFlow = false; // Track if user is importing vs creating
 
+const IPFS_EPHEMERAL_LABEL = 'Ephemeral';
+const IPFS_EPHEMERAL_TITLE =
+  'freedom-ipfs uses ephemeral peer identities for read-only retrieval in this release.';
+
 // DOM references
 let modal;
 let steps = {};
@@ -766,6 +770,12 @@ function displayIdentitySummary(result) {
     const peerId = result.ipfs.peerId;
     ipfsEl.textContent = peerId.slice(0, 12) + '...' + peerId.slice(-8);
     ipfsEl.title = peerId;
+  } else if (result.ipfs?.mode === 'ephemeral' || result.ipfs?.stableIdentitySupported === false) {
+    ipfsEl.textContent = IPFS_EPHEMERAL_LABEL;
+    ipfsEl.title = IPFS_EPHEMERAL_TITLE;
+  } else {
+    ipfsEl.textContent = '--';
+    ipfsEl.title = '';
   }
 
   if (result.radicle?.did) {

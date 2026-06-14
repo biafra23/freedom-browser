@@ -9,9 +9,9 @@
 // All node data dirs are redirected into a per-run temp root via the
 // FREEDOM_*_DATA overrides so a live run never touches the developer's
 // persistent `ant-data/`, `ipfs-data/`, `radicle-data/`, or `identity-data/`.
-// Settings are seeded so only Bee auto-starts (the node relevant to issue #90);
-// IPFS/Radicle identities are still injected by the wizard but don't need a
-// running daemon.
+// Settings are seeded so only Ant auto-starts (the node relevant to issue #90).
+// IPFS reports ephemeral native identity mode and does not need a binary
+// or running daemon for this regression.
 
 const { test: base, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -29,16 +29,13 @@ function resolveBinary(dir, base) {
 }
 
 const ANT_BINARY_PATH = resolveBinary('ant-bin', 'antd');
-const IPFS_BINARY_PATH = resolveBinary('ipfs-bin', 'ipfs');
 const HAS_ANT_BINARY = fs.existsSync(ANT_BINARY_PATH);
-const HAS_IPFS_BINARY = fs.existsSync(IPFS_BINARY_PATH);
-// The wizard injects Ant (needs a running node to reproduce #90) and IPFS
-// (its injection runs `ipfs init`, which needs the binary).
-const HAS_BINARIES = HAS_ANT_BINARY && HAS_IPFS_BINARY;
+// The wizard injects the Ant identity (needs a running node to reproduce #90).
+// Native freedom-ipfs reports an ephemeral identity and needs no binary here.
+const HAS_BINARIES = HAS_ANT_BINARY;
 
 // Start only Bee at launch: it's the node whose locked statestore drives the
-// issue #90 wipe. Keeping IPFS/Radicle daemons off reduces flakiness; their
-// identities are still injected by the wizard.
+// issue #90 wipe. Keeping IPFS/Radicle daemons off reduces flakiness.
 const SEED_SETTINGS = {
   enableIdentityWallet: true,
   startAntAtLaunch: true,
@@ -114,7 +111,5 @@ module.exports = {
   expect,
   HAS_BINARIES,
   HAS_ANT_BINARY,
-  HAS_IPFS_BINARY,
   ANT_BINARY_PATH,
-  IPFS_BINARY_PATH,
 };

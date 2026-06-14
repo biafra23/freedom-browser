@@ -98,7 +98,9 @@ describe('identity-manager wallet deletion', () => {
  * Regression guard for issue #90: Bee's restart after (re)injection is owned by
  * injectBeeIdentity via the lifecycle hook (stop → wipe → start), so Bee must
  * NOT also be reported in `needsRestart` — otherwise the renderer restarts it a
- * second time. IPFS/Radicle have no lifecycle hook and must still be reported.
+ * second time. Radicle has no lifecycle hook and must still be reported. Native
+ * IPFS uses ephemeral identities for retrieval today, so it must not report a
+ * restart or a durable injected identity.
  *
  * The lazily-loaded `./identity` module is mocked so the test exercises the
  * orchestration/branch logic without real key derivation or node binaries.
@@ -107,6 +109,8 @@ function createIdentityMock() {
   return {
     createVault: jest.fn(async () => 'test test test test test test test test test test test about'),
     unlockVault: jest.fn(async () => {}),
+    vaultExists: jest.fn(async () => true),
+    isUnlocked: jest.fn(async () => true),
     deriveAllKeys: jest.fn(() => ({
       userWallet: { address: '0xuser', privateKey: '0x01' },
       beeWallet: { address: '0xbee', privateKey: '0x02' },
@@ -115,8 +119,8 @@ function createIdentityMock() {
     })),
     injectBeeKey: jest.fn(async () => {}),
     createBeeConfig: jest.fn(() => {}),
-    injectIpfsKey: jest.fn(() => 'QmTestPeerId'),
     injectRadicleKey: jest.fn(() => 'did:key:zTest'),
+    createRadicleIdentity: jest.fn(() => ({ did: 'did:key:zTest' })),
   };
 }
 
@@ -178,9 +182,11 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     fs.writeFileSync(path.join(dataDirs.bee, 'keys', 'swarm.key'), '{}');
   }
 
-  function seedIpfsConfig(withPeerId) {
-    const config = withPeerId ? { Identity: { PeerID: 'QmExisting' } } : {};
-    fs.writeFileSync(path.join(dataDirs.ipfs, 'config'), JSON.stringify(config));
+  function seedIpfsIdentityMetadata() {
+    fs.writeFileSync(
+      path.join(dataDirs.identity, 'ipfs-identity.json'),
+      JSON.stringify({ peerId: 'QmExisting', activeWithNativeNode: false }, null, 2)
+    );
   }
 
   function seedRadicleInjected() {
@@ -188,10 +194,12 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     fs.writeFileSync(path.join(dataDirs.radicle, 'keys', 'radicle'), 'key');
   }
 
-  test('force reinjection reports IPFS/Radicle but NOT Bee for restart', async () => {
-    // All three already injected, so force=true takes the reinjection branch.
+  test('force reinjection reports Radicle but NOT Bee/IPFS for restart', async () => {
+    // Bee/Radicle are injected. A stale IPFS identity metadata file from older
+    // builds must be ignored because native freedom-ipfs now reports ephemeral
+    // identity mode instead of a prepared durable PeerID.
     seedBeeInjected();
-    seedIpfsConfig(true);
+    seedIpfsIdentityMetadata();
     seedRadicleInjected();
 
     const mgr = loadIdentityManager(dataDirs);
@@ -200,21 +208,48 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     const results = await mgr.injectAllIdentities('FreedomBrowser', true);
 
     expect(results.needsRestart).not.toContain('bee');
-    expect(results.needsRestart).toEqual(expect.arrayContaining(['ipfs', 'radicle']));
+    expect(results.needsRestart).not.toContain('ipfs');
+    expect(results.needsRestart).toEqual(expect.arrayContaining(['radicle']));
     expect(results.bee.reinjected).toBe(true);
+    expect(results.ipfs).toMatchObject({
+      mode: 'ephemeral',
+      active: false,
+      peerId: null,
+      stableIdentitySupported: false,
+    });
   });
 
   test('first-time injection reports nothing for restart', async () => {
-    // IPFS config exists but without a PeerID, so it is treated as not-yet
-    // injected and no ipfs binary init is needed.
-    seedIpfsConfig(false);
-
     const mgr = loadIdentityManager(dataDirs);
     await mgr.createNewVault('password-123');
 
     const results = await mgr.injectAllIdentities('FreedomBrowser', false);
 
     expect(results.needsRestart).toEqual([]);
+    expect(results.ipfs).toMatchObject({
+      mode: 'ephemeral',
+      active: false,
+      peerId: null,
+      stableIdentitySupported: false,
+    });
+  });
+
+  test('status reports native IPFS ephemeral identity mode', async () => {
+    seedIpfsIdentityMetadata();
+
+    const mgr = loadIdentityManager(dataDirs);
+    await mgr.createNewVault('password-123');
+
+    await expect(mgr.getIdentityStatus()).resolves.toMatchObject({
+      ipfsInjected: false,
+      ipfsIdentityPrepared: false,
+      ipfsIdentityMode: 'ephemeral',
+      ipfsStableIdentitySupported: false,
+      ipfsNativeIdentityActive: false,
+      addresses: {
+        ipfsPeerId: null,
+      },
+    });
   });
 
   // antd self-generates identity.json + signing.key when it starts on a data

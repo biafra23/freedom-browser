@@ -139,6 +139,7 @@ const loadTabsModule = async (options = {}) => {
   };
   const linkStatusMocks = {
     clearLinkStatus: jest.fn(),
+    clearHoverStatus: jest.fn(),
     showLinkStatus: jest.fn(),
     setLinkStatusSide: jest.fn(),
   };
@@ -1031,15 +1032,16 @@ describe('tabs ui behavior', () => {
 
     linkStatusMocks.showLinkStatus.mockClear();
     linkStatusMocks.clearLinkStatus.mockClear();
+    linkStatusMocks.clearHoverStatus.mockClear();
     linkStatusMocks.setLinkStatusSide.mockClear();
 
     // Active tab: non-empty url goes to showLinkStatus, empty triggers a
-    // (faded) clearLinkStatus.
+    // hover-only clear so loading diagnostics can remain underneath.
     secondTab.webview.dispatch('update-target-url', { url: 'https://hovered.example/' });
     expect(linkStatusMocks.showLinkStatus).toHaveBeenCalledWith('https://hovered.example/');
 
     secondTab.webview.dispatch('update-target-url', { url: '' });
-    expect(linkStatusMocks.clearLinkStatus).toHaveBeenLastCalledWith();
+    expect(linkStatusMocks.clearHoverStatus).toHaveBeenLastCalledWith();
 
     secondTab.webview.dispatch('ipc-message', {
       channel: 'link-status:zone',

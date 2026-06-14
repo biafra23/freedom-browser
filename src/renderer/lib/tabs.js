@@ -9,6 +9,7 @@ import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
 import {
   clearLinkStatus,
+  clearHoverStatus,
   showLinkStatus,
   setLinkStatusSide,
 } from './link-status.js';
@@ -318,7 +319,11 @@ const createWebview = (tabId, initialUrl) => {
         renderTabs();
       }
       if (tabId === tabState.activeTabId && onWebviewEvent) {
-        onWebviewEvent('did-start-loading', { tabId });
+        onWebviewEvent('did-start-loading', {
+          tabId,
+          url: webview.getURL(),
+          pendingNavigationUrl: tab?.navigationState?.pendingNavigationUrl || '',
+        });
       }
     },
     'did-stop-loading': () => {
@@ -562,7 +567,7 @@ const createWebview = (tabId, initialUrl) => {
       if (url) {
         showLinkStatus(url);
       } else {
-        clearLinkStatus();
+        clearHoverStatus();
       }
     },
   };

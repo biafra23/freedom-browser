@@ -7,10 +7,10 @@ Ant (antd, Swarm node)
   Copyright (c) solardev-xyz contributors
   https://github.com/solardev-xyz/ant
 
-IPFS Kubo
+freedom-ipfs
   License: MIT OR Apache-2.0
-  Copyright (c) Protocol Labs
-  https://github.com/ipfs/kubo
+  Copyright (c) 2026 Freedom IPFS contributors
+  https://github.com/solardev-xyz/freedom-ipfs
 
 Electron
   License: MIT

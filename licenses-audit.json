@@ -1,13 +1,13 @@
 {
   "project_license": "MPL-2.0",
-  "generated_at": "2026-01-29T00:00:00.000Z",
+  "generated_at": "2026-06-12T00:00:00.000Z",
   "distribution_model": {
     "packaging": "electron-builder",
     "bundles_node_modules": true,
     "bundles_in_asar": true,
     "ships_external_binaries": true,
-    "native_addons": ["better-sqlite3"],
-    "notes": "Electron desktop app bundled as DMG/DEB/NSIS. Node modules bundled in app.asar. Native addon better-sqlite3 unpacked. External binaries (Ant, Kubo, Radicle) shipped in resources/."
+    "native_addons": ["better-sqlite3", "freedom_ipfs_native.node"],
+    "notes": "Electron desktop app bundled as DMG/DEB/NSIS. Node modules bundled in app.asar. Native addon better-sqlite3 unpacked from app.asar. freedom_ipfs_native.node shipped under resources/freedom-ipfs-node. External binaries (Ant, Radicle) shipped in resources/."
   },
   "dependencies": [
     {
@@ -366,24 +366,30 @@
       ]
     },
     {
-      "name": "kubo (IPFS)",
-      "version": "latest",
-      "type": "binary",
+      "name": "freedom-ipfs",
+      "version": "0.4.1",
+      "type": "native-addon",
       "scope": "runtime",
       "source": {
-        "ecosystem": "other",
-        "url": "https://dist.ipfs.tech/kubo"
+        "ecosystem": "github",
+        "url": "https://github.com/solardev-xyz/freedom-ipfs"
       },
       "license": {
         "spdx": ["MIT", "Apache-2.0"],
         "raw": "MIT OR Apache-2.0",
-        "license_files": ["LICENSE"],
-        "notice_required": false
+        "license_files": ["LICENSE-MIT", "LICENSE-APACHE"],
+        "notice_required": true
       },
       "bundled_with_app": true,
-      "linking_or_integration": "separate-process",
+      "linking_or_integration": "native-addon",
       "risk": "green",
-      "issues": []
+      "issues": [
+        {
+          "kind": "notice",
+          "details": "freedom-ipfs is bundled as a native addon; keep its MIT/Apache notice with the distributed third-party notices",
+          "recommended_fix": "Include freedom-ipfs in NOTICES"
+        }
+      ]
     },
     {
       "name": "radicle",
@@ -553,18 +559,8 @@
   "required_actions": [
     {
       "priority": "required",
-      "action": "Create THIRD_PARTY_NOTICES.md file",
-      "details": "Include attribution for Electron/Chromium, Ant, and all bundled npm dependencies with their license texts"
-    },
-    {
-      "priority": "required",
-      "action": "Add LICENSE file with MPL-2.0 text",
-      "details": "Create LICENSE file in project root with full MPL-2.0 license text"
-    },
-    {
-      "priority": "required",
-      "action": "Update package.json license field",
-      "details": "Change 'UNLICENSED' to 'MPL-2.0' and remove 'private: true'"
+      "action": "Keep third-party notices current",
+      "details": "Include attribution for Electron/Chromium, Ant, freedom-ipfs, Radicle, and bundled npm dependencies with their license texts"
     },
     {
       "priority": "recommended",
