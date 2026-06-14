@@ -1200,6 +1200,7 @@
                 <div class="rpc-row" style="margin-bottom: 8px">
                   <input type="text" class="rpc-input" id="ep-url" placeholder="https://..." spellcheck="false" value="${esc(f.url)}" />
                 </div>
+                ${f.error ? `<p class="rpc-status error" style="margin-bottom: 8px">${esc(f.error)}</p>` : ''}
                 <button type="button" class="btn" data-action="save-endpoint">Save</button>
                 <button type="button" class="btn" data-action="cancel-endpoint" style="margin-left: 8px">Cancel</button>
               </div>
@@ -1375,15 +1376,30 @@
           } else if (action === 'save-endpoint') {
             const url = ($('ep-url')?.value || '').trim();
             const cid = openChainId();
-            if (!url) { setStatus('Enter an endpoint URL', 'error'); return; }
+            // Keep the form open on failure and show the error next to the input
+            // (a global status bar at the page bottom is easy to miss).
+            const failForm = (error) => {
+              endpointForm = { ...endpointForm, url, error };
+              render();
+              $('ep-url')?.focus();
+            };
+            if (!url) { failForm('Enter an endpoint URL'); return; }
             if (!cid) { endpointForm = null; render(); return; }
             const sourceId = endpointForm?.mode === 'edit' && endpointForm.id
               ? endpointForm.id
               : 'user-' + Date.now();
+            try {
+              const res = await freedomAPI.upsertEndpointSource(sourceId, {
+                role: 'rpc', keyed: false, coverage: { [cid]: url },
+              });
+              if (res && res.success === false) { failForm(res.error || 'Could not save endpoint'); return; }
+            } catch (err) {
+              failForm(err?.message || 'Could not save endpoint');
+              return;
+            }
             endpointForm = null;
-            await mutate(() => freedomAPI.upsertEndpointSource(sourceId, {
-              role: 'rpc', keyed: false, coverage: { [cid]: url },
-            }));
+            setStatus('', '');
+            await reload();
           } else if (action === 'delete-source') {
             await mutate(() => freedomAPI.removeEndpointSource(id));
           } else if (action === 'open-rpc-page') {

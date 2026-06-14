@@ -70,6 +70,20 @@ function isInternalIpv6(hostname) {
   return false;
 }
 
+function isLoopbackHostname(hostname) {
+  const host = normalizeHostname(hostname);
+  if (!host) return false;
+  // RFC 6761: localhost (and *.localhost) is reserved to resolve to loopback.
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) return host.split('.')[0] === '127'; // 127.0.0.0/8
+  if (ipVersion === 6) {
+    if (host === '::1') return true;
+    if (host.startsWith('::ffff:')) return host.slice('::ffff:'.length).split('.')[0] === '127';
+  }
+  return false;
+}
+
 function isInternalHostname(hostname) {
   const host = normalizeHostname(hostname);
   if (!host) return true;
@@ -97,13 +111,21 @@ function validateRpcUrl(url) {
     return 'RPC URL must be a valid URL';
   }
 
-  if (parsed.protocol !== 'https:') {
-    return 'RPC URL must use https://';
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return 'RPC URL must use https:// or http://';
   }
   if (parsed.username || parsed.password) {
     return 'RPC URL must not include credentials';
   }
-  if (isInternalHostname(parsed.hostname)) {
+  // Loopback endpoints (e.g. http://localhost:8545 for a self-hosted node) may
+  // use plaintext http — the request never leaves the machine. Everything else
+  // must use https, and non-loopback internal hosts (RFC1918 LAN, link-local,
+  // .local) stay blocked to limit the SSRF surface.
+  const loopback = isLoopbackHostname(parsed.hostname);
+  if (!loopback && parsed.protocol !== 'https:') {
+    return 'RPC URL must use https:// for non-loopback hosts';
+  }
+  if (!loopback && isInternalHostname(parsed.hostname)) {
     return 'RPC URL must use a public hostname';
   }
   return null;
