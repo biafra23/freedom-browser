@@ -43,6 +43,7 @@
     "ant:stop": "echo 'ant:stop is a legacy alias for system-ant:stop.'; npm run system-ant:stop",
     "ant:status": "echo 'Checking the Freedom-managed default-profile Ant. For a default-port system Ant/Bee-compatible node, use npm run system-ant:status.'; ANT_API=${ANT_API:-http://127.0.0.1:11633}; echo '--- HEALTH ---'; curl -s \"$ANT_API/health\"; echo '\n\n--- STATUS ---'; curl -s \"$ANT_API/status\"; echo '\n\n--- PEERS ---'; curl -s \"$ANT_API/peers\" | grep -o '\"address\":' | wc -l | xargs echo 'Peer Count:'; echo '\n--- ADDRESSES ---'; curl -s \"$ANT_API/addresses\"",
     "ant:reset": "echo 'ant:reset is a legacy alias for system-ant:reset and removes repo-root ant-data.'; npm run system-ant:reset",
+    "ant:cache:reset": "node scripts/reset-ant-cache.js",
     "ant:smoke-upload": "node scripts/smoke-upload.js",
     "system-ant:start": "test -f ant-data/config.yaml || npm run ant:init; ./ant-bin/mac-arm64/antd --config=./ant-data/config.yaml",
     "system-ant:stop": "pkill -SIGTERM antd || echo 'Ant not running or failed to stop'",
