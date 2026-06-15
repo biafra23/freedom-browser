@@ -13,7 +13,7 @@ const loadRadicleModule = async (options = {}) => {
   jest.resetModules();
 
   const state = {
-    beeMenuOpen: options.beeMenuOpen ?? false,
+    antMenuOpen: options.antMenuOpen ?? false,
     enableRadicleIntegration: options.enableRadicleIntegration ?? true,
     currentRadicleStatus: options.currentRadicleStatus || 'stopped',
     radicleVersionFetched: options.radicleVersionFetched ?? false,
@@ -160,7 +160,7 @@ describe('radicle-ui', () => {
 
   test('starts and stops Radicle info polling and populates stats', async () => {
     const ctx = await loadRadicleModule({
-      beeMenuOpen: true,
+      antMenuOpen: true,
       enableRadicleIntegration: true,
       currentRadicleStatus: 'running',
       windowRadicle: true,
@@ -194,7 +194,7 @@ describe('radicle-ui', () => {
 
   test('updates Radicle status lines, toggle state, and running transitions', async () => {
     const ctx = await loadRadicleModule({
-      beeMenuOpen: true,
+      antMenuOpen: true,
       enableRadicleIntegration: true,
       currentRadicleStatus: 'stopped',
       statusMessage: 'Radicle: Connected',
@@ -235,7 +235,7 @@ describe('radicle-ui', () => {
 
   test('initializes Radicle controls and reacts to settings changes and toggle actions', async () => {
     const ctx = await loadRadicleModule({
-      beeMenuOpen: true,
+      antMenuOpen: true,
       enableRadicleIntegration: false,
       currentRadicleStatus: 'stopped',
       binaryAvailable: false,

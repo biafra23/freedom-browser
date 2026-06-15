@@ -39,7 +39,7 @@
  */
 
 const log = require('../logger');
-const { getBeeApiUrl } = require('../service-registry');
+const { getAntApiUrl } = require('../service-registry');
 const { resolveEnsContent } = require('../ens-resolver');
 const { isEnsHost } = require('../../shared/origin-utils');
 
@@ -132,24 +132,24 @@ async function buildGatewayUrl(bzzUrl) {
   const host = parsed.hostname;
 
   if (BZZ_HASH_RE.test(host)) {
-    const beeApiUrl = getBeeApiUrl();
-    if (!beeApiUrl) {
-      return { ok: false, status: 503, message: 'Bee node is not ready' };
+    const antApiUrl = getAntApiUrl();
+    if (!antApiUrl) {
+      return { ok: false, status: 503, message: 'Swarm node is not ready' };
     }
 
     return {
       ok: true,
-      url: `${beeApiUrl}/bzz/${host}${parsed.pathname}${parsed.search}`,
+      url: `${antApiUrl}/bzz/${host}${parsed.pathname}${parsed.search}`,
     };
   }
 
   if (isEnsHost(host) && !hasEmptyLabel(host)) {
-    const beeApiUrl = getBeeApiUrl();
-    if (!beeApiUrl) {
-      return { ok: false, status: 503, message: 'Bee node is not ready' };
+    const antApiUrl = getAntApiUrl();
+    if (!antApiUrl) {
+      return { ok: false, status: 503, message: 'Swarm node is not ready' };
     }
 
-    return resolveEnsToGatewayUrl(host, parsed, beeApiUrl);
+    return resolveEnsToGatewayUrl(host, parsed, antApiUrl);
   }
 
   return null;
@@ -170,7 +170,7 @@ function hasEmptyLabel(host) {
 // is IPFS) return 404 with an explanatory body, mirroring the renderer's
 // transport assertion: a typed scheme is taken as user intent and we
 // don't silently switch transports.
-async function resolveEnsToGatewayUrl(host, parsed, beeApiUrl) {
+async function resolveEnsToGatewayUrl(host, parsed, antApiUrl) {
   let result;
   try {
     result = await resolveEnsContent(host);
@@ -193,7 +193,7 @@ async function resolveEnsToGatewayUrl(host, parsed, beeApiUrl) {
     }
     return {
       ok: true,
-      url: `${beeApiUrl}/bzz/${result.decoded}${parsed.pathname}${parsed.search}`,
+      url: `${antApiUrl}/bzz/${result.decoded}${parsed.pathname}${parsed.search}`,
     };
   }
 

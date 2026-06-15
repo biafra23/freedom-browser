@@ -100,44 +100,13 @@ jobs:
           FREEDOM_IPFS_NATIVE_SMOKE_LIVE: '0'
           FREEDOM_IPFS_NATIVE_SMOKE_ISSUE_102: '1'
 
-  # Issue #90 — Windows EPERM wiping bee-data/statestore during wallet creation.
-  # Reproductions live in cross-platform Jest integration tests that spawn a
-  # real Bee node; the Windows leg is what actually exercises the
-  # EPERM-on-locked-handle behavior (raw wipe + the inject flow that must stop
-  # Bee before wiping).
-  bee-statestore-lock:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Download Bee binary
-        run: npm run bee:download
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Run statestore-lock reproduction tests
-        run: npx jest --forceExit --runInBand src/main/identity/__tests__/integration/bee-statestore-lock.test.js src/main/identity/__tests__/integration/bee-injection-stops-node.test.js
-
-  # Issue #90 follow-up — onboarding wizard must create node identities while a
-  # real Bee node is running (its locked statestore is what triggered the EPERM
-  # wipe failure). Drives the full password wizard end-to-end against a real Bee
-  # spawn; the Windows leg is the meaningful regression guard.
+  # Onboarding wizard must create node identities while a real Swarm node (now
+  # antd) is running. Drives the full password wizard end-to-end against a real
+  # antd spawn across all three desktop platforms — the cross-platform proof
+  # that the bundled Ant node starts, goes healthy, and accepts an injected
+  # identity. (antd self-initializes its identity and reads the injected
+  # keys/swarm.key; it has no LevelDB statestore, but the wizard's
+  # stop→wipe→reinject→restart flow is still exercised.)
   e2e-onboarding-identity:
     strategy:
       fail-fast: false
@@ -163,8 +132,9 @@ jobs:
         if: runner.os == 'Linux'
         run: npx playwright install-deps
 
-      - name: Download Bee binary
-        run: npm run bee:download
+      - name: Download Ant (antd) binary
+        # Version pinned in scripts/fetch-ant.js so CI tests exactly what releases ship.
+        run: npm run ant:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
@@ -172,6 +142,14 @@ jobs:
         run: npm run ipfs:download
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+      # Upgrade-path proof on every desktop platform: antd must adopt a
+      # migrated bee-era identity (decrypt keys/swarm.key with the carried-over
+      # config password) instead of self-generating a throwaway wallet. The
+      # Windows leg matters most — EPERM-on-locked-handle is the historical
+      # failure class for these data-dir moves (issue #90).
+      - name: Run bee-data → ant-data migration integration test
+        run: npx jest --forceExit src/main/identity/__tests__/integration/bee-to-ant-migration.test.js
 
       - name: Run onboarding identity E2E
         shell: bash
@@ -187,6 +165,57 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-onboarding-identity-${{ matrix.os }}-traces
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Standalone Ant live E2E: prove the bundled antd node starts, connects to the
+  # Swarm network (peer count climbs), and serves real content the browser
+  # requests — `meinhard.eth` is a Swarm-hosted (bzz://) site. This is the
+  # headless, real-network validation that Ant is a working bee drop-in for
+  # downloads. Linux-only to keep CI cheap; the cross-platform spawn proof lives
+  # in e2e-onboarding-identity above.
+  e2e-ant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright system dependencies
+        run: npx playwright install-deps
+
+      - name: Download Ant (antd) binary
+        # Version pinned in scripts/fetch-ant.js so CI tests exactly what releases ship.
+        run: npm run ant:download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Download IPFS binary
+        run: npm run ipfs:download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Run Ant live download E2E (headless)
+        run: xvfb-run -a npm run test:e2e:live -- test-e2e/live/eth-sites.spec.js
+
+      - name: Upload Playwright traces and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-ant-traces
           path: |
             test-results/
             playwright-report/

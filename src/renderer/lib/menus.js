@@ -1,6 +1,6 @@
 // Menu dropdown handling
 import { state } from './state.js';
-import { startBeeInfoPolling, stopBeeInfoPolling } from './bee-ui.js';
+import { startAntInfoPolling, stopAntInfoPolling } from './ant-ui.js';
 import { startIpfsInfoPolling, stopIpfsInfoPolling } from './ipfs-ui.js';
 import { startRadicleInfoPolling, stopRadicleInfoPolling } from './radicle-ui.js';
 import { hideTabContextMenu, getActiveWebview } from './tabs.js';
@@ -58,19 +58,19 @@ export const setMenuOpen = (open) => {
     menuButton.setAttribute('aria-expanded', String(open));
   }
   if (open) {
-    setBeeMenuOpen(false);
+    setAntMenuOpen(false);
     hideTabContextMenu();
     hideBookmarkContextMenu();
     hideOverflowMenu();
     onMenuOpening?.();
     showMenuBackdrop();
-  } else if (!state.beeMenuOpen) {
+  } else if (!state.antMenuOpen) {
     hideMenuBackdrop();
   }
 };
 
-export const setBeeMenuOpen = (open) => {
-  state.beeMenuOpen = open;
+export const setAntMenuOpen = (open) => {
+  state.antMenuOpen = open;
   beeMenuDropdown?.classList.toggle('open', open);
   beeMenuButton?.setAttribute('aria-expanded', String(open));
   if (open) {
@@ -80,27 +80,27 @@ export const setBeeMenuOpen = (open) => {
     hideOverflowMenu();
     onMenuOpening?.();
     showMenuBackdrop();
-    startBeeInfoPolling();
+    startAntInfoPolling();
     startIpfsInfoPolling();
     startRadicleInfoPolling();
   } else {
     if (!state.menuOpen) {
       hideMenuBackdrop();
     }
-    stopBeeInfoPolling();
+    stopAntInfoPolling();
     stopIpfsInfoPolling();
     stopRadicleInfoPolling();
     if (beePeersCount) beePeersCount.textContent = '0';
     if (beeNetworkPeers) beeNetworkPeers.textContent = '0';
     if (beeVersionText)
-      beeVersionText.textContent = state.beeVersionFetched ? state.beeVersionValue : '';
+      beeVersionText.textContent = state.antVersionFetched ? state.antVersionValue : '';
     if (beeInfoPanel) beeInfoPanel.classList.remove('visible');
   }
 };
 
 export const closeMenus = () => {
   setMenuOpen(false);
-  setBeeMenuOpen(false);
+  setAntMenuOpen(false);
 };
 
 // Update zoom level display for the active webview
@@ -252,7 +252,7 @@ export const initMenus = () => {
 
   beeMenuButton?.addEventListener('click', (event) => {
     event.stopPropagation();
-    setBeeMenuOpen(!state.beeMenuOpen);
+    setAntMenuOpen(!state.antMenuOpen);
   });
 
   document.addEventListener('click', (event) => {
@@ -261,11 +261,11 @@ export const initMenus = () => {
       setMenuOpen(false);
     }
     if (
-      state.beeMenuOpen &&
+      state.antMenuOpen &&
       !beeMenuButton?.contains(target) &&
       !beeMenuDropdown?.contains(target)
     ) {
-      setBeeMenuOpen(false);
+      setAntMenuOpen(false);
     }
   });
 

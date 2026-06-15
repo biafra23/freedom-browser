@@ -39,8 +39,8 @@ describe('settings-store', () => {
         theme: 'system',
         enableRadicleIntegration: false,
         enableIdentityWallet: true,
-        beeNodeMode: 'ultraLight',
-        startBeeAtLaunch: true,
+        antNodeMode: 'ultraLight',
+        startAntAtLaunch: true,
         startIpfsAtLaunch: true,
         startRadicleAtLaunch: false,
         autoUpdate: true,
@@ -56,7 +56,7 @@ describe('settings-store', () => {
   test('merges persisted settings with defaults and applies the saved theme', () => {
     fs.writeFileSync(
       path.join(userDataDir, 'settings.json'),
-      JSON.stringify({ theme: 'dark', autoUpdate: false, beeNodeMode: 'light' }),
+      JSON.stringify({ theme: 'dark', autoUpdate: false, antNodeMode: 'light' }),
       'utf-8'
     );
 
@@ -66,12 +66,48 @@ describe('settings-store', () => {
       expect.objectContaining({
         theme: 'dark',
         autoUpdate: false,
-        beeNodeMode: 'light',
-        startBeeAtLaunch: true,
+        antNodeMode: 'light',
+        startAntAtLaunch: true,
         showBookmarkBar: false,
       })
     );
     expect(nativeTheme.themeSource).toBe('dark');
+  });
+
+  test('migrates bee-era keys to ant-named keys and drops the old keys', () => {
+    const settingsPath = path.join(userDataDir, 'settings.json');
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({ theme: 'dark', beeNodeMode: 'light', startBeeAtLaunch: false }),
+      'utf-8'
+    );
+
+    const { mod } = loadSettingsStore({ userDataDir });
+
+    const loaded = mod.loadSettings();
+    expect(loaded.antNodeMode).toBe('light');
+    expect(loaded.startAntAtLaunch).toBe(false);
+    expect(loaded).not.toHaveProperty('beeNodeMode');
+    expect(loaded).not.toHaveProperty('startBeeAtLaunch');
+
+    // Live file is rewritten with the new keys and no old keys.
+    const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    expect(persisted.antNodeMode).toBe('light');
+    expect(persisted.startAntAtLaunch).toBe(false);
+    expect(persisted).not.toHaveProperty('beeNodeMode');
+    expect(persisted).not.toHaveProperty('startBeeAtLaunch');
+  });
+
+  test('does not overwrite an ant-named key already present when migrating', () => {
+    fs.writeFileSync(
+      path.join(userDataDir, 'settings.json'),
+      JSON.stringify({ beeNodeMode: 'light', antNodeMode: 'ultraLight' }),
+      'utf-8'
+    );
+
+    const { mod } = loadSettingsStore({ userDataDir });
+
+    expect(mod.loadSettings().antNodeMode).toBe('ultraLight');
   });
 
   test('falls back to defaults when the settings file is invalid', () => {
@@ -82,7 +118,7 @@ describe('settings-store', () => {
     expect(mod.loadSettings()).toEqual(
       expect.objectContaining({
         theme: 'system',
-        beeNodeMode: 'ultraLight',
+        antNodeMode: 'ultraLight',
         autoUpdate: true,
       })
     );
@@ -92,7 +128,7 @@ describe('settings-store', () => {
   test('saveSettings persists a merged payload and updates the theme', () => {
     const { mod, nativeTheme } = loadSettingsStore({ userDataDir });
 
-    expect(mod.saveSettings({ theme: 'light', autoUpdate: false, beeNodeMode: 'light' })).toBe(
+    expect(mod.saveSettings({ theme: 'light', autoUpdate: false, antNodeMode: 'light' })).toBe(
       true
     );
 
@@ -102,8 +138,8 @@ describe('settings-store', () => {
       expect.objectContaining({
         theme: 'light',
         autoUpdate: false,
-        beeNodeMode: 'light',
-        startBeeAtLaunch: true,
+        antNodeMode: 'light',
+        startAntAtLaunch: true,
       })
     );
     expect(nativeTheme.themeSource).toBe('light');
@@ -185,10 +221,10 @@ describe('settings-store', () => {
     await expect(ipcMain.invoke(IPC.SETTINGS_GET)).resolves.toEqual(
       expect.objectContaining({
         theme: 'system',
-        beeNodeMode: 'ultraLight',
+        antNodeMode: 'ultraLight',
       })
     );
-    await expect(ipcMain.invoke(IPC.SETTINGS_SAVE, { theme: 'dark', beeNodeMode: 'light' }))
+    await expect(ipcMain.invoke(IPC.SETTINGS_SAVE, { theme: 'dark', antNodeMode: 'light' }))
       .resolves.toBe(true);
 
     expect(nativeTheme.themeSource).toBe('dark');

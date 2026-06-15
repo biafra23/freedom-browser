@@ -9,7 +9,7 @@
 
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { formatRawTokenBalance, formatBytes } from './wallet-utils.js';
-import { fetchBeeJson } from './bee-api.js';
+import { fetchAntJson } from './ant-api.js';
 
 const PRESETS = [
   { label: 'Try it out', sizeGB: 1, durationDays: 7, description: '1 GB for 7 days' },
@@ -487,7 +487,7 @@ async function refreshBalance() {
   if (!balanceDisplay) return;
 
   try {
-    const walletResult = await fetchBeeJson('/wallet');
+    const walletResult = await fetchAntJson('/wallet');
     if (walletResult.ok && walletResult.data?.bzzBalance) {
       balanceDisplay.textContent = `Balance: ${formatRawTokenBalance(walletResult.data.bzzBalance, 16)} xBZZ`;
     } else {

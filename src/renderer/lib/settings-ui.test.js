@@ -38,12 +38,12 @@ const loadSettingsModule = async (options = {}) => {
   const {
     initialSettings = {
       theme: 'system',
-      beeNodeMode: 'ultraLight',
+      antNodeMode: 'ultraLight',
       enableRadicleIntegration: false,
     },
     prefersDark = true,
     beeStatusResult = { status: 'running', error: null },
-    registryResult = { bee: { mode: 'bundled' } },
+    registryResult = { ant: { mode: 'bundled' } },
   } = options;
 
   const mediaQueryList = {
@@ -74,7 +74,7 @@ const loadSettingsModule = async (options = {}) => {
   global.window = {
     ...eventTarget,
     electronAPI,
-    bee: beeApi,
+    ant: beeApi,
     serviceRegistry,
     radicle,
     matchMedia: jest.fn(() => mediaQueryList),
@@ -117,7 +117,7 @@ describe('settings-ui', () => {
 
   test('initTheme loads settings and reacts to system theme changes', async () => {
     const { mod, mediaQueryList, documentElement, electronAPI } = await loadSettingsModule({
-      initialSettings: { theme: 'system', beeNodeMode: 'ultraLight' },
+      initialSettings: { theme: 'system', antNodeMode: 'ultraLight' },
       prefersDark: true,
     });
 
@@ -136,9 +136,9 @@ describe('settings-ui', () => {
   test('initSettingsEffects restarts bundled Bee when bee mode flips', async () => {
     const { mod, eventTarget, beeApi, serviceRegistry, debugMocks, documentElement } =
       await loadSettingsModule({
-        initialSettings: { theme: 'dark', beeNodeMode: 'ultraLight' },
+        initialSettings: { theme: 'dark', antNodeMode: 'ultraLight' },
         beeStatusResult: { status: 'running', error: null },
-        registryResult: { bee: { mode: 'bundled' } },
+        registryResult: { ant: { mode: 'bundled' } },
       });
 
     await mod.initTheme();
@@ -147,7 +147,7 @@ describe('settings-ui', () => {
 
     await emitSettingsUpdated(eventTarget, {
       theme: 'light',
-      beeNodeMode: 'light',
+      antNodeMode: 'light',
       enableRadicleIntegration: false,
     });
     await flushMicrotasks();
@@ -165,8 +165,8 @@ describe('settings-ui', () => {
 
   test('initSettingsEffects does not restart Bee when using a reused node', async () => {
     const { mod, eventTarget, beeApi, serviceRegistry, debugMocks } = await loadSettingsModule({
-      initialSettings: { theme: 'system', beeNodeMode: 'ultraLight' },
-      registryResult: { bee: { mode: 'reused' } },
+      initialSettings: { theme: 'system', antNodeMode: 'ultraLight' },
+      registryResult: { ant: { mode: 'reused' } },
     });
 
     await mod.initTheme();
@@ -174,7 +174,7 @@ describe('settings-ui', () => {
 
     await emitSettingsUpdated(eventTarget, {
       theme: 'system',
-      beeNodeMode: 'light',
+      antNodeMode: 'light',
       enableRadicleIntegration: false,
     });
     await flushMicrotasks();
@@ -192,7 +192,7 @@ describe('settings-ui', () => {
     const { mod, eventTarget, radicle } = await loadSettingsModule({
       initialSettings: {
         theme: 'system',
-        beeNodeMode: 'ultraLight',
+        antNodeMode: 'ultraLight',
         enableRadicleIntegration: true,
       },
     });
@@ -202,7 +202,7 @@ describe('settings-ui', () => {
 
     await emitSettingsUpdated(eventTarget, {
       theme: 'system',
-      beeNodeMode: 'ultraLight',
+      antNodeMode: 'ultraLight',
       enableRadicleIntegration: false,
     });
     await flushMicrotasks();
@@ -212,7 +212,7 @@ describe('settings-ui', () => {
 
   test('initSettingsEffects does not restart Bee when bee mode is unchanged', async () => {
     const { mod, eventTarget, beeApi } = await loadSettingsModule({
-      initialSettings: { theme: 'system', beeNodeMode: 'light' },
+      initialSettings: { theme: 'system', antNodeMode: 'light' },
     });
 
     await mod.initTheme();
@@ -220,7 +220,7 @@ describe('settings-ui', () => {
 
     await emitSettingsUpdated(eventTarget, {
       theme: 'system',
-      beeNodeMode: 'light',
+      antNodeMode: 'light',
       enableRadicleIntegration: false,
     });
     await flushMicrotasks();

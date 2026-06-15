@@ -19,7 +19,7 @@ describe('renderer state', () => {
     expect(defaults.state.radicleApiPrefix).toBeNull();
 
     const custom = await loadModule({
-      beeApi: 'http://127.0.0.1:1733/',
+      antApi: 'http://127.0.0.1:1733/',
     });
     expect(custom.state.bzzRoutePrefix).toBe('http://127.0.0.1:1733/bzz/');
     expect(custom.state.ipfsRoutePrefix).toBe('http://freedom-ipfs.localhost/ipfs/');
@@ -29,22 +29,22 @@ describe('renderer state', () => {
   test('builds service urls from registry values and rejects missing endpoints', async () => {
     const mod = await loadModule();
 
-    expect(() => mod.buildBeeUrl('/health')).toThrow('Bee endpoint is not ready');
+    expect(() => mod.buildAntUrl('/health')).toThrow('Ant endpoint is not ready');
     expect(() => mod.buildIpfsApiUrl('/api/v0/id')).toThrow(
       'IPFS API endpoint is not ready'
     );
     expect(() => mod.buildRadicleUrl('/api/v1')).toThrow('Radicle endpoint is not ready');
 
     mod.updateRegistry({
-      bee: { api: 'http://127.0.0.1:1999', gateway: 'http://127.0.0.1:1999' },
+      ant: { api: 'http://127.0.0.1:1999', gateway: 'http://127.0.0.1:1999' },
       ipfs: { api: 'http://127.0.0.1:5999', gateway: 'http://127.0.0.1:8999' },
       radicle: { api: 'http://127.0.0.1:8781', gateway: 'http://127.0.0.1:8781' },
     });
 
-    expect(mod.buildBeeUrl('/health')).toBe('http://127.0.0.1:1999/health');
+    expect(mod.buildAntUrl('/health')).toBe('http://127.0.0.1:1999/health');
     expect(mod.buildIpfsApiUrl('/api/v0/id')).toBe('http://127.0.0.1:5999/api/v0/id');
     expect(mod.buildRadicleUrl('/api/v1')).toBe('http://127.0.0.1:8781/api/v1');
-    expect(mod.state.beeBase).toBe('http://127.0.0.1:1999');
+    expect(mod.state.antBase).toBe('http://127.0.0.1:1999');
     expect(mod.state.ipfsBase).toBe('http://127.0.0.1:8999');
     expect(mod.state.ipfsApiBase).toBe('http://127.0.0.1:5999');
     expect(mod.state.radicleBase).toBe('http://127.0.0.1:8781');
@@ -61,7 +61,7 @@ describe('renderer state', () => {
 
     mod.updateRegistry({
       ...mod.state.registry,
-      bee: {
+      ant: {
         api: null,
         gateway: null,
         mode: 'none',
@@ -70,7 +70,7 @@ describe('renderer state', () => {
       },
     });
 
-    expect(mod.getDisplayMessage('bee')).toBe('Starting');
+    expect(mod.getDisplayMessage('ant')).toBe('Starting');
     expect(mod.getDisplayMessage('missing')).toBeNull();
   });
 });

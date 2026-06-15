@@ -41,7 +41,7 @@ const updateRadicleSectionVisibility = () => {
 };
 
 const fetchRadicleInfo = async () => {
-  if (!state.beeMenuOpen) return;
+  if (!state.antMenuOpen) return;
   if (state.currentRadicleStatus === 'stopped') {
     stopRadicleInfoPolling();
     return;
@@ -105,7 +105,7 @@ export const startRadicleInfoPolling = () => {
     stopRadicleInfoPolling();
     return;
   }
-  if (!state.beeMenuOpen || state.currentRadicleStatus === 'stopped') {
+  if (!state.antMenuOpen || state.currentRadicleStatus === 'stopped') {
     stopRadicleInfoPolling();
     return;
   }
@@ -156,7 +156,7 @@ export const updateRadicleUi = (status, error) => {
       break;
   }
 
-  if (state.beeMenuOpen) {
+  if (state.antMenuOpen) {
     if (status === 'stopped') {
       stopRadicleInfoPolling();
     } else if (!radicleInfoInterval && radicleToggleSwitch?.classList.contains('running')) {

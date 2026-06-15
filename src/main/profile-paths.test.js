@@ -46,6 +46,7 @@ describe('profile paths', () => {
     const paths = loadPaths(userDataDir);
 
     expect(paths.getIdentityDataDir()).toBe(path.join(userDataDir, 'identity'));
+    expect(paths.getAntDataDir()).toBe(path.join(userDataDir, 'ant-data'));
     expect(paths.getBeeDataDir()).toBe(path.join(userDataDir, 'bee-data'));
     expect(paths.getIpfsDataDir()).toBe(path.join(userDataDir, 'ipfs-data'));
     expect(paths.getRadicleDataDir()).toBe(path.join(userDataDir, 'radicle-data'));
@@ -55,6 +56,7 @@ describe('profile paths', () => {
     );
 
     expect(fs.existsSync(path.join(userDataDir, 'identity'))).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, 'ant-data'))).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'tmp'))).toBe(true);
   });
@@ -72,10 +74,12 @@ describe('profile paths', () => {
   test('honors explicit data directory overrides', () => {
     const userDataDir = track(createTempUserDataDir());
     const identityDir = track(createTempUserDataDir());
+    const antDir = track(createTempUserDataDir());
     const beeDir = track(createTempUserDataDir());
     const ipfsDir = track(createTempUserDataDir());
     const radicleDir = track(createTempUserDataDir());
     process.env.FREEDOM_IDENTITY_DATA = identityDir;
+    process.env.FREEDOM_ANT_DATA = antDir;
     process.env.FREEDOM_BEE_DATA = beeDir;
     process.env.FREEDOM_IPFS_DATA = ipfsDir;
     process.env.FREEDOM_RADICLE_DATA = radicleDir;
@@ -83,6 +87,7 @@ describe('profile paths', () => {
     const paths = loadPaths(userDataDir);
 
     expect(paths.getIdentityDataDir()).toBe(identityDir);
+    expect(paths.getAntDataDir()).toBe(antDir);
     expect(paths.getBeeDataDir()).toBe(beeDir);
     expect(paths.getIpfsDataDir()).toBe(ipfsDir);
     expect(paths.getRadicleDataDir()).toBe(radicleDir);

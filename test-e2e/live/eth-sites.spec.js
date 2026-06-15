@@ -13,15 +13,15 @@
 const {
   test,
   expect,
-  HAS_BEE_BINARY,
-  BEE_BINARY_PATH,
+  HAS_ANT_BINARY,
+  ANT_BINARY_PATH,
   HAS_IPFS_NATIVE_ADDON,
   IPFS_NATIVE_ADDON_PATH,
 } = require('../live-fixtures');
 
 const PEER_TARGET = 20;
-// Each live run starts with a *fresh* Bee/IPFS data dir
-// (FREEDOM_BEE_DATA / FREEDOM_IPFS_DATA point at a per-run temp dir,
+// Each live run starts with a *fresh* Ant/IPFS data dir
+// (FREEDOM_ANT_DATA / FREEDOM_IPFS_DATA point at a per-run temp dir,
 // see live-fixtures.js), so peerstores are empty and gossip starts
 // from the hardcoded bootstrap nodes every time. Bee in DHT client
 // mode typically crosses 20 peers in 30–180 s on a warm bootstrap
@@ -136,8 +136,8 @@ const waitForWebviewCondition = (window, snippet, message) =>
 // check happens before `electronApp` is ever requested.
 test.describe('live cold-start sites', () => {
   test.skip(
-    !HAS_BEE_BINARY,
-    `Live E2E needs the Bee binary at ${BEE_BINARY_PATH}. Run \`npm run bee:download\` to fetch it.`
+    !HAS_ANT_BINARY,
+    `Live E2E needs the Ant binary at ${ANT_BINARY_PATH}. Run \`npm run ant:download\` to fetch it.`
   );
   test.skip(
     !HAS_IPFS_NATIVE_ADDON,

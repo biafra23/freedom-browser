@@ -46,10 +46,10 @@ export function hasPositiveTokenBalance(balances, tokenKey) {
  * - Main wallet has xDAI → open send flow pre-filled to Bee wallet
  * - Main wallet empty → open receive screen (QR + address)
  */
-export function topUpXdai(beeWalletAddress) {
-  const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
+export function topUpXdai(antWalletAddress) {
+  const recipient = antWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
-    return { error: 'Bee wallet address not available.' };
+    return { error: 'Ant wallet address not available.' };
   }
 
   const hasMainXdai = hasPositiveTokenBalance(walletState.currentBalances, XDAI_TOKEN_KEY);
@@ -74,10 +74,10 @@ export function topUpXdai(beeWalletAddress) {
  * - Main wallet has xDAI but no xBZZ → open CowSwap
  * - Main wallet empty → open receive screen
  */
-export function topUpXbzz(beeWalletAddress) {
-  const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
+export function topUpXbzz(antWalletAddress) {
+  const recipient = antWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
-    return { error: 'Bee wallet address not available.' };
+    return { error: 'Ant wallet address not available.' };
   }
 
   const hasMainXbzz = hasPositiveTokenBalance(walletState.currentBalances, XBZZ_TOKEN_KEY);
