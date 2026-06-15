@@ -21,7 +21,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
 3. **Download the node binaries (first time only):**
 
    ```bash
-   npm run bee:download
+   npm run ant:download
    npm run ipfs:download
    npm run radicle:download
    ```
@@ -38,7 +38,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
 
 ## Architecture
 
-Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`bee-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
+Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`ant-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
 
 When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, or rewrites the URL to the active gateway URL via the registry (`rad`). `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the native IPFS protocol handler, so no renderer warm-up probe is needed.
 
@@ -46,13 +46,13 @@ When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the m
 
 ## Swarm Content Retrieval
 
-A fresh Bee node pulls chunks on-demand through the DHT, and any individual chunk lookup can transiently fail with `HTTP 404` even when the content is healthy and peers are connected. Across a page with 10–30 sub-resources (JS, CSS, fonts, images, video), a modest per-request failure rate compounds into visibly broken CSS, missing images, and videos that don't load. Retries almost always succeed — the problem is strictly first contact with cold content.
+A fresh Swarm node pulls chunks on-demand through the DHT, and any individual chunk lookup can transiently fail with `HTTP 404` even when the content is healthy and peers are connected. Across a page with 10–30 sub-resources (JS, CSS, fonts, images, video), a modest per-request failure rate compounds into visibly broken CSS, missing images, and videos that don't load. Retries almost always succeed — the problem is strictly first contact with cold content.
 
 Freedom mitigates this in two layers:
 
-1. **Navigation probe** (`src/main/swarm/swarm-probe.js`) — before loading a `bzz://` URL, the main process HEAD-polls `/bzz/<hash>` on the local Bee gateway with exponential backoff (30 s per attempt, 5 min overall). The tab spinner runs during the probe, so the user never sees Bee's raw 404 JSON; on timeout or Bee-unreachable we route to `error.html` with the original URL preserved and a **Try Again** button. Probes are cancellable.
+1. **Navigation probe** (`src/main/swarm/swarm-probe.js`) — before loading a `bzz://` URL, the main process HEAD-polls `/bzz/<hash>` on the local node's gateway with exponential backoff (30 s per attempt, 5 min overall). The tab spinner runs during the probe, so the user never sees the node's raw 404 JSON; on timeout or node-unreachable we route to `error.html` with the original URL preserved and a **Try Again** button. Probes are cancellable.
 
-2. **Custom `bzz:` scheme** (`src/main/swarm/bzz-protocol.js`) — `bzz` is registered as a privileged standard scheme, so `bzz://<hash>/` becomes the page origin in Chromium. Every `bzz://` request (top-level, sub-resources, `fetch`, media `Range`, CSS descendants, service workers) routes through a main-process handler that proxies to the local Bee gateway, always sets `Swarm-Chunk-Retrieval-Timeout` + `Swarm-Redundancy-Strategy: 3` + `Swarm-Redundancy-Fallback-Mode: true`, retries transient `5xx` on idempotent methods with bounded exponential backoff (~50 s total) with a 30 s per-attempt deadline, and streams the response back. `404` responses are surfaced immediately so SPAs that feature-detect missing endpoints don't stall — the cold-start case that 404 retries used to absorb is now handled upstream by the navigation probe. Because `bzz://<hash>/` is the origin, same-origin relative paths (`/foo.js`, `url(/bg.png)`) resolve naturally with no URL rewriting.
+2. **Custom `bzz:` scheme** (`src/main/swarm/bzz-protocol.js`) — `bzz` is registered as a privileged standard scheme, so `bzz://<hash>/` becomes the page origin in Chromium. Every `bzz://` request (top-level, sub-resources, `fetch`, media `Range`, CSS descendants, service workers) routes through a main-process handler that proxies to the local node's gateway, always sets `Swarm-Chunk-Retrieval-Timeout` + `Swarm-Redundancy-Strategy: 3` + `Swarm-Redundancy-Fallback-Mode: true`, retries transient `5xx` on idempotent methods with bounded exponential backoff (~50 s total) with a 30 s per-attempt deadline, and streams the response back. `404` responses are surfaced immediately so SPAs that feature-detect missing endpoints don't stall — the cold-start case that 404 retries used to absorb is now handled upstream by the navigation probe. Because `bzz://<hash>/` is the origin, same-origin relative paths (`/foo.js`, `url(/bg.png)`) resolve naturally with no URL rewriting.
 
 The handler also accepts ENS-named hosts: `bzz://swarm.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after address-bar resolution) and proxies the same way. The page's URL/origin stays `bzz://<name>/` rather than the resolved hash, so DevTools, `window.location`, storage, and subresource fetches like `fetch('bzz://swarm.eth/data')` see the ENS name. Cross-transport mismatches (e.g. `bzz://name.eth` whose contenthash is IPFS) return `404` with an explanatory body — the typed scheme is treated as an assertion. The renderer's address-bar pipeline applies the same assertion before navigating, so both layers agree.
 
@@ -68,7 +68,7 @@ With the custom scheme, pages now see:
 - `window.location.host === '<hash>'`
 - `window.location.pathname === '/path'` (the `/bzz/<hash>/` prefix is gone — it's encoded in the host)
 
-Most sites work without changes — relative URLs (`./assets/...`, `/foo.js`, `url(bar.png)`) resolve naturally because `bzz://<hash>/` is the origin. Sites break only when they sniff `window.location` to construct absolute Bee URLs.
+Most sites work without changes — relative URLs (`./assets/...`, `/foo.js`, `url(bar.png)`) resolve naturally because `bzz://<hash>/` is the origin. Sites break only when they sniff `window.location` to construct absolute gateway URLs.
 
 **Anti-pattern 1: protocol/pathname sniffing** (e.g. tile servers, Leaflet maps):
 
@@ -109,7 +109,7 @@ const bzzRoot =
     : `/bzz/${window.location.pathname.match(/^\/bzz\/([\dA-Fa-f]{64})\//)?.[1]}/`;
 ```
 
-Don't hardcode `http://localhost:1633` — Freedom users may have Bee on a different port, and external visitors via a public Swarm gateway certainly do.
+Don't hardcode `http://localhost:1633` — Freedom users may have their Swarm node on a different port, and external visitors via a public Swarm gateway certainly do.
 
 ---
 
@@ -183,38 +183,38 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 |                      | Swarm          | IPFS                                  | Radicle                        |
 | -------------------- | -------------- | ------------------------------------- | ------------------------------ |
 | **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       |
-| **Node Software**    | Bee            | freedom-ipfs native                  | radicle-node + radicle-httpd   |
+| **Node Software**    | Ant (antd, bee-compatible) | freedom-ipfs native      | radicle-node + radicle-httpd   |
 | **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
 | **Managed Gateway Port** | 11633+     | internal native handler               | 18780+                         |
 | **Managed API Port** | 11633+         | internal native handler               | 18780+                         |
 | **Managed P2P Port** | 12633+         | internal native handler               | 18776+                         |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
-| **Data Directory**   | `<profile>/bee-data/` | `<profile>/ipfs-data/freedom-ipfs/` | profile-scoped short Radicle home |
-| **Binary Directory** | `bee-bin/`     | `native/freedom-ipfs-node/`           | `radicle-bin/`                 |
+| **Data Directory**   | `<profile>/ant-data/` | `<profile>/ipfs-data/freedom-ipfs/` | profile-scoped short Radicle home |
+| **Binary Directory** | `ant-bin/`     | `native/freedom-ipfs-node/`           | `radicle-bin/`                 |
 
 ### Smart Node Connection
 
 Freedom manages nodes per browser profile:
 
-1. **Independent Managed Nodes**: By default, each profile starts its own Bee, native IPFS, and Radicle data directories. Bee and Radicle use profile-specific non-default ports; IPFS uses the embedded native handler without loopback API or gateway ports.
-2. **Explicit External Nodes**: Profiles can opt into external Bee/Radicle endpoints in profile settings. External node identity and storage are shared outside that profile. IPFS always uses the embedded `freedom-ipfs` native node.
-3. **Port Conflict Handling**: If a managed Bee or Radicle profile port is busy, Freedom picks a free profile port and persists the reassignment.
+1. **Independent Managed Nodes**: By default, each profile starts its own Ant, native IPFS, and Radicle data directories. Ant and Radicle use profile-specific non-default ports; IPFS uses the embedded native handler without loopback API or gateway ports.
+2. **Explicit External Nodes**: Profiles can opt into external Swarm/Radicle endpoints in profile settings. External node identity and storage are shared outside that profile. IPFS always uses the embedded `freedom-ipfs` native node.
+3. **Port Conflict Handling**: If a managed Ant or Radicle profile port is busy, Freedom picks a free profile port and persists the reassignment.
 4. **Visual Feedback**: The Nodes panel and profile settings show whether a node is managed, external/shared, or disabled.
 
 This means Freedom works seamlessly whether you:
 
 - Run it standalone (bundled Swarm and native IPFS nodes start automatically; Radicle is optional and behind an Experimental setting)
 - Create multiple independent browser profiles with their own browser data, vault, and managed node state
-- Already have system-wide Bee/Radicle daemons running and explicitly configure a profile to use them
+- Already have system-wide Swarm/Radicle daemons running and explicitly configure a profile to use them
 - Have port conflicts with other software (Freedom finds and records available profile ports)
 
 On macOS, the packaged app explicitly allows multiple bundle instances so profile
 launching can use `open -n -a Freedom --args --profile=<id>`.
 
-### Integrated Swarm Bee Node
+### Integrated Swarm Node (Ant)
 
 - **Toolbar Toggle**: Click the network icon to access the Nodes panel with independent on/off switches.
-- **Live Statistics**: View connected peers, visible network peers, and Bee version in real-time.
+- **Live Statistics**: View connected peers, visible network peers, and the Ant node version in real-time.
 - **DHT Client Mode**: Runs in ultra-light mode for minimal bandwidth and resource usage.
 - **Automatic Configuration**: First-run setup generates keys and config automatically.
 
@@ -371,19 +371,19 @@ Access built-in browser pages using the `freedom://` protocol:
 
 Freedom automatically manages node connections per profile. The default profile's managed endpoints start at:
 
-- **Swarm Bee**: `http://127.0.0.1:11633`
+- **Swarm Ant**: `http://127.0.0.1:11633`
 - **IPFS**: embedded native `freedom-ipfs` handler; no desktop loopback gateway/API port is started
 - **Radicle httpd**: `http://127.0.0.1:18780`
 
-Named profiles use the next profile slot for Bee and Radicle (`11634`, `18781`, and so on). The ecosystem default Bee/Radicle ports (`1633`, `8780`) are treated as external/system-node endpoints, not Freedom-managed defaults. IPFS is native-only and does not expose or reuse Kubo API/gateway ports.
+Named profiles use the next profile slot for Ant and Radicle (`11634`, `18781`, and so on). The ecosystem default Swarm/Radicle ports (`1633`, `8780`) are treated as external/system-node endpoints, not Freedom-managed defaults. IPFS is native-only and does not expose or reuse Kubo API/gateway ports.
 
-If Freedom detects a compatible Bee or Radicle daemon on an ecosystem default port for a protocol that would start at launch, it asks whether that profile should use the existing external node or keep an independent managed node.
+If Freedom detects a compatible Swarm or Radicle daemon on an ecosystem default port for a protocol that would start at launch, it asks whether that profile should use the existing external node or keep an independent managed node.
 
 For advanced users who need to connect a profile to a remote or system Bee/Radicle node, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
 
 ```bash
 # Connect to a remote Swarm node
-export BEE_API="http://remote-host:1633"
+export ANT_API="http://remote-host:1633"
 
 npm start
 ```
@@ -426,13 +426,14 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | `npm start`                                                   | Launch the Electron app                                     |
 | `npm test`                                                    | Run unit tests (Jest)                                       |
 | `npm run test:e2e`                                            | Run the harness E2E suite (stubbed nodes; fast, no network) |
-| `npm run test:e2e:live`                                       | Run the live E2E suite (real Bee + IPFS + ENS; manual only) |
-| `npm run bee:download`                                        | Download the Bee binary for your platform                   |
+| `npm run test:e2e:live`                                       | Run the live E2E suite (real Ant + IPFS + ENS; manual only) |
+| `npm run ant:download`                                        | Download the Ant (antd) binary for your platform            |
+| `npm run ant:status`                                          | Check the default profile's Freedom-managed Ant (`11633`)   |
+| `npm run system-ant:start` / `system-ant:status` / `system-ant:stop` | Run or inspect a repo-root system Ant on the ecosystem default port (`1633`) |
+| `npm run ant:smoke-upload`                                    | Exercise the buy → upload → download round-trip on a node   |
 | `npm run ipfs:download`                                       | Download the pinned freedom-ipfs native addon               |
 | `npm run ipfs:native:smoke`                                   | Smoke test the real native addon and live IPFS retrieval    |
 | `npm run ipfs:build`                                          | Build the freedom-ipfs native addon from source             |
-| `npm run bee:status`                                          | Check the default profile's Freedom-managed Bee (`11633`)   |
-| `npm run system-bee:start` / `system-bee:status` / `system-bee:stop` | Run or inspect a repo-root system Bee on the ecosystem default port (`1633`) |
 | `npm run ipfs:reset`                                          | Remove legacy repo-root IPFS data                           |
 | `npm run build -- --mac --unsigned`                           | Build unsigned macOS app (for local testing)                |
 | `npm run dist -- --mac`                                       | Build signed macOS distributable (DMG + ZIP)                |
@@ -447,8 +448,8 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 
 The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with optional `--arm64`, `--x64`, `--unsigned`, `--no-notarize`, and `--verbose` flags. See `scripts/build.js` for details.
 
-`bee:start` is kept as a legacy alias for the explicit `system-bee:start`
-script. It uses repo-root `bee-data/`, which Freedom no longer uses for
+`ant:start` is kept as a legacy alias for the explicit `system-ant:start`
+script. It uses repo-root `ant-data/`, which Freedom no longer uses for
 profile-managed dev data.
 
 ### Radicle Scripts
@@ -466,12 +467,12 @@ profile-managed dev data.
 
 | Directory             | Contents                                                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `src/main/`           | Electron main process — node managers (Bee, IPFS, Radicle), ENS resolver, IPC, settings, history, bookmarks, auto-updater |
+| `src/main/`           | Electron main process — node managers (Ant, IPFS, Radicle), ENS resolver, IPC, settings, history, bookmarks, auto-updater |
 | `src/renderer/`       | UI — tabs, navigation, address bar, menus, context menus, bookmarks bar, debug console, settings modal                    |
 | `src/renderer/pages/` | Internal pages (home, history, error, links, protocol-test, rad-browser)                                                  |
 | `src/shared/`         | Constants shared between main and renderer                                                                                |
-| `config/`             | Bee config template, default bookmarks, macOS entitlements                                                                |
-| `scripts/`            | Build and setup helpers (binary downloads, Bee/IPFS/Radicle init)                                                         |
+| `config/`             | Ant config template, default bookmarks, macOS entitlements                                                                |
+| `scripts/`            | Build and setup helpers (binary downloads, Ant/IPFS/Radicle init)                                                         |
 | `assets/`             | App icons                                                                                                                 |
 
 ---
@@ -490,7 +491,7 @@ npm test
 
 The suite covers most of `src/main/` and `src/renderer/lib/` — see `src/**/*.test.js` for the full list. Notable areas include:
 
-- **Networking & protocols**: `bzz-protocol`, `swarm-probe`, `swarm-service`, `swarm-provider-ipc`, `request-rewriter`, `ens-resolver`, `ipfs-manager`, `radicle-manager`, `bee-manager`, `service-registry`
+- **Networking & protocols**: `bzz-protocol`, `swarm-probe`, `swarm-service`, `swarm-provider-ipc`, `request-rewriter`, `ens-resolver`, `ipfs-manager`, `radicle-manager`, `ant-manager`, `service-registry`
 - **Renderer navigation & UI**: `navigation`, `navigation-utils`, `tabs`, `tabs-ui`, `bookmarks-ui`, `autocomplete`, `menus`, `page-context-menu`, `settings-ui`, `wallet/*`
 - **Identity, vault & wallet**: `identity/derivation`, `identity/vault`, `identity/formats`, `wallet/dapp-permissions`, `wallet/transaction-service`
 - **Parsing & utilities**: `url-utils`, `cid-utils`, `origin-utils`, `ethereum-uri`, `page-urls`, `brand`
@@ -502,10 +503,10 @@ Two Playwright projects live under `test-e2e/`. The harness suite is run manuall
 
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
-| `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Bee/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
-| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Bee + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). Requires `npm run bee:download` and `npm run ipfs:download` first; missing binaries/addons skip before Electron launches. |
+| `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Ant/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
+| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). Requires `npm run ant:download` and `npm run ipfs:download` first; missing binaries/addons skip before Electron launches. |
 
-Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Bee port detection don't tolerate parallel app instances.
+Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Ant port detection don't tolerate parallel app instances.
 
 ### Logging
 
@@ -529,7 +530,7 @@ DEBUG=1 /Applications/Freedom.app/Contents/MacOS/Freedom
 
 - Toggle the debug panel via **Menu (☰) > Debug Console**.
 - Check the terminal for main process logs (visible at `info` level and above in development):
-  - Bee/IPFS/Radicle stdout and stderr
+  - Ant/IPFS/Radicle stdout and stderr
   - IPC events
   - Request rewrites
   - ENS resolution
@@ -555,8 +556,8 @@ Output goes to the `dist/` folder as DMG and ZIP archives.
 
 The build includes:
 
-- Bundled Bee, freedom-ipfs native addon, and Radicle binaries
-- Bee configuration template
+- Bundled Ant, freedom-ipfs native addon, and Radicle binaries
+- Ant configuration template
 - All renderer assets
 
 #### Linux
@@ -707,7 +708,7 @@ npm run start:test-updater
 - **Context Isolation**: Uses `contextIsolation: true` and `nodeIntegration: false`.
 - **Remote Module Disabled**: The remote module is not available.
 - **Minimal API Surface**: Only necessary IPC methods are exposed to the renderer. The `freedomAPI` (history, bookmarks, etc.) is restricted to internal `freedom://` pages — external websites cannot call it.
-- **Local Nodes**: Bee, IPFS, and Radicle run locally; no external services required for basic operation.
+- **Local Nodes**: Ant, IPFS, and Radicle run locally; no external services required for basic operation.
 - **Permission Handling**: Pointer lock and fullscreen permissions are granted for better UX in Swarm/IPFS apps.
 - **Public RPC Fallback**: ENS resolution uses public RPCs by default. For trustless verification, use a local Helios client.
 
@@ -715,11 +716,11 @@ npm run start:test-updater
 
 ## Troubleshooting
 
-### Bee fails to start
+### Swarm node (Ant) fails to start
 
 - Freedom automatically detects managed-port conflicts and persists a free profile port
 - If the node still fails, check terminal output for specific error messages
-- Reset Bee data: `npm run bee:reset`
+- Reset Ant data: `npm run ant:reset`
 
 ### IPFS fails to start
 
@@ -737,7 +738,7 @@ npm run start:test-updater
 
 ### Using an external node
 
-- If you have a system-wide Bee, IPFS, or Radicle daemon running, configure external mode in **Settings → Profiles → Node endpoints**
+- If you have a system-wide Swarm or Radicle daemon running, configure external mode in **Settings → Profiles → Node endpoints**
 - External mode is per profile and per protocol
 - The Nodes panel shows external/shared status when connected to an external node
 - Freedom does not stop external nodes on quit
@@ -750,6 +751,6 @@ npm run start:test-updater
 
 ### Content not loading
 
-- Ensure the respective node (Bee, IPFS, or Radicle) is running (check Nodes panel, for Radicle, first enable it in **Settings → Experimental**)
+- Ensure the respective node (Ant, IPFS, or Radicle) is running (check Nodes panel, for Radicle, first enable it in **Settings → Experimental**)
 - Verify the Swarm reference (64 or 128 hex), CID, or Radicle ID is correct
 - Check the debug console for error messages

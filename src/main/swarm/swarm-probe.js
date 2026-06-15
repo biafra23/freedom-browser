@@ -18,7 +18,7 @@
 
 const crypto = require('crypto');
 const log = require('../logger');
-const { getBeeApiUrl } = require('../service-registry');
+const { getAntApiUrl } = require('../service-registry');
 
 const DEFAULT_DELAYS_MS = [0, 500, 1000, 2000, 3000];
 // Overall budget for a single probe. Freshly-started Bee nodes can take
@@ -101,7 +101,7 @@ function startProbe(hash, opts = {}) {
           if (controller.signal.aborted) return { ok: false, reason: 'aborted' };
         }
 
-        const beeUrl = getBeeApiUrl();
+        const beeUrl = getAntApiUrl();
         if (!beeUrl) {
           return { ok: false, reason: 'bee_unreachable' };
         }

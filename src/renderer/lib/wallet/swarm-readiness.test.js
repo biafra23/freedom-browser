@@ -66,7 +66,7 @@ describe('swarm-readiness', () => {
     ).toEqual({
       key: 'initializing',
       label: 'Initializing',
-      detail: 'Bee is finishing light-node setup.',
+      detail: 'Ant is finishing light-node setup.',
       action: null,
     });
   });

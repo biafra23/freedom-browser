@@ -5,7 +5,7 @@ import { pushDebug } from './debug.js';
 
 const electronAPI = window.electronAPI;
 
-let previous = { theme: 'system', beeNodeMode: 'ultraLight', enableRadicleIntegration: false };
+let previous = { theme: 'system', antNodeMode: 'ultraLight', enableRadicleIntegration: false };
 
 const systemPrefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
 
@@ -22,7 +22,7 @@ export const initTheme = async () => {
   const settings = await electronAPI.getSettings();
   previous = {
     theme: settings?.theme || 'system',
-    beeNodeMode: settings?.beeNodeMode === 'light' ? 'light' : 'ultraLight',
+    antNodeMode: settings?.antNodeMode === 'light' ? 'light' : 'ultraLight',
     enableRadicleIntegration: settings?.enableRadicleIntegration === true,
   };
   applyTheme(previous.theme);
@@ -34,8 +34,8 @@ export const initTheme = async () => {
   });
 };
 
-const applyBeeModeChange = async (nextBeeNodeMode) => {
-  if (!window.bee?.getStatus) return;
+const applyAntModeChange = async (nextAntNodeMode) => {
+  if (!window.ant?.getStatus) return;
 
   let registry = null;
   try {
@@ -44,7 +44,7 @@ const applyBeeModeChange = async (nextBeeNodeMode) => {
     // Fall back to restart check below when we can't inspect registry state.
   }
 
-  if (registry?.bee?.mode === 'reused') {
+  if (registry?.ant?.mode === 'reused') {
     pushDebug(
       'Swarm light mode setting saved. Using an existing Swarm node, so the change only applies to bundled nodes.'
     );
@@ -52,14 +52,14 @@ const applyBeeModeChange = async (nextBeeNodeMode) => {
   }
 
   try {
-    const { status } = await window.bee.getStatus();
+    const { status } = await window.ant.getStatus();
     if (status !== 'running' && status !== 'starting') return;
 
     pushDebug(
-      `Restarting Swarm node to apply ${nextBeeNodeMode === 'light' ? 'light' : 'ultra-light'} mode`
+      `Restarting Swarm node to apply ${nextAntNodeMode === 'light' ? 'light' : 'ultra-light'} mode`
     );
-    await window.bee.stop();
-    await window.bee.start();
+    await window.ant.stop();
+    await window.ant.start();
   } catch (err) {
     pushDebug(`Failed to restart Swarm node after mode change: ${err.message}`);
   }
@@ -73,7 +73,7 @@ export const initSettingsEffects = (onSettingsChanged) => {
     const prev = previous;
     previous = {
       theme: next.theme || 'system',
-      beeNodeMode: next.beeNodeMode === 'light' ? 'light' : 'ultraLight',
+      antNodeMode: next.antNodeMode === 'light' ? 'light' : 'ultraLight',
       enableRadicleIntegration: next.enableRadicleIntegration === true,
     };
 
@@ -88,8 +88,8 @@ export const initSettingsEffects = (onSettingsChanged) => {
     pushDebug('Settings updated');
     onSettingsChanged?.(next, prev);
 
-    if (prev.beeNodeMode !== previous.beeNodeMode) {
-      await applyBeeModeChange(previous.beeNodeMode);
+    if (prev.antNodeMode !== previous.antNodeMode) {
+      await applyAntModeChange(previous.antNodeMode);
     }
   });
 };

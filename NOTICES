@@ -2,10 +2,10 @@ Third-Party Notices
 
 This software includes the following third-party components:
 
-Swarm Bee
-  License: BSD-3-Clause
-  Copyright (c) 2020 Ethereum Swarm
-  https://github.com/ethersphere/bee
+Ant (antd, Swarm node)
+  License: MIT OR Apache-2.0
+  Copyright (c) solardev-xyz contributors
+  https://github.com/solardev-xyz/ant
 
 freedom-ipfs
   License: MIT OR Apache-2.0

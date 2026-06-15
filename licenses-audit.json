@@ -1,13 +1,13 @@
 {
   "project_license": "MPL-2.0",
-  "generated_at": "2026-06-12T00:00:00.000Z",
+  "generated_at": "2026-06-14T00:00:00.000Z",
   "distribution_model": {
     "packaging": "electron-builder",
     "bundles_node_modules": true,
     "bundles_in_asar": true,
     "ships_external_binaries": true,
     "native_addons": ["better-sqlite3", "freedom_ipfs_native.node"],
-    "notes": "Electron desktop app bundled as DMG/DEB/NSIS. Node modules bundled in app.asar. Native addon better-sqlite3 unpacked from app.asar. freedom_ipfs_native.node shipped under resources/freedom-ipfs-node. External binaries (Bee, Radicle) shipped in resources/."
+    "notes": "Electron desktop app bundled as DMG/DEB/NSIS. Node modules bundled in app.asar. Native addon better-sqlite3 unpacked from app.asar. freedom_ipfs_native.node shipped under resources/freedom-ipfs-node. External binaries (Ant, Radicle) shipped in resources/."
   },
   "dependencies": [
     {
@@ -335,18 +335,18 @@
       "issues": []
     },
     {
-      "name": "bee (Swarm)",
-      "version": "latest",
+      "name": "ant (Swarm)",
+      "version": "v0.5.21",
       "type": "binary",
       "scope": "runtime",
       "source": {
         "ecosystem": "github",
-        "url": "https://github.com/ethersphere/bee"
+        "url": "https://github.com/solardev-xyz/ant"
       },
       "license": {
-        "spdx": ["BSD-3-Clause"],
-        "raw": "BSD-3-Clause",
-        "license_files": ["LICENSE"],
+        "spdx": ["MIT", "Apache-2.0"],
+        "raw": "MIT OR Apache-2.0",
+        "license_files": ["LICENSE-MIT", "LICENSE-APACHE"],
         "notice_required": true
       },
       "bundled_with_app": true,
@@ -355,8 +355,8 @@
       "issues": [
         {
           "kind": "notice",
-          "details": "BSD-3-Clause requires attribution in documentation and advertising materials",
-          "recommended_fix": "Include Bee's license notice in THIRD_PARTY_NOTICES"
+          "details": "MIT and Apache-2.0 both require attribution and inclusion of the license text",
+          "recommended_fix": "Include Ant's MIT/Apache notice in THIRD_PARTY_NOTICES"
         }
       ]
     },
@@ -555,7 +555,7 @@
     {
       "priority": "required",
       "action": "Keep third-party notices current",
-      "details": "Include attribution for Electron/Chromium, Bee, freedom-ipfs, Radicle, and bundled npm dependencies with their license texts"
+      "details": "Include attribution for Electron/Chromium, Ant, freedom-ipfs, Radicle, and bundled npm dependencies with their license texts"
     },
     {
       "priority": "recommended",

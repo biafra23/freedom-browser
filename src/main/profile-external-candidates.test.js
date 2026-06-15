@@ -241,7 +241,7 @@ describe('profile external candidates', () => {
     const choices = await presentExternalCandidatesInWindow(
       profile,
       [
-        { protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] },
+        { protocol: 'bee', label: 'Swarm', endpoints: ['http://127.0.0.1:1633'] },
         {
           protocol: 'radicle',
           label: 'Radicle',
@@ -262,7 +262,7 @@ describe('profile external candidates', () => {
         displayName: 'Default',
       },
       candidates: [
-        { protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] },
+        { protocol: 'bee', label: 'Swarm', endpoints: ['http://127.0.0.1:1633'] },
         {
           protocol: 'radicle',
           label: 'Radicle',
@@ -300,7 +300,7 @@ describe('profile external candidates', () => {
 
     const choices = await presentExternalCandidatesInWindow(
       profile,
-      [{ protocol: 'bee', label: 'Swarm Bee', endpoints: ['http://127.0.0.1:1633'] }],
+      [{ protocol: 'bee', label: 'Swarm', endpoints: ['http://127.0.0.1:1633'] }],
       {
         ipcMain,
         requestId: 'req-bound',

@@ -191,7 +191,7 @@ function createWindowMock() {
   };
 }
 
-function loadBeeManagerModule(options = {}) {
+function loadAntManagerModule(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const app = options.app || createAppMock({
     isPackaged: options.isPackaged ?? false,
@@ -222,7 +222,7 @@ function loadBeeManagerModule(options = {}) {
     return proc;
   });
   const loadSettings = options.loadSettings || jest.fn(() => ({
-    beeNodeMode: options.beeNodeMode || 'ultraLight',
+    antNodeMode: options.antNodeMode || 'ultraLight',
   }));
   const gnosisRpcUrls = options.rpcUrls || ['https://rpc.gnosischain.com'];
   const ethereumRpcUrls = options.ethereumRpcUrls || ['https://ethereum.publicnode.com'];
@@ -245,9 +245,9 @@ function loadBeeManagerModule(options = {}) {
     win32: 'win',
   };
   const platform = platformMap[process.platform] || process.platform;
-  const binaryName = process.platform === 'win32' ? 'bee.exe' : 'bee';
-  const beeBinPath = path.join(PROJECT_ROOT, 'bee-bin', `${platform}-${process.arch}`, binaryName);
-  const dataDir = path.join(options.userDataDir || DEFAULT_USER_DATA_DIR, 'bee-data');
+  const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+  const antBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
+  const dataDir = path.join(options.userDataDir || DEFAULT_USER_DATA_DIR, 'ant-data');
   const configPath = path.join(dataDir, 'config.yaml');
   const keysPath = path.join(dataDir, 'keys');
 
@@ -257,7 +257,7 @@ function loadBeeManagerModule(options = {}) {
         return options.existsSync(target);
       }
 
-      if (target === beeBinPath) return options.binExists !== false;
+      if (target === antBinPath) return options.binExists !== false;
       if (target === dataDir) return options.dataDirExists === true;
       if (target === configPath) return options.configExists === true;
       if (target === keysPath) return options.keysExist === true;
@@ -271,7 +271,7 @@ function loadBeeManagerModule(options = {}) {
   const Socket = createSocketClass(options.portSequence || options.portResolver || false);
   const randomBytes = options.randomBytes || jest.fn(() => Buffer.from('ab'.repeat(32), 'hex'));
 
-  const { mod } = loadMainModule(require.resolve('./bee-manager'), {
+  const { mod } = loadMainModule(require.resolve('./ant-manager'), {
     app,
     ipcMain,
     BrowserWindow,
@@ -291,6 +291,9 @@ function loadBeeManagerModule(options = {}) {
         Socket,
       }),
       [require.resolve('./logger')]: () => log,
+      [require.resolve('./migrate-user-data')]: () => ({
+        isBeeDataMigrationPending: options.isBeeDataMigrationPending || jest.fn(() => false),
+      }),
       [require.resolve('./settings-store')]: () => ({
         loadSettings,
       }),
@@ -309,7 +312,7 @@ function loadBeeManagerModule(options = {}) {
           NONE: 'none',
         },
         DEFAULTS: {
-          bee: {
+          ant: {
             apiPort: 1633,
             p2pPort: 1634,
             fallbackRange: 10,
@@ -325,7 +328,7 @@ function loadBeeManagerModule(options = {}) {
   });
 
   return {
-    beeBinPath,
+    antBinPath,
     BrowserWindow,
     clearErrorState,
     clearService,
@@ -351,7 +354,7 @@ function loadBeeManagerModule(options = {}) {
   };
 }
 
-describe('bee-manager', () => {
+describe('ant-manager', () => {
   afterEach(() => {
     jest.clearAllMocks();
     jest.clearAllTimers();
@@ -360,30 +363,122 @@ describe('bee-manager', () => {
   });
 
   test('registers IPC handlers and reports binary availability plus initial status', async () => {
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       binExists: false,
     });
 
-    ctx.mod.registerBeeIpc();
+    ctx.mod.registerAntIpc();
 
     expect([...ctx.ipcMain.handlers.keys()].sort()).toEqual(
-      [IPC.BEE_START, IPC.BEE_STOP, IPC.BEE_GET_STATUS, IPC.BEE_CHECK_BINARY].sort()
+      [IPC.ANT_START, IPC.ANT_STOP, IPC.ANT_GET_STATUS, IPC.ANT_CHECK_BINARY].sort()
     );
 
-    await expect(ctx.ipcMain.invoke(IPC.BEE_GET_STATUS)).resolves.toEqual({
+    await expect(ctx.ipcMain.invoke(IPC.ANT_GET_STATUS)).resolves.toEqual({
       status: 'stopped',
       error: null,
     });
-    await expect(ctx.ipcMain.invoke(IPC.BEE_CHECK_BINARY)).resolves.toEqual({
+    await expect(ctx.ipcMain.invoke(IPC.ANT_CHECK_BINARY)).resolves.toEqual({
       available: false,
     });
+  });
+
+  test('refuses to spawn the bundled node while the bee-data migration is pending', async () => {
+    const isBeeDataMigrationPending = jest.fn(() => true);
+    const ctx = loadAntManagerModule({
+      isBeeDataMigrationPending,
+      portSequence: [false],
+    });
+
+    await ctx.mod.startAnt();
+
+    expect(isBeeDataMigrationPending).toHaveBeenCalled();
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getStatus()).toEqual({
+      status: 'error',
+      error: expect.stringContaining('identity migration has not completed'),
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'ant',
+      'Node start deferred (identity migration pending)'
+    );
+  });
+
+  test('defers the bundled node start in injected-identity mode until a key is injected', async () => {
+    const ctx = loadAntManagerModule({
+      portSequence: [false],
+    });
+
+    ctx.mod.setUseInjectedIdentity(true);
+    await ctx.mod.startAnt();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.fsMock.writeFileSync).not.toHaveBeenCalled();
+    expect(ctx.mod.getStatus()).toEqual({
+      status: 'error',
+      error: expect.stringContaining('no node key injected'),
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith(
+      'ant',
+      'Node start deferred (waiting for identity injection)'
+    );
+  });
+
+  test('starts the bundled node in injected-identity mode once keys/swarm.key exists', async () => {
+    jest.useFakeTimers();
+
+    // Injection always writes keys/swarm.key and config.yaml (with the
+    // keystore password) together, so the realistic injected state has both;
+    // a keystore without a readable password is the loud-failure case tested
+    // separately below.
+    const dataDir = path.join(DEFAULT_USER_DATA_DIR, 'ant-data');
+    const swarmKeyPath = path.join(dataDir, 'keys', 'swarm.key');
+    const configPath = path.join(dataDir, 'config.yaml');
+    const platformMap = {
+      darwin: 'mac',
+      linux: 'linux',
+      win32: 'win',
+    };
+    const platform = platformMap[process.platform] || process.platform;
+    const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+    const antBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
+    const ctx = loadAntManagerModule({
+      existsSync: (target) =>
+        target === antBinPath || target === swarmKeyPath || target === configPath,
+      configContents: 'api-addr: 127.0.0.1:1633\npassword: injected-keystore-password\n',
+      portSequence: [false],
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:1633/health') {
+          return {
+            statusCode: 200,
+            body: { version: '2.1.0' },
+          };
+        }
+        return { statusCode: 500, body: '' };
+      },
+    });
+
+    ctx.mod.setUseInjectedIdentity(true);
+    await ctx.mod.startAnt();
+    await flushMicrotasks();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(ctx.spawnedProcesses).toHaveLength(1);
+    expect(ctx.spawnedProcesses[0].binary).toBe(ctx.antBinPath);
+    expect(ctx.mod.getStatus()).toEqual({ status: 'running', error: null });
+
+    const stopPromise = ctx.mod.stopAnt();
+    await jest.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    await stopPromise;
+    expect(jest.getTimerCount()).toBe(0);
   });
 
   test('reuses an existing daemon and clears the health-check interval on stop', async () => {
     const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(123);
     const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
     const window = createWindowMock();
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       windows: [window],
       portSequence: [true],
       httpResponse: (url) => {
@@ -398,37 +493,37 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
 
     expect(ctx.spawn).not.toHaveBeenCalled();
     expect(ctx.mod.getActivePort()).toBe(1633);
-    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+    expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: 'http://127.0.0.1:1633',
       gateway: 'http://127.0.0.1:1633',
       mode: 'reused',
     });
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node: localhost:1633');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Node: localhost:1633');
     expect(setIntervalSpy).toHaveBeenCalled();
-    expect(window.webContents.send).toHaveBeenCalledWith(IPC.BEE_STATUS_UPDATE, {
+    expect(window.webContents.send).toHaveBeenCalledWith(IPC.ANT_STATUS_UPDATE, {
       status: 'starting',
       error: null,
     });
-    expect(window.webContents.send).toHaveBeenLastCalledWith(IPC.BEE_STATUS_UPDATE, {
+    expect(window.webContents.send).toHaveBeenLastCalledWith(IPC.ANT_STATUS_UPDATE, {
       status: 'running',
       error: null,
     });
 
-    await ctx.mod.stopBee();
+    await ctx.mod.stopAnt();
 
     expect(clearIntervalSpy).toHaveBeenCalledWith(123);
-    expect(ctx.clearService).toHaveBeenCalledWith('bee');
+    expect(ctx.clearService).toHaveBeenCalledWith('ant');
   });
 
   test('starts a managed profile daemon on the profile port without reusing defaults', async () => {
     jest.useFakeTimers();
     const checkedPorts = [];
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       activeProfile: {
         metadata: {
           nodes: {
@@ -454,7 +549,7 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
@@ -465,7 +560,7 @@ describe('bee-manager', () => {
     expect(checkedPorts).not.toContain(1634);
     expect(ctx.spawnedProcesses).toHaveLength(1);
     expect(ctx.mod.getActivePort()).toBe(11633);
-    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+    expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: 'http://127.0.0.1:11633',
       gateway: 'http://127.0.0.1:11633',
       mode: 'bundled',
@@ -475,14 +570,14 @@ describe('bee-manager', () => {
     expect(configContent).toContain('api-addr: 127.0.0.1:11633');
     expect(configContent).toContain('p2p-addr: :12633');
 
-    const stopPromise = ctx.mod.stopBee();
+    const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
   });
 
   test('persists a reassigned managed profile port before launching Bee', async () => {
     jest.useFakeTimers();
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       activeProfile: {
         source: 'catalog',
         metadata: {
@@ -506,7 +601,7 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
@@ -516,20 +611,20 @@ describe('bee-manager', () => {
       p2pPort: 12633,
     });
     expect(ctx.mod.getActivePort()).toBe(11634);
-    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+    expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: 'http://127.0.0.1:11634',
       gateway: 'http://127.0.0.1:11634',
       mode: 'bundled',
     });
 
-    const stopPromise = ctx.mod.stopBee();
+    const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
   });
 
-  test('skips reserved sibling profile ports when reassigning Bee ports', async () => {
+  test('skips reserved sibling profile ports when reassigning Ant ports', async () => {
     jest.useFakeTimers();
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       activeProfile: {
         source: 'catalog',
         metadata: {
@@ -554,7 +649,7 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
@@ -565,7 +660,7 @@ describe('bee-manager', () => {
     });
     expect(ctx.mod.getActivePort()).toBe(11635);
 
-    const stopPromise = ctx.mod.stopBee();
+    const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
   });
@@ -574,7 +669,7 @@ describe('bee-manager', () => {
     const setIntervalSpy = jest.spyOn(global, 'setInterval').mockReturnValue(456);
     const clearIntervalSpy = jest.spyOn(global, 'clearInterval').mockImplementation(() => {});
     const checkedPorts = [];
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       activeProfile: {
         metadata: {
           nodes: {
@@ -603,29 +698,29 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
 
     expect(checkedPorts).toEqual([]);
     expect(ctx.spawn).not.toHaveBeenCalled();
     expect(ctx.mod.getActivePort()).toBe(22633);
-    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+    expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: 'http://127.0.0.1:22633',
       gateway: 'http://127.0.0.1:22633',
       mode: 'external',
     });
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'External node: 127.0.0.1:22633');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'External node: 127.0.0.1:22633');
     expect(setIntervalSpy).toHaveBeenCalled();
 
-    await ctx.mod.stopBee();
+    await ctx.mod.stopAnt();
 
     expect(clearIntervalSpy).toHaveBeenCalledWith(456);
-    expect(ctx.clearService).toHaveBeenCalledWith('bee');
+    expect(ctx.clearService).toHaveBeenCalledWith('ant');
   });
 
-  test('marks a disabled profile Bee node without probing or spawning', async () => {
+  test('marks a disabled profile Swarm node without probing or spawning', async () => {
     const checkedPorts = [];
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       activeProfile: {
         metadata: {
           nodes: {
@@ -639,19 +734,19 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
 
     expect(checkedPorts).toEqual([]);
     expect(ctx.httpGet).not.toHaveBeenCalled();
     expect(ctx.spawn).not.toHaveBeenCalled();
     expect(ctx.mod.getActivePort()).toBeNull();
-    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+    expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: null,
       gateway: null,
       mode: 'disabled',
     });
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node disabled for this profile');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Node disabled for this profile');
   });
 
   test('starts a bundled ultra-light daemon on a fallback port and writes ultra-light config', async () => {
@@ -663,15 +758,15 @@ describe('bee-manager', () => {
       win32: 'win',
     };
     const platform = platformMap[process.platform] || process.platform;
-    const binaryName = process.platform === 'win32' ? 'bee.exe' : 'bee';
-    const beeBinPath = path.join(PROJECT_ROOT, 'bee-bin', `${platform}-${process.arch}`, binaryName);
-    const dataDir = path.join(DEFAULT_USER_DATA_DIR, 'bee-data');
+    const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+    const antBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
+    const dataDir = path.join(DEFAULT_USER_DATA_DIR, 'ant-data');
     const configPath = path.join(dataDir, 'config.yaml');
     const keysPath = path.join(dataDir, 'keys');
-    const ctx = loadBeeManagerModule({
-      beeNodeMode: 'ultraLight',
+    const ctx = loadAntManagerModule({
+      antNodeMode: 'ultraLight',
       existsSync: (target) => {
-        if (target === beeBinPath) return true;
+        if (target === antBinPath) return true;
         if (target === dataDir) return false;
         if (target === configPath) return false;
         if (target === keysPath) return false;
@@ -698,7 +793,7 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
@@ -706,17 +801,21 @@ describe('bee-manager', () => {
     expect(ctx.loadSettings).toHaveBeenCalled();
     expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(ctx.dataDir, { recursive: true });
     expect(ctx.randomBytes).toHaveBeenCalledWith(32);
-    expect(ctx.execSync).toHaveBeenCalledWith(`"${ctx.beeBinPath}" init --config="${ctx.configPath}"`);
+    // antd self-initializes its identity; Freedom no longer runs an init step.
+    expect(ctx.execSync).not.toHaveBeenCalled();
     expect(ctx.spawnedProcesses).toHaveLength(1);
-    expect(ctx.spawnedProcesses[0].binary).toBe(ctx.beeBinPath);
-    expect(ctx.spawnedProcesses[0].args).toEqual(['start', `--config=${ctx.configPath}`]);
+    expect(ctx.spawnedProcesses[0].binary).toBe(ctx.antBinPath);
+    expect(ctx.spawnedProcesses[0].args).toEqual([
+      `--config=${ctx.configPath}`,
+      '--no-control-socket',
+    ]);
     expect(ctx.mod.getActivePort()).toBe(1634);
-    expect(ctx.updateService).toHaveBeenCalledWith('bee', {
+    expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: 'http://127.0.0.1:1634',
       gateway: 'http://127.0.0.1:1634',
       mode: 'bundled',
     });
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Fallback Port: 1634');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Fallback Port: 1634');
 
     const configContent = ctx.fsMock.writeFileSync.mock.calls[0][1];
     expect(configContent).toContain('api-addr: 127.0.0.1:1634');
@@ -727,21 +826,21 @@ describe('bee-manager', () => {
     expect(configContent).toContain(`data-dir: ${ctx.dataDir}`);
     expect(configContent).toContain(`password: ${'ab'.repeat(32)}`);
 
-    const stopPromise = ctx.mod.stopBee();
+    const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await flushMicrotasks();
     await stopPromise;
 
     expect(ctx.spawnedProcesses[0].kills).toContain('SIGTERM');
-    expect(ctx.clearService).toHaveBeenCalledWith('bee');
+    expect(ctx.clearService).toHaveBeenCalledWith('ant');
     expect(jest.getTimerCount()).toBe(0);
   });
 
   test('writes light-node config with the primary Gnosis RPC endpoint', async () => {
     jest.useFakeTimers();
 
-    const ctx = loadBeeManagerModule({
-      beeNodeMode: 'light',
+    const ctx = loadAntManagerModule({
+      antNodeMode: 'light',
       rpcUrls: ['https://rpc.gnosischain.com', 'https://backup.gnosis.example'],
       ethereumRpcUrls: ['https://eth.user.example', 'https://ethereum.publicnode.com'],
       portSequence: [false],
@@ -759,7 +858,7 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
@@ -771,13 +870,13 @@ describe('bee-manager', () => {
     expect(configContent).toContain('blockchain-rpc-endpoint: "https://rpc.gnosischain.com"');
     expect(configContent).toContain('resolver-options: "https://eth.user.example"');
 
-    const stopPromise = ctx.mod.stopBee();
+    const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
   });
 
   test('prefers keyless Gnosis RPC for Bee over keyed commercial providers', () => {
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       registry: {
         getEndpointSources: jest.fn(() => [
           {
@@ -808,7 +907,7 @@ describe('bee-manager', () => {
   test('preserves an existing Bee password when rewriting config', async () => {
     jest.useFakeTimers();
 
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       configExists: true,
       keysExist: true,
       configContents: 'api-addr: 127.0.0.1:1633\npassword: keep-me\n',
@@ -827,7 +926,7 @@ describe('bee-manager', () => {
       },
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
     await jest.advanceTimersByTimeAsync(1000);
     await flushMicrotasks();
@@ -836,14 +935,56 @@ describe('bee-manager', () => {
     expect(configContent).toContain('password: keep-me');
     expect(ctx.execSync).not.toHaveBeenCalled();
 
-    const stopPromise = ctx.mod.stopBee();
+    const stopPromise = ctx.mod.stopAnt();
     await jest.advanceTimersByTimeAsync(0);
     await stopPromise;
   });
 
-  test('fails startup when Bee light mode has no configured primary Gnosis RPC', async () => {
-    const ctx = loadBeeManagerModule({
-      beeNodeMode: 'light',
+  // A keystore whose config password can't be recovered must fail the start
+  // loudly: silently minting a fresh password would leave keys/swarm.key
+  // (e.g. a migrated bee-era identity) permanently undecryptable.
+  test('refuses to mint a new password while a keystore exists with an unreadable config password', async () => {
+    const platformMap = {
+      darwin: 'mac',
+      linux: 'linux',
+      win32: 'win',
+    };
+    const platform = platformMap[process.platform] || process.platform;
+    const binaryName = process.platform === 'win32' ? 'antd.exe' : 'antd';
+    const antBinPath = path.join(PROJECT_ROOT, 'ant-bin', `${platform}-${process.arch}`, binaryName);
+    const dataDir = path.join(DEFAULT_USER_DATA_DIR, 'ant-data');
+    const configPath = path.join(dataDir, 'config.yaml');
+    const swarmKeyPath = path.join(dataDir, 'keys', 'swarm.key');
+
+    const ctx = loadAntManagerModule({
+      configContents: 'api-addr: 127.0.0.1:1633\n',
+      existsSync: (target) =>
+        target === antBinPath ||
+        target === dataDir ||
+        target === configPath ||
+        target === swarmKeyPath,
+      portSequence: [false],
+      httpResponse: () => ({
+        statusCode: 500,
+        body: '',
+      }),
+    });
+
+    await ctx.mod.startAnt();
+    await flushMicrotasks();
+
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.fsMock.writeFileSync).not.toHaveBeenCalled();
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Node failed to start');
+    expect(ctx.log.error).toHaveBeenCalledWith(
+      '[Ant] Failed to prepare config:',
+      expect.stringContaining('refusing to generate a new password')
+    );
+  });
+
+  test('fails startup when Ant light mode has no configured primary Gnosis RPC', async () => {
+    const ctx = loadAntManagerModule({
+      antNodeMode: 'light',
       rpcUrls: [],
       portSequence: [false],
       httpResponse: () => ({
@@ -852,19 +993,19 @@ describe('bee-manager', () => {
       }),
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
 
     expect(ctx.spawn).not.toHaveBeenCalled();
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node failed to start');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Node failed to start');
     expect(ctx.log.error).toHaveBeenCalledWith(
-      '[Bee] Failed to prepare config:',
-      'No primary Gnosis RPC endpoint configured for Bee light mode'
+      '[Ant] Failed to prepare config:',
+      'No primary Gnosis RPC endpoint configured for Ant light mode'
     );
   });
 
   test('fails startup when the Bee binary is missing', async () => {
-    const ctx = loadBeeManagerModule({
+    const ctx = loadAntManagerModule({
       binExists: false,
       portSequence: [false],
       httpResponse: () => ({
@@ -873,18 +1014,18 @@ describe('bee-manager', () => {
       }),
     });
 
-    await ctx.mod.startBee();
+    await ctx.mod.startAnt();
     await flushMicrotasks();
 
     expect(ctx.spawn).not.toHaveBeenCalled();
-    expect(ctx.setStatusMessage).toHaveBeenCalledWith('bee', 'Node failed to start');
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ant', 'Node failed to start');
   });
 
   // Regression guard for issue #90: identity injection must stop a Bee node that
   // already holds the statestore LevelDB lock before the directory is wiped. A
   // node that is STARTING (spawned, lock held, health not yet passing) must be
   // treated as active too, otherwise the wipe hits EPERM on Windows.
-  describe('createBeeLifecycle (issue #90 startup race)', () => {
+  describe('createAntLifecycle (issue #90 startup race)', () => {
     // Without a live process, every state that may still hold the statestore
     // lock must stop (RUNNING/STARTING/STOPPING/ERROR); only a truly idle
     // STOPPED node is skipped.
@@ -895,48 +1036,48 @@ describe('bee-manager', () => {
       ['error', true],
       ['stopped', false],
     ])('stop() with status %s (no live process) stops the node: %s', async (status, expectedActive) => {
-      const ctx = loadBeeManagerModule({ binExists: false });
-      const stopBee = jest.fn().mockResolvedValue(undefined);
-      const lifecycle = ctx.mod.createBeeLifecycle({
+      const ctx = loadAntManagerModule({ binExists: false });
+      const stopAnt = jest.fn().mockResolvedValue(undefined);
+      const lifecycle = ctx.mod.createAntLifecycle({
         getStatus: () => ({ status, error: null }),
         hasLiveProcess: () => false,
-        stopBee,
-        startBee: jest.fn(),
+        stopAnt,
+        startAnt: jest.fn(),
         setUseInjectedIdentity: jest.fn(),
       });
 
       const wasActive = await lifecycle.stop();
 
       expect(wasActive).toBe(expectedActive);
-      expect(stopBee).toHaveBeenCalledTimes(expectedActive ? 1 : 0);
+      expect(stopAnt).toHaveBeenCalledTimes(expectedActive ? 1 : 0);
     });
 
     // A live managed process holds the lock regardless of reported status, so a
     // STOPPED status with a process still alive must be stopped before a wipe.
     test('stop() stops when a live process exists even if status is STOPPED', async () => {
-      const ctx = loadBeeManagerModule({ binExists: false });
-      const stopBee = jest.fn().mockResolvedValue(undefined);
-      const lifecycle = ctx.mod.createBeeLifecycle({
+      const ctx = loadAntManagerModule({ binExists: false });
+      const stopAnt = jest.fn().mockResolvedValue(undefined);
+      const lifecycle = ctx.mod.createAntLifecycle({
         getStatus: () => ({ status: 'stopped', error: null }),
         hasLiveProcess: () => true,
-        stopBee,
-        startBee: jest.fn(),
+        stopAnt,
+        startAnt: jest.fn(),
         setUseInjectedIdentity: jest.fn(),
       });
 
       const wasActive = await lifecycle.stop();
 
       expect(wasActive).toBe(true);
-      expect(stopBee).toHaveBeenCalledTimes(1);
+      expect(stopAnt).toHaveBeenCalledTimes(1);
     });
 
     test('start() flags injected identity then starts the node', async () => {
-      const ctx = loadBeeManagerModule({ binExists: false });
+      const ctx = loadAntManagerModule({ binExists: false });
       const calls = [];
-      const lifecycle = ctx.mod.createBeeLifecycle({
+      const lifecycle = ctx.mod.createAntLifecycle({
         getStatus: () => ({ status: 'stopped', error: null }),
-        stopBee: jest.fn(),
-        startBee: jest.fn(() => calls.push('start')),
+        stopAnt: jest.fn(),
+        startAnt: jest.fn(() => calls.push('start')),
         setUseInjectedIdentity: jest.fn(() => calls.push('flag')),
       });
 
@@ -948,21 +1089,21 @@ describe('bee-manager', () => {
     test('stops a real spawned-but-not-yet-running (STARTING) node', async () => {
       jest.useFakeTimers();
 
-      const ctx = loadBeeManagerModule({
-        beeNodeMode: 'ultraLight',
+      const ctx = loadAntManagerModule({
+        antNodeMode: 'ultraLight',
         portSequence: [false],
         // Health never passes, so the node stays in STARTING with its process
         // (and statestore lock) alive — the exact startup-race window.
         httpResponse: () => ({ statusCode: 500, body: '' }),
       });
 
-      await ctx.mod.startBee();
+      await ctx.mod.startAnt();
       await flushMicrotasks();
 
       expect(ctx.mod.getStatus().status).toBe('starting');
       expect(ctx.spawnedProcesses).toHaveLength(1);
 
-      const lifecycle = ctx.mod.createBeeLifecycle();
+      const lifecycle = ctx.mod.createAntLifecycle();
       const stopPromise = lifecycle.stop();
       await jest.advanceTimersByTimeAsync(0);
       await flushMicrotasks();

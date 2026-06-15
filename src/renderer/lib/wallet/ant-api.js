@@ -2,10 +2,10 @@
  * Shared Bee API fetch helper.
  */
 
-import { buildBeeUrl } from '../state.js';
+import { buildAntUrl } from '../state.js';
 
-export async function fetchBeeJson(endpoint) {
-  const response = await fetch(buildBeeUrl(endpoint));
+export async function fetchAntJson(endpoint) {
+  const response = await fetch(buildAntUrl(endpoint));
   const text = await response.text();
 
   let data;

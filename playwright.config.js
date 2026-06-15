@@ -2,13 +2,13 @@
 //
 // Two projects:
 //   - `harness` (default `npm run test:e2e`): fixture-driven specs that run
-//     against the in-process test harness. No actual Bee, IPFS, ENS, or
+//     against the in-process test harness. No actual Ant, IPFS, ENS, or
 //     network. Fast, deterministic, safe in CI.
 //   - `live` (`npm run test:e2e:live`): drives the full app against live
-//     services — actual Bee node, live ENS resolution, real bzz:// /
-//     ipfs:// protocol handlers. Requires `npm run bee:download` first
+//     services — actual antd node, live ENS resolution, real bzz:// /
+//     ipfs:// protocol handlers. Requires `npm run ant:download` first
 //     and is slow (Swarm cold-start can take several minutes). Skipped
-//     automatically if the bee binary for the current platform isn't
+//     automatically if the antd binary for the current platform isn't
 //     present.
 //
 // Layout:

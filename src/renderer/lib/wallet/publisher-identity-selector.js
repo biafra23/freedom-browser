@@ -79,13 +79,13 @@ export function renderPublisherIdentitySelector(container, state, handlers = {})
 export function identityLabel(identity) {
   if (!identity) return 'Publisher identity';
   if (identity.label) return identity.label;
-  if (identity.mode === 'bee-wallet') return 'Bee wallet identity';
+  if (identity.mode === 'bee-wallet') return 'Ant wallet identity';
   if (identity.mode === 'ethereum-wallet') return 'Ethereum wallet';
   return 'App-scoped identity';
 }
 
 export function identityModeLabel(identity) {
-  if (identity?.mode === 'bee-wallet') return 'Bee wallet';
+  if (identity?.mode === 'bee-wallet') return 'Ant wallet';
   if (identity?.mode === 'app-scoped') return 'App-scoped';
   if (identity?.mode === 'ethereum-wallet') return 'Ethereum wallet';
   return 'Publisher';
@@ -101,7 +101,7 @@ function orderIdentities(state) {
   const beeWallet = identities.find((identity) => identity.id === BEE_WALLET_IDENTITY_ID) || {
     id: BEE_WALLET_IDENTITY_ID,
     mode: 'bee-wallet',
-    label: 'Bee wallet identity',
+    label: 'Ant wallet identity',
     owner: null,
     stored: false,
   };

@@ -9,7 +9,7 @@ const net = require('net');
 const IPC = require('../shared/ipc-channels');
 const { loadSettings } = require('./settings-store');
 const registry = require('./networks/network-registry');
-const { getBeeDataDir } = require('./profile-paths');
+const { getAntDataDir } = require('./profile-paths');
 const {
   getActiveProfile,
   getReservedProfilePorts,
@@ -36,30 +36,30 @@ const STATUS = {
 
 let currentState = STATUS.STOPPED;
 let lastError = null;
-let beeProcess = null;
+let antProcess = null;
 let healthCheckInterval = null;
 let pendingStart = false;
 let forceKillTimeout = null;
 
 const CONFIG_FILE = 'config.yaml';
-const BEE_NODE_MODE = {
+const ANT_NODE_MODE = {
   ULTRA_LIGHT: 'ultraLight',
   LIGHT: 'light',
 };
 const ETHEREUM_CHAIN_ID = 1;
 const GNOSIS_CHAIN_ID = 100;
-const DEFAULT_BEE_RESOLVER_RPC_URL = 'https://ethereum.publicnode.com';
+const DEFAULT_ANT_RESOLVER_RPC_URL = 'https://ethereum.publicnode.com';
 
-// Identity injection flag - when true, skip bee init and use pre-injected keys
+// Identity injection flag - when true, require pre-injected keys before start.
 let useInjectedIdentity = false;
 
 // Port configuration (resolved at startup)
-// Note: Newer Bee versions serve debug endpoints on the main API port
-let currentApiPort = DEFAULTS.bee.apiPort;
-let currentApiUrl = `http://127.0.0.1:${DEFAULTS.bee.apiPort}`;
+// Note: Newer Ant versions serve debug endpoints on the main API port
+let currentApiPort = DEFAULTS.ant.apiPort;
+let currentApiUrl = `http://127.0.0.1:${DEFAULTS.ant.apiPort}`;
 let currentMode = MODE.NONE;
 
-function getBeeBinaryPath() {
+function getAntBinaryPath() {
   const arch = process.arch;
 
   // Map Node.js platform names to our folder names
@@ -70,51 +70,54 @@ function getBeeBinaryPath() {
   };
   const platform = platformMap[process.platform] || process.platform;
 
-  // In dev, bee-bin is at project root (../../ from src/main)
-  let basePath = path.join(__dirname, '..', '..', 'bee-bin');
+  // In dev, ant-bin is at project root (../../ from src/main)
+  let basePath = path.join(__dirname, '..', '..', 'ant-bin');
 
   if (app.isPackaged) {
-    basePath = path.join(process.resourcesPath, 'bee-bin');
-    const binName = process.platform === 'win32' ? 'bee.exe' : 'bee';
+    basePath = path.join(process.resourcesPath, 'ant-bin');
+    const binName = process.platform === 'win32' ? 'antd.exe' : 'antd';
     return path.join(basePath, binName);
   }
 
-  const binName = process.platform === 'win32' ? 'bee.exe' : 'bee';
+  const binName = process.platform === 'win32' ? 'antd.exe' : 'antd';
   return path.join(basePath, `${platform}-${arch}`, binName);
 }
 
-function getBeeDataPath() {
-  return getBeeDataDir();
+function getAntDataPath() {
+  return getAntDataDir();
 }
 
-function getProfileBeeConfig() {
+function getProfileAntConfig() {
+  // The persisted profile contract still uses `nodes.bee` for the Swarm node
+  // slot/mode/port assignment. Ant is the managed Swarm implementation behind
+  // that profile setting, so keep reading the existing key during this merge.
   return getActiveProfile()?.metadata?.nodes?.bee || null;
 }
 
-function isManagedBeeConfig(config = getProfileBeeConfig()) {
+function isManagedAntConfig(config = getProfileAntConfig()) {
   return config?.mode === 'managed';
 }
 
-function isExternalBeeConfig(config = getProfileBeeConfig()) {
+function isExternalAntConfig(config = getProfileAntConfig()) {
   return config?.mode === 'external';
 }
 
-function isDisabledBeeConfig(config = getProfileBeeConfig()) {
+function isDisabledAntConfig(config = getProfileAntConfig()) {
   return config?.mode === 'disabled';
 }
 
-function hasUnknownBeeMode(config) {
-  return Boolean(config?.mode) && !isManagedBeeConfig(config)
-    && !isExternalBeeConfig(config)
-    && !isDisabledBeeConfig(config);
+function hasUnknownAntMode(config) {
+  return Boolean(config?.mode) && !isManagedAntConfig(config)
+    && !isExternalAntConfig(config)
+    && !isDisabledAntConfig(config);
 }
 
-function getConfiguredBeeApiPort(config = getProfileBeeConfig()) {
-  return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.bee.apiPort;
+function getConfiguredAntApiPort(config = getProfileAntConfig()) {
+  return Number.isInteger(config?.apiPort) ? config.apiPort : DEFAULTS.ant.apiPort;
 }
 
-function getConfiguredBeeP2pPort(config = getProfileBeeConfig()) {
-  return Number.isInteger(config?.p2pPort) ? config.p2pPort : DEFAULTS.bee.p2pPort;
+function getConfiguredAntP2pPort(config = getProfileAntConfig()) {
+  return Number.isInteger(config?.p2pPort) ? config.p2pPort : DEFAULTS.ant.p2pPort;
 }
 
 function normalizeExternalUrl(rawUrl) {
@@ -162,22 +165,22 @@ function getHttpClient(rawUrl) {
   return rawUrl.startsWith('https:') ? https : http;
 }
 
-function persistManagedBeePorts(updates) {
+function persistManagedAntPorts(updates) {
   const result = updateActiveProfileNodeConfig('bee', updates);
   if (result) {
-    log.info('[Bee] Persisted managed profile ports:', updates);
+    log.info('[Ant] Persisted managed profile ports:', updates);
   }
 }
 
-function getConfiguredBeeNodeMode() {
+function getConfiguredAntNodeMode() {
   const settings = loadSettings();
-  return settings?.beeNodeMode === BEE_NODE_MODE.LIGHT
-    ? BEE_NODE_MODE.LIGHT
-    : BEE_NODE_MODE.ULTRA_LIGHT;
+  return settings?.antNodeMode === ANT_NODE_MODE.LIGHT
+    ? ANT_NODE_MODE.LIGHT
+    : ANT_NODE_MODE.ULTRA_LIGHT;
 }
 
 function getPrimaryKeylessRpcUrl(chainId) {
-  // Bee config accepts one RPC URL per setting. A keyed commercial provider
+  // Ant config accepts one RPC URL per setting. A keyed commercial provider
   // can have a valid key while a specific chain is disabled for that app, so
   // prefer explicit/user/public keyless sources when available.
   const sources = registry.getEndpointSources(chainId, 'rpc');
@@ -194,15 +197,15 @@ function getPrimaryGnosisRpcUrl() {
 }
 
 function getPrimaryEthereumRpcUrl() {
-  return getPrimaryKeylessRpcUrl(ETHEREUM_CHAIN_ID) || DEFAULT_BEE_RESOLVER_RPC_URL;
+  return getPrimaryKeylessRpcUrl(ETHEREUM_CHAIN_ID) || DEFAULT_ANT_RESOLVER_RPC_URL;
 }
 
-function buildBeeConfigContent({
+function buildAntConfigContent({
   dataDir, apiPort, p2pPort, password, nodeMode, blockchainRpcEndpoint, resolverRpcEndpoint,
 }) {
-  const isLightNode = nodeMode === BEE_NODE_MODE.LIGHT;
+  const isLightNode = nodeMode === ANT_NODE_MODE.LIGHT;
 
-  return `# Bee Configuration
+  return `# Ant node configuration (bee-compatible keys)
 api-addr: 127.0.0.1:${apiPort}
 p2p-addr: :${p2pPort}
 swap-enable: ${isLightNode ? 'true' : 'false'}
@@ -221,8 +224,8 @@ password: ${password}
 function ensureConfig(
   dataDir,
   apiPort,
-  nodeMode = BEE_NODE_MODE.ULTRA_LIGHT,
-  p2pPort = DEFAULTS.bee.p2pPort
+  nodeMode = ANT_NODE_MODE.ULTRA_LIGHT,
+  p2pPort = DEFAULTS.ant.p2pPort
 ) {
   const configPath = path.join(dataDir, CONFIG_FILE);
   const crypto = require('crypto');
@@ -237,24 +240,36 @@ function ensureConfig(
         password = passwordMatch[1].trim();
       }
     } catch {
-      log.warn('[Bee] Could not read existing password, generating new one');
+      log.warn('[Ant] Could not read existing password, generating new one');
     }
   }
 
-  // Generate new password if we couldn't read one
+  // Generate new password if we couldn't read one — but never while a
+  // keystore is present whose only decryption password is the one we just
+  // failed to recover (e.g. the bee-data migration carried over both
+  // config.yaml and keys/swarm.key). Silently minting a fresh password here
+  // would leave that keystore permanently undecryptable, so fail loudly and
+  // let startAnt surface the error instead.
   if (!password) {
+    if (fs.existsSync(path.join(dataDir, 'keys', 'swarm.key'))) {
+      throw new Error(
+        `A keystore exists at ${path.join(dataDir, 'keys', 'swarm.key')} but its password ` +
+          `could not be recovered from ${configPath} — refusing to generate a new password ` +
+          'that would make the keystore undecryptable.'
+      );
+    }
     password = crypto.randomBytes(32).toString('hex');
   }
 
-  const blockchainRpcEndpoint = nodeMode === BEE_NODE_MODE.LIGHT ? getPrimaryGnosisRpcUrl() : null;
+  const blockchainRpcEndpoint = nodeMode === ANT_NODE_MODE.LIGHT ? getPrimaryGnosisRpcUrl() : null;
   const resolverRpcEndpoint = getPrimaryEthereumRpcUrl();
-  if (nodeMode === BEE_NODE_MODE.LIGHT && !blockchainRpcEndpoint) {
-    throw new Error('No primary Gnosis RPC endpoint configured for Bee light mode');
+  if (nodeMode === ANT_NODE_MODE.LIGHT && !blockchainRpcEndpoint) {
+    throw new Error('No primary Gnosis RPC endpoint configured for Ant light mode');
   }
 
   // Always write config with current port
-  // Note: Newer Bee versions don't have separate debug-api-addr, debug endpoints are on main API
-  const configContent = buildBeeConfigContent({
+  // Note: Newer Ant versions don't have separate debug-api-addr, debug endpoints are on main API
+  const configContent = buildAntConfigContent({
     dataDir,
     apiPort,
     p2pPort,
@@ -266,32 +281,22 @@ function ensureConfig(
 
   fs.writeFileSync(configPath, configContent);
   log.info(
-    `[Bee] Config written at ${configPath} with API:${apiPort} P2P:${p2pPort} mode:${nodeMode}${
+    `[Ant] Config written at ${configPath} with API:${apiPort} P2P:${p2pPort} mode:${nodeMode}${
       blockchainRpcEndpoint ? ` rpc:${blockchainRpcEndpoint}` : ''
     }`
   );
 
-  // Initialize keys if this is a fresh config
-  // Skip if identity system has injected keys (swarm.key exists)
+  // Identity handling. Unlike bee, antd has no `init` subcommand: when an
+  // injected Web3 v3 keystore exists at `keys/swarm.key` antd loads its
+  // identity from it; otherwise antd self-generates a native identity
+  // (`identity.json`) on start. So there is no separate init step to run.
   const keysDir = path.join(dataDir, 'keys');
   const swarmKeyPath = path.join(keysDir, 'swarm.key');
 
-  if (!fs.existsSync(keysDir)) {
-    if (useInjectedIdentity) {
-      log.info('[Bee] Waiting for identity injection (useInjectedIdentity=true)');
-      // Keys should be injected by identity-manager before starting
-    } else {
-      const binPath = getBeeBinaryPath();
-      try {
-        const { execSync } = require('child_process');
-        log.info('[Bee] Running init to generate keys...');
-        execSync(`"${binPath}" init --config="${configPath}"`);
-      } catch (e) {
-        log.error('[Bee] Init failed:', e.message);
-      }
-    }
-  } else if (fs.existsSync(swarmKeyPath)) {
-    log.info('[Bee] Using existing/injected keys from', keysDir);
+  if (fs.existsSync(swarmKeyPath)) {
+    log.info('[Ant] Using existing/injected keys from', keysDir);
+  } else {
+    log.info('[Ant] No injected keystore; antd will self-initialize its node identity on start');
   }
 
   return configPath;
@@ -303,7 +308,7 @@ function updateState(newState, error = null) {
   // Broadcast to all windows
   const windows = require('electron').BrowserWindow.getAllWindows();
   for (const win of windows) {
-    win.webContents.send(IPC.BEE_STATUS_UPDATE, { status: currentState, error: lastError });
+    win.webContents.send(IPC.ANT_STATUS_UPDATE, { status: currentState, error: lastError });
   }
 }
 
@@ -335,9 +340,9 @@ function isPortOpen(port, host = '127.0.0.1') {
 }
 
 /**
- * Probe Bee health endpoint
+ * Probe Ant health endpoint
  */
-function probeBeeApiUrl(apiUrl) {
+function probeAntApiUrl(apiUrl) {
   return new Promise((resolve) => {
     const healthUrl = `${apiUrl}/health`;
     const req = getHttpClient(healthUrl).get(healthUrl, { timeout: 2000 }, (res) => {
@@ -369,36 +374,36 @@ function probeBeeApiUrl(apiUrl) {
   });
 }
 
-function probeBeeApi(port) {
-  return probeBeeApiUrl(`http://127.0.0.1:${port}`);
+function probeAntApi(port) {
+  return probeAntApiUrl(`http://127.0.0.1:${port}`);
 }
 
 /**
  * Find an available port starting from the default
  */
-async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.bee.fallbackRange, options = {}) {
+async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.ant.fallbackRange, options = {}) {
   const reservedPorts = options.reservedPorts || new Set();
   for (let i = 0; i < maxAttempts; i++) {
     const port = defaultPort + i;
     if (reservedPorts.has(port)) {
-      log.info(`[Bee] Port ${port} is reserved by another profile, trying next...`);
+      log.info(`[Ant] Port ${port} is reserved by another profile, trying next...`);
       continue;
     }
     const open = await isPortOpen(port);
     if (!open) {
       return port;
     }
-    log.info(`[Bee] Port ${port} is busy, trying next...`);
+    log.info(`[Ant] Port ${port} is busy, trying next...`);
   }
   return null;
 }
 
 /**
- * Detect if an existing Bee daemon is running and reusable
+ * Detect if an existing Ant daemon is running and reusable
  * Always checks default port first to detect conflicts properly
  */
 async function detectExistingDaemon() {
-  const defaultPort = DEFAULTS.bee.apiPort;
+  const defaultPort = DEFAULTS.ant.apiPort;
 
   // First check if anything is on the default API port
   const portOpen = await isPortOpen(defaultPort);
@@ -406,10 +411,10 @@ async function detectExistingDaemon() {
     return { found: false };
   }
 
-  // Probe to see if it's actually Bee
-  const probe = await probeBeeApi(defaultPort);
+  // Probe to see if it's actually Ant
+  const probe = await probeAntApi(defaultPort);
   if (probe.valid) {
-    log.info('[Bee] Found existing daemon on port', defaultPort);
+    log.info('[Ant] Found existing daemon on port', defaultPort);
     return {
       found: true,
       port: defaultPort,
@@ -417,8 +422,8 @@ async function detectExistingDaemon() {
     };
   }
 
-  // Port is open but not Bee - conflict
-  log.info('[Bee] Port', defaultPort, 'is busy (not a Bee daemon)');
+  // Port is open but not Ant - conflict
+  log.info('[Ant] Port', defaultPort, 'is busy (not an Ant daemon)');
   return { found: false, conflict: true, port: defaultPort };
 }
 
@@ -450,27 +455,27 @@ function startHealthCheck() {
     const isHealthy = await checkHealth();
     if (!isHealthy && currentState === STATUS.RUNNING) {
       updateState(STATUS.ERROR, 'Health check failed');
-      setErrorState('bee', 'Node unreachable. Retrying…');
+      setErrorState('ant', 'Node unreachable. Retrying…');
     } else if (isHealthy && currentState === STATUS.ERROR) {
       // Recovered - clear error state (reveals original statusMessage)
-      clearErrorState('bee');
+      clearErrorState('ant');
       updateState(STATUS.RUNNING);
     }
   }, 5000);
 }
 
-async function startExternalBee(config) {
+async function startExternalAnt(config) {
   const apiUrl = normalizeExternalUrl(config?.externalApi);
   if (!apiUrl) {
-    updateState(STATUS.ERROR, 'External Bee API endpoint is not configured');
-    setStatusMessage('bee', 'External node not configured');
+    updateState(STATUS.ERROR, 'External Ant API endpoint is not configured');
+    setStatusMessage('ant', 'External node not configured');
     return;
   }
 
-  const probe = await probeBeeApiUrl(apiUrl);
+  const probe = await probeAntApiUrl(apiUrl);
   if (!probe.valid) {
-    updateState(STATUS.ERROR, 'External Bee API endpoint is unreachable');
-    setStatusMessage('bee', 'External node unreachable');
+    updateState(STATUS.ERROR, 'External Ant API endpoint is unreachable');
+    setStatusMessage('ant', 'External node unreachable');
     return;
   }
 
@@ -478,40 +483,40 @@ async function startExternalBee(config) {
   currentApiPort = getPortFromUrl(apiUrl);
   currentMode = MODE.EXTERNAL;
 
-  updateService('bee', {
+  updateService('ant', {
     api: currentApiUrl,
     gateway: currentApiUrl,
     mode: MODE.EXTERNAL,
   });
-  setStatusMessage('bee', `External node: ${getEndpointLabel(currentApiUrl)}`);
+  setStatusMessage('ant', `External node: ${getEndpointLabel(currentApiUrl)}`);
 
   updateState(STATUS.RUNNING);
   startHealthCheck();
-  log.info('[Bee] Connected to external API at', currentApiUrl);
+  log.info('[Ant] Connected to external API at', currentApiUrl);
 }
 
-function startDisabledBee() {
+function startDisabledAnt() {
   currentApiPort = null;
   currentApiUrl = null;
   currentMode = MODE.DISABLED;
-  updateService('bee', {
+  updateService('ant', {
     api: null,
     gateway: null,
     mode: MODE.DISABLED,
   });
-  setStatusMessage('bee', 'Node disabled for this profile');
+  setStatusMessage('ant', 'Node disabled for this profile');
   updateState(STATUS.STOPPED);
-  log.info('[Bee] Disabled for active profile');
+  log.info('[Ant] Disabled for active profile');
 }
 
-async function startBee() {
+async function startAnt() {
   if (currentState === STATUS.RUNNING || currentState === STATUS.STARTING) {
-    log.info(`[Bee] Ignoring start request, current state: ${currentState}`);
+    log.info(`[Ant] Ignoring start request, current state: ${currentState}`);
     return;
   }
 
   if (currentState === STATUS.STOPPING) {
-    log.info('[Bee] Currently stopping, queuing start for after stop completes');
+    log.info('[Ant] Currently stopping, queuing start for after stop completes');
     pendingStart = true;
     return;
   }
@@ -519,22 +524,22 @@ async function startBee() {
   pendingStart = false;
   updateState(STATUS.STARTING);
 
-  const profileConfig = getProfileBeeConfig();
-  const managedProfileNode = isManagedBeeConfig(profileConfig);
+  const profileConfig = getProfileAntConfig();
+  const managedProfileNode = isManagedAntConfig(profileConfig);
 
-  if (hasUnknownBeeMode(profileConfig)) {
-    updateState(STATUS.ERROR, `Unsupported Bee node mode: ${profileConfig.mode}`);
-    setStatusMessage('bee', 'Node failed to start');
+  if (hasUnknownAntMode(profileConfig)) {
+    updateState(STATUS.ERROR, `Unsupported Ant node mode: ${profileConfig.mode}`);
+    setStatusMessage('ant', 'Node failed to start');
     return;
   }
 
-  if (isDisabledBeeConfig(profileConfig)) {
-    startDisabledBee();
+  if (isDisabledAntConfig(profileConfig)) {
+    startDisabledAnt();
     return;
   }
 
-  if (isExternalBeeConfig(profileConfig)) {
-    await startExternalBee(profileConfig);
+  if (isExternalAntConfig(profileConfig)) {
+    await startExternalAnt(profileConfig);
     return;
   }
 
@@ -547,32 +552,65 @@ async function startBee() {
     currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
     currentMode = MODE.REUSED;
 
-    updateService('bee', {
+    updateService('ant', {
       api: currentApiUrl,
       gateway: currentApiUrl,
       mode: MODE.REUSED,
     });
-    setStatusMessage('bee', `Node: localhost:${currentApiPort}`);
+    setStatusMessage('ant', `Node: localhost:${currentApiPort}`);
 
     updateState(STATUS.RUNNING);
     startHealthCheck();
-    log.info('[Bee] Reusing existing daemon on port', currentApiPort);
+    log.info('[Ant] Reusing existing daemon on port', currentApiPort);
     return;
   }
 
-  // Step 2: Start bundled node
-  const binPath = getBeeBinaryPath();
+  // Step 2: Start bundled node — but never on a data dir whose identity
+  // migration hasn't completed. If the bee-data → ant-data migration failed
+  // (it retries on next launch), spawning antd now would self-generate a
+  // throwaway identity and the user's first post-upgrade session would run
+  // under the wrong overlay address. This guards every start path: launch
+  // auto-start, the IPC handler, and onboarding. (Reusing an external daemon
+  // above is fine — it has its own data dir.)
+  const { isBeeDataMigrationPending } = require('./migrate-user-data');
+  if (isBeeDataMigrationPending()) {
+    const msg =
+      'Node start blocked: the Bee → Ant identity migration has not completed. Restart Freedom to retry.';
+    log.error(`[Ant] ${msg}`);
+    updateState(STATUS.ERROR, msg);
+    setStatusMessage('ant', 'Node start deferred (identity migration pending)');
+    return;
+  }
+
+  const binPath = getAntBinaryPath();
   if (!fs.existsSync(binPath)) {
-    updateState(STATUS.ERROR, `Bee binary not found at ${binPath}`);
-    setStatusMessage('bee', 'Node failed to start');
+    const msg = `Ant binary not found at ${binPath}`;
+    log.error(`[Ant] ${msg}`);
+    updateState(STATUS.ERROR, msg);
+    setStatusMessage('ant', 'Node failed to start');
     return;
   }
 
-  const dataDir = getBeeDataPath();
+  const dataDir = getAntDataPath();
+
+  // In injected-identity mode (an identity vault exists) never spawn antd
+  // without the injected keystore: antd would self-generate a throwaway
+  // native identity — wrong overlay address, none of the user's postage
+  // stamps or chequebook funds. IPFS and Radicle defer the same way. The
+  // identity lifecycle start hook retries this start after injection, and
+  // launch auto-start picks it up once keys/swarm.key exists.
+  if (useInjectedIdentity && !fs.existsSync(path.join(dataDir, 'keys', 'swarm.key'))) {
+    const msg =
+      'Node start deferred: identity vault present but no node key injected yet. Complete identity setup to start the node.';
+    log.warn(`[Ant] ${msg}`);
+    updateState(STATUS.ERROR, msg);
+    setStatusMessage('ant', 'Node start deferred (waiting for identity injection)');
+    return;
+  }
 
   // Step 3: Resolve ports (handle conflicts)
-  let apiPort = getConfiguredBeeApiPort(profileConfig);
-  let p2pPort = getConfiguredBeeP2pPort(profileConfig);
+  let apiPort = getConfiguredAntApiPort(profileConfig);
+  let p2pPort = getConfiguredAntP2pPort(profileConfig);
   const configuredApiPort = apiPort;
   const configuredP2pPort = p2pPort;
   let usingFallbackPort = false;
@@ -580,12 +618,12 @@ async function startBee() {
 
   const managedApiPortBusy = managedProfileNode ? await isPortOpen(apiPort) : false;
   if (existing.conflict || managedApiPortBusy) {
-    const newApiPort = await findAvailablePort(apiPort + 1, DEFAULTS.bee.fallbackRange, {
+    const newApiPort = await findAvailablePort(apiPort + 1, DEFAULTS.ant.fallbackRange, {
       reservedPorts: reservedProfilePorts,
     });
     if (!newApiPort) {
-      updateState(STATUS.ERROR, 'No available ports for Bee API');
-      setStatusMessage('bee', 'Node failed to start');
+      updateState(STATUS.ERROR, 'No available ports for Ant API');
+      setStatusMessage('ant', 'Node failed to start');
       return;
     }
     usingFallbackPort = true;
@@ -594,12 +632,12 @@ async function startBee() {
 
   const managedP2pPortBusy = managedProfileNode ? await isPortOpen(p2pPort) : false;
   if (managedP2pPortBusy) {
-    const newP2pPort = await findAvailablePort(p2pPort + 1, DEFAULTS.bee.fallbackRange, {
+    const newP2pPort = await findAvailablePort(p2pPort + 1, DEFAULTS.ant.fallbackRange, {
       reservedPorts: reservedProfilePorts,
     });
     if (!newP2pPort) {
-      updateState(STATUS.ERROR, 'No available ports for Bee P2P');
-      setStatusMessage('bee', 'Node failed to start');
+      updateState(STATUS.ERROR, 'No available ports for Ant P2P');
+      setStatusMessage('ant', 'Node failed to start');
       return;
     }
     p2pPort = newP2pPort;
@@ -608,11 +646,11 @@ async function startBee() {
 
   if (managedProfileNode && (apiPort !== configuredApiPort || p2pPort !== configuredP2pPort)) {
     try {
-      persistManagedBeePorts({ apiPort, p2pPort });
+      persistManagedAntPorts({ apiPort, p2pPort });
     } catch (err) {
-      log.error('[Bee] Failed to persist managed profile ports:', err.message);
-      updateState(STATUS.ERROR, 'Failed to save Bee port assignment');
-      setStatusMessage('bee', 'Node failed to start');
+      log.error('[Ant] Failed to persist managed profile ports:', err.message);
+      updateState(STATUS.ERROR, 'Failed to save Ant port assignment');
+      setStatusMessage('ant', 'Node failed to start');
       return;
     }
   }
@@ -621,35 +659,51 @@ async function startBee() {
   currentApiUrl = `http://127.0.0.1:${currentApiPort}`;
   currentMode = MODE.BUNDLED;
 
-  const configuredNodeMode = getConfiguredBeeNodeMode();
+  const configuredNodeMode = getConfiguredAntNodeMode();
   let configPath;
   try {
     configPath = ensureConfig(dataDir, apiPort, configuredNodeMode, p2pPort);
   } catch (err) {
-    log.error('[Bee] Failed to prepare config:', err.message);
+    log.error('[Ant] Failed to prepare config:', err.message);
     updateState(STATUS.ERROR, err.message);
-    setStatusMessage('bee', 'Node failed to start');
+    setStatusMessage('ant', 'Node failed to start');
     return;
   }
 
-  const args = ['start', `--config=${configPath}`];
+  /*
+   * antd is flag-only (no `start` subcommand): it runs the node directly from
+   * the bee-compatible YAML config Freedom writes.
+   *
+   * IMPORTANT: Do not let antd bind its default control socket at
+   * `<data-dir>/antd.sock` when Freedom manages it. macOS and Linux impose a
+   * hard sockaddr_un path limit, and profile-aware dev paths such as:
+   *
+   *   ~/Library/Application Support/Freedom Dev/<checkout>/Profiles/default/ant-data/antd.sock
+   *
+   * can exceed that limit and make antd exit with
+   * "control socket: io: path must be shorter than SUN_LEN". Freedom talks to
+   * the node through the HTTP API, not antctl, so the managed desktop node does
+   * not need a control socket at all. Keeping the socket disabled avoids adding
+   * a second profile-owned short-home exception like Radicle's.
+   */
+  const args = [`--config=${configPath}`, '--no-control-socket'];
 
-  log.info(`[Bee] Starting: ${binPath} ${args.join(' ')}`);
+  log.info(`[Ant] Starting: ${binPath} ${args.join(' ')}`);
 
   try {
-    beeProcess = spawn(binPath, args);
+    antProcess = spawn(binPath, args);
 
-    beeProcess.stdout.on('data', (data) => {
-      log.info(`[Bee stdout]: ${data}`);
+    antProcess.stdout.on('data', (data) => {
+      log.info(`[Ant stdout]: ${data}`);
     });
 
-    beeProcess.stderr.on('data', (data) => {
-      log.error(`[Bee stderr]: ${data}`);
+    antProcess.stderr.on('data', (data) => {
+      log.error(`[Ant stderr]: ${data}`);
     });
 
-    beeProcess.on('close', (code) => {
-      log.info(`[Bee] Process exited with code ${code}`);
-      beeProcess = null;
+    antProcess.on('close', (code) => {
+      log.info(`[Ant] Process exited with code ${code}`);
+      antProcess = null;
 
       if (forceKillTimeout) {
         clearTimeout(forceKillTimeout);
@@ -669,19 +723,19 @@ async function startBee() {
         clearInterval(healthCheckInterval);
         healthCheckInterval = null;
       }
-      clearService('bee');
+      clearService('ant');
 
       if (pendingStart) {
-        log.info('[Bee] Processing queued start request');
+        log.info('[Ant] Processing queued start request');
         pendingStart = false;
-        setTimeout(() => startBee(), 100);
+        setTimeout(() => startAnt(), 100);
       }
     });
 
-    beeProcess.on('error', (err) => {
-      log.error('[Bee] Failed to start process:', err);
+    antProcess.on('error', (err) => {
+      log.error('[Ant] Failed to start process:', err);
       updateState(STATUS.ERROR, err.message);
-      setStatusMessage('bee', 'Node failed to start');
+      setStatusMessage('ant', 'Node failed to start');
     });
 
     // Poll for health until running
@@ -697,8 +751,8 @@ async function startBee() {
       if (isHealthy) {
         clearInterval(pollInterval);
 
-        // Update registry (API and gateway are same port in newer Bee)
-        updateService('bee', {
+        // Update registry (API and gateway are same port in newer Ant)
+        updateService('ant', {
           api: currentApiUrl,
           gateway: currentApiUrl,
           mode: MODE.BUNDLED,
@@ -706,10 +760,10 @@ async function startBee() {
 
         // Only show status line if using fallback port
         if (usingFallbackPort) {
-          setStatusMessage('bee', `Fallback Port: ${currentApiPort}`);
+          setStatusMessage('ant', `Fallback Port: ${currentApiPort}`);
         } else {
           // Clear any previous status for normal healthy state
-          setStatusMessage('bee', null);
+          setStatusMessage('ant', null);
         }
 
         updateState(STATUS.RUNNING);
@@ -718,20 +772,20 @@ async function startBee() {
         attempts++;
         if (attempts >= maxAttempts) {
           clearInterval(pollInterval);
-          stopBee();
+          stopAnt();
           updateState(STATUS.ERROR, 'Startup timed out');
-          setStatusMessage('bee', 'Node failed to start');
+          setStatusMessage('ant', 'Node failed to start');
         }
       }
     }, 1000);
   } catch (err) {
     updateState(STATUS.ERROR, err.message);
-    setStatusMessage('bee', 'Node failed to start');
+    setStatusMessage('ant', 'Node failed to start');
   }
 }
 
-// Stop Bee and return a Promise that resolves when the process exits
-function stopBee() {
+// Stop Ant and return a Promise that resolves when the process exits
+function stopAnt() {
   return new Promise((resolve) => {
     pendingStart = false;
 
@@ -742,19 +796,19 @@ function stopBee() {
         healthCheckInterval = null;
       }
       updateState(STATUS.STOPPED);
-      clearService('bee');
+      clearService('ant');
       currentMode = MODE.NONE;
       resolve();
       return;
     }
 
-    if (!beeProcess) {
+    if (!antProcess) {
       if (healthCheckInterval) {
         clearInterval(healthCheckInterval);
         healthCheckInterval = null;
       }
       updateState(STATUS.STOPPED);
-      clearService('bee');
+      clearService('ant');
       resolve();
       return;
     }
@@ -772,7 +826,7 @@ function stopBee() {
       resolve();
     };
 
-    beeProcess.once('close', onExit);
+    antProcess.once('close', onExit);
 
     updateState(STATUS.STOPPING);
     if (healthCheckInterval) {
@@ -781,42 +835,42 @@ function stopBee() {
     }
 
     // Try graceful shutdown via SIGTERM
-    beeProcess.kill('SIGTERM');
+    antProcess.kill('SIGTERM');
 
     // Force kill if it doesn't exit within 5 seconds
     if (forceKillTimeout) clearTimeout(forceKillTimeout);
     forceKillTimeout = setTimeout(() => {
-      if (beeProcess) {
-        log.warn('[Bee] Force killing process...');
-        beeProcess.kill('SIGKILL');
+      if (antProcess) {
+        log.warn('[Ant] Force killing process...');
+        antProcess.kill('SIGKILL');
       }
       forceKillTimeout = null;
     }, 5000);
 
     // Try graceful shutdown via SIGTERM
-    beeProcess.kill('SIGTERM');
+    antProcess.kill('SIGTERM');
   });
 }
 
 function checkBinary() {
-  const binPath = getBeeBinaryPath();
+  const binPath = getAntBinaryPath();
   return fs.existsSync(binPath);
 }
 
 /**
- * Enable injected identity mode - skip bee init and expect pre-injected keys
- * Call this before starting Bee when using the unified identity system
+ * Enable injected identity mode - require pre-injected keys before start.
+ * Call this before starting Ant when using the unified identity system
  */
 function setUseInjectedIdentity(enabled) {
   useInjectedIdentity = enabled;
-  log.info(`[Bee] Injected identity mode: ${enabled}`);
+  log.info(`[Ant] Injected identity mode: ${enabled}`);
 }
 
 /**
  * Check if keys have been injected
  */
 function hasInjectedKeys() {
-  const dataDir = getBeeDataPath();
+  const dataDir = getAntDataPath();
   const swarmKeyPath = path.join(dataDir, 'keys', 'swarm.key');
   return fs.existsSync(swarmKeyPath);
 }
@@ -829,33 +883,33 @@ function getStatus() {
   return { status: currentState, error: lastError };
 }
 
-function registerBeeIpc() {
-  ipcMain.handle(IPC.BEE_START, async () => {
-    await startBee();
+function registerAntIpc() {
+  ipcMain.handle(IPC.ANT_START, async () => {
+    await startAnt();
     return { status: currentState, error: lastError };
   });
 
-  ipcMain.handle(IPC.BEE_STOP, async () => {
-    await stopBee();
+  ipcMain.handle(IPC.ANT_STOP, async () => {
+    await stopAnt();
     return { status: currentState, error: lastError };
   });
 
-  ipcMain.handle(IPC.BEE_GET_STATUS, () => {
+  ipcMain.handle(IPC.ANT_GET_STATUS, () => {
     return { status: currentState, error: lastError };
   });
 
-  ipcMain.handle(IPC.BEE_CHECK_BINARY, () => {
+  ipcMain.handle(IPC.ANT_CHECK_BINARY, () => {
     return { available: checkBinary() };
   });
 }
 
 function hasLiveProcess() {
-  return beeProcess !== null;
+  return antProcess !== null;
 }
 
-// States in which a Bee node may still hold the statestore LevelDB lock even
+// States in which an Ant node may still hold the statestore LevelDB lock even
 // without a managed child process we can see: RUNNING also covers a reused
-// external daemon (beeProcess is null) and ERROR can be set by a failed health
+// external daemon (antProcess is null) and ERROR can be set by a failed health
 // check without the process being killed.
 const LOCK_HOLDING_STATES = new Set([
   STATUS.RUNNING,
@@ -864,18 +918,18 @@ const LOCK_HOLDING_STATES = new Set([
   STATUS.ERROR,
 ]);
 
-// Lifecycle hooks for identity (re)injection: the injector must stop a Bee
+// Lifecycle hooks for identity (re)injection: the injector must stop an Ant
 // node that holds the statestore LevelDB lock before wiping it, then restart
 // it with the new key. Any live process is treated as active (STARTING grabs
 // the lock before health passes; STOPPING is before the close event; ERROR can
 // leave the process alive), otherwise the wipe fails with EPERM on Windows
 // (issue #90). Dependencies are injectable so the decision can be unit-tested
 // without spawning a real node.
-function createBeeLifecycle(deps = {}) {
+function createAntLifecycle(deps = {}) {
   const getStatusFn = deps.getStatus || getStatus;
   const hasLiveProcessFn = deps.hasLiveProcess || hasLiveProcess;
-  const stopFn = deps.stopBee || stopBee;
-  const startFn = deps.startBee || startBee;
+  const stopFn = deps.stopAnt || stopAnt;
+  const startFn = deps.startAnt || startAnt;
   const setInjected = deps.setUseInjectedIdentity || setUseInjectedIdentity;
   return {
     stop: async () => {
@@ -892,18 +946,18 @@ function createBeeLifecycle(deps = {}) {
 }
 
 module.exports = {
-  registerBeeIpc,
-  createBeeLifecycle,
+  registerAntIpc,
+  createAntLifecycle,
   hasLiveProcess,
-  startBee,
-  stopBee,
+  startAnt,
+  stopAnt,
   getActivePort,
   getStatus,
-  getBeeDataPath,
+  getAntDataPath,
   setUseInjectedIdentity,
   hasInjectedKeys,
-  BEE_NODE_MODE,
-  getConfiguredBeeNodeMode,
+  ANT_NODE_MODE,
+  getConfiguredAntNodeMode,
   getPrimaryGnosisRpcUrl,
   getPrimaryEthereumRpcUrl,
   STATUS,

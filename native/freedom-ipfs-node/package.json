@@ -1,7 +1,0 @@
-{
-  "name": "@freedom-browser/freedom-ipfs-node",
-  "version": "0.0.0",
-  "private": true,
-  "gypfile": true,
-  "main": "build/Release/freedom_ipfs_native.node"
-}
