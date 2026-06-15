@@ -7,9 +7,9 @@ const {
   loadMainModule,
 } = require('../../test/helpers/main-process-test-utils');
 
-function loadMigrationModule(userDataDir) {
+function loadMigrationModule(userDataDir, options = {}) {
   return loadMainModule(require.resolve('./migrate-user-data'), {
-    app: createAppMock({ isPackaged: true, userDataDir }),
+    app: createAppMock({ isPackaged: options.isPackaged ?? true, userDataDir }),
     extraMocks: {
       [require.resolve('./logger')]: () => ({
         info: jest.fn(),
@@ -59,6 +59,17 @@ describe('migrateBeeDataToAntData (bee → ant upgrade)', () => {
       'bee-era-password'
     );
     expect(fs.existsSync(path.join(antData, 'stamperstore'))).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(false);
+  });
+
+  test('uses the active profile userData directory in dev mode', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore'] });
+    const mod = loadMigrationModule(userDataDir, { isPackaged: false });
+
+    expect(mod.isBeeDataMigrationPending()).toBe(true);
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+
+    expect(fs.existsSync(path.join(userDataDir, 'ant-data', 'keys', 'swarm.key'))).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'bee-data'))).toBe(false);
   });
 

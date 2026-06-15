@@ -196,7 +196,11 @@ const BEE_ONLY_DIRS = ['statestore', 'localstore', 'kademlia-metrics'];
 const BEE_CARRY_ITEMS = ['config.yaml', 'stamperstore', 'keys'];
 
 function getNodeDataBaseDir() {
-  return app.isPackaged ? app.getPath('userData') : path.join(__dirname, '..', '..');
+  // The Bee -> Ant migration must operate on the active profile's userData
+  // directory. In profile-aware dev builds that is
+  // `Freedom Dev/<checkout>/Profiles/<profile>/`, not the repository root.
+  // We intentionally do not revive/migrate legacy repo-root dev node data here.
+  return app.getPath('userData');
 }
 
 /**

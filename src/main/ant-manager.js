@@ -584,7 +584,9 @@ async function startAnt() {
 
   const binPath = getAntBinaryPath();
   if (!fs.existsSync(binPath)) {
-    updateState(STATUS.ERROR, `Ant binary not found at ${binPath}`);
+    const msg = `Ant binary not found at ${binPath}`;
+    log.error(`[Ant] ${msg}`);
+    updateState(STATUS.ERROR, msg);
     setStatusMessage('ant', 'Node failed to start');
     return;
   }
