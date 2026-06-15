@@ -32,6 +32,7 @@ const {
 const TEST_MNEMONIC =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const TEST_PORT = 11633; // Non-standard port so a dev's running node can't interfere
+const TEST_P2P_PORT = 12633; // Keep the P2P bind off the ecosystem default too.
 const TEST_PASSWORD = 'bee-era-keystore-password';
 
 function getAntBinaryPath() {
@@ -106,10 +107,11 @@ function getAntAddresses(port) {
 }
 
 // Ultra-light config shape matching ant-manager's buildAntConfigContent.
-function writeUltraLightConfig(antDataDir, apiPort, password) {
+function writeUltraLightConfig(antDataDir, apiPort, p2pPort, password) {
   const configPath = path.join(antDataDir, 'config.yaml');
   const content = `# Ant node configuration (bee-compatible keys)
 api-addr: 127.0.0.1:${apiPort}
+p2p-addr: :${p2pPort}
 swap-enable: false
 mainnet: true
 full-node: false
@@ -128,14 +130,14 @@ password: ${password}
 // Mirrors ant-manager's ensureConfig, which rewrites config.yaml on every
 // start: only the password is carried over from the existing (migrated)
 // config; data-dir and api-addr are re-derived.
-function rewriteConfigLikeEnsureConfig(antDataDir, apiPort) {
+function rewriteConfigLikeEnsureConfig(antDataDir, apiPort, p2pPort) {
   const existing = fs.readFileSync(path.join(antDataDir, 'config.yaml'), 'utf-8');
   const passwordMatch = existing.match(/^password:\s*(.+)$/m);
   if (!passwordMatch) {
     throw new Error('No password found in migrated config.yaml');
   }
   const password = passwordMatch[1].trim();
-  const configPath = writeUltraLightConfig(antDataDir, apiPort, password);
+  const configPath = writeUltraLightConfig(antDataDir, apiPort, p2pPort, password);
   return { configPath, password };
 }
 
@@ -199,7 +201,7 @@ describe('bee-data → ant-data migration (real antd)', () => {
       // 2. Build a genuine bee-era data dir with the real injection writers,
       //    plus a statestore/ to stand in for Bee's LevelDB cache.
       const beeDataDir = path.join(userDataDir, 'bee-data');
-      createBeeConfig(beeDataDir, TEST_PASSWORD, 1633);
+      createBeeConfig(beeDataDir, TEST_PASSWORD, 1633, 1634);
       await injectBeeKey(beeDataDir, keys.beeWallet.privateKey, TEST_PASSWORD);
       fs.mkdirSync(path.join(beeDataDir, 'statestore'), { recursive: true });
       fs.writeFileSync(path.join(beeDataDir, 'statestore', 'LOCK'), '');
@@ -215,7 +217,11 @@ describe('bee-data → ant-data migration (real antd)', () => {
 
       // 4. Rewrite the config the way ant-manager's ensureConfig does on
       //    every start — the password must have survived the migration.
-      const { configPath, password } = rewriteConfigLikeEnsureConfig(antDataDir, TEST_PORT);
+      const { configPath, password } = rewriteConfigLikeEnsureConfig(
+        antDataDir,
+        TEST_PORT,
+        TEST_P2P_PORT
+      );
       expect(password).toBe(TEST_PASSWORD);
 
       // 5. Start antd on the migrated directory (flag-only, no subcommand).
@@ -256,7 +262,12 @@ describe('bee-data → ant-data migration (real antd)', () => {
       // bee-era identity would be silently abandoned with no retry.
       const antDataDir = path.join(userDataDir, 'ant-data');
       fs.mkdirSync(antDataDir, { recursive: true });
-      const configPath = writeUltraLightConfig(antDataDir, TEST_PORT, 'fresh-start-password');
+      const configPath = writeUltraLightConfig(
+        antDataDir,
+        TEST_PORT,
+        TEST_P2P_PORT,
+        'fresh-start-password'
+      );
 
       antProcess = spawn(antBinary, [`--config=${configPath}`], {
         stdio: ['ignore', 'pipe', 'pipe'],
