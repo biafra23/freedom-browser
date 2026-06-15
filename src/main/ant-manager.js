@@ -670,9 +670,23 @@ async function startAnt() {
     return;
   }
 
-  // antd is flag-only (no `start` subcommand): it runs the node directly from
-  // the bee-compatible YAML config Freedom writes.
-  const args = [`--config=${configPath}`];
+  /*
+   * antd is flag-only (no `start` subcommand): it runs the node directly from
+   * the bee-compatible YAML config Freedom writes.
+   *
+   * IMPORTANT: Do not let antd bind its default control socket at
+   * `<data-dir>/antd.sock` when Freedom manages it. macOS and Linux impose a
+   * hard sockaddr_un path limit, and profile-aware dev paths such as:
+   *
+   *   ~/Library/Application Support/Freedom Dev/<checkout>/Profiles/default/ant-data/antd.sock
+   *
+   * can exceed that limit and make antd exit with
+   * "control socket: io: path must be shorter than SUN_LEN". Freedom talks to
+   * the node through the HTTP API, not antctl, so the managed desktop node does
+   * not need a control socket at all. Keeping the socket disabled avoids adding
+   * a second profile-owned short-home exception like Radicle's.
+   */
+  const args = [`--config=${configPath}`, '--no-control-socket'];
 
   log.info(`[Ant] Starting: ${binPath} ${args.join(' ')}`);
 

@@ -805,7 +805,10 @@ describe('ant-manager', () => {
     expect(ctx.execSync).not.toHaveBeenCalled();
     expect(ctx.spawnedProcesses).toHaveLength(1);
     expect(ctx.spawnedProcesses[0].binary).toBe(ctx.antBinPath);
-    expect(ctx.spawnedProcesses[0].args).toEqual([`--config=${ctx.configPath}`]);
+    expect(ctx.spawnedProcesses[0].args).toEqual([
+      `--config=${ctx.configPath}`,
+      '--no-control-socket',
+    ]);
     expect(ctx.mod.getActivePort()).toBe(1634);
     expect(ctx.updateService).toHaveBeenCalledWith('ant', {
       api: 'http://127.0.0.1:1634',
