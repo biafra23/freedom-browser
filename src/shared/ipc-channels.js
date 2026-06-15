@@ -68,6 +68,19 @@ module.exports = {
   // App
   APP_SHOW_ABOUT: 'app:show-about',
 
+  // Profiles
+  PROFILE_GET_ACTIVE: 'profile:get-active',
+  PROFILE_LIST: 'profile:list',
+  PROFILE_CREATE: 'profile:create',
+  PROFILE_IMPORT: 'profile:import',
+  PROFILE_RENAME: 'profile:rename',
+  PROFILE_OPEN: 'profile:open',
+  PROFILE_DELETE: 'profile:delete',
+  PROFILE_UPDATE_NODE_CONFIG: 'profile:update-node-config',
+  PROFILE_EXTERNAL_CANDIDATES: 'profile:external-candidates',
+  PROFILE_EXTERNAL_CANDIDATES_DECISION: 'profile:external-candidates-decision',
+  PROFILE_UPDATED: 'profile:updated',
+
   // History
   HISTORY_GET: 'history:get',
   HISTORY_ADD: 'history:add',

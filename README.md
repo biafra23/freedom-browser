@@ -185,26 +185,31 @@ Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major de
 | **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       |
 | **Node Software**    | Ant (antd, bee-compatible) | freedom-ipfs native      | radicle-node + radicle-httpd   |
 | **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
-| **Gateway Port**     | 1633           | internal native handler               | 8780                           |
-| **API Port**         | 1633           | internal native handler               | 8780                           |
+| **Managed Gateway Port** | 11633+     | internal native handler               | 18780+                         |
+| **Managed API Port** | 11633+         | internal native handler               | 18780+                         |
+| **Managed P2P Port** | 12633+         | internal native handler               | 18776+                         |
 | **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
-| **Data Directory**   | `ant-data/`    | `ipfs-data/freedom-ipfs/`             | `radicle-data/`                |
+| **Data Directory**   | `<profile>/ant-data/` | `<profile>/ipfs-data/freedom-ipfs/` | profile-scoped short Radicle home |
 | **Binary Directory** | `ant-bin/`     | `native/freedom-ipfs-node/`           | `radicle-bin/`                 |
 
 ### Smart Node Connection
 
-Freedom intelligently manages node connections:
+Freedom manages nodes per browser profile:
 
-1. **Detect Existing Nodes**: On launch, checks if Swarm or Radicle nodes are already running on default ports; IPFS uses the embedded native node
-2. **Reuse When Available**: If a healthy node is detected, Freedom connects to it instead of starting a new one
-3. **Automatic Fallback**: If default ports are busy (but not by a compatible node), Freedom starts bundled nodes on alternative ports
-4. **Visual Feedback**: The Nodes panel shows connection status, including when using an external node or fallback port
+1. **Independent Managed Nodes**: By default, each profile starts its own Ant, native IPFS, and Radicle data directories. Ant and Radicle use profile-specific non-default ports; IPFS uses the embedded native handler without loopback API or gateway ports.
+2. **Explicit External Nodes**: Profiles can opt into external Swarm/Radicle endpoints in profile settings. External node identity and storage are shared outside that profile. IPFS always uses the embedded `freedom-ipfs` native node.
+3. **Port Conflict Handling**: If a managed Ant or Radicle profile port is busy, Freedom picks a free profile port and persists the reassignment.
+4. **Visual Feedback**: The Nodes panel and profile settings show whether a node is managed, external/shared, or disabled.
 
 This means Freedom works seamlessly whether you:
 
 - Run it standalone (bundled Swarm and native IPFS nodes start automatically; Radicle is optional and behind an Experimental setting)
-- Already have system-wide Swarm (Ant)/Radicle daemons running (Freedom reuses them)
-- Have port conflicts with other software (Freedom finds available ports)
+- Create multiple independent browser profiles with their own browser data, vault, and managed node state
+- Already have system-wide Swarm/Radicle daemons running and explicitly configure a profile to use them
+- Have port conflicts with other software (Freedom finds and records available profile ports)
+
+On macOS, the packaged app explicitly allows multiple bundle instances so profile
+launching can use `open -n -a Freedom --args --profile=<id>`.
 
 ### Integrated Swarm Node (Ant)
 
@@ -228,7 +233,7 @@ This means Freedom works seamlessly whether you:
 - **Live Statistics**: View connected peers, seeded repos, version, and Node ID.
 - **Repository Seeding**: Seed Radicle repositories directly from the browser to help replicate them across the network.
 - **Stale Socket Cleanup**: Automatically cleans up control sockets from unclean shutdowns.
-- **Port Conflict Resolution**: Falls back to ports 8781+ if default port 8780 is unavailable.
+- **Port Conflict Resolution**: Uses profile-specific managed ports and persists reassignment if one is unavailable.
 - **Windows**: Radicle is not available on Windows yet (no upstream binaries). The Experimental settings section is hidden on Windows builds.
 
 ### Universal Address Bar
@@ -364,20 +369,28 @@ Access built-in browser pages using the `freedom://` protocol:
 
 ### Node Endpoints
 
-Freedom automatically manages node connections. By default:
+Freedom automatically manages node connections per profile. The default profile's managed endpoints start at:
 
-- **Swarm (Ant)**: `http://127.0.0.1:1633`
+- **Swarm Ant**: `http://127.0.0.1:11633`
 - **IPFS**: embedded native `freedom-ipfs` handler; no desktop loopback gateway/API port is started
-- **Radicle httpd**: `http://127.0.0.1:8780`
+- **Radicle httpd**: `http://127.0.0.1:18780`
 
-The browser automatically detects existing nodes and handles port conflicts. For advanced users who need to override the defaults (e.g., connecting to a remote node), use environment variables:
+Named profiles use the next profile slot for Ant and Radicle (`11634`, `18781`, and so on). The ecosystem default Swarm/Radicle ports (`1633`, `8780`) are treated as external/system-node endpoints, not Freedom-managed defaults. IPFS is native-only and does not expose or reuse Kubo API/gateway ports.
+
+If Freedom detects a compatible Swarm or Radicle daemon on an ecosystem default port for a protocol that would start at launch, it asks whether that profile should use the existing external node or keep an independent managed node.
+
+For advanced users who need to connect a profile to a remote or system Bee/Radicle node, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
 
 ```bash
 # Connect to a remote Swarm node
-export BEE_API="http://remote-host:1633"
+export ANT_API="http://remote-host:1633"
 
 npm start
 ```
+
+### External Protocol Links And Profiles
+
+Inside Freedom, `bzz://`, `ipfs://`, `ipns://`, and `rad://` URLs always resolve through the active profile's node settings and storage. OS-level protocol launches from other apps are a v1 limitation: they are not profile-aware and should not be used when a link must open in a specific profile. Open the target profile first and paste or navigate to the URL inside that window.
 
 ### ENS Resolution (Ethereum)
 
@@ -408,31 +421,36 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 
 ## NPM Scripts
 
-| Script                                                       | Description                                                 |
-| ------------------------------------------------------------ | ----------------------------------------------------------- |
-| `npm start`                                                  | Launch the Electron app                                     |
-| `npm test`                                                   | Run unit tests (Jest)                                       |
-| `npm run test:e2e`                                           | Run the harness E2E suite (stubbed nodes; fast, no network) |
-| `npm run test:e2e:live`                                      | Run the live E2E suite (real Ant + IPFS + ENS; manual only) |
-| `npm run ant:download`                                       | Download the Ant (antd) binary for your platform            |
-| `npm run ant:start` / `ant:stop` / `ant:status` / `ant:reset` | Manage Ant outside the app                                |
-| `npm run ant:smoke-upload`                                   | Exercise the buy → upload → download round-trip on a node   |
-| `npm run ipfs:download`                                      | Download the pinned freedom-ipfs native addon               |
-| `npm run ipfs:native:smoke`                                  | Smoke test the real native addon and live IPFS retrieval    |
-| `npm run ipfs:build`                                         | Build the freedom-ipfs native addon from source             |
-| `npm run ipfs:reset`                                         | Reset IPFS data used by the bundled node                    |
-| `npm run build -- --mac --unsigned`                          | Build unsigned macOS app (for local testing)                |
-| `npm run dist -- --mac`                                      | Build signed macOS distributable (DMG + ZIP)                |
-| `npm run dist:mac:prepare-notary`                            | Build signed macOS artifacts without notarization wait      |
-| `npm run dist:mac:submit-notary`                             | Submit macOS artifacts to Apple asynchronously              |
-| `npm run dist:mac:notary-status`                             | Check notarization status from saved receipts               |
-| `npm run dist:mac:notary-log -- <submission-id>`             | Fetch notarization log JSON for a submission ID             |
-| `npm run dist:mac:staple-notary`                             | Staple and validate accepted notarized artifacts            |
-| `npm run dist:linux:arm64:docker`                            | Build Linux ARM64 via Docker (recommended)                  |
-| `npm run dist:linux:x64:docker`                              | Build Linux x64 via Docker                                  |
-| `npm run dist -- --win`                                      | Build Windows x64 distributable (NSIS + ZIP)                |
+| Script                                                        | Description                                                 |
+| ------------------------------------------------------------- | ----------------------------------------------------------- |
+| `npm start`                                                   | Launch the Electron app                                     |
+| `npm test`                                                    | Run unit tests (Jest)                                       |
+| `npm run test:e2e`                                            | Run the harness E2E suite (stubbed nodes; fast, no network) |
+| `npm run test:e2e:live`                                       | Run the live E2E suite (real Ant + IPFS + ENS; manual only) |
+| `npm run ant:download`                                        | Download the Ant (antd) binary for your platform            |
+| `npm run ant:status`                                          | Check the default profile's Freedom-managed Ant (`11633`)   |
+| `npm run system-ant:start` / `system-ant:status` / `system-ant:stop` | Run or inspect a repo-root system Ant on the ecosystem default port (`1633`) |
+| `npm run ant:smoke-upload`                                    | Exercise the buy → upload → download round-trip on a node   |
+| `npm run ipfs:download`                                       | Download the pinned freedom-ipfs native addon               |
+| `npm run ipfs:native:smoke`                                   | Smoke test the real native addon and live IPFS retrieval    |
+| `npm run ipfs:build`                                          | Build the freedom-ipfs native addon from source             |
+| `npm run ipfs:reset`                                          | Remove legacy repo-root IPFS data                           |
+| `npm run build -- --mac --unsigned`                           | Build unsigned macOS app (for local testing)                |
+| `npm run dist -- --mac`                                       | Build signed macOS distributable (DMG + ZIP)                |
+| `npm run dist:mac:prepare-notary`                             | Build signed macOS artifacts without notarization wait      |
+| `npm run dist:mac:submit-notary`                              | Submit macOS artifacts to Apple asynchronously              |
+| `npm run dist:mac:notary-status`                              | Check notarization status from saved receipts               |
+| `npm run dist:mac:notary-log -- <submission-id>`              | Fetch notarization log JSON for a submission ID             |
+| `npm run dist:mac:staple-notary`                              | Staple and validate accepted notarized artifacts            |
+| `npm run dist:linux:arm64:docker`                             | Build Linux ARM64 via Docker (recommended)                  |
+| `npm run dist:linux:x64:docker`                               | Build Linux x64 via Docker                                  |
+| `npm run dist -- --win`                                       | Build Windows x64 distributable (NSIS + ZIP)                |
 
 The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with optional `--arm64`, `--x64`, `--unsigned`, `--no-notarize`, and `--verbose` flags. See `scripts/build.js` for details.
+
+`ant:start` is kept as a legacy alias for the explicit `system-ant:start`
+script. It uses repo-root `ant-data/`, which Freedom no longer uses for
+profile-managed dev data.
 
 ### Radicle Scripts
 
@@ -440,7 +458,7 @@ The `build` and `dist` scripts accept `--mac`, `--linux`, or `--win` with option
 |--------|-------------|
 | `npm run radicle:download` | Download the Radicle binaries for your platform |
 | `npm run radicle:init` | Initialize Radicle identity and configuration |
-| `npm run radicle:status` | Check Radicle httpd API status |
+| `npm run radicle:status` | Check the default profile's Radicle httpd root endpoint |
 | `npm run radicle:reset` | Delete all Radicle data and start fresh |
 
 ---
@@ -640,7 +658,8 @@ Freedom includes **non-intrusive auto-update functionality** that silently check
 **Update Experience:**
 
 - Silent background downloads - no interruptions
-- Updates install automatically on quit, or manually via menu
+- Updates install manually via notification/menu when ready
+- Default-profile installs restart Freedom automatically; named/profile-dir installs close after install so users do not silently relaunch into the wrong profile
 - Users stay in control - can disable in Settings
 
 **Server Setup:**
@@ -661,8 +680,8 @@ Freedom-{version}-arm64.dmg.blockmap
 2. Checks again every 6 hours
 3. If new version available → downloads silently in background
 4. Small notification: "Update downloading..."
-5. When ready → notification: "Update ready. Click to restart."
-6. Update installs automatically on quit, or via "Restart to Install Update" menu
+5. When ready → notification: "Update ready. Click to install."
+6. Update installs via the notification or app menu; named/profile-dir profiles close after installation and should be reopened from the profile manager
 
 **Manual Update Check:**
 
@@ -699,19 +718,19 @@ npm run start:test-updater
 
 ### Swarm node (Ant) fails to start
 
-- Freedom automatically detects port conflicts and uses fallback ports
+- Freedom automatically detects managed-port conflicts and persists a free profile port
 - If the node still fails, check terminal output for specific error messages
 - Reset Ant data: `npm run ant:reset`
 
 ### IPFS fails to start
 
-- Freedom automatically detects port conflicts and uses fallback ports
-- Check for stale lock file: the app should auto-clean, but you can manually delete `ipfs-data/repo.lock`
+- Freedom automatically detects managed-port conflicts and persists a free profile port
+- Check for stale lock file: the app should auto-clean profile-local IPFS locks
 - Reset IPFS data: `npm run ipfs:reset`
 
 ### Radicle fails to start
 - Ensure **Settings → Experimental → Enable Radicle integration (Beta)** is enabled
-- Freedom automatically detects port conflicts and uses fallback ports
+- Freedom automatically detects managed-port conflicts and persists a free profile port
 - Ensure both `radicle-node` and `radicle-httpd` binaries exist in `radicle-bin/`
 - If starting for the first time, Freedom creates a Radicle identity automatically
 - Check terminal output for specific error messages
@@ -719,9 +738,10 @@ npm run start:test-updater
 
 ### Using an external node
 
-- If you have a system-wide Swarm (Bee or Ant), IPFS, or Radicle daemon running, Freedom will detect and reuse it
-- The Nodes panel will show "Node: localhost:PORT" when connected to an external node
-- The toggle switch is disabled for external nodes (can't stop a node Freedom didn't start)
+- If you have a system-wide Swarm or Radicle daemon running, configure external mode in **Settings → Profiles → Node endpoints**
+- External mode is per profile and per protocol
+- The Nodes panel shows external/shared status when connected to an external node
+- Freedom does not stop external nodes on quit
 
 ### ENS resolution not working
 

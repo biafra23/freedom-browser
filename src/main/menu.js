@@ -1,7 +1,12 @@
 const log = require('./logger');
 const { BrowserWindow, Menu, app, ipcMain } = require('electron');
 const { isMainBrowserWindow, getMainWindows, createMainWindow } = require('./windows/mainWindow');
-const { checkForUpdates, isUpdateReady, installUpdate } = require('./updater');
+const {
+  checkForUpdates,
+  getInstallRelaunchMode,
+  isUpdateReady,
+  installUpdate,
+} = require('./updater');
 
 // Helper to get the best target window for tab operations
 // Only returns main browser windows we created (not DevTools or other system windows)
@@ -12,6 +17,15 @@ function getTargetWindow() {
   }
   const mainWindows = getMainWindows();
   return mainWindows[0] || null;
+}
+
+function openProfilesManager() {
+  const win = getTargetWindow();
+  if (win) {
+    win.webContents.send('tab:new-with-url', 'freedom://settings/profiles');
+    return;
+  }
+  createMainWindow('freedom://settings/profiles');
 }
 
 let newTabMenuItem = null;
@@ -104,6 +118,13 @@ function buildFileSubmenu(isMac) {
       click: () => {
         log.info('[menu] New Window clicked');
         createMainWindow();
+      },
+    },
+    {
+      label: 'Manage Profiles...',
+      click: () => {
+        log.info('[menu] Manage Profiles clicked');
+        openProfilesManager();
       },
     },
     { type: 'separator' },
@@ -343,7 +364,7 @@ function setupApplicationMenu() {
   const updateMenuItems = updateReady
     ? [
         {
-          label: 'Install Update and Restart...',
+          label: getInstallRelaunchMode().menuLabel,
           click: () => {
             installUpdate();
           },

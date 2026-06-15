@@ -9,10 +9,10 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const os = require('os');
 const { ipcMain, dialog, BrowserWindow } = require('electron');
 const { getBee, selectBestBatch, toHex } = require('./swarm-service');
 const { addEntry, updateEntry } = require('./publish-history');
+const { createProfileTempDir } = require('../profile-paths');
 const log = require('electron-log');
 
 // Sentinel for user-initiated publishes (text/file/directory triggered from
@@ -151,7 +151,7 @@ async function publishDirectory(dirPath, options = {}) {
  * @param {{ indexDocument?: string }} options
  */
 async function publishFilesFromContent(files, options = {}) {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freedom-swarm-publish-'));
+  const tempDir = createProfileTempDir('swarm-publish');
 
   try {
     for (const file of files) {

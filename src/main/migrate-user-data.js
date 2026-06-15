@@ -11,7 +11,6 @@
  *    (overlay address, postage stamps, chequebook funds).
  */
 
-const log = require('./logger');
 const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -52,7 +51,12 @@ function isEffectivelyEmpty(dir) {
  *
  * @returns {boolean} true if migration was performed, false otherwise
  */
-function migrateUserData() {
+function getLogger(logger) {
+  return logger || require('./logger');
+}
+
+function migrateUserData(options = {}) {
+  const log = getLogger(options.logger);
   const newPath = app.getPath('userData');
   const oldPath = getOldUserDataPath();
   const markerPath = path.join(newPath, MIGRATION_MARKER);
@@ -244,7 +248,9 @@ function isBeeDataMigrationPending() {
  *
  * @returns {boolean} true if a migration was performed
  */
-function migrateBeeDataToAntData() {
+function migrateBeeDataToAntData(options = {}) {
+  const log = getLogger(options.logger);
+
   if (!isBeeDataMigrationPending()) {
     return false;
   }

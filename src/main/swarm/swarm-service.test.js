@@ -25,6 +25,11 @@ describe('swarm-service', () => {
     expect(bee._testUrl).toBe('http://127.0.0.1:1633');
   });
 
+  test('throws when the Swarm endpoint is not hydrated', () => {
+    getAntApiUrl.mockReturnValue(null);
+    expect(() => getBee()).toThrow('Swarm node is not ready');
+  });
+
   test('returns the same client on subsequent calls with the same URL', () => {
     getAntApiUrl.mockReturnValue('http://127.0.0.1:1633');
     const bee1 = getBee();

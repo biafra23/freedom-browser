@@ -384,10 +384,10 @@ describe('page-context-menu', () => {
     await triggerMenuAction(pageContextMenu, 'open-link-new-window');
     expect(urlUtils.deriveDisplayValue).toHaveBeenCalledWith(
       'https://example.com/link',
-      expect.any(String),
+      null,
       '',
-      expect.any(String),
-      expect.any(String)
+      'http://freedom-ipfs.localhost/ipfs/',
+      'http://freedom-ipfs.localhost/ipns/'
     );
     expect(electronAPI.openUrlInNewWindow).toHaveBeenCalledWith(
       'ens:derived:https://example.com/link'

@@ -6,8 +6,8 @@ const {
   loadMainModule,
 } = require('../../test/helpers/main-process-test-utils');
 
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const DEV_IPFS_DATA_DIR = path.join(PROJECT_ROOT, 'ipfs-data', 'freedom-ipfs');
+const PROFILE_IPFS_DATA_DIR = '/tmp/freedom-user-data/ipfs-data';
+const NATIVE_IPFS_DATA_DIR = path.join(PROFILE_IPFS_DATA_DIR, 'freedom-ipfs');
 const loadedContexts = [];
 
 function createWindowMock() {
@@ -85,6 +85,7 @@ function loadIpfsManagerModule(options = {}) {
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
+          DISABLED: 'disabled',
           NONE: 'none',
         },
         updateService,
@@ -95,6 +96,12 @@ function loadIpfsManagerModule(options = {}) {
       }),
       [require.resolve('./ipfs/freedom-ipfs-native-node')]: () => ({
         FreedomIpfsNativeNode: MockFreedomIpfsNativeNode,
+      }),
+      [require.resolve('./profile-paths')]: () => ({
+        getIpfsDataDir: jest.fn(() => options.ipfsDataDir || PROFILE_IPFS_DATA_DIR),
+      }),
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: jest.fn(() => options.activeProfile || null),
       }),
     },
   });
@@ -159,10 +166,10 @@ describe('ipfs-manager', () => {
 
     await ctx.mod.startIpfs();
 
-    expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(DEV_IPFS_DATA_DIR, { recursive: true });
+    expect(ctx.fsMock.mkdirSync).toHaveBeenCalledWith(NATIVE_IPFS_DATA_DIR, { recursive: true });
     expect(ctx.nativeInstances).toHaveLength(1);
     expect(ctx.nativeInstances[0].config).toEqual({
-      dataDir: DEV_IPFS_DATA_DIR,
+      dataDir: NATIVE_IPFS_DATA_DIR,
       onFailure: expect.any(Function),
     });
     expect(ctx.nativeInstances[0].start).toHaveBeenCalled();
@@ -181,6 +188,30 @@ describe('ipfs-manager', () => {
       status: 'running',
       error: null,
     });
+  });
+
+  test('does not start native IPFS when the active profile disables it', async () => {
+    const ctx = loadIpfsManagerModule({
+      activeProfile: {
+        metadata: {
+          nodes: {
+            ipfs: { mode: 'disabled', backend: 'freedom-ipfs' },
+          },
+        },
+      },
+    });
+
+    await ctx.mod.startIpfs();
+
+    expect(ctx.nativeInstances).toHaveLength(0);
+    expect(ctx.clearService).toHaveBeenCalledWith('ipfs');
+    expect(ctx.updateService).toHaveBeenCalledWith('ipfs', {
+      api: null,
+      gateway: null,
+      mode: 'disabled',
+      backend: 'freedom-ipfs',
+    });
+    expect(ctx.setStatusMessage).toHaveBeenCalledWith('ipfs', 'Node disabled for this profile');
   });
 
   test('serves native gateway requests only while running', async () => {

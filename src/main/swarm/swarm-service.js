@@ -18,6 +18,9 @@ let beeClientUrl = null;
  */
 function getBee() {
   const url = getAntApiUrl();
+  if (!url) {
+    throw new Error('Swarm node is not ready');
+  }
   if (!beeClient || beeClientUrl !== url) {
     beeClient = new Bee(url);
     beeClientUrl = url;

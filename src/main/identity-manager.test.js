@@ -1,43 +1,185 @@
-const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { loadMainModule } = require('../../test/helpers/main-process-test-utils');
+const path = require('path');
+const {
+  createTempUserDataDir,
+  loadMainModule,
+  removeTempUserDataDir,
+} = require('../../test/helpers/main-process-test-utils');
 
-jest.mock('electron', () => ({
-  app: {
-    isPackaged: false,
-    getPath: jest.fn(),
-  },
-  ipcMain: {
-    handle: jest.fn(),
-  },
-}));
+const ENV_KEYS = [
+  'FREEDOM_ANT_DATA',
+  'FREEDOM_BEE_DATA',
+  'FREEDOM_IPFS_DATA',
+  'FREEDOM_RADICLE_DATA',
+  'FREEDOM_IDENTITY_DATA',
+];
 
-const mockGetEthereumWalletIdentityReferences = jest.fn();
+function snapshotEnv() {
+  return Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+}
 
-jest.mock('./swarm/feed-store', () => ({
-  getEthereumWalletIdentityReferences: (...args) => mockGetEthereumWalletIdentityReferences(...args),
-}));
+function restoreEnv(snapshot) {
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
 
-const { deleteDerivedWallet } = require('./identity-manager');
+function makeProfileIdentityMock() {
+  return {
+    createVault: jest.fn().mockResolvedValue('test mnemonic'),
+    unlockVault: jest.fn().mockResolvedValue(undefined),
+    deriveAllKeys: jest.fn(() => ({
+      userWallet: { address: '0xuser', privateKey: '0xuser-private' },
+      beeWallet: { address: '0xbee', privateKey: '0xbee-private' },
+      ipfsKey: { privateKey: Buffer.from('ipfs-private'), publicKey: Buffer.from('ipfs-public') },
+      radicleKey: {
+        privateKey: Buffer.from('radicle-private'),
+        publicKey: Buffer.from('radicle-public'),
+      },
+    })),
+    injectBeeKey: jest.fn().mockResolvedValue(undefined),
+    createBeeConfig: jest.fn(),
+    injectIpfsKey: jest.fn(() => '12D3KooProfilePeer'),
+    injectRadicleKey: jest.fn(() => 'did:key:zProfileRadicle'),
+  };
+}
 
-describe('identity-manager wallet deletion', () => {
-  let tmpDir;
-  let previousIdentityDataDir;
+function makeRestartIdentityMock() {
+  return {
+    createVault: jest.fn(async () => 'test test test test test test test test test test test about'),
+    unlockVault: jest.fn(async () => {}),
+    vaultExists: jest.fn(async () => true),
+    isUnlocked: jest.fn(async () => true),
+    deriveAllKeys: jest.fn(() => ({
+      userWallet: { address: '0xuser', privateKey: '0x01' },
+      beeWallet: { address: '0xbee', privateKey: '0x02' },
+      ipfsKey: { privateKey: '0x03', publicKey: '0x04' },
+      radicleKey: { privateKey: '0x05', publicKey: '0x06' },
+    })),
+    injectBeeKey: jest.fn(async () => {}),
+    createBeeConfig: jest.fn(() => {}),
+    injectIpfsKey: jest.fn(() => 'QmTestPeerId'),
+    injectRadicleKey: jest.fn(() => 'did:key:zTest'),
+    createRadicleIdentity: jest.fn(() => ({ did: 'did:key:zTest' })),
+  };
+}
+
+describe('identity-manager profile paths', () => {
+  let tempDirs = [];
+  let envSnapshot;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-manager-test-'));
-    previousIdentityDataDir = process.env.FREEDOM_IDENTITY_DATA;
-    process.env.FREEDOM_IDENTITY_DATA = tmpDir;
-    mockGetEthereumWalletIdentityReferences.mockReturnValue([]);
+    tempDirs = [];
+    envSnapshot = snapshotEnv();
+    restoreEnv(envSnapshot);
+    jest.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    if (previousIdentityDataDir === undefined) {
-      delete process.env.FREEDOM_IDENTITY_DATA;
-    } else {
-      process.env.FREEDOM_IDENTITY_DATA = previousIdentityDataDir;
+    restoreEnv(envSnapshot);
+    for (const dir of tempDirs) {
+      removeTempUserDataDir(dir);
     }
+    jest.restoreAllMocks();
+  });
+
+  function tempDir(prefix) {
+    const dir = createTempUserDataDir(prefix);
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  test('injects node identities into env-resolved profile data dirs', async () => {
+    const userDataDir = tempDir('identity-manager-user-data-');
+    const identityDir = tempDir('identity-manager-identity-');
+    const antDir = tempDir('identity-manager-ant-');
+    const ipfsDir = tempDir('identity-manager-ipfs-');
+    const radicleDir = tempDir('identity-manager-radicle-');
+    process.env.FREEDOM_IDENTITY_DATA = identityDir;
+    process.env.FREEDOM_ANT_DATA = antDir;
+    process.env.FREEDOM_IPFS_DATA = ipfsDir;
+    process.env.FREEDOM_RADICLE_DATA = radicleDir;
+
+    const identityMock = makeProfileIdentityMock();
+    const activeProfile = {
+      id: 'profiled',
+      source: 'catalog',
+      metadata: {
+        nodes: {
+          bee: { apiPort: 11644, p2pPort: 12644 },
+        },
+      },
+    };
+    const { mod } = loadMainModule(require.resolve('./identity-manager'), {
+      userDataDir,
+      extraMocks: {
+        [require.resolve('./identity')]: () => identityMock,
+        [require.resolve('./profile-resolver')]: () => ({
+          getActiveProfile: jest.fn(() => activeProfile),
+        }),
+      },
+    });
+
+    await mod.createNewVault('password123');
+    await mod.injectBeeIdentity();
+    await mod.injectIpfsIdentity();
+    await mod.injectRadicleIdentity('ProfileAlias');
+
+    expect(mod.getIdentityDataDir()).toBe(identityDir);
+    expect(mod.getAntDataDir()).toBe(antDir);
+    expect(mod.getIpfsDataDir()).toBe(ipfsDir);
+    expect(mod.getRadicleDataDir()).toBe(radicleDir);
+
+    expect(identityMock.injectBeeKey).toHaveBeenCalledWith(
+      antDir,
+      '0xbee-private',
+      expect.any(String)
+    );
+    expect(identityMock.createBeeConfig).toHaveBeenCalledWith(
+      antDir,
+      expect.any(String),
+      11644,
+      12644
+    );
+    expect(identityMock.injectIpfsKey).not.toHaveBeenCalled();
+    expect(identityMock.injectRadicleKey).toHaveBeenCalledWith(
+      radicleDir,
+      Buffer.from('radicle-private'),
+      Buffer.from('radicle-public'),
+      'ProfileAlias'
+    );
+  });
+});
+
+describe('identity-manager wallet deletion', () => {
+  let tmpDir;
+  let envSnapshot;
+  let mockGetEthereumWalletIdentityReferences;
+  let identityManager;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-manager-test-'));
+    envSnapshot = snapshotEnv();
+    process.env.FREEDOM_IDENTITY_DATA = tmpDir;
+    mockGetEthereumWalletIdentityReferences = jest.fn(() => []);
+    identityManager = loadMainModule(require.resolve('./identity-manager'), {
+      userDataDir: tmpDir,
+      extraMocks: {
+        [require.resolve('./swarm/feed-store')]: () => ({
+          getEthereumWalletIdentityReferences: (...args) =>
+            mockGetEthereumWalletIdentityReferences(...args),
+        }),
+      },
+    }).mod;
+  });
+
+  afterEach(() => {
+    restoreEnv(envSnapshot);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -66,7 +208,7 @@ describe('identity-manager wallet deletion', () => {
       ],
     });
 
-    await expect(deleteDerivedWallet(2))
+    await expect(identityManager.deleteDerivedWallet(2))
       .rejects.toMatchObject({
         code: 'SWARM_PUBLISHER_IDENTITY_WALLET_IN_USE',
         references,
@@ -86,7 +228,7 @@ describe('identity-manager wallet deletion', () => {
       ],
     });
 
-    await deleteDerivedWallet(2);
+    await identityManager.deleteDerivedWallet(2);
 
     expect(mockGetEthereumWalletIdentityReferences).toHaveBeenCalledWith(2);
     expect(readVaultMeta().derivedWallets.map((wallet) => wallet.index)).toEqual([0]);
@@ -105,44 +247,10 @@ describe('identity-manager wallet deletion', () => {
  * The lazily-loaded `./identity` module is mocked so the test exercises the
  * orchestration/branch logic without real key derivation or node binaries.
  */
-function createIdentityMock() {
-  return {
-    createVault: jest.fn(async () => 'test test test test test test test test test test test about'),
-    unlockVault: jest.fn(async () => {}),
-    vaultExists: jest.fn(async () => true),
-    isUnlocked: jest.fn(async () => true),
-    deriveAllKeys: jest.fn(() => ({
-      userWallet: { address: '0xuser', privateKey: '0x01' },
-      beeWallet: { address: '0xbee', privateKey: '0x02' },
-      ipfsKey: { privateKey: '0x03', publicKey: '0x04' },
-      radicleKey: { privateKey: '0x05', publicKey: '0x06' },
-    })),
-    injectBeeKey: jest.fn(async () => {}),
-    createBeeConfig: jest.fn(() => {}),
-    injectRadicleKey: jest.fn(() => 'did:key:zTest'),
-    createRadicleIdentity: jest.fn(() => ({ did: 'did:key:zTest' })),
-  };
-}
-
-function loadIdentityManager(dataDirs) {
-  return loadMainModule(require.resolve('./identity-manager'), {
-    extraMocks: {
-      [require.resolve('./identity')]: () => createIdentityMock(),
-    },
-    userDataDir: dataDirs.identity,
-  }).mod;
-}
-
 describe('injectAllIdentities restart reporting (issue #90)', () => {
   let root;
   let dataDirs;
-  const savedEnv = {};
-  const ENV_KEYS = [
-    'FREEDOM_IDENTITY_DATA',
-    'FREEDOM_ANT_DATA',
-    'FREEDOM_IPFS_DATA',
-    'FREEDOM_RADICLE_DATA',
-  ];
+  let envSnapshot;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-mgr-'));
@@ -155,9 +263,7 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
     for (const dir of Object.values(dataDirs)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    ENV_KEYS.forEach((key) => {
-      savedEnv[key] = process.env[key];
-    });
+    envSnapshot = snapshotEnv();
     process.env.FREEDOM_IDENTITY_DATA = dataDirs.identity;
     process.env.FREEDOM_ANT_DATA = dataDirs.bee;
     process.env.FREEDOM_IPFS_DATA = dataDirs.ipfs;
@@ -165,17 +271,20 @@ describe('injectAllIdentities restart reporting (issue #90)', () => {
   });
 
   afterEach(() => {
-    ENV_KEYS.forEach((key) => {
-      if (savedEnv[key] === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = savedEnv[key];
-      }
-    });
+    restoreEnv(envSnapshot);
     if (root && fs.existsSync(root)) {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  function loadIdentityManager(dataDirsForLoad) {
+    return loadMainModule(require.resolve('./identity-manager'), {
+      extraMocks: {
+        [require.resolve('./identity')]: () => makeRestartIdentityMock(),
+      },
+      userDataDir: dataDirsForLoad.identity,
+    }).mod;
+  }
 
   function seedBeeInjected() {
     fs.mkdirSync(path.join(dataDirs.bee, 'keys'), { recursive: true });

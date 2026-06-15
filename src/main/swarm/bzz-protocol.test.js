@@ -23,6 +23,7 @@ const {
   handleBzzRequest,
   RETRY_DELAYS_MS,
 } = require('./bzz-protocol');
+const { getAntApiUrl } = require('../service-registry');
 
 const HASH = 'a'.repeat(64);
 const ENCRYPTED_HASH = 'a'.repeat(128);
@@ -30,9 +31,20 @@ const ENCRYPTED_HASH = 'a'.repeat(128);
 describe('buildGatewayUrl', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getAntApiUrl.mockReturnValue('http://127.0.0.1:1633');
   });
 
-  test('converts bzz://<hash>/path to the Bee gateway URL', async () => {
+  test('returns 503 when the Swarm endpoint is not hydrated', async () => {
+    getAntApiUrl.mockReturnValue(null);
+
+    await expect(buildGatewayUrl(`bzz://${HASH}/index.html`)).resolves.toEqual({
+      ok: false,
+      status: 503,
+      message: 'Swarm node is not ready',
+    });
+  });
+
+  test('converts bzz://<hash>/path to the Swarm gateway URL', async () => {
     await expect(buildGatewayUrl(`bzz://${HASH}/index.html`)).resolves.toEqual({
       ok: true,
       url: `http://127.0.0.1:1633/bzz/${HASH}/index.html`,
@@ -256,6 +268,7 @@ describe('sanitizeRequestHeaders', () => {
 describe('handleBzzRequest', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getAntApiUrl.mockReturnValue('http://127.0.0.1:1633');
   });
 
   const makeRequest = (url, { method = 'GET', headers = {} } = {}) => ({

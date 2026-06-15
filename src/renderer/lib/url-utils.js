@@ -89,6 +89,10 @@ const looksLikeDomain = (str) => {
 };
 
 export const parseHashInput = (rawInput, bzzRoutePrefix) => {
+  if (!bzzRoutePrefix) {
+    return null;
+  }
+
   const withoutScheme = rawInput.replace(/^bzz:\/\//i, '').replace(/^\/+/, '');
   if (!withoutScheme) {
     return null;
@@ -396,7 +400,7 @@ export const deriveDisplayValue = (
     return innerDisplay ? `view-source:${innerDisplay}` : url;
   }
 
-  if (url.startsWith(bzzRoutePrefix)) {
+  if (bzzRoutePrefix && url.startsWith(bzzRoutePrefix)) {
     const decoded = decodeAndTrim(url.slice(bzzRoutePrefix.length));
     return decoded ? `bzz://${decoded}` : '';
   }
@@ -483,8 +487,8 @@ const KNOWN_GATEWAY_HOSTS = new Set([
 // avoids `new URL()` so base58btc hosts survive Chromium's standard-
 // scheme lowercasing — see the comment in `parseIpfsInput`), so port
 // handling has to be done here too. Kubo emits protocol-relative anchors
-// like `<a href="//localhost:8080/ipfs/<cid>">`, which Chromium resolves
-// against the page's `ipfs://` origin to `ipfs://localhost:8080/ipfs/<cid>`;
+// like `<a href="//localhost:<gateway-port>/ipfs/<cid>">`, which Chromium resolves
+// against the page's `ipfs://` origin to `ipfs://localhost:<gateway-port>/ipfs/<cid>`;
 // without stripping the port the allowlist comparison would miss and the
 // rewrite would fall through, leaving the address bar permanently on
 // the gateway-origin form. `[::1]:8080` and bare `[::1]` are handled by
@@ -508,6 +512,10 @@ const isKnownGatewayHost = (host) => {
 };
 
 export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
+  if (!ipfsRoutePrefix) {
+    return null;
+  }
+
   // Remove ipfs:// or ipns:// scheme
   let withoutScheme = rawInput
     .replace(/^ipfs:\/\//i, '')
@@ -552,7 +560,7 @@ export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
   // recognised public-gateway / loopback hostname, the embedded
   // reference is the actual content target. The most common source is
   // Kubo's auto-generated directory listings: those emit
-  // `<a href="//localhost:8080/ipfs/<cid>">` which Chromium resolves
+  // `<a href="//localhost:<gateway-port>/ipfs/<cid>">` which Chromium resolves
   // against the page's `ipfs:` scheme to `ipfs://localhost/ipfs/<cid>`.
   // Without this rewrite, every link in a Kubo dir listing 404s.
   //
@@ -617,7 +625,7 @@ export const parseIpfsInput = (rawInput, ipfsRoutePrefix) => {
 
 /**
  * Derive IPFS base URL from a gateway URL.
- * Accepts the path-gateway form ("http://localhost:8080/ipfs/CID/path").
+ * Accepts the path-gateway form ("http://localhost:<gateway-port>/ipfs/CID/path").
  * The subdomain-gateway form is no longer recognised here — Chromium never
  * sees `<cid>.ipfs.localhost` URLs since `ipfs:`/`ipns:` are standard
  * schemes and the protocol handler in `src/main/ipfs/ipfs-protocol.js`
@@ -687,6 +695,9 @@ export const formatIpfsUrl = (input, ipfsRoutePrefix) => {
     const derivedBase = deriveIpfsBaseFromUrl(asUrl);
     if (derivedBase) {
       const isIpns = asUrl.pathname.toLowerCase().startsWith('/ipns/');
+      const ipnsRoutePrefix = ipfsRoutePrefix
+        ? ipfsRoutePrefix.replace('/ipfs/', '/ipns/')
+        : null;
       return {
         targetUrl: asUrl.toString(),
         displayValue: deriveDisplayValue(
@@ -694,7 +705,7 @@ export const formatIpfsUrl = (input, ipfsRoutePrefix) => {
           '',
           '',
           ipfsRoutePrefix,
-          ipfsRoutePrefix.replace('/ipfs/', '/ipns/')
+          ipnsRoutePrefix
         ),
         baseUrl: derivedBase,
         protocol: isIpns ? 'ipns' : 'ipfs',
@@ -737,6 +748,10 @@ export const formatIpfsUrl = (input, ipfsRoutePrefix) => {
  * @returns {object|null} Parsed result with rid, tail, baseUrl, displayValue
  */
 export const parseRadicleInput = (rawInput, radicleApiPrefix) => {
+  if (!radicleApiPrefix) {
+    return null;
+  }
+
   // Remove rad: or rad:// prefix
   let withoutScheme = rawInput.replace(/^rad:\/\//i, '').replace(/^rad:/i, '').replace(/^\/+/, '');
 
@@ -814,12 +829,15 @@ export const deriveRadBaseFromUrl = (input) => {
 /**
  * Format user input into a Radicle browser page URL
  * @param {string} input - User input (RID, rad:RID, etc.)
- * @param {string} radicleBase - Radicle httpd base URL like "http://127.0.0.1:8780"
+ * @param {string} radicleBase - Radicle httpd base URL
  * @returns {object|null} Object with targetUrl, displayValue, protocol
  */
 export const formatRadicleUrl = (input, radicleBase) => {
   const raw = (input || '').trim();
   if (!raw) {
+    return null;
+  }
+  if (!radicleBase) {
     return null;
   }
 

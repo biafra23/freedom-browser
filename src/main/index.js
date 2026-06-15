@@ -1,6 +1,8 @@
 // Set app name early, before electron-log initializes (it uses app name for log path)
-const { app } = require('electron');
-const appName = process.platform === 'linux' ? 'freedom' : 'Freedom';
+const { app, dialog } = require('electron');
+const appName = app.isPackaged
+  ? process.platform === 'linux' ? 'freedom' : 'Freedom'
+  : 'Freedom Dev';
 
 // Suppress Electron security warnings in development (CSP handles security in production)
 if (!app.isPackaged) {
@@ -22,6 +24,60 @@ if (process.env.FREEDOM_TEST_USER_DATA) {
   app.setPath('userData', process.env.FREEDOM_TEST_USER_DATA);
 }
 const TEST_MODE = process.env.FREEDOM_TEST_MODE === '1';
+const { migrateBeeDataToAntData, migrateUserData } = require('./migrate-user-data');
+if (app.isPackaged && !process.env.FREEDOM_TEST_USER_DATA) {
+  migrateUserData({ logger: console });
+}
+const { initializeProfile, warnAboutLegacyDevData } = require('./profile-resolver');
+let activeProfile = null;
+try {
+  activeProfile = initializeProfile(app);
+} catch (error) {
+  dialog.showErrorBox(
+    'Freedom profile could not open',
+    `Freedom could not initialize the selected profile.\n\n${error?.message || error}`
+  );
+  app.exit(1);
+  process.exit(1);
+}
+const {
+  acquireProfileLock,
+  isLockUnavailableError,
+  releaseProfileLock,
+} = require('./profile-lock');
+const {
+  requestProfileFocusSync,
+  startProfileFocusRequestWatcher,
+} = require('./profile-focus-handoff');
+let activeProfileLock = null;
+try {
+  activeProfileLock = acquireProfileLock(activeProfile, { logger: console });
+} catch (error) {
+  if (isLockUnavailableError(error)) {
+    const profileName = activeProfile.displayName || activeProfile.id || 'selected';
+    const focusResult = requestProfileFocusSync(activeProfile);
+    if (!focusResult.ok) {
+      dialog.showErrorBox(
+        'Freedom profile is already open',
+        `The "${profileName}" profile is already open, but Freedom could not focus it.\n\nClose that Freedom window or launch a different profile.`
+      );
+    }
+    app.exit(0);
+    process.exit(0);
+  }
+  throw error;
+}
+let focusCurrentProfileWindow = null;
+const profileFocusWatcher = startProfileFocusRequestWatcher(
+  activeProfile,
+  () => app.whenReady().then(() => {
+    if (typeof focusCurrentProfileWindow !== 'function') {
+      throw new Error('Main window focus handler is not ready');
+    }
+    return focusCurrentProfileWindow();
+  }),
+  { logger: console }
+);
 
 const { version } = require('../../package.json');
 const iconPath = app.isPackaged
@@ -49,8 +105,9 @@ process.on('unhandledRejection', (reason, _promise) => {
   log.error('Unhandled rejection:', reason);
 });
 
+const { registerShutdownSignalHandlers } = require('./shutdown-signals');
+const unregisterShutdownSignalHandlers = registerShutdownSignalHandlers({ app, logger: log });
 const { BrowserWindow, protocol, session } = require('electron');
-const path = require('path');
 const { registerBaseIpcHandlers } = require('./ipc-handlers');
 const { installRequestRewriter } = require('./request-rewriter');
 const { attachWebRequestDispatcher } = require('./webrequest-dispatcher');
@@ -102,17 +159,35 @@ const { registerSwarmProviderIpc } = require('./swarm/swarm-provider-ipc');
 const { registerFeedStoreIpc } = require('./swarm/feed-store');
 const { registerGithubBridgeIpc, cleanupTempDirs } = require('./github-bridge');
 const { registerServiceRegistryIpc } = require('./service-registry');
-const { createMainWindow, setWindowTitle, getMainWindows } = require('./windows/mainWindow');
-const { migrateUserData, migrateBeeDataToAntData } = require('./migrate-user-data');
+const { promptForDefaultExternalCandidates } = require('./profile-external-candidates');
+const {
+  createMainWindow,
+  focusOrCreateMainWindow,
+  setWindowTitle,
+  getMainWindows,
+} = require('./windows/mainWindow');
+focusCurrentProfileWindow = focusOrCreateMainWindow;
 const { initUpdater } = require('./updater');
 const { setupApplicationMenu, updateTabMenuItems } = require('./menu');
 const { registerWebContentsHandlers } = require('./webcontents-setup');
 const { installTestHarness } = require('./test-harness');
 
 app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
-
-const crashDir = path.join(__dirname, 'crash-reports');
-app.setPath('crashDumps', crashDir);
+log.info('[profile] Active profile:', {
+  id: activeProfile.id,
+  source: activeProfile.source,
+  userDataDir: activeProfile.userDataDir,
+  appRoot: activeProfile.appRoot,
+});
+warnAboutLegacyDevData(activeProfile, { logger: log });
+app.on('will-quit', () => {
+  unregisterShutdownSignalHandlers();
+  profileFocusWatcher.stop();
+  if (activeProfileLock) {
+    releaseProfileLock(activeProfileLock, { logger: log });
+    activeProfileLock = null;
+  }
+});
 
 function allowInteractivePermissions(targetSession) {
   if (!targetSession || !targetSession.setPermissionRequestHandler) {
@@ -129,10 +204,6 @@ function allowInteractivePermissions(targetSession) {
 }
 
 async function bootstrap() {
-  // Migrate user data from old "Freedom Browser" directory if needed
-  // This must run before any modules access userData
-  migrateUserData();
-
   // Carry the injected Swarm identity from the Bee-era bee-data/ into
   // ant-data/. Must run before the Ant node is started below, or antd
   // self-generates a throwaway identity on the empty directory.
@@ -224,6 +295,18 @@ async function bootstrap() {
   }
 
   const settings = loadSettings();
+  const mainWindow = createMainWindow();
+
+  if (!TEST_MODE) {
+    await promptForDefaultExternalCandidates(activeProfile, {
+      window: mainWindow,
+      enabledProtocols: {
+        bee: settings.startBeeAtLaunch !== false,
+        radicle: settings.enableRadicleIntegration === true && settings.startRadicleAtLaunch !== false,
+      },
+      logger: log,
+    });
+  }
 
   // In test mode the harness has already seeded service-registry with
   // fake endpoints. Spawning real Bee / IPFS / Radicle binaries against
@@ -241,13 +324,11 @@ async function bootstrap() {
     }
   }
 
-  const mainWindow = createMainWindow();
-
   // Initialize auto-updater (pass menu update callback). Skipped in
   // test mode so specs don't trigger background network checks against
   // freedom.baby.
   if (!TEST_MODE) {
-    initUpdater(mainWindow, setupApplicationMenu);
+    initUpdater(mainWindow, setupApplicationMenu, { profile: activeProfile });
   }
 
   app.on('activate', () => {

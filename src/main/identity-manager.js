@@ -8,11 +8,18 @@
  * - Provides IPC handlers for renderer communication
  */
 
-const { ipcMain, app } = require('electron');
+const { ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const IPC = require('../shared/ipc-channels');
+const {
+  getAntDataDir,
+  getIdentityDataDir,
+  getIpfsDataDir,
+  getRadicleDataDir,
+} = require('./profile-paths');
+const { getActiveProfile } = require('./profile-resolver');
 const { VAULT_LOCKED_MESSAGE } = require('./wallet/vault-errors');
 
 // Identity module - loaded lazily
@@ -48,24 +55,8 @@ let injectedNodes = {
 
 // Vault metadata file
 const VAULT_META_FILE = 'vault-meta.json';
-
-/**
- * Get the app data directory for identity storage
- */
-function getIdentityDataDir() {
-  // Explicit override for tests / advanced users — keeps a live E2E
-  // run from picking up the developer's persistent dev `identity-data/`
-  // vault, which would flip Bee/IPFS into injected-identity mode and
-  // make them hang waiting for keys the temp data dirs don't have.
-  // Honoured in both dev and packaged modes.
-  if (process.env.FREEDOM_IDENTITY_DATA) {
-    return process.env.FREEDOM_IDENTITY_DATA;
-  }
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'identity-data');
-  }
-  return path.join(app.getPath('userData'), 'identity');
-}
+const LEGACY_NON_CATALOG_BEE_API_PORT = 1633;
+const LEGACY_NON_CATALOG_BEE_P2P_PORT = 1634;
 
 /**
  * Get the path to the vault metadata file
@@ -305,68 +296,16 @@ async function getUserWalletKey(walletIndex) {
 }
 
 /**
- * Get the Ant data directory
- *
- * Must resolve to the same directory bee-manager uses, so the keys we inject
- * land where the running node reads them. The FREEDOM_ANT_DATA override
- * mirrors bee-manager.getAntDataPath() and keeps a live E2E run isolated in a
- * temp dir instead of the developer's persistent `ant-data/`.
- */
-function getAntDataDir() {
-  if (process.env.FREEDOM_ANT_DATA) {
-    return process.env.FREEDOM_ANT_DATA;
-  }
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'ant-data');
-  }
-  return path.join(app.getPath('userData'), 'ant-data');
-}
-
-/**
- * Get the IPFS data directory
- *
- * Legacy Kubo-compatible location. The native freedom-ipfs node uses a
- * dedicated child directory managed by ipfs-manager and does not consume Kubo
- * config identity fields.
- */
-function getIpfsDataDir() {
-  if (process.env.FREEDOM_IPFS_DATA) {
-    return process.env.FREEDOM_IPFS_DATA;
-  }
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'ipfs-data');
-  }
-  return path.join(app.getPath('userData'), 'ipfs-data');
-}
-
-function isIpfsIdentityPrepared() {
-  return false;
-}
-
-/**
- * Get the Radicle data directory
- *
- * Mirrors radicle-manager.getRadicleDataPath()'s FREEDOM_RADICLE_DATA override
- * so injection targets the same RAD_HOME the node uses (and stays isolated in
- * E2E).
- */
-function getRadicleDataDir() {
-  if (process.env.FREEDOM_RADICLE_DATA) {
-    return process.env.FREEDOM_RADICLE_DATA;
-  }
-  if (!app.isPackaged) {
-    return path.join(__dirname, '..', '..', 'radicle-data');
-  }
-  return path.join(app.getPath('userData'), 'radicle-data');
-}
-
-/**
- * Check if Bee identity has been injected
+ * Check if the Swarm identity has been injected into Ant's data directory.
  */
 function isBeeIdentityInjected() {
   const dataDir = getAntDataDir();
   const keystorePath = path.join(dataDir, 'keys', 'swarm.key');
   return fs.existsSync(keystorePath);
+}
+
+function isIpfsIdentityPrepared() {
+  return false;
 }
 
 /**
@@ -448,6 +387,34 @@ async function readRadicleDid() {
  */
 function generateBeeKeystorePassword() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+function getBeeApiPortForIdentityConfig() {
+  const profile = getActiveProfile();
+  const apiPort = profile?.metadata?.nodes?.bee?.apiPort;
+  if (Number.isInteger(apiPort)) {
+    return apiPort;
+  }
+
+  if (!profile || profile.source !== 'catalog') {
+    return LEGACY_NON_CATALOG_BEE_API_PORT;
+  }
+
+  throw new Error('Active profile is missing a Bee API port');
+}
+
+function getBeeP2pPortForIdentityConfig() {
+  const profile = getActiveProfile();
+  const p2pPort = profile?.metadata?.nodes?.bee?.p2pPort;
+  if (Number.isInteger(p2pPort)) {
+    return p2pPort;
+  }
+
+  if (!profile || profile.source !== 'catalog') {
+    return LEGACY_NON_CATALOG_BEE_P2P_PORT;
+  }
+
+  throw new Error('Active profile is missing a Bee P2P port');
 }
 
 // On Windows, deleting LevelDB-backed dirs (statestore/localstore) throws
@@ -597,7 +564,12 @@ async function injectBeeIdentity() {
   await identity.injectBeeKey(dataDir, derivedKeys.beeWallet.privateKey, beePassword);
 
   // Store the password in config so Bee can decrypt the keystore on startup
-  identity.createBeeConfig(dataDir, beePassword);
+  identity.createBeeConfig(
+    dataDir,
+    beePassword,
+    getBeeApiPortForIdentityConfig(),
+    getBeeP2pPortForIdentityConfig()
+  );
 
   injectedNodes.bee = true;
 

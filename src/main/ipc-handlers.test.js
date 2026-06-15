@@ -21,6 +21,19 @@ function createWindowMock() {
   };
 }
 
+const HOST_RENDERER_URL = 'file:///app/src/renderer/index.html';
+const SETTINGS_PAGE_URL = 'file:///app/src/renderer/pages/settings.html';
+const HISTORY_PAGE_URL = 'file:///app/src/renderer/pages/history.html';
+
+function createIpcEvent(url = SETTINGS_PAGE_URL) {
+  return {
+    senderFrame: { url },
+    sender: {
+      getURL: jest.fn(() => url),
+    },
+  };
+}
+
 function loadIpcHandlersModule(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const log = {
@@ -44,18 +57,127 @@ function loadIpcHandlersModule(options = {}) {
       isEmpty: () => false,
     })),
   };
+  const activeProfile = Object.prototype.hasOwnProperty.call(options, 'activeProfile')
+    ? options.activeProfile
+    : {
+      id: 'default',
+      displayName: 'Default',
+      source: 'catalog',
+      isDev: false,
+      userDataDir: '/tmp/freedom-user-data',
+    };
+  const updateActiveProfileNodeConfig =
+    options.updateActiveProfileNodeConfig ||
+    jest.fn((protocol, updates) => {
+      if (activeProfile?.metadata) {
+        activeProfile.metadata.nodes = activeProfile.metadata.nodes || {};
+        activeProfile.metadata.nodes[protocol] = {
+          ...(activeProfile.metadata.nodes[protocol] || {}),
+          ...updates,
+        };
+      }
+      return { metadata: activeProfile?.metadata || null };
+    });
+  const listProfilesForActiveApp =
+    options.listProfilesForActiveApp ||
+    jest.fn(() => options.profiles || [
+      {
+        id: activeProfile?.id || 'default',
+        displayName: activeProfile?.displayName || 'Default',
+        slot: activeProfile?.metadata?.slot ?? 0,
+        createdAt: activeProfile?.metadata?.createdAt || null,
+        lastOpenedAt: activeProfile?.metadata?.lastOpenedAt || null,
+        nodes: activeProfile?.metadata?.nodes || null,
+        isActive: true,
+      },
+    ]);
+  const createProfileForActiveApp =
+    options.createProfileForActiveApp ||
+    jest.fn((profile) => ({
+      record: {
+        id: 'created',
+        displayName: profile.displayName,
+        slot: 1,
+      },
+      metadata: {
+        id: 'created',
+        displayName: profile.displayName,
+        slot: 1,
+        nodes: {},
+      },
+    }));
+  const importProfileForActiveApp =
+    options.importProfileForActiveApp ||
+    jest.fn((id) => ({
+      record: {
+        id,
+        displayName: id === 'work' ? 'Work' : id,
+        slot: 1,
+      },
+      metadata: {
+        id,
+        displayName: id === 'work' ? 'Work' : id,
+        slot: 1,
+        nodes: {},
+      },
+    }));
+  const renameProfileForActiveApp =
+    options.renameProfileForActiveApp ||
+    jest.fn((id, displayName) => ({
+      record: {
+        id,
+        displayName,
+        slot: 0,
+      },
+      metadata: {
+        id,
+        displayName,
+        slot: 0,
+        nodes: {},
+      },
+    }));
+  const launchProfile =
+    options.launchProfile ||
+    jest.fn((_activeProfile, profileId) => ({
+      command: '/electron',
+      args: [`--profile=${profileId}`],
+    }));
+  const deleteProfileForActiveApp =
+    options.deleteProfileForActiveApp ||
+    jest.fn((id, _confirmDisplayName) => ({
+      record: {
+        id,
+        displayName: id === 'work' ? 'Work' : id,
+        slot: 1,
+        nodes: {},
+      },
+    }));
 
-  const { mod, app } = loadMainModule(require.resolve('./ipc-handlers'), {
+  const { mod, app, webContents } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
     dialog,
     clipboard,
     nativeImage,
+    webContents: options.webContents,
+    webContentsList: options.webContentsList,
     extraMocks: {
       [require.resolve('./logger')]: () => log,
       [require.resolve('./settings-store')]: () => ({ loadSettings }),
       [require.resolve('./http-fetch')]: () => ({
         fetchBuffer,
         fetchToFile,
+      }),
+      [require.resolve('./profile-resolver')]: () => ({
+        createProfileForActiveApp,
+        deleteProfileForActiveApp,
+        getActiveProfile: jest.fn(() => activeProfile),
+        importProfileForActiveApp,
+        listProfilesForActiveApp,
+        renameProfileForActiveApp,
+        updateActiveProfileNodeConfig,
+      }),
+      [require.resolve('./profile-launcher')]: () => ({
+        launchProfile,
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -79,6 +201,16 @@ function loadIpcHandlersModule(options = {}) {
     mod,
     nativeImage,
     state,
+    webContents,
+    createProfileForActiveApp,
+    deleteProfileForActiveApp,
+    importProfileForActiveApp,
+    listProfilesForActiveApp,
+    launchProfile,
+    invokeProfileMutation: (channel, payload = {}, url = SETTINGS_PAGE_URL) =>
+      Promise.resolve(ipcMain.handlers.get(channel)(createIpcEvent(url), payload)),
+    renameProfileForActiveApp,
+    updateActiveProfileNodeConfig,
   };
 }
 
@@ -210,6 +342,12 @@ describe('ipc-handlers', () => {
     expect(win.setFullScreen).toHaveBeenCalledWith(true);
 
     await expect(ctx.ipcMain.invoke(IPC.WINDOW_GET_PLATFORM)).resolves.toBe(process.platform);
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_GET_ACTIVE)).resolves.toEqual({
+      id: 'default',
+      displayName: 'Default',
+      source: 'catalog',
+      isDev: false,
+    });
 
     ctx.ipcMain.emit(IPC.WINDOW_NEW, event);
     ctx.ipcMain.emit(IPC.WINDOW_NEW_WITH_URL, event, 'https://example.com');
@@ -252,6 +390,403 @@ describe('ipc-handlers', () => {
 
     await ctx.ipcMain.handlers.get(IPC.SIDEBAR_OPEN_PUBLISH_SETUP)(event);
     expect(hostWebContents.send).toHaveBeenCalledWith(IPC.SIDEBAR_OPEN_PUBLISH_SETUP);
+  });
+
+  test('returns active profile metadata without local paths', async () => {
+    const ctx = loadIpcHandlersModule({
+      activeProfile: {
+        id: 'work',
+        displayName: 'Work',
+        source: 'catalog',
+        isDev: true,
+        userDataDir: '/sensitive/profile/path',
+        appRoot: '/sensitive/app/root',
+        metadata: {
+          slot: 2,
+          nodes: {
+            bee: { mode: 'managed', apiPort: 11635 },
+            ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
+            radicle: { mode: 'disabled' },
+          },
+        },
+      },
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_GET_ACTIVE)).resolves.toEqual({
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: true,
+      slot: 2,
+      nodes: {
+        bee: { mode: 'managed', apiPort: 11635 },
+        ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
+        radicle: { mode: 'disabled' },
+      },
+    });
+  });
+
+  test('lists, creates, and renames profiles through profile IPC', async () => {
+    const activeProfile = {
+      id: 'default',
+      displayName: 'Default',
+      source: 'catalog',
+      isDev: false,
+    };
+    const profileWebContents = {
+      send: jest.fn(),
+    };
+    const ctx = loadIpcHandlersModule({
+      activeProfile,
+      webContentsList: [profileWebContents],
+      profiles: [
+        {
+          id: 'default',
+          displayName: 'Default',
+          slot: 0,
+          createdAt: '2026-05-25T00:00:00.000Z',
+          lastOpenedAt: '2026-05-26T00:00:00.000Z',
+          nodes: { bee: { mode: 'managed', apiPort: 11633 } },
+          isActive: true,
+        },
+      ],
+      renameProfileForActiveApp: jest.fn((id, displayName) => {
+        if (id === activeProfile.id) {
+          activeProfile.displayName = displayName;
+        }
+        return {
+          record: {
+            id,
+            displayName,
+            slot: 0,
+          },
+          metadata: {
+            id,
+            displayName,
+            slot: 0,
+            nodes: {},
+          },
+        };
+      }),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.ipcMain.invoke(IPC.PROFILE_LIST)).resolves.toEqual(
+      success({
+        profiles: [
+          {
+            id: 'default',
+            displayName: 'Default',
+            slot: 0,
+            createdAt: '2026-05-25T00:00:00.000Z',
+            lastOpenedAt: '2026-05-26T00:00:00.000Z',
+            nodes: { bee: { mode: 'managed', apiPort: 11633 } },
+            isActive: true,
+          },
+        ],
+      })
+    );
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_CREATE, { displayName: 'Work' })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'created',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: false,
+        },
+      })
+    );
+    expect(ctx.createProfileForActiveApp).toHaveBeenCalledWith({
+      displayName: 'Work',
+      id: undefined,
+    });
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_RENAME, { id: 'default', displayName: 'Personal' })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'default',
+          displayName: 'Personal',
+          slot: 0,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: true,
+        },
+        activeProfile: {
+          id: 'default',
+          displayName: 'Personal',
+          source: 'catalog',
+          isDev: false,
+        },
+      })
+    );
+    expect(ctx.renameProfileForActiveApp).toHaveBeenCalledWith('default', 'Personal');
+    expect(profileWebContents.send).toHaveBeenCalledWith(IPC.PROFILE_UPDATED, {
+      id: 'default',
+      displayName: 'Personal',
+      source: 'catalog',
+      isDev: false,
+    });
+  });
+
+  test('opens inactive catalog profiles through profile IPC', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        {
+          id: 'default',
+          displayName: 'Default',
+          slot: 0,
+          nodes: {},
+          isActive: true,
+        },
+        {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          nodes: { bee: { mode: 'managed', apiPort: 11634 } },
+          isActive: false,
+        },
+      ],
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_OPEN, { id: 'work' }, HOST_RENDERER_URL)
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: undefined,
+          lastOpenedAt: undefined,
+          nodes: { bee: { mode: 'managed', apiPort: 11634 } },
+          isActive: false,
+        },
+        launch: {
+          command: '/electron',
+          args: ['--profile=work'],
+        },
+      })
+    );
+    expect(ctx.launchProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'default' }),
+      'work'
+    );
+  });
+
+  test('rejects profile mutations from non-settings internal pages', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(
+        IPC.PROFILE_CREATE,
+        { displayName: 'Work' },
+        HISTORY_PAGE_URL
+      )
+    ).resolves.toEqual(
+      failure(
+        'PROFILE_IPC_FORBIDDEN',
+        'Profile changes are only available from trusted profile UI'
+      )
+    );
+    expect(ctx.createProfileForActiveApp).not.toHaveBeenCalled();
+  });
+
+  test('imports unregistered profile directories through profile IPC', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.invokeProfileMutation(IPC.PROFILE_IMPORT, { id: 'work' })).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: false,
+        },
+      })
+    );
+    expect(ctx.importProfileForActiveApp).toHaveBeenCalledWith('work');
+  });
+
+  test('rejects opening the active profile', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(ctx.invokeProfileMutation(IPC.PROFILE_OPEN, { id: 'default' })).resolves.toEqual(
+      failure('PROFILE_ALREADY_OPEN', 'This profile is already open')
+    );
+    expect(ctx.launchProfile).not.toHaveBeenCalled();
+  });
+
+  test('deletes inactive profiles through typed confirmation IPC', async () => {
+    const ctx = loadIpcHandlersModule();
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_DELETE, {
+        id: 'work',
+        confirmDisplayName: 'Work',
+      })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          slot: 1,
+          createdAt: null,
+          lastOpenedAt: null,
+          nodes: {},
+          isActive: false,
+        },
+      })
+    );
+    expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
+  });
+
+  test('updates active profile node config through validated IPC', async () => {
+    const activeProfile = {
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: false,
+      metadata: {
+        slot: 1,
+        nodes: {
+          bee: { mode: 'managed', apiPort: 11634 },
+          ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
+          radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+        },
+      },
+    };
+    const profileWebContents = {
+      send: jest.fn(),
+    };
+    const ctx = loadIpcHandlersModule({ activeProfile, webContentsList: [profileWebContents] });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'bee',
+        config: {
+          mode: 'external',
+          externalApi: '127.0.0.1:1633/',
+          ignored: true,
+        },
+      })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          source: 'catalog',
+          isDev: false,
+          slot: 1,
+          nodes: {
+            bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
+            ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
+            radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+          },
+        },
+      })
+    );
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('bee', {
+      mode: 'external',
+      externalApi: 'http://127.0.0.1:1633',
+    });
+    expect(profileWebContents.send).toHaveBeenCalledWith(IPC.PROFILE_UPDATED, {
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: false,
+      slot: 1,
+      nodes: {
+        bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
+        ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
+        radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+      },
+    });
+  });
+
+  test('rejects invalid active profile node updates', async () => {
+    const ctx = loadIpcHandlersModule({
+      activeProfile: {
+        id: 'work',
+        displayName: 'Work',
+        source: 'catalog',
+        metadata: { nodes: {} },
+      },
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'bee',
+        config: { mode: 'preferExternal' },
+      })
+    ).resolves.toEqual(
+      failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
+        mode: 'preferExternal',
+      })
+    );
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'ipfs',
+        config: { mode: 'external', externalApi: '127.0.0.1:5001' },
+      })
+    ).resolves.toEqual(
+      failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
+        mode: 'external',
+      })
+    );
+
+    expect(ctx.updateActiveProfileNodeConfig).not.toHaveBeenCalled();
+  });
+
+  test('rejects profile node updates outside catalog profiles', async () => {
+    const ctx = loadIpcHandlersModule({
+      activeProfile: {
+        id: 'direct',
+        displayName: 'Direct',
+        source: 'profile-dir',
+      },
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'bee',
+        config: { mode: 'disabled' },
+      })
+    ).resolves.toEqual(
+      failure('PROFILE_NOT_EDITABLE', 'The active profile cannot be edited')
+    );
   });
 
   test('saves images through the dialog workflow', async () => {
