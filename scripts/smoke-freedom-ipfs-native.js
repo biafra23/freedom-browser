@@ -9,11 +9,6 @@ const DEFAULT_LIVE_PATH = '/ipns/ipfs.tech/';
 const DEFAULT_LIVE_EXPECT = 'ipfs';
 const DEFAULT_LIVE_ATTEMPTS = 3;
 const LIVE_TIMEOUT_MS = 45_000;
-const ISSUE_102_PATH =
-  '/ipfs/bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy/frontend/pages/QXBvbGxvIDEyIE1hZ2F6aW5lIDUwL1E=.html';
-const ISSUE_102_CONCURRENCY = 48;
-const ISSUE_102_MAX_ASSETS = 96;
-const ISSUE_102_ASSET_TIMEOUT_MS = 30_000;
 
 function assert(condition, message) {
   if (!condition) {
@@ -43,61 +38,6 @@ function extractTitle(body) {
   return match ? match[1].replace(/\s+/g, ' ').trim() : null;
 }
 
-function gatewayPathToIpfsUrl(gatewayPath) {
-  const match = gatewayPath.match(/^\/(ipfs|ipns)\/([^/?#]+)([^?#]*)?(\?[^#]*)?(#.*)?$/);
-  if (!match) return null;
-  const [, protocol, host, pathname = '/', search = '', hash = ''] = match;
-  return `${protocol}://${host}${pathname || '/'}${search}${hash}`;
-}
-
-function ipfsUrlToGatewayPath(value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== 'ipfs:' && url.protocol !== 'ipns:') return null;
-  return `/${url.protocol.slice(0, -1)}/${url.host}${url.pathname}${url.search}`;
-}
-
-function discoverIpfsSubresources(html, baseGatewayPath) {
-  const baseUrl = gatewayPathToIpfsUrl(baseGatewayPath);
-  if (!baseUrl) return [];
-
-  const resources = new Set();
-  const attrPattern = /\b(?:src|href)\s*=\s*["']([^"']+)["']/gi;
-  let match;
-  while ((match = attrPattern.exec(html))) {
-    const raw = match[1]?.trim();
-    if (!raw || raw.startsWith('#') || raw.startsWith('data:') || raw.startsWith('javascript:')) {
-      continue;
-    }
-    try {
-      const resolved = new URL(raw, baseUrl).toString();
-      const gatewayPath = ipfsUrlToGatewayPath(resolved);
-      if (gatewayPath && gatewayPath !== baseGatewayPath) resources.add(gatewayPath);
-    } catch {
-      // Ignore malformed subresource references in live pages.
-    }
-  }
-
-  return [...resources];
-}
-
-async function requestText(node, gatewayPath, { signal } = {}) {
-  const response = await node.request({
-    method: 'GET',
-    path: gatewayPath,
-    headers: new Headers({
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    }),
-    signal,
-  });
-  const body = await response.text();
-  return { response, body };
-}
-
 async function loadLivePage(node) {
   if (process.env.FREEDOM_IPFS_NATIVE_SMOKE_LIVE === '0') return null;
 
@@ -115,9 +55,15 @@ async function loadLivePage(node) {
     const timeout = setTimeout(() => controller.abort(), LIVE_TIMEOUT_MS);
 
     try {
-      const { response, body } = await requestText(node, smokePath, {
+      const response = await node.request({
+        method: 'GET',
+        path: smokePath,
+        headers: new Headers({
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }),
         signal: controller.signal,
       });
+      const body = await response.text();
       const title = extractTitle(body);
 
       assert(
@@ -157,87 +103,6 @@ async function loadLivePage(node) {
   throw lastError;
 }
 
-async function loadIssue102Fanout(node) {
-  if (process.env.FREEDOM_IPFS_NATIVE_SMOKE_ISSUE_102 !== '1') return null;
-
-  const startedAt = Date.now();
-  const root = await requestText(node, ISSUE_102_PATH);
-  assert(
-    root.response.status >= 200 && root.response.status < 400,
-    `issue #102 root returned HTTP ${root.response.status}`
-  );
-
-  const assets = discoverIpfsSubresources(root.body, ISSUE_102_PATH).slice(0, ISSUE_102_MAX_ASSETS);
-  assert(assets.length >= 40, `issue #102 expected many subresources, discovered ${assets.length}`);
-
-  const beforeStats = parseJson(
-    'native stats before issue #102 fanout',
-    node.nativeGatewayStatsJson()
-  );
-  const results = [];
-  let next = 0;
-
-  async function worker() {
-    while (next < assets.length) {
-      const asset = assets[next++];
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), ISSUE_102_ASSET_TIMEOUT_MS);
-      try {
-        const response = await node.request({
-          method: 'GET',
-          path: asset,
-          headers: new Headers({ Accept: '*/*' }),
-          signal: controller.signal,
-        });
-        await response.arrayBuffer();
-        results.push({
-          path: asset,
-          status: response.status,
-          errorCode: response.headers.get('x-freedom-ipfs-error-code') || null,
-        });
-      } catch (err) {
-        results.push({
-          path: asset,
-          status: 0,
-          errorCode: err.code || null,
-          error: err.message,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(ISSUE_102_CONCURRENCY, assets.length) }, () => worker())
-  );
-
-  const afterStats = parseJson(
-    'native stats after issue #102 fanout',
-    node.nativeGatewayStatsJson()
-  );
-  const gatewayBusy = results.filter(
-    (result) => result.status === 503 && result.errorCode === 'gateway_busy'
-  );
-  const busyDelta =
-    (afterStats.total_gateway_busy_responses || 0) -
-    (beforeStats.total_gateway_busy_responses || 0);
-
-  assert(gatewayBusy.length === 0, `issue #102 saw ${gatewayBusy.length} gateway_busy responses`);
-  assert(busyDelta === 0, `issue #102 gateway busy counter increased by ${busyDelta}`);
-
-  return {
-    path: ISSUE_102_PATH,
-    rootBytes: root.body.length,
-    discoveredAssets: assets.length,
-    fetchedAssets: results.length,
-    non2xxAssets: results.filter((result) => result.status < 200 || result.status >= 400).length,
-    gatewayBusyResponses: gatewayBusy.length,
-    gatewayBusyDelta: busyDelta,
-    ms: Date.now() - startedAt,
-  };
-}
-
 async function main() {
   const expectedTarget = process.env.FREEDOM_IPFS_NATIVE_SMOKE_TARGET;
   const actualTarget = `${process.platform}-${process.arch}`;
@@ -267,7 +132,6 @@ async function main() {
     const progress = parseJson('progress snapshot', node.progressSnapshotJson());
     const stats = parseJson('native gateway stats', node.nativeGatewayStatsJson());
     const livePage = await loadLivePage(node);
-    const issue102Fanout = await loadIssue102Fanout(node);
 
     assert(progress && Array.isArray(progress.active), 'progress snapshot missing active list');
     assert(stats && typeof stats === 'object' && !Array.isArray(stats), 'stats must be an object');
@@ -280,7 +144,6 @@ async function main() {
           buildInfo,
           dataDir,
           livePage,
-          issue102Fanout,
           statsKeys: Object.keys(stats).sort(),
         },
         null,

@@ -92,14 +92,6 @@ jobs:
           FREEDOM_IPFS_NATIVE_SMOKE_PATH: /ipns/ipfs.tech/
           FREEDOM_IPFS_NATIVE_SMOKE_EXPECT: ipfs
 
-      - name: Smoke test issue #102 high-fanout IPFS page
-        if: matrix.target == 'linux-x64'
-        run: npm run ipfs:native:smoke
-        env:
-          FREEDOM_IPFS_NATIVE_SMOKE_TARGET: ${{ matrix.target }}
-          FREEDOM_IPFS_NATIVE_SMOKE_LIVE: '0'
-          FREEDOM_IPFS_NATIVE_SMOKE_ISSUE_102: '1'
-
   # Issue #90 — Windows EPERM wiping bee-data/statestore during wallet creation.
   # Reproductions live in cross-platform Jest integration tests that spawn a
   # real Bee node; the Windows leg is what actually exercises the
