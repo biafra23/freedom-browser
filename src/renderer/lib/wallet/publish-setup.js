@@ -11,7 +11,7 @@ import { isChequebookDeployed } from './wallet-utils.js';
 import { normalizeSwarmMode } from './swarm-readiness.js';
 import { fetchAntJson } from './ant-api.js';
 import { openStampManager } from './stamp-manager.js';
-import { topUpXdai, topUpXbzz, GNOSIS_CHAIN_ID, XDAI_TOKEN_KEY, XBZZ_TOKEN_KEY } from './funding-actions.js';
+import { topUpXdai, topUpXbzz, GNOSIS_CHAIN_ID, XDAI_TOKEN_KEY, XBZZ_TOKEN_KEY, hasPositiveTokenBalance } from './funding-actions.js';
 
 const POLL_MS = 5000;
 
@@ -177,10 +177,8 @@ async function evaluateSteps() {
     try {
       const result = await window.wallet.getBalances(beeAddr);
       if (result?.success && result.balances) {
-        const xdaiRaw = parseFloat(result.balances[XDAI_TOKEN_KEY]?.formatted || '0');
-        hasXdai = xdaiRaw > 0;
-        const xbzzRaw = parseFloat(result.balances[XBZZ_TOKEN_KEY]?.formatted || '0');
-        beeHasXbzz = xbzzRaw > 0;
+        hasXdai = hasPositiveTokenBalance(result.balances, XDAI_TOKEN_KEY);
+        beeHasXbzz = hasPositiveTokenBalance(result.balances, XBZZ_TOKEN_KEY);
       }
     } catch {
       // Balance fetch failed — leave as false
@@ -190,8 +188,7 @@ async function evaluateSteps() {
   // Main wallet xBZZ balance (to know if user already swapped).
   // Read from walletState.currentBalances — already kept fresh by balance-display polling.
   if (!beeHasXbzz && mainAddr && mainAddr.toLowerCase() !== beeAddr?.toLowerCase()) {
-    const xbzzRaw = parseFloat(walletState.currentBalances[XBZZ_TOKEN_KEY]?.formatted || '0');
-    mainWalletHasXbzz = xbzzRaw > 0;
+    mainWalletHasXbzz = hasPositiveTokenBalance(walletState.currentBalances, XBZZ_TOKEN_KEY);
   }
 
   // Tier 2 + sync progress queries (run in parallel when available)
@@ -298,7 +295,7 @@ function renderSteps(steps) {
   toggleEl(stepFundXdaiBtn, step1Status === 'active');
 
   if (stepFundXdaiBtn && step1Status === 'active') {
-    const mainHasXdai = parseFloat(walletState.currentBalances[XDAI_TOKEN_KEY]?.formatted || '0') > 0;
+    const mainHasXdai = hasPositiveTokenBalance(walletState.currentBalances, XDAI_TOKEN_KEY);
     stepFundXdaiBtn.textContent = mainHasXdai ? 'Send xDAI' : 'Get xDAI';
   }
 
