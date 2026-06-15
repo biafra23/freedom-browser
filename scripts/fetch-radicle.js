@@ -105,6 +105,16 @@ async function installTarget(targetKey, radicleTarget, mainVersion, httpdVersion
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
+  // Remove stale root-level binaries before extraction. Otherwise findBinaries()
+  // can rediscover the old installed binary first and leave one component
+  // pinned to an older Radicle protocol version while the rest updates.
+  for (const name of REQUIRED_BINARIES) {
+    const existingBinary = path.join(targetDir, name);
+    if (fs.existsSync(existingBinary)) {
+      fs.unlinkSync(existingBinary);
+    }
+  }
+
   // Main bundle (rad, radicle-node, git-remote-rad)
   const mainBundleName = mainVersion
     ? `radicle-${mainVersion}-${radicleTarget}.tar.xz`

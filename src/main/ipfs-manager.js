@@ -1,8 +1,10 @@
 const log = require('./logger');
-const { ipcMain, app } = require('electron');
+const { ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const IPC = require('../shared/ipc-channels');
+const { getIpfsDataDir } = require('./profile-paths');
+const { getActiveProfile } = require('./profile-resolver');
 const {
   MODE,
   updateService,
@@ -63,21 +65,17 @@ function nativeNodeLabel(node) {
 }
 
 function getIpfsDataPath() {
-  if (process.env.FREEDOM_IPFS_DATA) {
-    const overrideDir = path.join(process.env.FREEDOM_IPFS_DATA, 'freedom-ipfs');
-    fs.mkdirSync(overrideDir, { recursive: true });
-    return overrideDir;
-  }
-
-  if (!app.isPackaged) {
-    const devDataDir = path.join(__dirname, '..', '..', 'ipfs-data', 'freedom-ipfs');
-    fs.mkdirSync(devDataDir, { recursive: true });
-    return devDataDir;
-  }
-
-  const dataDir = path.join(app.getPath('userData'), 'ipfs-data', 'freedom-ipfs');
+  const dataDir = path.join(getIpfsDataDir(), 'freedom-ipfs');
   fs.mkdirSync(dataDir, { recursive: true });
   return dataDir;
+}
+
+function getProfileIpfsConfig() {
+  return getActiveProfile()?.metadata?.nodes?.ipfs || null;
+}
+
+function isDisabledIpfsConfig(config = getProfileIpfsConfig()) {
+  return config?.mode === 'disabled';
 }
 
 function updateState(newState, error = null) {
@@ -142,6 +140,19 @@ function checkBinary() {
   return FreedomIpfsNativeNode.isAvailable();
 }
 
+function startDisabledIpfs() {
+  clearService('ipfs');
+  updateService('ipfs', {
+    api: null,
+    gateway: null,
+    mode: MODE.DISABLED,
+    backend: 'freedom-ipfs',
+  });
+  setStatusMessage('ipfs', 'Node disabled for this profile');
+  updateState(STATUS.STOPPED);
+  log.info('[IPFS] Disabled for active profile');
+}
+
 async function startIpfs() {
   if (currentState === STATUS.RUNNING || currentState === STATUS.STARTING) {
     log.info(`[IPFS] Ignoring start request, current state: ${currentState}`);
@@ -156,6 +167,11 @@ async function startIpfs() {
 
   pendingStart = false;
   updateState(STATUS.STARTING);
+
+  if (isDisabledIpfsConfig()) {
+    startDisabledIpfs();
+    return;
+  }
 
   if (!checkBinary()) {
     updateState(STATUS.ERROR, 'freedom-ipfs native addon not built');

@@ -26,6 +26,7 @@ function loadMenuModule(platform) {
       }),
       [require.resolve('./updater')]: () => ({
         checkForUpdates: jest.fn(),
+        getInstallRelaunchMode: () => ({ menuLabel: 'Install Update and Restart...' }),
         isUpdateReady: () => false,
         installUpdate: jest.fn(),
       }),
@@ -81,6 +82,17 @@ describe('menu', () => {
     );
     expect(capturedTemplate.some((item) => item.role === 'appMenu')).toBe(false);
     expect(capturedTemplate.some((item) => item.role === 'windowMenu')).toBe(false);
+  });
+
+  test('File menu includes profile management entry', () => {
+    for (const platform of ['darwin', 'win32', 'linux']) {
+      const { capturedTemplate } = loadMenuModule(platform);
+      const file = findTopLabel(capturedTemplate, 'File');
+
+      expect(file?.submenu?.map((item) => item.label)).toEqual(
+        expect.arrayContaining(['Manage Profiles...'])
+      );
+    }
   });
 
   test('macOS template keeps appMenu and editMenu roles', () => {

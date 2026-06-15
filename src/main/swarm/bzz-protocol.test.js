@@ -23,6 +23,7 @@ const {
   handleBzzRequest,
   RETRY_DELAYS_MS,
 } = require('./bzz-protocol');
+const { getBeeApiUrl } = require('../service-registry');
 
 const HASH = 'a'.repeat(64);
 const ENCRYPTED_HASH = 'a'.repeat(128);
@@ -30,6 +31,17 @@ const ENCRYPTED_HASH = 'a'.repeat(128);
 describe('buildGatewayUrl', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getBeeApiUrl.mockReturnValue('http://127.0.0.1:1633');
+  });
+
+  test('returns 503 when the Bee endpoint is not hydrated', async () => {
+    getBeeApiUrl.mockReturnValue(null);
+
+    await expect(buildGatewayUrl(`bzz://${HASH}/index.html`)).resolves.toEqual({
+      ok: false,
+      status: 503,
+      message: 'Bee node is not ready',
+    });
   });
 
   test('converts bzz://<hash>/path to the Bee gateway URL', async () => {
@@ -256,6 +268,7 @@ describe('sanitizeRequestHeaders', () => {
 describe('handleBzzRequest', () => {
   beforeEach(() => {
     mockResolveEnsContent.mockReset();
+    getBeeApiUrl.mockReturnValue('http://127.0.0.1:1633');
   });
 
   const makeRequest = (url, { method = 'GET', headers = {} } = {}) => ({

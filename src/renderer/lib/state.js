@@ -1,6 +1,16 @@
 // Shared renderer state
 // This module holds state that needs to be accessed across multiple UI modules
 
+const normalizeBaseUrl = (value) =>
+  typeof value === 'string' && value ? value.replace(/\/$/, '') : null;
+
+// Internal canonical base used by the renderer's URL parser and by tests that
+// expect a gateway-shaped intermediate. Freedom does not expose a desktop
+// Kubo-compatible loopback gateway; real loads go through ipfs:// / ipns://
+// and the main-process native freedom-ipfs request API.
+const NATIVE_IPFS_BASE = 'http://freedom-ipfs.localhost';
+const envBeeApi = normalizeBaseUrl(window.nodeConfig?.beeApi);
+
 export const state = {
   // Service Registry (updated from main process)
   registry: {
@@ -27,20 +37,20 @@ export const state = {
     },
   },
 
-  // Bee/Swarm Gateway config (defaults from env or hardcoded, updated from registry)
-  beeBase: (window.nodeConfig?.beeApi || 'http://127.0.0.1:1633').replace(/\/$/, ''),
+  // Bee/Swarm Gateway config (from env override or registry)
+  beeBase: envBeeApi,
   get bzzRoutePrefix() {
-    return `${this.beeBase}/bzz/`;
+    return this.beeBase ? `${this.beeBase}/bzz/` : null;
   },
 
-  // IPFS Gateway config (defaults from env or hardcoded, updated from registry)
-  ipfsBase: (window.nodeConfig?.ipfsGateway || 'http://localhost:8080').replace(/\/$/, ''),
-  ipfsApiBase: 'http://127.0.0.1:5001',
+  // IPFS native gateway-shaped canonical base. This is not an external Kubo endpoint.
+  ipfsBase: NATIVE_IPFS_BASE,
+  ipfsApiBase: null,
   get ipfsRoutePrefix() {
-    return `${this.ipfsBase}/ipfs/`;
+    return this.ipfsBase ? `${this.ipfsBase}/ipfs/` : null;
   },
   get ipnsRoutePrefix() {
-    return `${this.ipfsBase}/ipns/`;
+    return this.ipfsBase ? `${this.ipfsBase}/ipns/` : null;
   },
 
   // Navigation state
@@ -95,10 +105,10 @@ export const state = {
   radicleVersionValue: '',
   suppressRadicleRunningStatus: false,
 
-  // Radicle Gateway config (defaults updated from registry)
-  radicleBase: 'http://127.0.0.1:8780',
+  // Radicle Gateway config (updated from registry)
+  radicleBase: null,
   get radicleApiPrefix() {
-    return `${this.radicleBase}/api/v1/repos/`;
+    return this.radicleBase ? `${this.radicleBase}/api/v1/repos/` : null;
   },
 
   // Navigation state for Radicle
@@ -109,41 +119,39 @@ export const state = {
   blockUnverifiedEns: true, // When true, unverified ENS resolutions route through an interstitial
 };
 
-// Build Bee URL using registry or fallback to defaults
+const buildServiceUrl = (base, endpoint, serviceName) => {
+  if (!base) {
+    throw new Error(`${serviceName} endpoint is not ready`);
+  }
+  return `${base}${endpoint}`;
+};
+
+// Build Bee URL using registry or explicit env override
 export const buildBeeUrl = (endpoint) => {
   const base = state.registry.bee.api || state.beeBase;
-  return `${base}${endpoint}`;
+  return buildServiceUrl(base, endpoint, 'Bee');
 };
 
-// Build IPFS API URL using registry or fallback to defaults
+// Build IPFS API URL using registry
 export const buildIpfsApiUrl = (endpoint) => {
   const base = state.registry.ipfs.api || state.ipfsApiBase;
-  return `${base}${endpoint}`;
+  return buildServiceUrl(base, endpoint, 'IPFS API');
 };
 
-// Build Radicle API URL using registry or fallback to defaults
+// Build Radicle API URL using registry
 export const buildRadicleUrl = (endpoint) => {
   const base = state.registry.radicle.api || state.radicleBase;
-  return `${base}${endpoint}`;
+  return buildServiceUrl(base, endpoint, 'Radicle');
 };
 
 // Update registry state from main process
 export const updateRegistry = (newRegistry) => {
   state.registry = newRegistry;
 
-  // Update base URLs from registry if available
-  if (newRegistry.bee.api) {
-    state.beeBase = newRegistry.bee.api.replace(/\/$/, '');
-  }
-  if (newRegistry.ipfs.gateway) {
-    state.ipfsBase = newRegistry.ipfs.gateway.replace(/\/$/, '');
-  }
-  if (newRegistry.ipfs.api) {
-    state.ipfsApiBase = newRegistry.ipfs.api.replace(/\/$/, '');
-  }
-  if (newRegistry.radicle?.api) {
-    state.radicleBase = newRegistry.radicle.api.replace(/\/$/, '');
-  }
+  state.beeBase = normalizeBaseUrl(newRegistry.bee?.api) || envBeeApi;
+  state.ipfsBase = normalizeBaseUrl(newRegistry.ipfs?.gateway) || NATIVE_IPFS_BASE;
+  state.ipfsApiBase = normalizeBaseUrl(newRegistry.ipfs?.api);
+  state.radicleBase = normalizeBaseUrl(newRegistry.radicle?.api);
 };
 
 export const setRadicleIntegrationEnabled = (enabled) => {

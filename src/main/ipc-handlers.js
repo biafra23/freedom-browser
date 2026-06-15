@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const log = require('./logger');
-const { ipcMain, app, dialog, clipboard, nativeImage } = require('electron');
+const { ipcMain, app, dialog, clipboard, nativeImage, webContents } = require('electron');
 const { URL } = require('url');
 const path = require('path');
 const { activeBzzBases, activeRadBases } = require('./state');
@@ -10,6 +10,16 @@ const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
 const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
+const {
+  createProfileForActiveApp,
+  deleteProfileForActiveApp,
+  getActiveProfile,
+  importProfileForActiveApp,
+  listProfilesForActiveApp,
+  renameProfileForActiveApp,
+  updateActiveProfileNodeConfig,
+} = require('./profile-resolver');
+const { launchProfile } = require('./profile-launcher');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -80,6 +90,342 @@ const isAllowedBaseUrl = (value) => {
 const formatWindowTitle = (title) => {
   return title?.trim() ? `${title.trim()} - Freedom` : 'Freedom';
 };
+
+function getIpcSenderUrl(event) {
+  return event?.senderFrame?.url || event?.sender?.getURL?.() || '';
+}
+
+function normalizeFileUrlPath(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'file:') return null;
+    return decodeURIComponent(parsed.pathname).replace(/\\/g, '/');
+  } catch {
+    return null;
+  }
+}
+
+function isTrustedProfileMutationSender(event) {
+  const pathname = normalizeFileUrlPath(getIpcSenderUrl(event));
+  if (!pathname) return false;
+
+  return pathname.endsWith('/src/renderer/index.html')
+    || pathname.endsWith('/src/renderer/pages/settings.html');
+}
+
+function withTrustedProfileMutationSender(event, fn) {
+  if (!isTrustedProfileMutationSender(event)) {
+    return failure(
+      'PROFILE_IPC_FORBIDDEN',
+      'Profile changes are only available from trusted profile UI'
+    );
+  }
+  return fn();
+}
+
+function serializeActiveProfile() {
+  const profile = getActiveProfile();
+  if (!profile) return null;
+
+  const serialized = {
+    id: profile.id,
+    displayName: profile.displayName,
+    source: profile.source,
+    isDev: profile.isDev === true,
+  };
+
+  const metadata = profile.metadata || null;
+  if (Number.isInteger(metadata?.slot)) {
+    serialized.slot = metadata.slot;
+  }
+  if (metadata?.nodes && typeof metadata.nodes === 'object') {
+    serialized.nodes = {
+      bee: metadata.nodes.bee ? { ...metadata.nodes.bee } : null,
+      ipfs: metadata.nodes.ipfs ? { ...metadata.nodes.ipfs } : null,
+      radicle: metadata.nodes.radicle ? { ...metadata.nodes.radicle } : null,
+    };
+  }
+
+  return serialized;
+}
+
+function broadcastProfileUpdated(profile = serializeActiveProfile()) {
+  if (!webContents?.getAllWebContents) return;
+
+  for (const contents of webContents.getAllWebContents()) {
+    try {
+      contents.send(IPC.PROFILE_UPDATED, profile);
+    } catch {
+      // The target may have been destroyed between enumeration and send.
+    }
+  }
+}
+
+function serializeProfileSummary(profile) {
+  if (!profile) return null;
+  const serialized = {
+    id: profile.id,
+    displayName: profile.displayName,
+    slot: profile.slot,
+    createdAt: profile.createdAt,
+    lastOpenedAt: profile.lastOpenedAt,
+    nodes: profile.nodes,
+    isActive: profile.isActive === true,
+  };
+  if (profile.isUnregistered === true) {
+    serialized.isUnregistered = true;
+  }
+  return serialized;
+}
+
+function serializeProfileMutationResult(result) {
+  if (!result) return null;
+  return serializeProfileSummary({
+    id: result.metadata?.id || result.record?.id,
+    displayName: result.metadata?.displayName || result.record?.displayName,
+    slot: result.metadata?.slot ?? result.record?.slot,
+    createdAt: result.metadata?.createdAt || result.record?.createdAt || null,
+    lastOpenedAt: result.metadata?.lastOpenedAt || result.record?.lastOpenedAt || null,
+    nodes: result.metadata?.nodes || result.record?.nodes || null,
+    isActive: result.record?.id === getActiveProfile()?.id,
+  });
+}
+
+const PROFILE_NODE_MODES = {
+  bee: new Set(['managed', 'external', 'disabled']),
+  ipfs: new Set(['managed', 'disabled']),
+  radicle: new Set(['managed', 'external', 'disabled']),
+};
+const PROFILE_NODE_FIELDS = {
+  bee: ['mode', 'externalApi'],
+  ipfs: ['mode'],
+  radicle: ['mode', 'externalHttp'],
+};
+const EXTERNAL_FIELDS = {
+  bee: ['externalApi'],
+  radicle: ['externalHttp'],
+};
+
+function normalizeProfileNodeEndpoint(rawValue) {
+  if (rawValue == null) return null;
+  const trimmed = String(rawValue).trim();
+  if (!trimmed) return null;
+
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function validateProfileNodeConfigUpdate(protocol, patch = {}) {
+  if (!Object.prototype.hasOwnProperty.call(PROFILE_NODE_FIELDS, protocol)) {
+    return {
+      ok: false,
+      response: failure('INVALID_PROFILE_PROTOCOL', 'Unsupported profile node protocol', {
+        protocol,
+      }),
+    };
+  }
+
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return {
+      ok: false,
+      response: failure('INVALID_PROFILE_NODE_CONFIG', 'Profile node config must be an object'),
+    };
+  }
+
+  const allowedFields = PROFILE_NODE_FIELDS[protocol];
+  const sanitized = {};
+
+  for (const field of allowedFields) {
+    if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
+
+    if (field === 'mode') {
+      if (!PROFILE_NODE_MODES[protocol].has(patch.mode)) {
+        return {
+          ok: false,
+          response: failure('INVALID_PROFILE_NODE_MODE', 'Unsupported profile node mode', {
+            mode: patch.mode,
+          }),
+        };
+      }
+      sanitized.mode = patch.mode;
+      continue;
+    }
+
+    const normalized = normalizeProfileNodeEndpoint(patch[field]);
+    if (patch[field] && !normalized) {
+      return {
+        ok: false,
+        response: failure('INVALID_PROFILE_NODE_ENDPOINT', 'Invalid profile node endpoint', {
+          field,
+        }),
+      };
+    }
+    sanitized[field] = normalized;
+  }
+
+  if (!Object.keys(sanitized).length) {
+    return {
+      ok: false,
+      response: failure('EMPTY_PROFILE_NODE_CONFIG', 'No supported profile node config fields'),
+    };
+  }
+
+  if (sanitized.mode === 'external') {
+    const missing = (EXTERNAL_FIELDS[protocol] || []).filter((field) => !sanitized[field]);
+    if (missing.length) {
+      return {
+        ok: false,
+        response: failure('MISSING_PROFILE_NODE_ENDPOINT', 'External node mode requires endpoints', {
+          fields: missing,
+        }),
+      };
+    }
+  }
+
+  return { ok: true, sanitized };
+}
+
+function updateProfileNodeConfigFromIpc(protocol, patch) {
+  const activeProfile = getActiveProfile();
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return failure('PROFILE_NOT_EDITABLE', 'The active profile cannot be edited');
+  }
+
+  const validation = validateProfileNodeConfigUpdate(protocol, patch);
+  if (!validation.ok) return validation.response;
+
+  try {
+    const result = updateActiveProfileNodeConfig(protocol, validation.sanitized);
+    if (!result) {
+      return failure('PROFILE_UPDATE_FAILED', 'Profile node config was not updated');
+    }
+    const profile = serializeActiveProfile();
+    broadcastProfileUpdated(profile);
+    return success({ profile });
+  } catch (err) {
+    log.error('[profile] Failed to update node config:', err);
+    return failure('PROFILE_UPDATE_FAILED', err.message || 'Profile node config update failed');
+  }
+}
+
+function listProfilesFromIpc() {
+  const profiles = listProfilesForActiveApp();
+  if (!profiles) {
+    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+  }
+  return success({ profiles: profiles.map(serializeProfileSummary) });
+}
+
+function createProfileFromIpc(payload = {}) {
+  try {
+    const result = createProfileForActiveApp({
+      displayName: payload.displayName,
+      id: payload.id,
+    });
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({ profile: serializeProfileMutationResult(result) });
+  } catch (err) {
+    return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
+  }
+}
+
+function importProfileFromIpc(payload = {}) {
+  try {
+    const result = importProfileForActiveApp(payload.id);
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({ profile: serializeProfileMutationResult(result) });
+  } catch (err) {
+    return failure('PROFILE_IMPORT_FAILED', err.message || 'Profile could not be imported');
+  }
+}
+
+function renameProfileFromIpc(payload = {}) {
+  try {
+    const result = renameProfileForActiveApp(payload.id, payload.displayName);
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    const activeProfile = serializeActiveProfile();
+    broadcastProfileUpdated(activeProfile);
+    return success({
+      profile: serializeProfileMutationResult(result),
+      activeProfile,
+    });
+  } catch (err) {
+    return failure('PROFILE_RENAME_FAILED', err.message || 'Profile could not be renamed');
+  }
+}
+
+function openProfileFromIpc(payload = {}) {
+  const activeProfile = getActiveProfile();
+  const profileId = payload.id;
+  if (!profileId || typeof profileId !== 'string') {
+    return failure('INVALID_PROFILE_ID', 'Missing profile id');
+  }
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+  }
+  if (profileId === activeProfile.id) {
+    return failure('PROFILE_ALREADY_OPEN', 'This profile is already open');
+  }
+
+  const profiles = listProfilesForActiveApp();
+  const target = profiles?.find((profile) => profile.id === profileId);
+  if (!target) {
+    return failure('PROFILE_NOT_FOUND', 'Profile not found', { id: profileId });
+  }
+
+  try {
+    const launch = launchProfile(activeProfile, profileId);
+    return success({
+      profile: serializeProfileSummary(target),
+      launch,
+    });
+  } catch (err) {
+    log.error('[profile] Failed to open profile:', err);
+    return failure('PROFILE_OPEN_FAILED', err.message || 'Profile could not be opened');
+  }
+}
+
+function deleteProfileFromIpc(payload = {}) {
+  try {
+    const result = deleteProfileForActiveApp(payload.id, payload.confirmDisplayName);
+    if (!result) {
+      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    }
+    return success({
+      profile: serializeProfileSummary({
+        id: result.record.id,
+        displayName: result.record.displayName,
+        slot: result.record.slot,
+        createdAt: result.record.createdAt || null,
+        lastOpenedAt: result.record.lastOpenedAt || null,
+        nodes: result.record.nodes || null,
+        isActive: false,
+      }),
+    });
+  } catch (err) {
+    return failure('PROFILE_DELETE_FAILED', err.message || 'Profile could not be deleted');
+  }
+}
 
 function registerBaseIpcHandlers(callbacks = {}) {
   ipcMain.handle(IPC.BZZ_SET_BASE, (_event, payload = {}) => {
@@ -256,6 +602,29 @@ function registerBaseIpcHandlers(callbacks = {}) {
     app.showAboutPanel();
   });
 
+  ipcMain.handle(IPC.PROFILE_GET_ACTIVE, () => serializeActiveProfile());
+  ipcMain.handle(IPC.PROFILE_LIST, () => listProfilesFromIpc());
+  ipcMain.handle(IPC.PROFILE_CREATE, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => createProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_IMPORT, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => importProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_RENAME, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => renameProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_OPEN, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => openProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_DELETE, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () => deleteProfileFromIpc(payload))
+  );
+  ipcMain.handle(IPC.PROFILE_UPDATE_NODE_CONFIG, (event, payload = {}) =>
+    withTrustedProfileMutationSender(event, () =>
+      updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
+    )
+  );
+
   ipcMain.handle(IPC.GET_WEBVIEW_PRELOAD_PATH, () => {
     return webviewPreloadPath;
   });
@@ -378,5 +747,17 @@ function registerBaseIpcHandlers(callbacks = {}) {
 }
 
 module.exports = {
+  broadcastProfileUpdated,
+  createProfileFromIpc,
+  deleteProfileFromIpc,
+  importProfileFromIpc,
+  isTrustedProfileMutationSender,
+  listProfilesFromIpc,
+  openProfileFromIpc,
+  renameProfileFromIpc,
   registerBaseIpcHandlers,
+  serializeActiveProfile,
+  serializeProfileSummary,
+  updateProfileNodeConfigFromIpc,
+  validateProfileNodeConfigUpdate,
 };

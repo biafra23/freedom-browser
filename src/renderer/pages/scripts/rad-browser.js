@@ -6,7 +6,7 @@
 
   const params = new URLSearchParams(window.location.search);
   const rid = params.get('rid');
-  const base = params.get('base') || 'http://127.0.0.1:8780';
+  const base = params.get('base');
   const PUBLIC_SEED = 'https://seed.radicle.xyz';
 
   // App state
@@ -958,6 +958,11 @@
     }
 
     errorRid.textContent = `rad://${rid}`;
+
+    if (!base) {
+      showState('connection-error');
+      return;
+    }
 
     // If navigation.js passed status=offline, verify the actual node status
     // This handles the case where user activates the node and then refreshes

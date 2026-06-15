@@ -213,6 +213,9 @@ function loadGithubBridgeModule(options = {}) {
       [require.resolve('./settings-store')]: () => ({
         loadSettings,
       }),
+      [require.resolve('./profile-paths')]: () => ({
+        createProfileTempDir: jest.fn(() => tempDir),
+      }),
     },
   });
 

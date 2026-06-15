@@ -18,14 +18,40 @@ describe('service-registry', () => {
     jest.useRealTimers();
   });
 
-  test('returns default service URLs when registry is empty', () => {
+  test('returns no service URLs when registry is empty', () => {
     const { mod } = loadServiceRegistry();
 
-    expect(mod.getIpfsApiUrl()).toBe('http://127.0.0.1:5001');
-    expect(mod.getIpfsGatewayUrl()).toBe('http://localhost:8080');
-    expect(mod.getBeeApiUrl()).toBe('http://127.0.0.1:1633');
-    expect(mod.getBeeGatewayUrl()).toBe('http://127.0.0.1:1633');
-    expect(mod.getRadicleApiUrl()).toBe('http://127.0.0.1:8780');
+    expect(mod.getIpfsApiUrl()).toBeNull();
+    expect(mod.getIpfsGatewayUrl()).toBeNull();
+    expect(mod.getBeeApiUrl()).toBeNull();
+    expect(mod.getBeeGatewayUrl()).toBeNull();
+    expect(mod.getRadicleApiUrl()).toBeNull();
+  });
+
+  test('returns service URLs after registry hydration', () => {
+    const { mod } = loadServiceRegistry();
+
+    mod.updateService('ipfs', {
+      api: 'http://127.0.0.1:15001',
+      gateway: 'http://localhost:18080',
+      mode: mod.MODE.BUNDLED,
+    });
+    mod.updateService('bee', {
+      api: 'http://127.0.0.1:11633',
+      gateway: 'http://127.0.0.1:11633',
+      mode: mod.MODE.BUNDLED,
+    });
+    mod.updateService('radicle', {
+      api: 'http://127.0.0.1:18780',
+      gateway: 'http://127.0.0.1:18780',
+      mode: mod.MODE.BUNDLED,
+    });
+
+    expect(mod.getIpfsApiUrl()).toBe('http://127.0.0.1:15001');
+    expect(mod.getIpfsGatewayUrl()).toBe('http://localhost:18080');
+    expect(mod.getBeeApiUrl()).toBe('http://127.0.0.1:11633');
+    expect(mod.getBeeGatewayUrl()).toBe('http://127.0.0.1:11633');
+    expect(mod.getRadicleApiUrl()).toBe('http://127.0.0.1:18780');
   });
 
   test('updates a service and broadcasts the new registry state', () => {
