@@ -58,6 +58,17 @@ function createBindingMock({
 
 function loadModule(binding) {
   jest.resetModules();
+  const { EventEmitter } = require('events');
+  class MockWorker extends EventEmitter {
+    constructor() {
+      super();
+      this.postMessage = jest.fn();
+      this.terminate = jest.fn(() => Promise.resolve());
+    }
+  }
+  jest.doMock('worker_threads', () => ({
+    Worker: jest.fn(() => new MockWorker()),
+  }));
   jest.doMock('../logger', () => ({
     info: jest.fn(),
     warn: jest.fn(),
@@ -153,6 +164,24 @@ describe('FreedomIpfsNativeNode', () => {
     expect(node.start()).toBe(false);
     expect(binding.nodeStartNativeGatewayOnline).not.toHaveBeenCalled();
     expect(node.nodeHandle).toBe('0');
+  });
+
+  test('starts native gateway with a request queue timeout', () => {
+    const binding = createBindingMock();
+    const { FreedomIpfsNativeNode, REQUEST_QUEUE_TIMEOUT_MS } = loadModule(binding);
+    const node = new FreedomIpfsNativeNode({ dataDir: '/tmp/freedom-ipfs-test' });
+
+    expect(node.start()).toBe(true);
+
+    expect(binding.nodeStartNativeGatewayOnline).toHaveBeenCalledWith(
+      '1',
+      '',
+      binding.constants.ROUTING_MODE_AUTO,
+      0,
+      3,
+      0,
+      REQUEST_QUEUE_TIMEOUT_MS
+    );
   });
 
   test('rejects invalid native request handles without registering a controller', async () => {

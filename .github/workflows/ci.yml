@@ -92,6 +92,14 @@ jobs:
           FREEDOM_IPFS_NATIVE_SMOKE_PATH: /ipns/ipfs.tech/
           FREEDOM_IPFS_NATIVE_SMOKE_EXPECT: ipfs
 
+      - name: Smoke test issue #102 high-fanout IPFS page
+        if: matrix.target == 'linux-x64'
+        run: npm run ipfs:native:smoke
+        env:
+          FREEDOM_IPFS_NATIVE_SMOKE_TARGET: ${{ matrix.target }}
+          FREEDOM_IPFS_NATIVE_SMOKE_LIVE: '0'
+          FREEDOM_IPFS_NATIVE_SMOKE_ISSUE_102: '1'
+
   # Onboarding wizard must create node identities while a real Swarm node (now
   # antd) is running. Drives the full password wizard end-to-end against a real
   # antd spawn across all three desktop platforms — the cross-platform proof
