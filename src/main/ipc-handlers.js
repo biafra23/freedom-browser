@@ -1,6 +1,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const log = require('./logger');
+
+const execFileAsync = promisify(execFile);
 const { ipcMain, app, dialog, clipboard, nativeImage, webContents } = require('electron');
 const { URL } = require('url');
 const path = require('path');
@@ -576,6 +580,27 @@ function registerBaseIpcHandlers(callbacks = {}) {
 
   ipcMain.handle(IPC.WINDOW_GET_PLATFORM, () => {
     return process.platform;
+  });
+
+  // Which window-manager buttons the desktop expects (GNOME defaults to
+  // close-only). Returns null off-GNOME/non-Linux so the caller shows all three.
+  ipcMain.handle(IPC.WINDOW_GET_BUTTON_LAYOUT, async () => {
+    if (process.platform !== 'linux') return null;
+    try {
+      const { stdout } = await execFileAsync(
+        'gsettings',
+        ['get', 'org.gnome.desktop.wm.preferences', 'button-layout'],
+        { timeout: 2000 }
+      );
+      const tokens = stdout.replace(/['"\n]/g, '').replace(':', ',').split(',');
+      return {
+        minimize: tokens.includes('minimize'),
+        maximize: tokens.includes('maximize'),
+        close: tokens.includes('close'),
+      };
+    } catch {
+      return null;
+    }
   });
 
   ipcMain.on(IPC.APP_RELAUNCH, () => {

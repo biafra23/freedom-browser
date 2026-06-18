@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openUrlInNewWindow: (url) => ipcRenderer.send('window:new-with-url', url),
   showAbout: () => ipcRenderer.send('app:show-about'),
   getPlatform: () => ipcRenderer.invoke('window:get-platform'),
+  getWindowButtonLayout: () => ipcRenderer.invoke('window:get-button-layout'),
   getActiveProfile: () => ipcRenderer.invoke('profile:get-active'),
   listProfiles: () => ipcRenderer.invoke('profile:list'),
   createProfile: (input) => ipcRenderer.invoke('profile:create', input),

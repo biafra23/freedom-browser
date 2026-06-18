@@ -134,6 +134,16 @@ async function initPlatformUI() {
 
     // Frameless on Linux: show + wire the in-app window controls
     document.getElementById('window-controls')?.classList.add('visible');
+
+    // Respect the desktop's button layout (GNOME defaults to close-only). Drop
+    // buttons the layout omits. Use .remove() — .window-control-btn's display:flex
+    // overrides the [hidden] attribute. null layout (non-GNOME) keeps all three.
+    const layout = await electronAPI.getWindowButtonLayout().catch(() => null);
+    if (layout) {
+      if (!layout.minimize) document.getElementById('minimize-btn')?.remove();
+      if (!layout.maximize) document.getElementById('maximize-btn')?.remove();
+    }
+
     document
       .getElementById('minimize-btn')
       ?.addEventListener('click', () => electronAPI.minimizeWindow());
