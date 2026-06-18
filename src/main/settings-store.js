@@ -44,6 +44,8 @@ const DEFAULT_SETTINGS = {
   blockUnverifiedEns: true,
   sidebarOpen: false,
   sidebarWidth: 320,
+  // Linux only: render the tab strip as the window titlebar (frameless window).
+  tabsInTitlebar: true,
 };
 
 let cachedSettings = null;

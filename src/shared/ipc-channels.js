@@ -67,6 +67,7 @@ module.exports = {
 
   // App
   APP_SHOW_ABOUT: 'app:show-about',
+  APP_RELAUNCH: 'app:relaunch',
 
   // Profiles
   PROFILE_GET_ACTIVE: 'profile:get-active',

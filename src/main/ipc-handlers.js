@@ -578,6 +578,11 @@ function registerBaseIpcHandlers(callbacks = {}) {
     return process.platform;
   });
 
+  ipcMain.on(IPC.APP_RELAUNCH, () => {
+    app.relaunch();
+    app.quit();
+  });
+
   ipcMain.on(IPC.WINDOW_TOGGLE_FULLSCREEN, (event) => {
     const win = event.sender.getOwnerBrowserWindow();
     if (win) {

@@ -123,7 +123,28 @@ async function initPlatformUI() {
   const platform = await electronAPI.getPlatform();
 
   if (platform === 'linux') {
+    // The window is only frameless when the user keeps tabs-in-titlebar on; with
+    // the OS frame the system provides the controls, so skip the custom ones.
+    const settings = await electronAPI.getSettings().catch(() => ({}));
+    if (settings.tabsInTitlebar === false) return;
+
     document.body.classList.add('platform-linux');
+
+    // Frameless on Linux: show + wire the in-app window controls
+    document.getElementById('window-controls')?.classList.add('visible');
+    document
+      .getElementById('minimize-btn')
+      ?.addEventListener('click', () => electronAPI.minimizeWindow());
+    document
+      .getElementById('maximize-btn')
+      ?.addEventListener('click', () => electronAPI.maximizeWindow());
+    document.getElementById('close-btn')?.addEventListener('click', () => electronAPI.closeWindow());
+
+    // Double-click the bare titlebar to toggle maximize (native behavior)
+    document.querySelector('.title-bar')?.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.no-drag, button, .tab')) return; // ponytail: only bare titlebar
+      electronAPI.maximizeWindow();
+    });
   }
 }
 

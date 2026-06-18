@@ -2,6 +2,7 @@ const log = require('../logger');
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { loadSettings } = require('../settings-store');
 
 let currentWindowTitle = 'Freedom';
 
@@ -26,6 +27,10 @@ function getIconPath() {
 
 function createMainWindow(initialUrl = null) {
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
+  // Linux only: tab strip doubles as the titlebar unless the user opted out.
+  // `frame` can't change on a live window, so this is read once at creation.
+  const linuxFrameless = isLinux && loadSettings().tabsInTitlebar !== false;
 
   // Headless E2E: keep the window hidden so a local test run doesn't pop a
   // window or steal focus. The renderer still loads and is fully driveable via
@@ -49,6 +54,8 @@ function createMainWindow(initialUrl = null) {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 14, y: 14 },
     }),
+    // Linux: drop the OS frame so the in-app tab strip is the titlebar
+    ...(linuxFrameless && { frame: false }),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,

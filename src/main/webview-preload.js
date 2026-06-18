@@ -233,6 +233,7 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   saveSettings: guardInternal('saveSettings', (settings) =>
     ipcRenderer.invoke('settings:save', settings)
   ),
+  relaunchApp: guardInternal('relaunchApp', () => ipcRenderer.send('app:relaunch')),
 
   // Platform / environment info needed by settings page
   getPlatform: guardInternal('getPlatform', () => ipcRenderer.invoke('window:get-platform')),
