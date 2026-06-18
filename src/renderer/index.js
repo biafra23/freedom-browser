@@ -123,12 +123,14 @@ async function initPlatformUI() {
   const platform = await electronAPI.getPlatform();
 
   if (platform === 'linux') {
+    // platform-linux governs the titlebar spacer width (shrinks the 76px macOS
+    // traffic-light gap to 12px), so it applies to Linux regardless of framing.
+    document.body.classList.add('platform-linux');
+
     // The window is only frameless when the user keeps tabs-in-titlebar on; with
     // the OS frame the system provides the controls, so skip the custom ones.
     const settings = await electronAPI.getSettings().catch(() => ({}));
     if (settings.tabsInTitlebar === false) return;
-
-    document.body.classList.add('platform-linux');
 
     // Frameless on Linux: show + wire the in-app window controls
     document.getElementById('window-controls')?.classList.add('visible');
