@@ -122,7 +122,8 @@
 
 [data-theme='light'] .bee-toggle-knob,
 [data-theme='light'] .ipfs-toggle-knob,
-[data-theme='light'] .radicle-toggle-knob {
+[data-theme='light'] .radicle-toggle-knob,
+[data-theme='light'] .tor-toggle-knob {
   background: #ffffff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }

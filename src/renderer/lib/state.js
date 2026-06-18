@@ -35,6 +35,12 @@ export const state = {
       statusMessage: null,
       tempMessage: null,
     },
+    tor: {
+      socks: null,
+      mode: 'none',
+      statusMessage: null,
+      tempMessage: null,
+    },
   },
 
   // Swarm Gateway config (from env override or registry)
@@ -114,8 +120,13 @@ export const state = {
   // Navigation state for Radicle
   currentRadBase: null,
 
+  // Tor (.onion) state
+  currentTorStatus: 'stopped',
+  suppressTorRunningStatus: false,
+
   // Feature flags
   enableRadicleIntegration: false,
+  enableTorIntegration: false,
   blockUnverifiedEns: true, // When true, unverified ENS resolutions route through an interstitial
 };
 
@@ -156,6 +167,10 @@ export const updateRegistry = (newRegistry) => {
 
 export const setRadicleIntegrationEnabled = (enabled) => {
   state.enableRadicleIntegration = enabled === true;
+};
+
+export const setTorIntegrationEnabled = (enabled) => {
+  state.enableTorIntegration = enabled === true;
 };
 
 export const setBlockUnverifiedEns = (enabled) => {

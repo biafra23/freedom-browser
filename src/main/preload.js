@@ -313,6 +313,20 @@ contextBridge.exposeInMainWorld('radicle', {
   },
 });
 
+contextBridge.exposeInMainWorld('tor', {
+  start: () => ipcRenderer.invoke('tor:start'),
+  stop: () => ipcRenderer.invoke('tor:stop'),
+  getStatus: () => ipcRenderer.invoke('tor:getStatus'),
+  checkBinary: () => ipcRenderer.invoke('tor:checkBinary'),
+  getVersion: () => ipcRenderer.invoke('tor:getVersion'),
+  onStatusUpdate: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('tor:statusUpdate', handler);
+    ipcRenderer.invoke('tor:getStatus').then(callback);
+    return () => ipcRenderer.removeListener('tor:statusUpdate', handler);
+  },
+});
+
 contextBridge.exposeInMainWorld('githubBridge', {
   import: (url) => ipcRenderer.invoke('github-bridge:import', url),
   checkGit: () => ipcRenderer.invoke('github-bridge:check-git'),

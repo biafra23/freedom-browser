@@ -1,5 +1,10 @@
 // Renderer process entry point
-import { updateRegistry, setRadicleIntegrationEnabled, setBlockUnverifiedEns } from './lib/state.js';
+import {
+  updateRegistry,
+  setRadicleIntegrationEnabled,
+  setTorIntegrationEnabled,
+  setBlockUnverifiedEns,
+} from './lib/state.js';
 import { initAntUi, updateAntStatusLine, updateAntToggleState } from './lib/ant-ui.js';
 import { initIpfsUi, updateIpfsStatusLine, updateIpfsToggleState } from './lib/ipfs-ui.js';
 import {
@@ -7,6 +12,7 @@ import {
   updateRadicleStatusLine,
   updateRadicleToggleState,
 } from './lib/radicle-ui.js';
+import { initTorUi, updateTorStatusLine } from './lib/tor-ui.js';
 import {
   initMenus,
   setOnOpenHistory,
@@ -86,6 +92,7 @@ window.serviceRegistry?.onUpdate?.((registry) => {
   updateIpfsToggleState();
   updateRadicleStatusLine();
   updateRadicleToggleState();
+  updateTorStatusLine();
 });
 
 // Fetch initial registry state
@@ -638,13 +645,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   try {
     const settings = await electronAPI.getSettings();
     setRadicleIntegrationEnabled(settings?.enableRadicleIntegration === true);
+    setTorIntegrationEnabled(settings?.enableTorIntegration === true);
     setBlockUnverifiedEns(settings?.blockUnverifiedEns !== false);
   } catch {
     setRadicleIntegrationEnabled(false);
+    setTorIntegrationEnabled(false);
     setBlockUnverifiedEns(true);
   }
   window.addEventListener('settings:updated', (event) => {
     setRadicleIntegrationEnabled(event.detail?.enableRadicleIntegration === true);
+    setTorIntegrationEnabled(event.detail?.enableTorIntegration === true);
     setBlockUnverifiedEns(event.detail?.blockUnverifiedEns !== false);
   });
 
@@ -653,6 +663,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   initAntUi();
   initIpfsUi();
   initRadicleUi();
+  initTorUi();
   initGithubBridgeUi();
   document.getElementById('settings-btn')?.addEventListener('click', () => {
     closeMenus();

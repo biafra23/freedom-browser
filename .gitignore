@@ -22,6 +22,8 @@ dev-scripts/
 helios-bin/
 radicle-bin/
 radicle-data/
+arti-bin/
+tor-data/
 dev-app-update.yml
 CLAUDE.md
 .codex

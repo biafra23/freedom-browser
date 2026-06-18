@@ -142,6 +142,7 @@ const { registerEnsIpc } = require('./ens-resolver');
 const { registerAntIpc, createAntLifecycle, stopAnt, startAnt, setUseInjectedIdentity: setAntInjectedIdentity } = require('./ant-manager');
 const { registerIpfsIpc, stopIpfs, startIpfs, setUseInjectedIdentity: setIpfsInjectedIdentity } = require('./ipfs-manager');
 const { registerRadicleIpc, stopRadicle, startRadicle, setUseInjectedIdentity: setRadicleInjectedIdentity } = require('./radicle-manager');
+const { registerTorIpc, stopTor, startTor } = require('./tor-manager');
 const { registerIdentityIpc, hasVault, setBeeLifecycle } = require('./identity-manager');
 const { registerQuickUnlockIpc } = require('./quick-unlock');
 const { registerWalletIpc } = require('./wallet/wallet-ipc');
@@ -223,6 +224,7 @@ async function bootstrap() {
   registerAntIpc();
   registerIpfsIpc();
   registerRadicleIpc();
+  registerTorIpc();
   registerGithubBridgeIpc();
   registerServiceRegistryIpc();
   registerIdentityIpc();
@@ -322,6 +324,9 @@ async function bootstrap() {
     if (settings.enableRadicleIntegration && settings.startRadicleAtLaunch) {
       startRadicle();
     }
+    if (settings.enableTorIntegration && settings.startTorAtLaunch) {
+      startTor({ targetSession: defaultSession });
+    }
   }
 
   // Initialize auto-updater (pass menu update callback). Skipped in
@@ -398,8 +403,8 @@ app.on('before-quit', async (event) => {
   // Clean up any GitHub bridge temp directories
   cleanupTempDirs();
 
-  log.info('[App] Waiting for Ant, IPFS, and Radicle to stop...');
-  await Promise.all([stopAnt(), stopIpfs(), stopRadicle()]);
+  log.info('[App] Waiting for Ant, IPFS, Radicle, and Tor to stop...');
+  await Promise.all([stopAnt(), stopIpfs(), stopRadicle(), stopTor()]);
   log.info('[App] All processes stopped, quitting...');
 
 

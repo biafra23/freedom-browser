@@ -461,6 +461,47 @@ profile-managed dev data.
 | `npm run radicle:status` | Check the default profile's Radicle httpd root endpoint |
 | `npm run radicle:reset` | Delete all Radicle data and start fresh |
 
+### Tor Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run tor:download` | Build the Arti (Rust Tor client) binary for your platform |
+| `npm run tor:reset` | Delete all Tor data and start fresh |
+
+---
+
+## Tor (.onion) Access
+
+Freedom can reach Tor `.onion` services using [Arti](https://arti.torproject.org/),
+the Tor Project's pure-Rust Tor client. It is **off by default** and gated behind
+**Settings → Experimental → Enable Tor (.onion access) (Beta)**.
+
+- **Scope is `.onion`-only.** When enabled, only `*.onion` hostnames are routed
+  through Tor; clearnet and the decentralized protocols (bzz/ipfs/ipns/rad) keep
+  connecting directly. Routing is done with a PAC script on the Electron session
+  (`src/main/tor-proxy.js`) that returns `SOCKS5 127.0.0.1:9150` for `.onion` and
+  `DIRECT` for everything else. SOCKS5 does remote DNS, so the onion name resolves
+  at Tor — no custom scheme is needed; `.onion` is just an ordinary http(s) host
+  (defaulted to `http://` since most onion services are http-only).
+- **Lifecycle.** `src/main/tor-manager.js` spawns the bundled `arti` binary as a
+  local SOCKS5 proxy (`arti proxy -c <arti.toml>`), health-checks the SOCKS port,
+  applies/clears the proxy, and reports status through the service registry — the
+  same pattern as the Bee / Radicle managers.
+- **Status readout.** The node-status menu's Tor section shows the SOCKS endpoint
+  and the Arti software version (`arti --version`, via `getArtiVersion`). Exit-node
+  details are intentionally not shown: `.onion` connections have no exit node, so
+  an exit indicator only becomes meaningful once clearnet-over-Tor lands.
+- **Binary.** Arti has no clean prebuilt-binary distribution, so `npm run
+  tor:download` builds it from crates.io via `cargo install` (requires a Rust
+  toolchain). The binary lands in `arti-bin/<platform>-<arch>/arti` and is bundled
+  via electron-builder `extraResources`. Bundling is **optional**: if `arti-bin`
+  hasn't been built, `npm run build/dist` still succeeds (a non-fatal warning from
+  `check-binaries.js`) and simply ships without Tor — the in-app toggle stays
+  disabled until the binary is present. Like Radicle, Tor is macOS/Linux-only for
+  now; the toggle is hidden on Windows.
+- **Data.** Arti state/cache live under `<userData>/tor-data` (override with
+  `FREEDOM_TOR_DATA`).
+
 ---
 
 ## Project Structure
