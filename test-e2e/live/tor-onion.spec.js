@@ -13,6 +13,7 @@ const ONION_URL = process.env.FREEDOM_TOR_E2E_ONION_URL || DEFAULT_ONION_URL;
 const TOR_START_TIMEOUT_MS = 180_000;
 const ONION_NAVIGATION_TIMEOUT_MS = 180_000;
 const PAGE_RENDER_TIMEOUT_MS = 120_000;
+const SETTINGS_TIMEOUT_MS = 30_000;
 
 const ONION_RENDER_SNIFFER = `
   (() => {
@@ -20,18 +21,6 @@ const ONION_RENDER_SNIFFER = `
     return /guardian/i.test(text);
   })()
 `;
-
-async function enableTorIntegration(window) {
-  const saved = await window.evaluate(async () => {
-    const settings = await window.electronAPI.getSettings();
-    return window.electronAPI.saveSettings({
-      ...settings,
-      enableTorIntegration: true,
-      startTorAtLaunch: false,
-    });
-  });
-  expect(saved).toBe(true);
-}
 
 const evalInActiveWebview = (window, snippet) =>
   window.evaluate(async (s) => {
@@ -53,6 +42,98 @@ const waitForWebviewCondition = (window, snippet, message) =>
     })
     .toBeTruthy();
 
+const navigateWithAddressBar = async (
+  window,
+  target,
+  expected,
+  timeout = ONION_NAVIGATION_TIMEOUT_MS
+) => {
+  const input = window.locator('[data-test="address-input"]');
+  await input.click();
+  await input.fill(target);
+  await input.press('Enter');
+  await expect(input).toHaveValue(expected, { timeout });
+};
+
+async function enableTorIntegrationFromSettings(window) {
+  await navigateWithAddressBar(
+    window,
+    'freedom://settings/experimental',
+    /freedom:\/\/settings\/experimental/,
+    SETTINGS_TIMEOUT_MS
+  );
+
+  await waitForWebviewCondition(
+    window,
+    `
+      (() => location.hash === '#experimental'
+        && !!document.querySelector('#enable-tor-integration'))()
+    `,
+    'Waiting for the Experimental settings section'
+  );
+
+  await expect
+    .poll(
+      async () => {
+        const toggled = await evalInActiveWebview(
+          window,
+          `
+            (() => {
+              const checkbox = document.querySelector('#enable-tor-integration');
+              if (!checkbox) return false;
+              checkbox.scrollIntoView({ block: 'center' });
+              if (!checkbox.checked) checkbox.click();
+              checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+              return checkbox.checked;
+            })()
+          `
+        );
+        if (!toggled) return false;
+        return window.evaluate(async () => {
+          const settings = await window.electronAPI.getSettings();
+          return settings.enableTorIntegration === true && settings.startTorAtLaunch === false;
+        });
+      },
+      {
+        message: 'Waiting for Tor settings to persist',
+        timeout: SETTINGS_TIMEOUT_MS,
+        intervals: [500, 1000],
+      }
+    )
+    .toBe(true);
+}
+
+async function startTorFromNodesMenu(window) {
+  const menuButton = window.locator('#bee-menu-button');
+  const dropdown = window.locator('#bee-menu-dropdown');
+  const torSection = window.locator('#tor-nodes-section');
+  const torToggle = window.locator('#tor-toggle-btn');
+
+  await menuButton.click();
+  await expect(dropdown).toHaveClass(/open/);
+  await expect(torSection).toBeVisible();
+  await expect(torToggle).toBeEnabled();
+
+  await torToggle.click();
+  await expect
+    .poll(async () => (await window.evaluate(() => window.tor.getStatus())).status, {
+      message: 'Waiting for Tor manager to start Arti',
+      timeout: TOR_START_TIMEOUT_MS,
+      intervals: [1000, 2000, 5000],
+    })
+    .toBe('running');
+
+  await expect(window.locator('#tor-status-label')).toHaveText(/SOCKS:/, {
+    timeout: SETTINGS_TIMEOUT_MS,
+  });
+  await expect(window.locator('#tor-status-value')).toHaveText(/127\.0\.0\.1:\d+/, {
+    timeout: SETTINGS_TIMEOUT_MS,
+  });
+
+  await menuButton.click();
+  await expect(dropdown).not.toHaveClass(/open/);
+}
+
 test.describe('live Tor onion access', () => {
   test.skip(
     !HAS_ARTI_BINARY,
@@ -60,27 +141,14 @@ test.describe('live Tor onion access', () => {
   );
 
   test('cold-start: Arti starts and a real onion service renders', async ({ window }) => {
-    await enableTorIntegration(window);
+    await enableTorIntegrationFromSettings(window);
+    await startTorFromNodesMenu(window);
 
-    await window.evaluate(() => window.tor.start());
-    await expect
-      .poll(async () => (await window.evaluate(() => window.tor.getStatus())).status, {
-        message: 'Waiting for Tor manager to start Arti',
-        timeout: TOR_START_TIMEOUT_MS,
-        intervals: [1000, 2000, 5000],
-      })
-      .toBe('running');
-
-    const input = window.locator('[data-test="address-input"]');
-    await input.click();
-    await input.fill(ONION_URL);
-    await input.press('Enter');
-
-    await expect(input).toHaveValue(
+    await navigateWithAddressBar(
+      window,
+      ONION_URL,
       new RegExp(`^${ONION_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-      {
-        timeout: ONION_NAVIGATION_TIMEOUT_MS,
-      }
+      ONION_NAVIGATION_TIMEOUT_MS
     );
 
     await waitForWebviewCondition(
