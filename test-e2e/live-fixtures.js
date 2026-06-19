@@ -37,11 +37,22 @@ function resolveIpfsNativeAddonPath() {
   );
 }
 
+function resolveArtiBinaryPath() {
+  const platformMap = { darwin: 'mac', linux: 'linux', win32: 'win' };
+  const platform = platformMap[process.platform] || process.platform;
+  const arch = process.arch;
+  const binName = process.platform === 'win32' ? 'arti.exe' : 'arti';
+  return path.join(repoRoot, 'arti-bin', `${platform}-${arch}`, binName);
+}
+
 const ANT_BINARY_PATH = resolveAntBinaryPath();
 const HAS_ANT_BINARY = fs.existsSync(ANT_BINARY_PATH);
 
 const IPFS_NATIVE_ADDON_PATH = resolveIpfsNativeAddonPath();
 const HAS_IPFS_NATIVE_ADDON = fs.existsSync(IPFS_NATIVE_ADDON_PATH);
+
+const ARTI_BINARY_PATH = resolveArtiBinaryPath();
+const HAS_ARTI_BINARY = fs.existsSync(ARTI_BINARY_PATH);
 
 const test = base.extend({
   // Playwright derives fixture dependencies from the first parameter's
@@ -50,16 +61,17 @@ const test = base.extend({
   // plain factory.
   // eslint-disable-next-line no-empty-pattern
   electronApp: async ({}, use) => {
-    // One temp root per run, with four subdirs:
+    // One temp root per run, with isolated subdirs:
     //   - userData/     → settings, bookmarks, history (FREEDOM_TEST_USER_DATA)
     //   - ant-data/     → Ant's identity, swarm key, peerstore (FREEDOM_ANT_DATA)
     //   - ipfs-data/    → native freedom-ipfs data base (FREEDOM_IPFS_DATA)
     //   - identity/     → vault meta + node-identity files (FREEDOM_IDENTITY_DATA)
-    // All four overrides matter: in dev mode these directories default
+    //   - tor-data/     → Arti state/cache (FREEDOM_TOR_DATA)
+    // These overrides matter: in dev mode these directories default
     // to `<repoRoot>/ant-data`, `<repoRoot>/ipfs-data`, and
     // `<repoRoot>/identity-data` — pointing them at empty temp dirs is
     // what keeps a live run from clobbering the developer's persistent
-    // state. The identity override is the most subtle of the three:
+    // state. The identity override is the most subtle one:
     // without it `hasVault()` would still find the developer's local
     // vault, set the node managers into injected-identity mode, and
     // Bee would hang waiting for keys the temp data dirs don't
@@ -69,8 +81,20 @@ const test = base.extend({
     const beeDataDir = path.join(tmpRoot, 'ant-data');
     const ipfsDataDir = path.join(tmpRoot, 'ipfs-data');
     const identityDataDir = path.join(tmpRoot, 'identity');
-    for (const dir of [userDataDir, beeDataDir, ipfsDataDir, identityDataDir]) {
+    const torDataDir = path.join(tmpRoot, 'tor-data');
+    for (const dir of [userDataDir, beeDataDir, ipfsDataDir, identityDataDir, torDataDir]) {
       fs.mkdirSync(dir, { recursive: true });
+    }
+
+    if (process.env.FREEDOM_LIVE_E2E_DISABLE_DEFAULT_NODES === '1') {
+      fs.writeFileSync(
+        path.join(userDataDir, 'settings.json'),
+        JSON.stringify({
+          startAntAtLaunch: false,
+          startIpfsAtLaunch: false,
+          startRadicleAtLaunch: false,
+        })
+      );
     }
 
     const app = await electron.launch({
@@ -85,6 +109,7 @@ const test = base.extend({
         FREEDOM_ANT_DATA: beeDataDir,
         FREEDOM_IPFS_DATA: ipfsDataDir,
         FREEDOM_IDENTITY_DATA: identityDataDir,
+        FREEDOM_TOR_DATA: torDataDir,
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
         LANG: 'en_US.UTF-8',
       },
@@ -120,4 +145,6 @@ module.exports = {
   ANT_BINARY_PATH,
   HAS_IPFS_NATIVE_ADDON,
   IPFS_NATIVE_ADDON_PATH,
+  HAS_ARTI_BINARY,
+  ARTI_BINARY_PATH,
 };

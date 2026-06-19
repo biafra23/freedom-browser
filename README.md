@@ -427,6 +427,7 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | `npm test`                                                    | Run unit tests (Jest)                                       |
 | `npm run test:e2e`                                            | Run the harness E2E suite (stubbed nodes; fast, no network) |
 | `npm run test:e2e:live`                                       | Run the live E2E suite (real Ant + IPFS + ENS; manual only) |
+| `npm run test:e2e:tor`                                        | Run the live Tor `.onion` E2E suite (real Arti; manual only) |
 | `npm run ant:download`                                        | Download the Ant (antd) binary for your platform            |
 | `npm run ant:status`                                          | Check the default profile's Freedom-managed Ant (`11633`)   |
 | `npm run system-ant:start` / `system-ant:status` / `system-ant:stop` | Run or inspect a repo-root system Ant on the ecosystem default port (`1633`) |
@@ -466,6 +467,7 @@ profile-managed dev data.
 | Script | Description |
 |--------|-------------|
 | `npm run tor:download` | Build the Arti (Rust Tor client) binary for your platform |
+| `npm run test:e2e:tor` | Start real Arti and load a live `.onion` service |
 | `npm run tor:reset` | Delete all Tor data and start fresh |
 
 ---
@@ -545,7 +547,7 @@ Two Playwright projects live under `test-e2e/`. The harness suite is run manuall
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
 | `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Ant/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
-| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). Requires `npm run ant:download` and `npm run ipfs:download` first; missing binaries/addons skip before Electron launches. |
+| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). `npm run test:e2e:tor` runs the Tor-only live smoke against real Arti and a live `.onion` service. Requires the matching binary download/build first; missing binaries/addons skip before Electron launches. |
 
 Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Ant port detection don't tolerate parallel app instances.
 
