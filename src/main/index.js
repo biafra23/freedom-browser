@@ -174,9 +174,6 @@ const { registerWebContentsHandlers } = require('./webcontents-setup');
 const { installTestHarness } = require('./test-harness');
 
 app.commandLine.appendSwitch('disable-features', 'VizDisplayCompositor');
-// Tor SOCKS proxying is TCP-only. Disable QUIC/HTTP3 so cached Alt-Svc state
-// cannot send .onion navigations down a transport that SOCKS cannot carry.
-app.commandLine.appendSwitch('disable-quic');
 log.info('[profile] Active profile:', {
   id: activeProfile.id,
   source: activeProfile.source,
