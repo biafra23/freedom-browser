@@ -379,7 +379,7 @@ Freedom automatically manages node connections per profile. The default profile'
 
 Named profiles use the next profile slot for Ant, Radicle, and Tor (`11634`, `18781`, `19151`, and so on). The ecosystem default Swarm/Radicle/Tor ports (`1633`, `8780`, `9150`) are treated as external/system-node endpoints, not Freedom-managed defaults. IPFS is native-only and does not expose or reuse Kubo API/gateway ports.
 
-If Freedom detects a compatible Swarm, Radicle, or Tor daemon on an ecosystem default port for a protocol that would start at launch, it asks whether that profile should use the existing external node or keep an independent managed node.
+If Freedom detects a compatible Swarm, Radicle, or Tor daemon on an ecosystem default port while that protocol is starting, it asks whether that profile should use the existing external node or keep an independent managed node. This check runs both during profile startup and when a managed node is started manually from the Nodes menu.
 
 For advanced users who need to connect a profile to a remote or system Bee/Radicle node, or to an external Tor SOCKS5 endpoint, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
 
@@ -788,7 +788,7 @@ npm run start:test-updater
 
 ### Using an external node
 
-- If you have a system-wide Swarm or Radicle daemon running, configure external mode in **Settings → Profiles → Node endpoints**
+- If you have a system-wide Swarm/Radicle daemon or Tor SOCKS5 endpoint running, configure external mode in **Settings → Profiles → Node endpoints**
 - External mode is per profile and per protocol
 - The Nodes panel shows external/shared status when connected to an external node
 - Freedom does not stop external nodes on quit

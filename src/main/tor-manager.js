@@ -11,7 +11,7 @@
  */
 
 const log = require('./logger');
-const { ipcMain, app, session } = require('electron');
+const { ipcMain, app, session, BrowserWindow } = require('electron');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
@@ -29,6 +29,9 @@ const {
   getReservedProfilePorts,
   updateActiveProfileNodeConfig,
 } = require('./profile-resolver');
+const {
+  promptForDefaultExternalCandidateProtocol,
+} = require('./profile-external-candidates');
 const { probeSocks5Endpoint } = require('./socks-probe');
 const { applyOnionProxy, clearOnionProxy } = require('./tor-proxy');
 const {
@@ -101,6 +104,13 @@ function getTorDataPath() {
 
 function getProfileTorConfig() {
   return getActiveProfile()?.metadata?.nodes?.tor || null;
+}
+
+function getPromptWindowForEvent(event) {
+  return BrowserWindow.fromWebContents?.(event?.sender)
+    || BrowserWindow.getFocusedWindow?.()
+    || BrowserWindow.getAllWindows?.()[0]
+    || null;
 }
 
 function isManagedTorConfig(config = getProfileTorConfig()) {
@@ -374,13 +384,22 @@ async function startTor(opts = {}) {
   updateState(STATUS.STARTING);
   setStatusMessage('tor', 'Bootstrapping…');
 
-  const profileConfig = getProfileTorConfig();
-  const managedProfileNode = isManagedTorConfig(profileConfig);
+  let profileConfig = getProfileTorConfig();
+  let managedProfileNode = isManagedTorConfig(profileConfig);
 
   if (hasUnknownTorMode(profileConfig)) {
     updateState(STATUS.ERROR, `Unsupported Tor node mode: ${profileConfig.mode}`);
     setStatusMessage('tor', 'Tor failed to start');
     return;
+  }
+
+  if (managedProfileNode && opts.checkDefaultExternalCandidate === true) {
+    await promptForDefaultExternalCandidateProtocol(getActiveProfile(), 'tor', {
+      window: opts.promptWindow,
+      logger: log,
+    });
+    profileConfig = getProfileTorConfig();
+    managedProfileNode = isManagedTorConfig(profileConfig);
   }
 
   if (isDisabledTorConfig(profileConfig)) {
@@ -580,13 +599,16 @@ function registerTorIpc() {
   };
   const isTorEnabled = () => loadSettings().enableTorIntegration === true;
 
-  ipcMain.handle(IPC.TOR_START, () => {
+  ipcMain.handle(IPC.TOR_START, (event) => {
     if (!isTorEnabled()) {
       log.info('[Tor] IPC: start blocked, integration disabled');
       return torDisabledResponse;
     }
     log.info('[Tor] IPC: start requested');
-    startTor();
+    startTor({
+      checkDefaultExternalCandidate: true,
+      promptWindow: getPromptWindowForEvent(event),
+    });
     return { status: currentState, error: lastError };
   });
 

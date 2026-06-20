@@ -1,5 +1,5 @@
 const log = require('./logger');
-const { ipcMain, app } = require('electron');
+const { ipcMain, app, BrowserWindow } = require('electron');
 const { spawn, execFileSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
@@ -19,6 +19,9 @@ const {
   getReservedProfilePorts,
   updateActiveProfileNodeConfig,
 } = require('./profile-resolver');
+const {
+  promptForDefaultExternalCandidateProtocol,
+} = require('./profile-external-candidates');
 
 /**
  * Validate a Radicle Repository ID (RID).
@@ -129,6 +132,13 @@ function getRadicleDataPath() {
 
 function getProfileRadicleConfig() {
   return getActiveProfile()?.metadata?.nodes?.radicle || null;
+}
+
+function getPromptWindowForEvent(event) {
+  return BrowserWindow.fromWebContents?.(event?.sender)
+    || BrowserWindow.getFocusedWindow?.()
+    || BrowserWindow.getAllWindows?.()[0]
+    || null;
 }
 
 function isManagedRadicleConfig(config = getProfileRadicleConfig()) {
@@ -615,7 +625,7 @@ async function autoSeedDefaults() {
   }
 }
 
-async function startRadicle() {
+async function startRadicle(opts = {}) {
   log.info('[Radicle] startRadicle() called, currentState:', currentState);
 
   if (currentState === STATUS.RUNNING || currentState === STATUS.STARTING) {
@@ -632,13 +642,22 @@ async function startRadicle() {
   pendingStart = false;
   updateState(STATUS.STARTING);
 
-  const profileConfig = getProfileRadicleConfig();
-  const managedProfileNode = isManagedRadicleConfig(profileConfig);
+  let profileConfig = getProfileRadicleConfig();
+  let managedProfileNode = isManagedRadicleConfig(profileConfig);
 
   if (hasUnknownRadicleMode(profileConfig)) {
     updateState(STATUS.ERROR, `Unsupported Radicle node mode: ${profileConfig.mode}`);
     setStatusMessage('radicle', 'Node failed to start');
     return;
+  }
+
+  if (managedProfileNode && opts.checkDefaultExternalCandidate === true) {
+    await promptForDefaultExternalCandidateProtocol(getActiveProfile(), 'radicle', {
+      window: opts.promptWindow,
+      logger: log,
+    });
+    profileConfig = getProfileRadicleConfig();
+    managedProfileNode = isManagedRadicleConfig(profileConfig);
   }
 
   if (isDisabledRadicleConfig(profileConfig)) {
@@ -1369,13 +1388,16 @@ function registerRadicleIpc() {
     return loadSettings().enableRadicleIntegration === true;
   };
 
-  ipcMain.handle(IPC.RADICLE_START, () => {
+  ipcMain.handle(IPC.RADICLE_START, (event) => {
     if (!isRadicleIntegrationEnabled()) {
       log.info('[Radicle] IPC: start blocked, integration disabled');
       return radicleDisabledResponse;
     }
     log.info('[Radicle] IPC: start requested');
-    startRadicle();
+    startRadicle({
+      checkDefaultExternalCandidate: true,
+      promptWindow: getPromptWindowForEvent(event),
+    });
     return { status: currentState, error: lastError };
   });
 

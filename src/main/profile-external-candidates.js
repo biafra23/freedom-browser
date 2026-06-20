@@ -196,6 +196,15 @@ function managedChoicesFor(candidates) {
   return Object.fromEntries(candidates.map((candidate) => [candidate.protocol, 'managed']));
 }
 
+function singleEnabledProtocol(protocol, definitions = DEFAULT_EXTERNAL_NODE_CANDIDATES) {
+  return Object.fromEntries(
+    Object.keys(definitions).map((candidateProtocol) => [
+      candidateProtocol,
+      candidateProtocol === protocol,
+    ])
+  );
+}
+
 function waitForWindowLoad(window) {
   if (!window || window.isDestroyed?.()) {
     return Promise.resolve(false);
@@ -319,6 +328,15 @@ async function promptForDefaultExternalCandidates(profile, options = {}) {
   return decisions;
 }
 
+function promptForDefaultExternalCandidateProtocol(profile, protocol, options = {}) {
+  const definitions = options.candidates || DEFAULT_EXTERNAL_NODE_CANDIDATES;
+  if (!definitions[protocol]) return Promise.resolve([]);
+  return promptForDefaultExternalCandidates(profile, {
+    ...options,
+    enabledProtocols: singleEnabledProtocol(protocol, definitions),
+  });
+}
+
 module.exports = {
   DEFAULT_EXTERNAL_NODE_CANDIDATES,
   EXTERNAL_CANDIDATE_PROMPT_KEY,
@@ -327,6 +345,7 @@ module.exports = {
   detectDefaultExternalCandidates,
   probeEndpoint,
   presentExternalCandidatesInWindow,
+  promptForDefaultExternalCandidateProtocol,
   promptForDefaultExternalCandidates,
   shouldPromptForProtocol,
 };

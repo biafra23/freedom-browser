@@ -10,6 +10,7 @@ let torToggleSwitch = null;
 let torStatusRow = null;
 let torStatusLabel = null;
 let torStatusValue = null;
+let torVersionRow = null;
 let torVersionText = null;
 let torNodesSection = null;
 
@@ -18,22 +19,39 @@ let torBinaryAvailable = true;
 
 // Version is read from the binary once and cached.
 let torVersionFetched = false;
+let torVersionValue = '';
+
+const isExternalTorMode = () => state.registry?.tor?.mode === 'external';
+
+const renderTorVersionLine = () => {
+  const showBundledVersion = state.enableTorIntegration === true && !isExternalTorMode();
+  if (torVersionRow) torVersionRow.hidden = !showBundledVersion;
+  if (!torVersionText) return;
+  torVersionText.textContent = showBundledVersion ? torVersionValue : '';
+};
 
 const fetchTorVersionOnce = async () => {
-  if (torVersionFetched) return;
-  if (!state.enableTorIntegration || !window.tor?.getVersion) return;
+  if (torVersionFetched) {
+    renderTorVersionLine();
+    return;
+  }
+  if (!state.enableTorIntegration || isExternalTorMode() || !window.tor?.getVersion) {
+    renderTorVersionLine();
+    return;
+  }
   try {
     const result = await window.tor.getVersion();
     if (result?.success && result.version) {
       torVersionFetched = true;
-      if (torVersionText) {
-        torVersionText.textContent = `${result.name || 'Arti'} ${result.version}`;
-      }
+      torVersionValue = `${result.name || 'Arti'} ${result.version}`;
+      renderTorVersionLine();
     } else if (torVersionText) {
-      torVersionText.textContent = '';
+      torVersionValue = '';
+      renderTorVersionLine();
     }
   } catch {
-    if (torVersionText) torVersionText.textContent = '';
+    torVersionValue = '';
+    renderTorVersionLine();
   }
 };
 
@@ -93,11 +111,15 @@ const setToggleDisabled = (disabled) => {
   }
 };
 
+const updateTorToggleAvailability = () => {
+  setToggleDisabled(!torBinaryAvailable && !isExternalTorMode());
+};
+
 const refreshTorBinaryAvailability = () => {
   if (!window.tor?.checkBinary) return;
   window.tor.checkBinary().then(({ available }) => {
     torBinaryAvailable = available;
-    setToggleDisabled(!available);
+    updateTorToggleAvailability();
     if (!available) {
       pushDebug('Tor (arti) binary not found - toggle disabled');
     }
@@ -108,6 +130,10 @@ const refreshTorBinaryAvailability = () => {
 export const updateTorStatusLine = () => {
   if (!state.enableTorIntegration) return;
   if (!torStatusRow || !torStatusLabel || !torStatusValue) return;
+
+  updateTorToggleAvailability();
+  renderTorVersionLine();
+  fetchTorVersionOnce();
 
   const message = getDisplayMessage('tor');
 
@@ -135,6 +161,7 @@ export const initTorUi = () => {
   torStatusLabel = document.getElementById('tor-status-label');
   torStatusValue = document.getElementById('tor-status-value');
   torVersionText = document.getElementById('tor-version-text');
+  torVersionRow = torVersionText?.closest?.('.tor-info-row') || null;
   torNodesSection = document.getElementById('tor-nodes-section');
   updateTorSectionVisibility();
 
@@ -143,7 +170,7 @@ export const initTorUi = () => {
 
   torToggleBtn?.addEventListener('click', () => {
     if (!state.enableTorIntegration) return;
-    if (!torBinaryAvailable) return;
+    if (!torBinaryAvailable && !isExternalTorMode()) return;
 
     if (state.currentTorStatus === 'running' || state.currentTorStatus === 'starting') {
       state.suppressTorRunningStatus = true;

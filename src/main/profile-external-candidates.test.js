@@ -5,6 +5,7 @@ const {
   detectDefaultExternalCandidates,
   applyExternalCandidateDecisions,
   presentExternalCandidatesInWindow,
+  promptForDefaultExternalCandidateProtocol,
   promptForDefaultExternalCandidates,
   shouldPromptForProtocol,
 } = require('./profile-external-candidates');
@@ -185,6 +186,37 @@ describe('profile external candidates', () => {
       externalSocks: '127.0.0.1:9150',
       [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
         choice: 'external',
+        checkedAt: '2026-05-26T00:00:00.000Z',
+        endpoints: ['SOCKS5 127.0.0.1:9150'],
+      },
+    });
+  });
+
+  test('single-protocol prompt only probes the requested default endpoint', async () => {
+    const profile = createProfile({
+      tor: { mode: 'managed' },
+    });
+    const updateNodeConfig = jest.fn();
+    const probeEndpoint = jest.fn().mockResolvedValue(true);
+
+    await promptForDefaultExternalCandidateProtocol(profile, 'tor', {
+      logger: { info: jest.fn() },
+      now: '2026-05-26T00:00:00.000Z',
+      presentCandidates: jest.fn().mockResolvedValue({
+        tor: 'managed',
+      }),
+      probeEndpoint,
+      updateNodeConfig,
+    });
+
+    expect(probeEndpoint).toHaveBeenCalledTimes(1);
+    expect(probeEndpoint).toHaveBeenCalledWith(
+      DEFAULT_EXTERNAL_NODE_CANDIDATES.tor.probes[0],
+      expect.any(Object)
+    );
+    expect(updateNodeConfig).toHaveBeenCalledWith('tor', {
+      [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
+        choice: 'managed',
         checkedAt: '2026-05-26T00:00:00.000Z',
         endpoints: ['SOCKS5 127.0.0.1:9150'],
       },

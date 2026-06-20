@@ -6,15 +6,24 @@ const { createIpcMainMock, loadMainModule } = require('../../test/helpers/main-p
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
+function flushMicrotasks() {
+  return Promise.resolve().then(() => Promise.resolve());
+}
+
 function loadTorManager(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const enableTorIntegration = options.enableTorIntegration === true;
   const updateActiveProfileNodeConfig = options.updateActiveProfileNodeConfig || jest.fn();
-  return loadMainModule(require.resolve('./tor-manager'), {
+  const promptForDefaultExternalCandidateProtocol =
+    options.promptForDefaultExternalCandidateProtocol || jest.fn().mockResolvedValue([]);
+  const defaultSession = options.defaultSession || {
+    setProxy: jest.fn().mockResolvedValue(undefined),
+  };
+  const result = loadMainModule(require.resolve('./tor-manager'), {
     ipcMain,
     userDataDir: options.userDataDir,
     electronOverrides: {
-      session: { defaultSession: { setProxy: jest.fn().mockResolvedValue(undefined) } },
+      session: { defaultSession },
     },
     extraMocks: {
       [require.resolve('./logger')]: () => ({
@@ -33,9 +42,16 @@ function loadTorManager(options = {}) {
       [require.resolve('./socks-probe')]: () => ({
         probeSocks5Endpoint: jest.fn().mockResolvedValue(options.socksProbeResult === true),
       }),
+      [require.resolve('./profile-external-candidates')]: () => ({
+        promptForDefaultExternalCandidateProtocol,
+      }),
       ...(options.extraMocks || {}),
     },
   });
+  return {
+    ...result,
+    defaultSession,
+  };
 }
 
 describe('tor-manager paths and config', () => {
@@ -153,6 +169,56 @@ describe('tor-manager IPC', () => {
     const res = await ipcMain.invoke(IPC.TOR_GET_VERSION);
     expect(res.success).toBe(false);
     expect(res.error?.message || res.error).toMatch(/disabled/i);
+  });
+
+  test('TOR_START prompts for a default external SOCKS endpoint before managed start', async () => {
+    const ipcMain = createIpcMainMock();
+    const activeProfile = {
+      source: 'catalog',
+      metadata: {
+        nodes: {
+          tor: {
+            mode: 'managed',
+            socksPort: 19150,
+          },
+        },
+      },
+    };
+    const promptForDefaultExternalCandidateProtocol = jest.fn(async () => {
+      activeProfile.metadata.nodes.tor = {
+        mode: 'external',
+        externalSocks: '127.0.0.1:9150',
+      };
+      return [
+        {
+          protocol: 'tor',
+          choice: 'external',
+          endpoints: ['SOCKS5 127.0.0.1:9150'],
+        },
+      ];
+    });
+    const { mod, defaultSession } = loadTorManager({
+      ipcMain,
+      enableTorIntegration: true,
+      activeProfile,
+      socksProbeResult: true,
+      promptForDefaultExternalCandidateProtocol,
+    });
+    mod.registerTorIpc();
+
+    await ipcMain.invoke(IPC.TOR_START);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(promptForDefaultExternalCandidateProtocol).toHaveBeenCalledWith(
+      activeProfile,
+      'tor',
+      expect.objectContaining({ window: null })
+    );
+    expect(defaultSession.setProxy).toHaveBeenCalled();
+    expect(mod.getActivePort()).toBe(9150);
+    await mod.stopTor();
+    await flushMicrotasks();
   });
 
   test('getArtiVersion fails when the binary is absent', async () => {
