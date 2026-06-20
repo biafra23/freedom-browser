@@ -152,6 +152,45 @@ describe('profile external candidates', () => {
     });
   });
 
+  test('persists external Tor when a default SOCKS endpoint is chosen', async () => {
+    const profile = createProfile({
+      tor: { mode: 'managed' },
+    });
+    const updateNodeConfig = jest.fn();
+
+    const decisions = await promptForDefaultExternalCandidates(profile, {
+      enabledProtocols: {
+        bee: false,
+        radicle: false,
+        tor: true,
+      },
+      logger: { info: jest.fn() },
+      now: '2026-05-26T00:00:00.000Z',
+      presentCandidates: jest.fn().mockResolvedValue({
+        tor: 'external',
+      }),
+      probeEndpoint: jest.fn().mockResolvedValue(true),
+      updateNodeConfig,
+    });
+
+    expect(decisions).toEqual([
+      {
+        protocol: 'tor',
+        choice: 'external',
+        endpoints: ['SOCKS5 127.0.0.1:9150'],
+      },
+    ]);
+    expect(updateNodeConfig).toHaveBeenCalledWith('tor', {
+      mode: 'external',
+      externalSocks: '127.0.0.1:9150',
+      [EXTERNAL_CANDIDATE_PROMPT_KEY]: {
+        choice: 'external',
+        checkedAt: '2026-05-26T00:00:00.000Z',
+        endpoints: ['SOCKS5 127.0.0.1:9150'],
+      },
+    });
+  });
+
   test('persists managed choice without changing node mode', async () => {
     const profile = createProfile();
     const dialog = {

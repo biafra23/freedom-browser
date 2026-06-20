@@ -9,8 +9,10 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 function loadTorManager(options = {}) {
   const ipcMain = options.ipcMain || createIpcMainMock();
   const enableTorIntegration = options.enableTorIntegration === true;
+  const updateActiveProfileNodeConfig = options.updateActiveProfileNodeConfig || jest.fn();
   return loadMainModule(require.resolve('./tor-manager'), {
     ipcMain,
+    userDataDir: options.userDataDir,
     electronOverrides: {
       session: { defaultSession: { setProxy: jest.fn().mockResolvedValue(undefined) } },
     },
@@ -23,11 +25,24 @@ function loadTorManager(options = {}) {
       [require.resolve('./settings-store')]: () => ({
         loadSettings: () => ({ enableTorIntegration }),
       }),
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: jest.fn(() => options.activeProfile || null),
+        getReservedProfilePorts: jest.fn(() => options.reservedPorts || new Set()),
+        updateActiveProfileNodeConfig,
+      }),
+      [require.resolve('./socks-probe')]: () => ({
+        probeSocks5Endpoint: jest.fn().mockResolvedValue(options.socksProbeResult === true),
+      }),
+      ...(options.extraMocks || {}),
     },
   });
 }
 
 describe('tor-manager paths and config', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   test('getArtiBinaryPath points at the dev arti-bin layout', () => {
     const { mod } = loadTorManager();
     const expected = path.join(
@@ -53,6 +68,16 @@ describe('tor-manager paths and config', () => {
     }
   });
 
+  test('getTorDataPath uses the active profile userData directory by default', () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tor-profile-data-'));
+    try {
+      const { mod } = loadTorManager({ userDataDir });
+      expect(mod.getTorDataPath()).toBe(path.join(userDataDir, 'tor-data'));
+    } finally {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
   test('writeArtiConfig pins the SOCKS port and storage dirs', () => {
     const { mod } = loadTorManager();
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tor-cfg-'));
@@ -71,13 +96,21 @@ describe('tor-manager paths and config', () => {
   });
 
   test('checkBinary returns false when the arti binary is absent', () => {
+    const realExistsSync = fs.existsSync;
+    jest.spyOn(fs, 'existsSync').mockImplementation((target) => {
+      if (String(target).includes(`${path.sep}arti-bin${path.sep}`)) return false;
+      return realExistsSync(target);
+    });
     const { mod } = loadTorManager();
-    // No arti-bin built in the test tree.
     expect(mod.checkBinary()).toBe(false);
   });
 });
 
 describe('tor-manager IPC', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   test('TOR_GET_STATUS returns disabled response when integration is off', async () => {
     const ipcMain = createIpcMainMock();
     const { mod } = loadTorManager({ ipcMain, enableTorIntegration: false });
@@ -99,6 +132,11 @@ describe('tor-manager IPC', () => {
   });
 
   test('TOR_CHECK_BINARY reports availability', async () => {
+    const realExistsSync = fs.existsSync;
+    jest.spyOn(fs, 'existsSync').mockImplementation((target) => {
+      if (String(target).includes(`${path.sep}arti-bin${path.sep}`)) return false;
+      return realExistsSync(target);
+    });
     const ipcMain = createIpcMainMock();
     const { mod } = loadTorManager({ ipcMain });
     mod.registerTorIpc();
@@ -118,8 +156,39 @@ describe('tor-manager IPC', () => {
   });
 
   test('getArtiVersion fails when the binary is absent', async () => {
+    const realExistsSync = fs.existsSync;
+    jest.spyOn(fs, 'existsSync').mockImplementation((target) => {
+      if (String(target).includes(`${path.sep}arti-bin${path.sep}`)) return false;
+      return realExistsSync(target);
+    });
     const { mod } = loadTorManager({ enableTorIntegration: true });
     const res = await mod.getArtiVersion();
     expect(res.success).toBe(false);
+  });
+
+  test('starts external Tor profile through a SOCKS endpoint without requiring arti', async () => {
+    const targetSession = { setProxy: jest.fn().mockResolvedValue(undefined) };
+    const { mod } = loadTorManager({
+      enableTorIntegration: true,
+      socksProbeResult: true,
+      activeProfile: {
+        metadata: {
+          nodes: {
+            tor: {
+              mode: 'external',
+              externalSocks: 'socks5://127.0.0.1:9150/',
+            },
+          },
+        },
+      },
+    });
+
+    await mod.startTor({ targetSession });
+
+    expect(targetSession.setProxy).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'pac_script' })
+    );
+    expect(mod.getActivePort()).toBe(9150);
+    await mod.stopTor();
   });
 });

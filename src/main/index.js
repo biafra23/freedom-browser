@@ -305,6 +305,7 @@ async function bootstrap() {
       enabledProtocols: {
         bee: settings.startBeeAtLaunch !== false,
         radicle: settings.enableRadicleIntegration === true && settings.startRadicleAtLaunch !== false,
+        tor: settings.enableTorIntegration === true && settings.startTorAtLaunch === true,
       },
       logger: log,
     });

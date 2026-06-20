@@ -1146,19 +1146,76 @@
         external: 'Use external node',
         disabled: 'Disabled',
       };
-      const EDITABLE_NODE_MODES = {
-        bee: ['managed', 'external', 'disabled'],
-        ipfs: ['managed', 'disabled'],
-        radicle: ['managed', 'external', 'disabled'],
+
+      const PROFILE_NODE_SERVICES = [
+        {
+          protocol: 'bee',
+          label: 'Swarm',
+          modes: ['managed', 'external', 'disabled'],
+          externalFields: [
+            { key: 'externalApi', label: 'API', placeholder: 'http://127.0.0.1:1633' },
+          ],
+          endpointLines: (config, service) => [
+            config?.externalApi || service?.api || (config?.apiPort ? `http://127.0.0.1:${config.apiPort}` : null),
+          ].filter(Boolean),
+        },
+        {
+          protocol: 'ipfs',
+          label: 'IPFS',
+          modes: ['managed', 'disabled'],
+          endpointLines: () => ['Embedded freedom-ipfs native node'],
+        },
+        {
+          protocol: 'radicle',
+          label: 'Radicle',
+          modes: ['managed', 'external', 'disabled'],
+          settingKey: 'enableRadicleIntegration',
+          hideOnWindows: true,
+          externalFields: [
+            { key: 'externalHttp', label: 'HTTP', placeholder: 'http://127.0.0.1:8780' },
+          ],
+          endpointLines: (config, service) => [
+            config?.externalHttp || service?.api || (config?.httpPort ? `http://127.0.0.1:${config.httpPort}` : null),
+          ].filter(Boolean),
+        },
+        {
+          protocol: 'tor',
+          label: 'Tor (.onion)',
+          modes: ['managed', 'external', 'disabled'],
+          settingKey: 'enableTorIntegration',
+          hideOnWindows: true,
+          externalFields: [
+            { key: 'externalSocks', label: 'SOCKS5', placeholder: '127.0.0.1:9150' },
+          ],
+          endpointLines: (config, service) => [
+            config?.externalSocks
+              ? `SOCKS5 ${config.externalSocks}`
+              : service?.socks
+                ? `SOCKS5 ${service.socks}`
+                : config?.socksPort
+                  ? `SOCKS5 127.0.0.1:${config.socksPort}`
+                  : null,
+          ].filter(Boolean),
+        },
+      ];
+
+      const SERVICE_DEFINITIONS = Object.fromEntries(
+        PROFILE_NODE_SERVICES.map((definition) => [definition.protocol, definition])
+      );
+      const SERVICE_LABELS = Object.fromEntries(
+        PROFILE_NODE_SERVICES.map((definition) => [definition.protocol, definition.label])
+      );
+      const visibleProfileServices = () =>
+        PROFILE_NODE_SERVICES.filter((definition) => !(definition.hideOnWindows && isWindows));
+      const featureGateMessage = (definition, settings, config) => {
+        if (!definition.settingKey || config?.mode === 'disabled') return null;
+        if (settings?.[definition.settingKey] === true) return null;
+        return `${definition.label} integration is off in Experimental`;
       };
 
-      const SERVICE_LABELS = {
-        bee: 'Swarm',
-        ipfs: 'IPFS',
-        radicle: 'Radicle',
-      };
-
-      const statusLabel = (service) => {
+      const statusLabel = (definition, service, config, settings) => {
+        const gateMessage = featureGateMessage(definition, settings, config);
+        if (gateMessage) return gateMessage;
         const mode = service?.mode || 'none';
         const message = service?.tempMessage || service?.statusMessage;
         if (message) return message;
@@ -1174,39 +1231,26 @@
         return source || 'Unknown';
       };
 
-      const endpointLines = (protocol, config, service) => {
+      const endpointLines = (definition, config, service) => {
         if (config?.mode === 'disabled') return [];
-        if (protocol === 'bee') {
-          return [
-            config?.externalApi || service?.api || (config?.apiPort ? `http://127.0.0.1:${config.apiPort}` : null),
-          ].filter(Boolean);
-        }
-        if (protocol === 'ipfs') {
-          return ['Embedded freedom-ipfs native node'];
-        }
-        return [
-          config?.externalHttp || service?.api || (config?.httpPort ? `http://127.0.0.1:${config.httpPort}` : null),
-        ].filter(Boolean);
+        return definition.endpointLines?.(config, service) || [];
       };
 
-      const externalFields = (protocol, config) => {
-        if (protocol === 'bee') {
-          return [{ key: 'externalApi', label: 'API', value: config?.externalApi }];
-        }
-        if (protocol === 'ipfs') {
-          return [];
-        }
-        return [{ key: 'externalHttp', label: 'HTTP', value: config?.externalHttp }];
-      };
+      const externalFields = (definition, config) =>
+        (definition.externalFields || []).map((field) => ({
+          ...field,
+          value: config?.[field.key],
+        }));
 
       const renderModeOptions = (protocol, mode) =>
-        (EDITABLE_NODE_MODES[protocol] || EDITABLE_NODE_MODES.bee).map(
+        (SERVICE_DEFINITIONS[protocol]?.modes || ['managed', 'disabled']).map(
           (value) =>
             `<option value="${value}"${mode === value ? ' selected' : ''}>${NODE_MODE_LABELS[value]}</option>`
         ).join('');
 
       const renderExternalEditor = (protocol, config, mode) => {
-        const fields = externalFields(protocol, config).map(
+        const definition = SERVICE_DEFINITIONS[protocol];
+        const fields = externalFields(definition, config).map(
           (field) => `
             <div class="profile-node-field">
               <label for="profile-${protocol}-${field.key}">${esc(field.label)}</label>
@@ -1216,7 +1260,7 @@
                 data-endpoint-field="${field.key}"
                 type="text"
                 value="${esc(field.value || '')}"
-                placeholder="http://127.0.0.1:${protocol === 'bee' ? '1633' : '8780'}"
+                placeholder="${esc(field.placeholder || '')}"
                 spellcheck="false"
               />
             </div>`
@@ -1253,7 +1297,8 @@
 
       const nodeModeSummary = (profile) => {
         const nodes = profile?.nodes || {};
-        return ['bee', 'ipfs', 'radicle']
+        return visibleProfileServices()
+          .map((definition) => definition.protocol)
           .map((protocol) => `${SERVICE_LABELS[protocol]}: ${NODE_MODE_LABELS[nodes[protocol]?.mode || 'managed'] || 'Managed'}`)
           .join(' · ');
       };
@@ -1352,14 +1397,14 @@
         }
       };
 
-      const renderProfileNodes = (profile, registry) => {
+      const renderProfileNodes = (profile, registry, settings) => {
         const nodes = profile?.nodes || {};
-        const services = ['bee', 'ipfs', 'radicle'];
-        const rows = services.map((protocol) => {
+        const rows = visibleProfileServices().map((definition) => {
+          const protocol = definition.protocol;
           const config = nodes[protocol] || {};
           const service = registry?.[protocol] || {};
           const mode = config.mode || 'managed';
-          const lines = endpointLines(protocol, config, service);
+          const lines = endpointLines(definition, config, service);
           const details = lines.length
             ? lines.map((line) => `<div class="profile-node-detail">${esc(line)}</div>`).join('')
             : '<div class="profile-node-detail">No endpoint</div>';
@@ -1373,7 +1418,7 @@
                 </select>
               </div>
               <div class="profile-node-status">
-                <div class="profile-node-status-line">${esc(statusLabel(service))}</div>
+                <div class="profile-node-status-line">${esc(statusLabel(definition, service, config, settings))}</div>
                 ${details}
                 ${renderExternalEditor(protocol, config, mode)}
                 <div class="profile-node-actions">
@@ -1399,9 +1444,10 @@
         }
 
         try {
-          const [profile, registry] = await Promise.all([
+          const [profile, registry, settings] = await Promise.all([
             freedomAPI.getActiveProfile?.(),
             freedomAPI.getServiceRegistry().catch(() => null),
+            freedomAPI.getSettings?.().catch(() => null),
           ]);
           const label = profile?.displayName || profile?.id || 'Unknown';
           profileFields.displayName.textContent = label;
@@ -1411,7 +1457,7 @@
           profileFields.slot.textContent = Number.isInteger(profile?.slot)
             ? `Slot ${profile.slot}`
             : 'Unassigned';
-          renderProfileNodes(profile, registry);
+          renderProfileNodes(profile, registry, settings);
           await refreshProfileManager();
         } catch {
           profileFields.nodesCard.innerHTML =
@@ -1798,6 +1844,9 @@
             document
               .querySelectorAll('[data-radicle], [data-tor]')
               .forEach((el) => (el.style.display = 'none'));
+            if (resolveSection(location.hash) === 'profiles') {
+              refreshProfileSection(true);
+            }
           }
         } catch {
           // Non-fatal — assume non-Windows.

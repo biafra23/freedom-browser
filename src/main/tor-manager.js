@@ -20,8 +20,16 @@ const execFileAsync = promisify(execFile);
 const fs = require('fs');
 const net = require('net');
 const IPC = require('../shared/ipc-channels');
+const { normalizeSocksEndpoint, parseSocksEndpoint } = require('../shared/socks-endpoint');
 const { success, failure } = require('./ipc-contract');
 const { loadSettings } = require('./settings-store');
+const { getTorDataDir } = require('./profile-paths');
+const {
+  getActiveProfile,
+  getReservedProfilePorts,
+  updateActiveProfileNodeConfig,
+} = require('./profile-resolver');
+const { probeSocks5Endpoint } = require('./socks-probe');
 const { applyOnionProxy, clearOnionProxy } = require('./tor-proxy');
 const {
   MODE,
@@ -49,7 +57,10 @@ let healthCheckInterval = null;
 let pendingStart = false;
 let forceKillTimeout = null;
 let currentSocksPort = DEFAULTS.tor.socksPort;
+let currentSocksEndpoint = `127.0.0.1:${DEFAULTS.tor.socksPort}`;
 let proxySession = null;
+let artiBootstrapped = false;
+let artiOutputBuffer = '';
 
 /**
  * Resolve the bundled arti binary path. Dev layout mirrors radicle:
@@ -73,14 +84,7 @@ function getArtiBinaryPath() {
  * 0700 perms so Arti's filesystem-permission checks pass.
  */
 function getTorDataPath() {
-  let dir;
-  if (process.env.FREEDOM_TOR_DATA) {
-    dir = process.env.FREEDOM_TOR_DATA;
-  } else if (!app.isPackaged) {
-    dir = path.join(__dirname, '..', '..', 'tor-data');
-  } else {
-    dir = path.join(app.getPath('userData'), 'tor-data');
-  }
+  const dir = getTorDataDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -93,6 +97,44 @@ function getTorDataPath() {
     // Non-fatal: on Windows chmod is a no-op and Arti's perm checks differ.
   }
   return dir;
+}
+
+function getProfileTorConfig() {
+  return getActiveProfile()?.metadata?.nodes?.tor || null;
+}
+
+function isManagedTorConfig(config = getProfileTorConfig()) {
+  return config?.mode === 'managed';
+}
+
+function isExternalTorConfig(config = getProfileTorConfig()) {
+  return config?.mode === 'external';
+}
+
+function isDisabledTorConfig(config = getProfileTorConfig()) {
+  return config?.mode === 'disabled';
+}
+
+function hasUnknownTorMode(config) {
+  return Boolean(config?.mode) && !isManagedTorConfig(config)
+    && !isExternalTorConfig(config)
+    && !isDisabledTorConfig(config);
+}
+
+function getConfiguredTorSocksPort(config = getProfileTorConfig()) {
+  return Number.isInteger(config?.socksPort) ? config.socksPort : DEFAULTS.tor.socksPort;
+}
+
+function persistManagedTorPort(socksPort) {
+  const result = updateActiveProfileNodeConfig('tor', { socksPort });
+  if (result) {
+    log.info('[Tor] Persisted managed profile SOCKS port:', socksPort);
+  }
+}
+
+function setCurrentSocksEndpoint(endpoint) {
+  currentSocksEndpoint = endpoint;
+  currentSocksPort = parseSocksEndpoint(endpoint)?.port || null;
 }
 
 /**
@@ -166,9 +208,14 @@ function isPortOpen(port, host = '127.0.0.1') {
 }
 
 /** Find an available port starting from the default. */
-async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.tor.fallbackRange) {
+async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.tor.fallbackRange, options = {}) {
+  const reservedPorts = options.reservedPorts || new Set();
   for (let i = 0; i < maxAttempts; i++) {
     const port = defaultPort + i;
+    if (reservedPorts.has(port)) {
+      log.info(`[Tor] Port ${port} is reserved by another profile, trying next...`);
+      continue;
+    }
     const open = await isPortOpen(port);
     if (!open) return port;
     log.info(`[Tor] Port ${port} is busy, trying next...`);
@@ -176,9 +223,9 @@ async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.tor.fallbac
   return null;
 }
 
-/** Readiness: the SOCKS port is accepting connections. */
+/** Readiness: the SOCKS endpoint accepts a SOCKS5 greeting. */
 async function checkHealth() {
-  return isPortOpen(currentSocksPort);
+  return probeSocks5Endpoint(currentSocksEndpoint);
 }
 
 function startHealthCheck() {
@@ -193,6 +240,60 @@ function startHealthCheck() {
       updateState(STATUS.RUNNING);
     }
   }, 5000);
+}
+
+async function applyTorProxy(mode, statusMessage) {
+  try {
+    await applyOnionProxy(proxySession, currentSocksEndpoint);
+  } catch (err) {
+    log.error('[Tor] Failed to apply proxy:', err.message);
+    updateState(STATUS.ERROR, 'Failed to apply Tor proxy');
+    setStatusMessage('tor', 'Tor failed to start');
+    return false;
+  }
+
+  updateService('tor', {
+    socks: currentSocksEndpoint,
+    mode,
+  });
+  setStatusMessage('tor', statusMessage);
+  updateState(STATUS.RUNNING);
+  startHealthCheck();
+  return true;
+}
+
+async function startExternalTor(config) {
+  const endpoint = normalizeSocksEndpoint(config?.externalSocks);
+  if (!endpoint) {
+    updateState(STATUS.ERROR, 'External Tor SOCKS endpoint is not configured');
+    setStatusMessage('tor', 'External Tor not configured');
+    return;
+  }
+
+  setCurrentSocksEndpoint(endpoint);
+  setStatusMessage('tor', 'Checking external SOCKS…');
+
+  if (!(await checkHealth())) {
+    updateState(STATUS.ERROR, 'External Tor SOCKS endpoint is unreachable');
+    setStatusMessage('tor', 'External Tor unreachable');
+    return;
+  }
+
+  if (await applyTorProxy(MODE.EXTERNAL, `External SOCKS: ${currentSocksEndpoint}`)) {
+    log.info('[Tor] Connected to external SOCKS at', currentSocksEndpoint);
+  }
+}
+
+function startDisabledTor() {
+  setCurrentSocksEndpoint(`127.0.0.1:${DEFAULTS.tor.socksPort}`);
+  clearService('tor');
+  updateService('tor', {
+    socks: null,
+    mode: MODE.DISABLED,
+  });
+  setStatusMessage('tor', 'Tor disabled for this profile');
+  updateState(STATUS.STOPPED);
+  log.info('[Tor] Disabled for active profile');
 }
 
 function checkBinary() {
@@ -227,6 +328,28 @@ async function getArtiVersion() {
   }
 }
 
+function handleArtiLogLine(line) {
+  if (/Sufficiently bootstrapped/i.test(line)) {
+    artiBootstrapped = true;
+    setStatusMessage('tor', 'Tor bootstrapped; opening SOCKS…');
+  }
+}
+
+function handleArtiOutput(streamName, data) {
+  const text = String(data || '');
+  log.info(`[arti ${streamName}]: ${text}`);
+  artiOutputBuffer += text;
+  const lines = artiOutputBuffer.split(/\r?\n/);
+  artiOutputBuffer = lines.pop() || '';
+  for (const line of lines) {
+    handleArtiLogLine(line);
+  }
+
+  // If a platform flushes without a trailing newline, still catch the readiness
+  // marker. Keep the buffer so a split marker can complete on the next chunk.
+  handleArtiLogLine(artiOutputBuffer);
+}
+
 /**
  * Start Arti as a SOCKS proxy and route `.onion` through it.
  * @param {object} [opts]
@@ -251,6 +374,25 @@ async function startTor(opts = {}) {
   updateState(STATUS.STARTING);
   setStatusMessage('tor', 'Bootstrapping…');
 
+  const profileConfig = getProfileTorConfig();
+  const managedProfileNode = isManagedTorConfig(profileConfig);
+
+  if (hasUnknownTorMode(profileConfig)) {
+    updateState(STATUS.ERROR, `Unsupported Tor node mode: ${profileConfig.mode}`);
+    setStatusMessage('tor', 'Tor failed to start');
+    return;
+  }
+
+  if (isDisabledTorConfig(profileConfig)) {
+    startDisabledTor();
+    return;
+  }
+
+  if (isExternalTorConfig(profileConfig)) {
+    await startExternalTor(profileConfig);
+    return;
+  }
+
   const artiPath = getArtiBinaryPath();
   if (!fs.existsSync(artiPath)) {
     updateState(STATUS.ERROR, `arti binary not found at ${artiPath}`);
@@ -258,10 +400,17 @@ async function startTor(opts = {}) {
     return;
   }
 
-  // Resolve a free SOCKS port (default 9150, fall back if busy).
-  let socksPort = DEFAULTS.tor.socksPort;
-  if (await isPortOpen(socksPort)) {
-    const next = await findAvailablePort(socksPort + 1);
+  // Resolve a free SOCKS port (profile default, fall back if busy/reserved).
+  let socksPort = getConfiguredTorSocksPort(profileConfig);
+  const configuredSocksPort = socksPort;
+  const reservedProfilePorts = managedProfileNode ? getReservedProfilePorts() : new Set();
+  const configuredPortUnavailable =
+    reservedProfilePorts.has(socksPort) || (await isPortOpen(socksPort));
+
+  if (configuredPortUnavailable) {
+    const next = await findAvailablePort(socksPort + 1, DEFAULTS.tor.fallbackRange, {
+      reservedPorts: reservedProfilePorts,
+    });
     if (!next) {
       updateState(STATUS.ERROR, 'No available ports for Tor SOCKS proxy');
       setStatusMessage('tor', 'Tor failed to start');
@@ -269,7 +418,21 @@ async function startTor(opts = {}) {
     }
     socksPort = next;
   }
-  currentSocksPort = socksPort;
+
+  if (managedProfileNode && socksPort !== configuredSocksPort) {
+    try {
+      persistManagedTorPort(socksPort);
+    } catch (err) {
+      log.error('[Tor] Failed to persist managed profile SOCKS port:', err.message);
+      updateState(STATUS.ERROR, 'Failed to save Tor port assignment');
+      setStatusMessage('tor', 'Tor failed to start');
+      return;
+    }
+  }
+
+  setCurrentSocksEndpoint(`127.0.0.1:${socksPort}`);
+  artiBootstrapped = false;
+  artiOutputBuffer = '';
 
   let configPath;
   try {
@@ -291,8 +454,8 @@ async function startTor(opts = {}) {
     return;
   }
 
-  artiProcess.stdout.on('data', (data) => log.info(`[arti stdout]: ${data}`));
-  artiProcess.stderr.on('data', (data) => log.info(`[arti stderr]: ${data}`));
+  artiProcess.stdout.on('data', (data) => handleArtiOutput('stdout', data));
+  artiProcess.stderr.on('data', (data) => handleArtiOutput('stderr', data));
 
   artiProcess.on('error', (err) => {
     log.error('[Tor] Failed to start process:', err);
@@ -303,6 +466,8 @@ async function startTor(opts = {}) {
   artiProcess.on('close', (code) => {
     log.info(`[Tor] arti process exited with code ${code}`);
     artiProcess = null;
+    artiBootstrapped = false;
+    artiOutputBuffer = '';
     if (forceKillTimeout) {
       clearTimeout(forceKillTimeout);
       forceKillTimeout = null;
@@ -330,7 +495,8 @@ async function startTor(opts = {}) {
     }
   });
 
-  // Poll for the SOCKS port to come up, then apply the proxy.
+  // Poll for the SOCKS endpoint to come up, then wait for Arti's bootstrap
+  // marker before routing Chromium traffic through it.
   let attempts = 0;
   const maxAttempts = 120; // up to ~120s for first bootstrap
   const pollInterval = setInterval(async () => {
@@ -338,23 +504,15 @@ async function startTor(opts = {}) {
       clearInterval(pollInterval);
       return;
     }
-    const healthy = await checkHealth();
-    if (healthy) {
+    const socksReady = await checkHealth();
+    if (socksReady && artiBootstrapped) {
       clearInterval(pollInterval);
-      try {
-        await applyOnionProxy(proxySession, `127.0.0.1:${currentSocksPort}`);
-      } catch (err) {
-        log.error('[Tor] Failed to apply proxy:', err.message);
-      }
-      updateService('tor', {
-        socks: `127.0.0.1:${currentSocksPort}`,
-        mode: MODE.BUNDLED,
-      });
-      setStatusMessage('tor', `SOCKS: 127.0.0.1:${currentSocksPort}`);
-      updateState(STATUS.RUNNING);
-      startHealthCheck();
+      await applyTorProxy(MODE.BUNDLED, `SOCKS: ${currentSocksEndpoint}`);
     } else {
       attempts++;
+      if (socksReady) {
+        setStatusMessage('tor', 'Bootstrapping Tor network…');
+      }
       if (attempts >= maxAttempts) {
         clearInterval(pollInterval);
         stopTor();
@@ -381,6 +539,8 @@ function stopTor() {
       }
       if (proxySession) clearOnionProxy(proxySession).catch(() => {});
       clearService('tor');
+      artiBootstrapped = false;
+      artiOutputBuffer = '';
       resolve();
     };
 

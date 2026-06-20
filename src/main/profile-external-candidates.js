@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { ipcMain } = require('electron');
 const IPC = require('../shared/ipc-channels');
 const { updateActiveProfileNodeConfig } = require('./profile-resolver');
+const { probeSocks5Endpoint } = require('./socks-probe');
 
 const EXTERNAL_CANDIDATE_PROMPT_KEY = 'externalCandidatePrompt';
 
@@ -37,6 +38,20 @@ const DEFAULT_EXTERNAL_NODE_CANDIDATES = {
       },
     ],
   },
+  tor: {
+    label: 'Tor',
+    endpoints: ['SOCKS5 127.0.0.1:9150'],
+    externalConfig: {
+      mode: 'external',
+      externalSocks: '127.0.0.1:9150',
+    },
+    probes: [
+      {
+        type: 'socks5',
+        endpoint: '127.0.0.1:9150',
+      },
+    ],
+  },
 };
 
 function getHttpClient(url) {
@@ -45,6 +60,10 @@ function getHttpClient(url) {
 
 function probeEndpoint(probe, options = {}) {
   const timeoutMs = options.timeoutMs ?? 1000;
+  if (probe.type === 'socks5') {
+    return probeSocks5Endpoint(probe.endpoint, { timeoutMs });
+  }
+
   return new Promise((resolve) => {
     const parsed = new URL(probe.url);
     const requestOptions = {

@@ -1,5 +1,5 @@
 /**
- * Service Registry - Central tracking of IPFS and Swarm node state
+ * Service Registry - Central tracking of node state
  *
  * This module provides a port-agnostic way for Freedom to access nodes.
  * All URL rewriting resolves through this registry.
@@ -52,6 +52,27 @@ const registry = {
   },
 };
 
+function createEmptyServiceState(service) {
+  if (service === 'tor') {
+    return {
+      socks: null,
+      mode: MODE.NONE,
+      statusMessage: null,
+      tempMessage: null,
+      tempMessageTimeout: null,
+    };
+  }
+
+  return {
+    api: null,
+    gateway: null,
+    mode: MODE.NONE,
+    statusMessage: null,
+    tempMessage: null,
+    tempMessageTimeout: null,
+  };
+}
+
 // Default ports
 const DEFAULTS = {
   ant: {
@@ -66,7 +87,7 @@ const DEFAULTS = {
     fallbackRange: 10,
   },
   tor: {
-    socksPort: 9150,  // Arti SOCKS5 proxy (Tor Browser's default SOCKS port)
+    socksPort: 19150, // Freedom-managed Arti SOCKS5 proxy; 9150 is treated as external
     fallbackRange: 10,
   },
 };
@@ -181,14 +202,7 @@ function clearService(service) {
     clearTimeout(registry[service].tempMessageTimeout);
   }
 
-  registry[service] = {
-    api: null,
-    gateway: null,
-    mode: MODE.NONE,
-    statusMessage: null,
-    tempMessage: null,
-    tempMessageTimeout: null,
-  };
+  registry[service] = createEmptyServiceState(service);
 
   broadcastRegistryUpdate();
 }
