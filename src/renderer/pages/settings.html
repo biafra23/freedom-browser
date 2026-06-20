@@ -1180,7 +1180,7 @@
         },
         {
           protocol: 'tor',
-          label: 'Tor (.onion)',
+          label: 'Tor',
           modes: ['managed', 'external', 'disabled'],
           settingKey: 'enableTorIntegration',
           hideOnWindows: true,
@@ -1205,17 +1205,15 @@
       const SERVICE_LABELS = Object.fromEntries(
         PROFILE_NODE_SERVICES.map((definition) => [definition.protocol, definition.label])
       );
-      const visibleProfileServices = () =>
-        PROFILE_NODE_SERVICES.filter((definition) => !(definition.hideOnWindows && isWindows));
-      const featureGateMessage = (definition, settings, config) => {
-        if (!definition.settingKey || config?.mode === 'disabled') return null;
-        if (settings?.[definition.settingKey] === true) return null;
-        return `${definition.label} integration is off in Experimental`;
+      const isProfileServiceVisible = (definition, settings) => {
+        if (definition.hideOnWindows && isWindows) return false;
+        if (definition.settingKey && settings?.[definition.settingKey] !== true) return false;
+        return true;
       };
+      const visibleProfileServices = (settings) =>
+        PROFILE_NODE_SERVICES.filter((definition) => isProfileServiceVisible(definition, settings));
 
-      const statusLabel = (definition, service, config, settings) => {
-        const gateMessage = featureGateMessage(definition, settings, config);
-        if (gateMessage) return gateMessage;
+      const statusLabel = (service) => {
         const mode = service?.mode || 'none';
         const message = service?.tempMessage || service?.statusMessage;
         if (message) return message;
@@ -1295,15 +1293,15 @@
         return date.toLocaleString();
       };
 
-      const nodeModeSummary = (profile) => {
+      const nodeModeSummary = (profile, settings) => {
         const nodes = profile?.nodes || {};
-        return visibleProfileServices()
+        return visibleProfileServices(settings)
           .map((definition) => definition.protocol)
           .map((protocol) => `${SERVICE_LABELS[protocol]}: ${NODE_MODE_LABELS[nodes[protocol]?.mode || 'managed'] || 'Managed'}`)
           .join(' · ');
       };
 
-      const renderProfileManager = (profiles) => {
+      const renderProfileManager = (profiles, settings) => {
         if (!profileFields.managerList) return;
         if (!profiles?.length) {
           profileFields.managerList.innerHTML =
@@ -1353,7 +1351,7 @@
               <div class="profile-manager-meta">
                 ${metaPrefix}ID: ${esc(profile.id)} · Slot ${Number.isInteger(profile.slot) ? profile.slot : 'unassigned'} · Last opened: ${esc(formatProfileDate(profile.lastOpenedAt))}
               </div>
-              <div class="profile-manager-meta">${esc(nodeModeSummary(profile))}</div>
+              <div class="profile-manager-meta">${esc(nodeModeSummary(profile, settings))}</div>
             </div>
             <div class="profile-manager-actions">${actions}</div>
             <div class="profile-delete-confirm" data-delete-confirm hidden>
@@ -1382,14 +1380,17 @@
         }).join('');
       };
 
-      const refreshProfileManager = async () => {
+      const refreshProfileManager = async (settings = null) => {
         if (!profileFields.managerList) return;
         try {
-          const result = await freedomAPI.listProfiles?.();
+          const [result, resolvedSettings] = await Promise.all([
+            freedomAPI.listProfiles?.(),
+            settings ? Promise.resolve(settings) : freedomAPI.getSettings?.().catch(() => null),
+          ]);
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profiles unavailable');
           }
-          renderProfileManager(result.profiles || []);
+          renderProfileManager(result.profiles || [], resolvedSettings);
         } catch (err) {
           profileFields.managerList.innerHTML =
             '<div class="profile-manager-empty">Profile list unavailable</div>';
@@ -1399,7 +1400,7 @@
 
       const renderProfileNodes = (profile, registry, settings) => {
         const nodes = profile?.nodes || {};
-        const rows = visibleProfileServices().map((definition) => {
+        const rows = visibleProfileServices(settings).map((definition) => {
           const protocol = definition.protocol;
           const config = nodes[protocol] || {};
           const service = registry?.[protocol] || {};
@@ -1418,7 +1419,7 @@
                 </select>
               </div>
               <div class="profile-node-status">
-                <div class="profile-node-status-line">${esc(statusLabel(definition, service, config, settings))}</div>
+                <div class="profile-node-status-line">${esc(statusLabel(service))}</div>
                 ${details}
                 ${renderExternalEditor(protocol, config, mode)}
                 <div class="profile-node-actions">
@@ -1458,7 +1459,7 @@
             ? `Slot ${profile.slot}`
             : 'Unassigned';
           renderProfileNodes(profile, registry, settings);
-          await refreshProfileManager();
+          await refreshProfileManager(settings);
         } catch {
           profileFields.nodesCard.innerHTML =
             '<div class="profile-node-empty">Profile data unavailable</div>';
