@@ -40,17 +40,28 @@ describe('buildOnionPacScript', () => {
 describe('applyOnionProxy / clearOnionProxy', () => {
   test('applyOnionProxy sets a pac_script proxy on the session', async () => {
     const setProxy = jest.fn().mockResolvedValue(undefined);
-    await applyOnionProxy({ setProxy }, '127.0.0.1:9150');
+    const forceReloadProxyConfig = jest.fn().mockResolvedValue(undefined);
+    const closeAllConnections = jest.fn().mockResolvedValue(undefined);
+    await applyOnionProxy(
+      { setProxy, forceReloadProxyConfig, closeAllConnections },
+      '127.0.0.1:9150'
+    );
     expect(setProxy).toHaveBeenCalledTimes(1);
     const arg = setProxy.mock.calls[0][0];
     expect(arg.mode).toBe('pac_script');
     expect(arg.pacScript).toMatch(/^data:application\/x-ns-proxy-autoconfig;base64,/);
+    expect(forceReloadProxyConfig).toHaveBeenCalledTimes(1);
+    expect(closeAllConnections).toHaveBeenCalledTimes(1);
   });
 
   test('clearOnionProxy resets the session to direct', async () => {
     const setProxy = jest.fn().mockResolvedValue(undefined);
-    await clearOnionProxy({ setProxy });
+    const forceReloadProxyConfig = jest.fn().mockResolvedValue(undefined);
+    const closeAllConnections = jest.fn().mockResolvedValue(undefined);
+    await clearOnionProxy({ setProxy, forceReloadProxyConfig, closeAllConnections });
     expect(setProxy).toHaveBeenCalledWith({ mode: 'direct' });
+    expect(forceReloadProxyConfig).toHaveBeenCalledTimes(1);
+    expect(closeAllConnections).toHaveBeenCalledTimes(1);
   });
 
   test('no-ops gracefully when session has no setProxy', async () => {

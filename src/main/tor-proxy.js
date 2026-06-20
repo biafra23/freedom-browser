@@ -51,6 +51,8 @@ async function applyOnionProxy(targetSession, socksHostPort) {
     'utf-8'
   ).toString('base64')}`;
   await targetSession.setProxy({ mode: 'pac_script', pacScript: pacUrl });
+  await targetSession.forceReloadProxyConfig?.();
+  await targetSession.closeAllConnections?.();
   log.info(`[tor-proxy] .onion traffic routed via SOCKS5 ${socksHostPort}`);
 }
 
@@ -65,6 +67,8 @@ async function clearOnionProxy(targetSession) {
     return;
   }
   await targetSession.setProxy({ mode: 'direct' });
+  await targetSession.forceReloadProxyConfig?.();
+  await targetSession.closeAllConnections?.();
   log.info('[tor-proxy] proxy cleared — connections are direct');
 }
 
