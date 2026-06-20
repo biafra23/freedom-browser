@@ -15,6 +15,30 @@ const SOCKS5_LOCAL_CONNECT_PROBE = Buffer.from([
   1, // port 1
 ]);
 
+function probeTcpEndpoint(endpoint, options = {}) {
+  const parsed = parseSocksEndpoint(endpoint);
+  if (!parsed) return Promise.resolve(false);
+
+  const timeoutMs = options.timeoutMs ?? 1000;
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.on('connect', () => finish(true));
+    socket.on('timeout', () => finish(false));
+    socket.on('error', () => finish(false));
+    socket.connect(parsed.port, parsed.host);
+  });
+}
+
 function probeSocks5Endpoint(endpoint, options = {}) {
   const parsed = parseSocksEndpoint(endpoint);
   if (!parsed) return Promise.resolve(false);
@@ -70,5 +94,6 @@ function probeSocks5Endpoint(endpoint, options = {}) {
 }
 
 module.exports = {
+  probeTcpEndpoint,
   probeSocks5Endpoint,
 };

@@ -32,7 +32,7 @@ const {
 const {
   promptForDefaultExternalCandidateProtocol,
 } = require('./profile-external-candidates');
-const { probeSocks5Endpoint } = require('./socks-probe');
+const { probeSocks5Endpoint, probeTcpEndpoint } = require('./socks-probe');
 const { applyOnionProxy, clearOnionProxy } = require('./tor-proxy');
 const {
   MODE,
@@ -233,13 +233,24 @@ async function findAvailablePort(defaultPort, maxAttempts = DEFAULTS.tor.fallbac
   return null;
 }
 
-/** Readiness: the SOCKS endpoint accepts a SOCKS5 greeting. */
+/** External liveness: the configured endpoint accepts a TCP connection. */
 async function checkHealth() {
+  return probeTcpEndpoint(currentSocksEndpoint);
+}
+
+async function checkSocksProtocolHealth() {
   return probeSocks5Endpoint(currentSocksEndpoint);
 }
 
-function startHealthCheck() {
+function startHealthCheck(mode) {
   if (healthCheckInterval) clearInterval(healthCheckInterval);
+  if (mode === MODE.BUNDLED) {
+    // Managed Arti reports readiness through its bootstrap log, and process
+    // exit is handled separately. Repeated synthetic SOCKS connections make
+    // Arti log warnings, so avoid polling the managed listener.
+    healthCheckInterval = null;
+    return;
+  }
   healthCheckInterval = setInterval(async () => {
     const healthy = await checkHealth();
     if (!healthy && currentState === STATUS.RUNNING) {
@@ -268,7 +279,7 @@ async function applyTorProxy(mode, statusMessage) {
   });
   setStatusMessage('tor', statusMessage);
   updateState(STATUS.RUNNING);
-  startHealthCheck();
+  startHealthCheck(mode);
   return true;
 }
 
@@ -283,7 +294,7 @@ async function startExternalTor(config) {
   setCurrentSocksEndpoint(endpoint);
   setStatusMessage('tor', 'Checking external SOCKS…');
 
-  if (!(await checkHealth())) {
+  if (!(await checkSocksProtocolHealth())) {
     updateState(STATUS.ERROR, 'External Tor SOCKS endpoint is unreachable');
     setStatusMessage('tor', 'External Tor unreachable');
     return;
@@ -523,15 +534,11 @@ async function startTor(opts = {}) {
       clearInterval(pollInterval);
       return;
     }
-    const socksReady = await checkHealth();
-    if (socksReady && artiBootstrapped) {
+    if (artiBootstrapped) {
       clearInterval(pollInterval);
       await applyTorProxy(MODE.BUNDLED, `SOCKS: ${currentSocksEndpoint}`);
     } else {
       attempts++;
-      if (socksReady) {
-        setStatusMessage('tor', 'Bootstrapping Tor network…');
-      }
       if (attempts >= maxAttempts) {
         clearInterval(pollInterval);
         stopTor();

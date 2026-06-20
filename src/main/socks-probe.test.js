@@ -1,5 +1,5 @@
 const net = require('net');
-const { probeSocks5Endpoint } = require('./socks-probe');
+const { probeSocks5Endpoint, probeTcpEndpoint } = require('./socks-probe');
 
 const SOCKS5_GREETING = Buffer.from([0x05, 0x01, 0x00]);
 const SOCKS5_LOCAL_CONNECT_PROBE = Buffer.from([
@@ -38,7 +38,23 @@ function closeServer(server) {
   });
 }
 
-describe('probeSocks5Endpoint', () => {
+describe('socks-probe helpers', () => {
+  test('probeTcpEndpoint verifies that the listener accepts TCP without sending SOCKS bytes', async () => {
+    let receivedBytes = 0;
+    const { server, endpoint } = await listenWithHandler((socket) => {
+      socket.on('data', (chunk) => {
+        receivedBytes += chunk.length;
+      });
+    });
+
+    try {
+      await expect(probeTcpEndpoint(endpoint, { timeoutMs: 500 })).resolves.toBe(true);
+      expect(receivedBytes).toBe(0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test('sends a complete SOCKS request after the method greeting is accepted', async () => {
     let received = Buffer.alloc(0);
     let sentMethodReply = false;

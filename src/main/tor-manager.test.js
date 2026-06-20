@@ -41,6 +41,7 @@ function loadTorManager(options = {}) {
       }),
       [require.resolve('./socks-probe')]: () => ({
         probeSocks5Endpoint: jest.fn().mockResolvedValue(options.socksProbeResult === true),
+        probeTcpEndpoint: jest.fn().mockResolvedValue(options.tcpProbeResult ?? true),
       }),
       [require.resolve('./profile-external-candidates')]: () => ({
         promptForDefaultExternalCandidateProtocol,
