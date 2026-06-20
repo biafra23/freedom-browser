@@ -10,6 +10,8 @@
 
 const log = require('./logger');
 
+const ONION_PROXY_TEST_URL = 'https://freedom-proxy-check.onion/';
+
 /**
  * Build the PAC script that routes only `*.onion` through the SOCKS5 proxy.
  * Pure function so it can be unit-tested without a live session.
@@ -30,6 +32,25 @@ function buildOnionPacScript(socksHostPort) {
     '  return "DIRECT";',
     '}',
   ].join('\n');
+}
+
+async function logOnionProxyResolution(targetSession, socksHostPort) {
+  if (!targetSession || typeof targetSession.resolveProxy !== 'function') {
+    return;
+  }
+
+  try {
+    const resolvedProxy = await targetSession.resolveProxy(ONION_PROXY_TEST_URL);
+    if (String(resolvedProxy).includes(socksHostPort)) {
+      log.info(`[tor-proxy] Chromium resolves .onion via ${resolvedProxy}`);
+      return;
+    }
+    log.warn(
+      `[tor-proxy] Chromium did not resolve .onion via SOCKS5 ${socksHostPort}: ${resolvedProxy || '(empty)'}`
+    );
+  } catch (err) {
+    log.warn(`[tor-proxy] failed to verify .onion proxy resolution: ${err?.message || err}`);
+  }
 }
 
 /**
@@ -53,6 +74,7 @@ async function applyOnionProxy(targetSession, socksHostPort) {
   await targetSession.setProxy({ mode: 'pac_script', pacScript: pacUrl });
   await targetSession.forceReloadProxyConfig?.();
   await targetSession.closeAllConnections?.();
+  await logOnionProxyResolution(targetSession, socksHostPort);
   log.info(`[tor-proxy] .onion traffic routed via SOCKS5 ${socksHostPort}`);
 }
 

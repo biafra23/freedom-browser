@@ -1,5 +1,6 @@
 jest.mock('./logger', () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
 
+const log = require('./logger');
 const { buildOnionPacScript, applyOnionProxy, clearOnionProxy } = require('./tor-proxy');
 
 // Compile the PAC text into a callable FindProxyForURL, supplying the
@@ -42,8 +43,9 @@ describe('applyOnionProxy / clearOnionProxy', () => {
     const setProxy = jest.fn().mockResolvedValue(undefined);
     const forceReloadProxyConfig = jest.fn().mockResolvedValue(undefined);
     const closeAllConnections = jest.fn().mockResolvedValue(undefined);
+    const resolveProxy = jest.fn().mockResolvedValue('SOCKS5 127.0.0.1:9150');
     await applyOnionProxy(
-      { setProxy, forceReloadProxyConfig, closeAllConnections },
+      { setProxy, forceReloadProxyConfig, closeAllConnections, resolveProxy },
       '127.0.0.1:9150'
     );
     expect(setProxy).toHaveBeenCalledTimes(1);
@@ -52,6 +54,10 @@ describe('applyOnionProxy / clearOnionProxy', () => {
     expect(arg.pacScript).toMatch(/^data:application\/x-ns-proxy-autoconfig;base64,/);
     expect(forceReloadProxyConfig).toHaveBeenCalledTimes(1);
     expect(closeAllConnections).toHaveBeenCalledTimes(1);
+    expect(resolveProxy).toHaveBeenCalledWith('https://freedom-proxy-check.onion/');
+    expect(log.info).toHaveBeenCalledWith(
+      '[tor-proxy] Chromium resolves .onion via SOCKS5 127.0.0.1:9150'
+    );
   });
 
   test('clearOnionProxy resets the session to direct', async () => {
