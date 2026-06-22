@@ -13,6 +13,7 @@ const { universalResolverCall, universalResolverReverse, hostOf } = require('../
 // threat model legible.
 const PRIVACY_MODE = 'basic';
 const CHAIN_ID = 1;
+const MAX_LATEST_AGE_SECONDS = 60;
 
 let cachedClient = null;
 let cachedClientKey = null;
@@ -77,6 +78,7 @@ async function buildClient({ key, proverUrl, zkProof, generation }) {
     zk_proof: zkProof,
     privacy_mode: PRIVACY_MODE,
     proofStrategy: Strategy.VerifiedOnly,
+    max_latest_age_seconds: MAX_LATEST_AGE_SECONDS,
   });
 
   if (generation !== buildGeneration) {
