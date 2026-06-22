@@ -198,7 +198,15 @@ export const formatBzzUrl = (input, bzzRoutePrefix) => {
 
     // Check if it looks like a regular domain (e.g., "spiegel.de", "example.com/path")
     if (looksLikeDomain(raw)) {
-      const urlWithProtocol = `https://${raw}`;
+      // Tor onion services default to http:// — the .onion address itself
+      // provides end-to-end encryption, and most are http-only, so defaulting
+      // to https would break them. Routing through Tor is handled at the
+      // session layer (see src/main/tor-proxy.js); the address bar just needs
+      // to produce a loadable http(s) URL.
+      const hostPart = raw.split(/[/?#]/)[0].toLowerCase();
+      // Allow an optional :port so e.g. `abc.onion:8080` is still detected.
+      const scheme = /\.onion(:\d+)?$/.test(hostPart) ? 'http' : 'https';
+      const urlWithProtocol = `${scheme}://${raw}`;
       return {
         targetUrl: urlWithProtocol,
         displayValue: urlWithProtocol,

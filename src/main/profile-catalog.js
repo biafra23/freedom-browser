@@ -22,6 +22,7 @@ const PACKAGED_PORT_BASE = {
   beeP2p: 12633,
   radicleHttp: 18780,
   radicleP2p: 18776,
+  torSocks: 19150,
 };
 
 const DEV_PORT_BASE = {
@@ -29,6 +30,7 @@ const DEV_PORT_BASE = {
   beeP2p: 22633,
   radicleHttp: 28780,
   radicleP2p: 28776,
+  torSocks: 29150,
 };
 
 function sanitizeProfileId(value) {
@@ -80,6 +82,7 @@ function getManagedPorts(slot, options = {}) {
     beeP2p: base.beeP2p + offset + slot,
     radicleHttp: base.radicleHttp + offset + slot,
     radicleP2p: base.radicleP2p + offset + slot,
+    torSocks: base.torSocks + offset + slot,
   };
 }
 
@@ -101,6 +104,11 @@ function buildNodeConfig(ports) {
       p2pPort: ports.radicleP2p,
       externalHttp: null,
     },
+    tor: {
+      mode: 'managed',
+      socksPort: ports.torSocks,
+      externalSocks: null,
+    },
   };
 }
 
@@ -121,6 +129,11 @@ function rebaseNodeConfig(nodes = {}, ports) {
       ...defaults.radicle,
       mode: nodes.radicle?.mode || defaults.radicle.mode,
       externalHttp: nodes.radicle?.externalHttp || null,
+    },
+    tor: {
+      ...defaults.tor,
+      mode: nodes.tor?.mode || defaults.tor.mode,
+      externalSocks: nodes.tor?.externalSocks || null,
     },
   };
 }
@@ -156,6 +169,15 @@ function fillMissingNodeConfig(nodes = {}, ports) {
         ? nodes.radicle.p2pPort
         : defaults.radicle.p2pPort,
       externalHttp: nodes.radicle?.externalHttp || null,
+    },
+    tor: {
+      ...defaults.tor,
+      ...(nodes.tor || {}),
+      mode: nodes.tor?.mode || defaults.tor.mode,
+      socksPort: Number.isInteger(nodes.tor?.socksPort)
+        ? nodes.tor.socksPort
+        : defaults.tor.socksPort,
+      externalSocks: nodes.tor?.externalSocks || null,
     },
   };
 }
@@ -196,6 +218,7 @@ function getReservedManagedPorts(appRoot, options = {}) {
     addIntegerPort(reservedPorts, nodes.bee?.p2pPort);
     addIntegerPort(reservedPorts, nodes.radicle?.httpPort);
     addIntegerPort(reservedPorts, nodes.radicle?.p2pPort);
+    addIntegerPort(reservedPorts, nodes.tor?.socksPort);
   }
 
   return reservedPorts;
@@ -729,7 +752,7 @@ function updateProfileNodeConfig(profile, protocol, updates) {
     return null;
   }
 
-  if (!['bee', 'ipfs', 'radicle'].includes(protocol)) {
+  if (!['bee', 'ipfs', 'radicle', 'tor'].includes(protocol)) {
     throw new Error(`Unsupported profile node protocol: ${protocol}`);
   }
 

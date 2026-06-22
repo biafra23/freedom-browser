@@ -235,6 +235,20 @@ describe('url-utils', () => {
       });
     });
 
+    test('defaults bare .onion hosts to http:// (most are http-only)', () => {
+      expect(formatBzzUrl('abcdefghijklmnop.onion', BZZ_ROUTE_PREFIX)).toEqual({
+        targetUrl: 'http://abcdefghijklmnop.onion',
+        displayValue: 'http://abcdefghijklmnop.onion',
+        baseUrl: null,
+      });
+      // …and with a path
+      expect(formatBzzUrl('abcdefghijklmnop.onion/wiki', BZZ_ROUTE_PREFIX)).toEqual({
+        targetUrl: 'http://abcdefghijklmnop.onion/wiki',
+        displayValue: 'http://abcdefghijklmnop.onion/wiki',
+        baseUrl: null,
+      });
+    });
+
     test('passthrough for normal http urls', () => {
       const input = 'https://google.com';
       const result = formatBzzUrl(input, BZZ_ROUTE_PREFIX);

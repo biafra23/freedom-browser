@@ -167,6 +167,14 @@ describe('profile catalog', () => {
     );
     expect(catalog.profiles[0].nodes.bee.p2pPort).toBe(12633);
     expect(metadata.nodes.bee.p2pPort).toBe(12633);
+    expect(catalog.profiles[0].nodes.tor).toMatchObject({
+      mode: 'managed',
+      socksPort: 19150,
+    });
+    expect(metadata.nodes.tor).toMatchObject({
+      mode: 'managed',
+      socksPort: 19150,
+    });
   });
 
   test('adopts an existing profile directory with metadata instead of assigning a fresh slot', () => {
@@ -212,6 +220,10 @@ describe('profile catalog', () => {
       apiPort: 11640,
       p2pPort: 12640,
       externalApi: 'http://127.0.0.1:1633',
+    });
+    expect(result.metadata.nodes.tor).toMatchObject({
+      mode: 'managed',
+      socksPort: 19157,
     });
 
     const catalog = JSON.parse(

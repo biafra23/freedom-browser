@@ -24,6 +24,7 @@
     "test:e2e": "playwright test --project=harness",
     "test:e2e:live": "playwright test --project=live",
     "test:e2e:onboarding": "playwright test --project=live test-e2e/live/onboarding-identity.spec.js",
+    "test:e2e:tor": "FREEDOM_LIVE_E2E_DISABLE_DEFAULT_NODES=1 playwright test --project=live test-e2e/live/tor-onion.spec.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -53,6 +54,8 @@
     "ipfs:build": "node scripts/fetch-freedom-ipfs-native.js --from-source",
     "ipfs:native:smoke": "node scripts/smoke-freedom-ipfs-native.js",
     "ipfs:reset": "rm -rf ipfs-data && echo 'Legacy repo-root IPFS data reset.'",
+    "tor:download": "node scripts/fetch-arti.js",
+    "tor:reset": "rm -rf tor-data && echo 'Tor data reset.'",
     "radicle:download": "node scripts/fetch-radicle.js",
     "radicle:init": "node scripts/init-radicle.js",
     "radicle:status": "RADICLE_API=${RADICLE_API:-http://127.0.0.1:18780}; curl -s \"$RADICLE_API/\" | head -c 500",
@@ -96,6 +99,13 @@
           "filter": [
             "**/*"
           ]
+        },
+        {
+          "from": "arti-bin/${os}-${arch}/",
+          "to": "arti-bin",
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
@@ -116,6 +126,13 @@
         {
           "from": "radicle-bin/${os}-${arch}/",
           "to": "radicle-bin",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "arti-bin/${os}-${arch}/",
+          "to": "arti-bin",
           "filter": [
             "**/*"
           ]

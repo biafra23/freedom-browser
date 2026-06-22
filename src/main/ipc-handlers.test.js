@@ -407,6 +407,7 @@ describe('ipc-handlers', () => {
             bee: { mode: 'managed', apiPort: 11635 },
             ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
             radicle: { mode: 'disabled' },
+            tor: { mode: 'managed', socksPort: 19152 },
           },
         },
       },
@@ -424,6 +425,7 @@ describe('ipc-handlers', () => {
         bee: { mode: 'managed', apiPort: 11635 },
         ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
         radicle: { mode: 'disabled' },
+        tor: { mode: 'managed', socksPort: 19152 },
       },
     });
   });
@@ -677,6 +679,7 @@ describe('ipc-handlers', () => {
           bee: { mode: 'managed', apiPort: 11634 },
           ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
           radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+          tor: { mode: 'managed', socksPort: 19151 },
         },
       },
     };
@@ -708,6 +711,7 @@ describe('ipc-handlers', () => {
             bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
             ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
             radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+            tor: { mode: 'managed', socksPort: 19151 },
           },
         },
       })
@@ -727,8 +731,76 @@ describe('ipc-handlers', () => {
         bee: { mode: 'external', apiPort: 11634, externalApi: 'http://127.0.0.1:1633' },
         ipfs: { mode: 'managed', backend: 'freedom-ipfs' },
         radicle: { mode: 'managed', httpPort: 18781, p2pPort: 18777 },
+        tor: { mode: 'managed', socksPort: 19151 },
       },
     });
+  });
+
+  test('updates Tor profile node config through SOCKS endpoint validation', async () => {
+    const activeProfile = {
+      id: 'work',
+      displayName: 'Work',
+      source: 'catalog',
+      isDev: false,
+      metadata: {
+        slot: 1,
+        nodes: {
+          tor: { mode: 'managed', socksPort: 19151, externalSocks: null },
+        },
+      },
+    };
+    const ctx = loadIpcHandlersModule({ activeProfile });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'tor',
+        config: {
+          mode: 'external',
+          externalSocks: 'socks5://127.0.0.1:9150/',
+        },
+      })
+    ).resolves.toEqual(
+      success({
+        profile: {
+          id: 'work',
+          displayName: 'Work',
+          source: 'catalog',
+          isDev: false,
+          slot: 1,
+          nodes: {
+            bee: null,
+            ipfs: null,
+            radicle: null,
+            tor: {
+              mode: 'external',
+              socksPort: 19151,
+              externalSocks: '127.0.0.1:9150',
+            },
+          },
+        },
+      })
+    );
+
+    expect(ctx.updateActiveProfileNodeConfig).toHaveBeenCalledWith('tor', {
+      mode: 'external',
+      externalSocks: '127.0.0.1:9150',
+    });
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_UPDATE_NODE_CONFIG, {
+        protocol: 'tor',
+        config: {
+          mode: 'external',
+          externalSocks: 'http://127.0.0.1:9150',
+        },
+      })
+    ).resolves.toEqual(
+      failure('INVALID_PROFILE_NODE_ENDPOINT', 'Invalid profile node endpoint', {
+        field: 'externalSocks',
+      })
+    );
   });
 
   test('rejects invalid active profile node updates', async () => {

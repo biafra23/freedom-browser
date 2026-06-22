@@ -9,6 +9,7 @@ const { loadSettings } = require('./settings-store');
 const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
+const { normalizeSocksEndpoint } = require('../shared/socks-endpoint');
 const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
 const {
   createProfileForActiveApp,
@@ -143,6 +144,7 @@ function serializeActiveProfile() {
       bee: metadata.nodes.bee ? { ...metadata.nodes.bee } : null,
       ipfs: metadata.nodes.ipfs ? { ...metadata.nodes.ipfs } : null,
       radicle: metadata.nodes.radicle ? { ...metadata.nodes.radicle } : null,
+      tor: metadata.nodes.tor ? { ...metadata.nodes.tor } : null,
     };
   }
 
@@ -195,15 +197,23 @@ const PROFILE_NODE_MODES = {
   bee: new Set(['managed', 'external', 'disabled']),
   ipfs: new Set(['managed', 'disabled']),
   radicle: new Set(['managed', 'external', 'disabled']),
+  tor: new Set(['managed', 'external', 'disabled']),
 };
 const PROFILE_NODE_FIELDS = {
   bee: ['mode', 'externalApi'],
   ipfs: ['mode'],
   radicle: ['mode', 'externalHttp'],
+  tor: ['mode', 'externalSocks'],
 };
 const EXTERNAL_FIELDS = {
   bee: ['externalApi'],
   radicle: ['externalHttp'],
+  tor: ['externalSocks'],
+};
+const PROFILE_NODE_ENDPOINT_NORMALIZERS = {
+  externalApi: normalizeProfileNodeEndpoint,
+  externalHttp: normalizeProfileNodeEndpoint,
+  externalSocks: normalizeSocksEndpoint,
 };
 
 function normalizeProfileNodeEndpoint(rawValue) {
@@ -265,7 +275,8 @@ function validateProfileNodeConfigUpdate(protocol, patch = {}) {
       continue;
     }
 
-    const normalized = normalizeProfileNodeEndpoint(patch[field]);
+    const normalizeEndpoint = PROFILE_NODE_ENDPOINT_NORMALIZERS[field] || (() => null);
+    const normalized = normalizeEndpoint(patch[field]);
     if (patch[field] && !normalized) {
       return {
         ok: false,
