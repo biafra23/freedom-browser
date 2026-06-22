@@ -30,7 +30,7 @@ function loadNetworkIpc(options = {}) {
   const providerManager = { clearProviderCache: jest.fn() };
   const ensResolver = { invalidateCachedProvider: jest.fn() };
   const settingsStore = {
-    loadSettings: jest.fn(() => ({ theme: 'system', beeNodeMode: 'ultraLight' })),
+    loadSettings: jest.fn(() => ({ theme: 'system', antNodeMode: 'ultraLight' })),
   };
   const rpcManager = {
     hasApiKey: jest.fn(() => false),

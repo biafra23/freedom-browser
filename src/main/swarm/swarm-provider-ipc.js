@@ -38,7 +38,7 @@ const {
   getSignerAddress,
 } = require('./chunk-service');
 const { addEntry, updateEntry } = require('./publish-history');
-const { getBeeApiUrl } = require('../service-registry');
+const { getAntApiUrl } = require('../service-registry');
 const { getDerivedKeys, getPublisherKey, getUserWalletKey } = require('../identity-manager');
 const { resetVaultAutoLockTimer } = require('../vault-timer');
 const log = require('electron-log');
@@ -1407,7 +1407,7 @@ function handleListFeeds(origin) {
  * @returns {{ ok: boolean, reason?: string }}
  */
 async function checkBeeReachable() {
-  const beeUrl = getBeeApiUrl();
+  const beeUrl = getAntApiUrl();
   if (!beeUrl) return { ok: false, reason: 'node-stopped' };
   try {
     const res = await fetch(`${beeUrl}/node`);
@@ -1425,7 +1425,7 @@ async function checkBeeReachable() {
  */
 async function checkSwarmPreFlight() {
   try {
-    const beeUrl = getBeeApiUrl();
+    const beeUrl = getAntApiUrl();
     if (!beeUrl) {
       return { ok: false, reason: 'node-stopped' };
     }

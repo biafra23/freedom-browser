@@ -154,7 +154,7 @@ export function classifySwarmPublishState({
       key: 'initializing',
       label: 'Initializing',
       detail: appendInspectOnlyNote(
-        'Bee is finishing light-node setup.',
+        'Ant is finishing light-node setup.',
         registryMode
       ),
       action: null,

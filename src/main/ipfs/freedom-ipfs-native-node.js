@@ -5,6 +5,7 @@ const { loadNativeBinding, isNativeBindingAvailable } = require('./freedom-ipfs-
 
 const BUFFER_SIZE = 64 * 1024;
 const ATTEMPT_TIMEOUT_MS = 30_000;
+const REQUEST_QUEUE_TIMEOUT_MS = 15_000;
 
 let native = null;
 
@@ -231,9 +232,15 @@ class NativeGatewayController {
 }
 
 class FreedomIpfsNativeNode {
-  constructor({ dataDir, maxCacheBytes = 256 * 1024 * 1024, onFailure = null } = {}) {
+  constructor({
+    dataDir,
+    maxCacheBytes = 256 * 1024 * 1024,
+    requestQueueTimeoutMs = REQUEST_QUEUE_TIMEOUT_MS,
+    onFailure = null,
+  } = {}) {
     this.dataDir = dataDir;
     this.maxCacheBytes = maxCacheBytes;
+    this.requestQueueTimeoutMs = requestQueueTimeoutMs;
     this.onFailure = onFailure;
     this.nodeHandle = '0';
     this.dispatcher = null;
@@ -283,7 +290,8 @@ class FreedomIpfsNativeNode {
       binding().constants.ROUTING_MODE_AUTO,
       0,
       3,
-      0
+      0,
+      this.requestQueueTimeoutMs
     );
     if (!ok) {
       binding().nodeFree(this.nodeHandle);
@@ -401,7 +409,9 @@ class FreedomIpfsNativeNode {
   }
 
   isHealthy() {
-    return Boolean(normalizeNativeHandle(this.nodeHandle)) && !this.failed && Boolean(this.dispatcher);
+    return (
+      Boolean(normalizeNativeHandle(this.nodeHandle)) && !this.failed && Boolean(this.dispatcher)
+    );
   }
 
   unregister(handleKey) {
@@ -415,7 +425,9 @@ class FreedomIpfsNativeNode {
       return Promise.reject(new Error('freedom-ipfs native node is not running'));
     }
     if (!this.isHealthy()) {
-      return Promise.reject(new Error(this.failureError || 'freedom-ipfs native node is unavailable'));
+      return Promise.reject(
+        new Error(this.failureError || 'freedom-ipfs native node is unavailable')
+      );
     }
     const requestId = this.nextRequestId++;
     const requestJson = JSON.stringify({
@@ -425,9 +437,7 @@ class FreedomIpfsNativeNode {
       request_id: requestId,
       top_level_path: gatewayPath,
     });
-    const handle = normalizeNativeHandle(
-      binding().gatewayRequestStart(nodeHandle, requestJson)
-    );
+    const handle = normalizeNativeHandle(binding().gatewayRequestStart(nodeHandle, requestJson));
     if (!handle) {
       return Promise.reject(new Error('freedom-ipfs native request could not be started'));
     }
@@ -451,4 +461,5 @@ module.exports = {
   FreedomIpfsNativeNode,
   NativeGatewayController,
   ATTEMPT_TIMEOUT_MS,
+  REQUEST_QUEUE_TIMEOUT_MS,
 };

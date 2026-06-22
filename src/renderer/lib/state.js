@@ -9,7 +9,7 @@ const normalizeBaseUrl = (value) =>
 // Kubo-compatible loopback gateway; real loads go through ipfs:// / ipns://
 // and the main-process native freedom-ipfs request API.
 const NATIVE_IPFS_BASE = 'http://freedom-ipfs.localhost';
-const envBeeApi = normalizeBaseUrl(window.nodeConfig?.beeApi);
+const envAntApi = normalizeBaseUrl(window.nodeConfig?.antApi);
 
 export const state = {
   // Service Registry (updated from main process)
@@ -21,7 +21,7 @@ export const state = {
       statusMessage: null,
       tempMessage: null,
     },
-    bee: {
+    ant: {
       api: null,
       gateway: null,
       mode: 'none',
@@ -37,10 +37,10 @@ export const state = {
     },
   },
 
-  // Bee/Swarm Gateway config (from env override or registry)
-  beeBase: envBeeApi,
+  // Swarm Gateway config (from env override or registry)
+  antBase: envAntApi,
   get bzzRoutePrefix() {
-    return this.beeBase ? `${this.beeBase}/bzz/` : null;
+    return this.antBase ? `${this.antBase}/bzz/` : null;
   },
 
   // IPFS native gateway-shaped canonical base. This is not an external Kubo endpoint.
@@ -81,14 +81,14 @@ export const state = {
 
   // UI state
   menuOpen: false,
-  beeMenuOpen: false,
+  antMenuOpen: false,
 
   // Bee/Swarm state
-  currentBeeStatus: 'stopped',
-  beePeersInterval: null,
-  beeVisibleInterval: null,
-  beeVersionFetched: false,
-  beeVersionValue: '',
+  currentAntStatus: 'stopped',
+  antPeersInterval: null,
+  antVisibleInterval: null,
+  antVersionFetched: false,
+  antVersionValue: '',
   suppressRunningStatus: false,
 
   // IPFS state
@@ -126,10 +126,10 @@ const buildServiceUrl = (base, endpoint, serviceName) => {
   return `${base}${endpoint}`;
 };
 
-// Build Bee URL using registry or explicit env override
-export const buildBeeUrl = (endpoint) => {
-  const base = state.registry.bee.api || state.beeBase;
-  return buildServiceUrl(base, endpoint, 'Bee');
+// Build Ant URL using registry or explicit env override
+export const buildAntUrl = (endpoint) => {
+  const base = state.registry.ant.api || state.antBase;
+  return buildServiceUrl(base, endpoint, 'Ant');
 };
 
 // Build IPFS API URL using registry
@@ -148,7 +148,7 @@ export const buildRadicleUrl = (endpoint) => {
 export const updateRegistry = (newRegistry) => {
   state.registry = newRegistry;
 
-  state.beeBase = normalizeBaseUrl(newRegistry.bee?.api) || envBeeApi;
+  state.antBase = normalizeBaseUrl(newRegistry.ant?.api) || envAntApi;
   state.ipfsBase = normalizeBaseUrl(newRegistry.ipfs?.gateway) || NATIVE_IPFS_BASE;
   state.ipfsApiBase = normalizeBaseUrl(newRegistry.ipfs?.api);
   state.radicleBase = normalizeBaseUrl(newRegistry.radicle?.api);

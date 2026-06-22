@@ -113,7 +113,7 @@ jest.mock('@ethersphere/bee-js', () => ({
 }));
 
 jest.mock('../service-registry', () => ({
-  getBeeApiUrl: jest.fn().mockReturnValue('http://127.0.0.1:1633'),
+  getAntApiUrl: jest.fn().mockReturnValue('http://127.0.0.1:1633'),
 }));
 
 jest.mock('electron-log', () => ({

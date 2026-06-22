@@ -13,15 +13,15 @@ const loadBeeModule = async (options = {}) => {
   jest.resetModules();
 
   const state = {
-    beeMenuOpen: options.beeMenuOpen ?? false,
-    currentBeeStatus: options.currentBeeStatus || 'stopped',
-    beePeersInterval: null,
-    beeVisibleInterval: null,
-    beeVersionFetched: options.beeVersionFetched ?? false,
-    beeVersionValue: options.beeVersionValue || '',
+    antMenuOpen: options.antMenuOpen ?? false,
+    currentAntStatus: options.currentAntStatus || 'stopped',
+    antPeersInterval: null,
+    antVisibleInterval: null,
+    antVersionFetched: options.antVersionFetched ?? false,
+    antVersionValue: options.antVersionValue || '',
     suppressRunningStatus: options.suppressRunningStatus ?? false,
     registry: {
-      bee: {
+      ant: {
         api: 'http://bee.test',
         mode: options.mode || 'none',
         statusMessage: options.statusMessage ?? null,
@@ -29,9 +29,9 @@ const loadBeeModule = async (options = {}) => {
       },
     },
   };
-  const buildBeeUrl = jest.fn((endpoint) => `http://bee.test${endpoint}`);
+  const buildAntUrl = jest.fn((endpoint) => `http://bee.test${endpoint}`);
   const getDisplayMessage = jest.fn(() => {
-    return state.registry.bee.tempMessage || state.registry.bee.statusMessage;
+    return state.registry.ant.tempMessage || state.registry.ant.statusMessage;
   });
   const debugMocks = {
     pushDebug: jest.fn(),
@@ -110,27 +110,27 @@ const loadBeeModule = async (options = {}) => {
 
       return {
         ok: true,
-        json: async () => ({ version: '2.3.4-abcdef' }),
+        json: async () => ({ version: 'antd/0.5.8-abcdef' }),
       };
     });
   global.window = {
-    bee: beeApi,
+    ant: beeApi,
   };
   global.document = document;
 
   jest.doMock('./state.js', () => ({
     state,
-    buildBeeUrl,
+    buildAntUrl,
     getDisplayMessage,
   }));
   jest.doMock('./debug.js', () => debugMocks);
 
-  const mod = await import('./bee-ui.js');
+  const mod = await import('./ant-ui.js');
 
   return {
     mod,
     state,
-    buildBeeUrl,
+    buildAntUrl,
     getDisplayMessage,
     debugMocks,
     setIntervalMock,
@@ -161,97 +161,97 @@ describe('bee-ui', () => {
 
   test('starts and stops Bee info polling and populates stats', async () => {
     const ctx = await loadBeeModule({
-      beeMenuOpen: true,
-      currentBeeStatus: 'running',
+      antMenuOpen: true,
+      currentAntStatus: 'running',
       windowBee: false,
     });
 
-    ctx.mod.initBeeUi();
-    ctx.mod.startBeeInfoPolling();
+    ctx.mod.initAntUi();
+    ctx.mod.startAntInfoPolling();
     await flushMicrotasks();
 
-    expect(ctx.buildBeeUrl).toHaveBeenCalledWith('/peers');
-    expect(ctx.buildBeeUrl).toHaveBeenCalledWith('/topology');
-    expect(ctx.buildBeeUrl).toHaveBeenCalledWith('/health');
+    expect(ctx.buildAntUrl).toHaveBeenCalledWith('/peers');
+    expect(ctx.buildAntUrl).toHaveBeenCalledWith('/topology');
+    expect(ctx.buildAntUrl).toHaveBeenCalledWith('/health');
     expect(ctx.elements.beeInfoPanel.classList.contains('visible')).toBe(true);
     expect(ctx.elements.beePeersCount.textContent).toBe('2');
     expect(ctx.elements.beeNetworkPeers.textContent).toBe('7');
-    expect(ctx.elements.beeVersionText.textContent).toBe('2.3.4');
-    expect(ctx.state.beeVersionFetched).toBe(true);
-    expect(ctx.state.beePeersInterval).toBe(1);
-    expect(ctx.state.beeVisibleInterval).toBe(2);
+    expect(ctx.elements.beeVersionText.textContent).toBe('Ant v0.5.8');
+    expect(ctx.state.antVersionFetched).toBe(true);
+    expect(ctx.state.antPeersInterval).toBe(1);
+    expect(ctx.state.antVisibleInterval).toBe(2);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 500);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 1000);
 
-    ctx.mod.stopBeeInfoPolling();
+    ctx.mod.stopAntInfoPolling();
 
     expect(ctx.clearIntervalMock).toHaveBeenCalledWith(1);
     expect(ctx.clearIntervalMock).toHaveBeenCalledWith(2);
-    expect(ctx.state.beePeersInterval).toBeNull();
-    expect(ctx.state.beeVisibleInterval).toBeNull();
+    expect(ctx.state.antPeersInterval).toBeNull();
+    expect(ctx.state.antVisibleInterval).toBeNull();
     expect(ctx.elements.beeInfoPanel.classList.contains('visible')).toBe(false);
     expect(ctx.elements.beePeersCount.textContent).toBe('0');
     expect(ctx.elements.beeNetworkPeers.textContent).toBe('0');
-    expect(ctx.elements.beeVersionText.textContent).toBe('2.3.4');
+    expect(ctx.elements.beeVersionText.textContent).toBe('Ant v0.5.8');
 
-    ctx.mod.resetBeeVersion();
-    expect(ctx.state.beeVersionFetched).toBe(false);
-    expect(ctx.state.beeVersionValue).toBe('');
+    ctx.mod.resetAntVersion();
+    expect(ctx.state.antVersionFetched).toBe(false);
+    expect(ctx.state.antVersionValue).toBe('');
     expect(ctx.elements.beeVersionText.textContent).toBe('');
   });
 
   test('updates Bee status lines, toggle state, and running transitions', async () => {
     const ctx = await loadBeeModule({
-      beeMenuOpen: true,
-      currentBeeStatus: 'stopped',
+      antMenuOpen: true,
+      currentAntStatus: 'stopped',
       statusMessage: 'Swarm: Connected',
       windowBee: false,
     });
 
-    ctx.mod.initBeeUi();
-    ctx.mod.updateBeeStatusLine();
+    ctx.mod.initAntUi();
+    ctx.mod.updateAntStatusLine();
 
-    expect(ctx.getDisplayMessage).toHaveBeenCalledWith('bee');
+    expect(ctx.getDisplayMessage).toHaveBeenCalledWith('ant');
     expect(ctx.elements.beeStatusLabel.textContent).toBe('Swarm:');
     expect(ctx.elements.beeStatusValue.textContent).toBe('Connected');
     expect(ctx.elements.beeStatusRow.classList.contains('visible')).toBe(true);
 
-    ctx.state.registry.bee.mode = 'reused';
-    ctx.mod.updateBeeToggleState();
+    ctx.state.registry.ant.mode = 'reused';
+    ctx.mod.updateAntToggleState();
     expect(ctx.elements.beeToggleBtn.classList.contains('external')).toBe(true);
     expect(ctx.elements.beeToggleBtn.getAttribute('title')).toBe(
       'Using existing node — cannot be controlled from Freedom'
     );
 
-    ctx.state.registry.bee.mode = 'none';
-    ctx.mod.updateBeeToggleState();
+    ctx.state.registry.ant.mode = 'none';
+    ctx.mod.updateAntToggleState();
     expect(ctx.elements.beeToggleBtn.classList.contains('external')).toBe(false);
 
-    ctx.mod.updateBeeUi('starting');
+    ctx.mod.updateAntUi('starting');
     expect(ctx.elements.beeToggleSwitch.classList.contains('running')).toBe(true);
-    expect(ctx.state.currentBeeStatus).toBe('starting');
+    expect(ctx.state.currentAntStatus).toBe('starting');
 
     ctx.state.suppressRunningStatus = true;
     ctx.elements.beeToggleSwitch.classList.remove('running');
-    ctx.mod.updateBeeUi('running');
+    ctx.mod.updateAntUi('running');
     expect(ctx.elements.beeToggleSwitch.classList.contains('running')).toBe(false);
 
-    ctx.mod.updateBeeUi('error', 'offline');
-    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Bee Error: offline');
+    ctx.mod.updateAntUi('error', 'offline');
+    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Ant Error: offline');
 
-    ctx.mod.updateBeeUi('stopped');
+    ctx.mod.updateAntUi('stopped');
     expect(ctx.elements.beeStatusRow.classList.contains('visible')).toBe(false);
   });
 
   test('initializes Bee controls, handles binary availability, and toggles start and stop', async () => {
     const ctx = await loadBeeModule({
-      beeMenuOpen: true,
-      currentBeeStatus: 'stopped',
+      antMenuOpen: true,
+      currentAntStatus: 'stopped',
       binaryAvailable: false,
       statusResult: { status: 'stopped', error: null },
     });
 
-    ctx.mod.initBeeUi();
+    ctx.mod.initAntUi();
     await flushMicrotasks();
 
     expect(ctx.beeApi.checkBinary).toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe('bee-ui', () => {
     expect(ctx.beeApi.start).not.toHaveBeenCalled();
 
     ctx.beeApi.checkBinary.mockResolvedValueOnce({ available: true });
-    ctx.mod.initBeeUi();
+    ctx.mod.initAntUi();
     await flushMicrotasks();
 
     ctx.elements.beeToggleBtn.dispatch('click');
@@ -275,16 +275,16 @@ describe('bee-ui', () => {
     expect(ctx.beeApi.start).toHaveBeenCalled();
     expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('User toggled Swarm On');
     expect(ctx.elements.beeToggleSwitch.classList.contains('running')).toBe(true);
-    expect(ctx.state.currentBeeStatus).toBe('running');
+    expect(ctx.state.currentAntStatus).toBe('running');
 
     const statusHandler = ctx.getStatusHandler();
     statusHandler({
       status: 'error',
       error: 'offline',
     });
-    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Bee Status Update: error (offline)');
+    expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('Ant Status Update: error (offline)');
 
-    ctx.state.currentBeeStatus = 'running';
+    ctx.state.currentAntStatus = 'running';
     ctx.elements.beeToggleBtn.dispatch('click');
     await flushMicrotasks();
 

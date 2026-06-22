@@ -24,7 +24,7 @@ if (process.env.FREEDOM_TEST_USER_DATA) {
   app.setPath('userData', process.env.FREEDOM_TEST_USER_DATA);
 }
 const TEST_MODE = process.env.FREEDOM_TEST_MODE === '1';
-const { migrateUserData } = require('./migrate-user-data');
+const { migrateBeeDataToAntData, migrateUserData } = require('./migrate-user-data');
 if (app.isPackaged && !process.env.FREEDOM_TEST_USER_DATA) {
   migrateUserData({ logger: console });
 }
@@ -139,7 +139,7 @@ const { registerBookmarksIpc } = require('./bookmarks-store');
 const { registerHistoryIpc, closeDb: closeHistoryDb } = require('./history');
 const { registerFaviconsIpc } = require('./favicons');
 const { registerEnsIpc } = require('./ens-resolver');
-const { registerBeeIpc, createBeeLifecycle, stopBee, startBee, setUseInjectedIdentity: setBeeInjectedIdentity } = require('./bee-manager');
+const { registerAntIpc, createAntLifecycle, stopAnt, startAnt, setUseInjectedIdentity: setAntInjectedIdentity } = require('./ant-manager');
 const { registerIpfsIpc, stopIpfs, startIpfs, setUseInjectedIdentity: setIpfsInjectedIdentity } = require('./ipfs-manager');
 const { registerRadicleIpc, stopRadicle, startRadicle, setUseInjectedIdentity: setRadicleInjectedIdentity } = require('./radicle-manager');
 const { registerIdentityIpc, hasVault, setBeeLifecycle } = require('./identity-manager');
@@ -204,6 +204,11 @@ function allowInteractivePermissions(targetSession) {
 }
 
 async function bootstrap() {
+  // Carry the injected Swarm identity from the Bee-era bee-data/ into
+  // ant-data/. Must run before the Ant node is started below, or antd
+  // self-generates a throwaway identity on the empty directory.
+  migrateBeeDataToAntData();
+
   const defaultSession = session.defaultSession;
   await defaultSession.clearCache();
   registerBaseIpcHandlers({
@@ -215,7 +220,7 @@ async function bootstrap() {
   registerHistoryIpc();
   registerFaviconsIpc();
   registerEnsIpc();
-  registerBeeIpc();
+  registerAntIpc();
   registerIpfsIpc();
   registerRadicleIpc();
   registerGithubBridgeIpc();
@@ -227,7 +232,7 @@ async function bootstrap() {
   // Let identity (re)injection stop the Bee node before wiping its statestore
   // (which it holds a LevelDB lock on) and restart it with the new key. Without
   // this, the wipe fails with EPERM on Windows during onboarding (issue #90).
-  setBeeLifecycle(createBeeLifecycle());
+  setBeeLifecycle(createAntLifecycle());
   registerTokenRegistryIpc();
   registerRpcManagerIpc();
   registerNetworkConfigIpc();
@@ -281,7 +286,7 @@ async function bootstrap() {
   try {
     if (await hasVault()) {
       log.info('[App] Identity vault found, enabling injected identity mode');
-      setBeeInjectedIdentity(true);
+      setAntInjectedIdentity(true);
       setIpfsInjectedIdentity(true);
       setRadicleInjectedIdentity(true);
     }
@@ -308,8 +313,8 @@ async function bootstrap() {
   // a temp userData would fail port checks, take seconds, and defeat
   // the purpose of fixture-driven tests.
   if (!TEST_MODE) {
-    if (settings.startBeeAtLaunch) {
-      startBee();
+    if (settings.startAntAtLaunch) {
+      startAnt();
     }
     if (settings.startIpfsAtLaunch) {
       startIpfs();
@@ -393,8 +398,8 @@ app.on('before-quit', async (event) => {
   // Clean up any GitHub bridge temp directories
   cleanupTempDirs();
 
-  log.info('[App] Waiting for Bee, IPFS, and Radicle to stop...');
-  await Promise.all([stopBee(), stopIpfs(), stopRadicle()]);
+  log.info('[App] Waiting for Ant, IPFS, and Radicle to stop...');
+  await Promise.all([stopAnt(), stopIpfs(), stopRadicle()]);
   log.info('[App] All processes stopped, quitting...');
 
 

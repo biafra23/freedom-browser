@@ -16,7 +16,7 @@ ships the darwin `.node` and crashes on launch under Windows.
 
 Build **natively inside the VM** when you need an app that actually launches on
 Windows. The VM compiles/fetches the correct native-module ABI and bundles the
-correct-arch Bee/IPFS binaries.
+correct-arch Ant/IPFS binaries.
 
 ## Prerequisites
 
@@ -135,15 +135,15 @@ All commands run via the `cmd.exe /c '… > log 2>&1'` + poll pattern from above
    Confirm `git -C C:\freedom-build\repo log --oneline -1` is the commit you expect.
 
 2. **Provide the Windows binaries.** `npm run check-binaries -- --win --arm64`
-   requires `bee-bin/win-arm64/bee.exe` and
+   requires `ant-bin/win-arm64/antd.exe` and
    `native/freedom-ipfs-node/prebuilds/win-arm64/freedom_ipfs_native.node`
    (Radicle is intentionally skipped on Windows — see `scripts/check-binaries.js`).
-   The Bee fetch needs auth, so the reliable path is to **push the local
+   The Ant fetch needs auth, so the reliable path is to **push the local
    binaries/addons** rather than download them in the guest:
 
    ```
-   "$UTMCTL" exec "<VM>" --cmd 'C:\Windows\System32\cmd.exe' '/c' 'mkdir C:\freedom-build\repo\bee-bin\win-arm64 2>nul & mkdir C:\freedom-build\repo\native\freedom-ipfs-node\prebuilds\win-arm64 2>nul'
-   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\bee-bin\win-arm64\bee.exe' < bee-bin/win-arm64/bee.exe
+   "$UTMCTL" exec "<VM>" --cmd 'C:\Windows\System32\cmd.exe' '/c' 'mkdir C:\freedom-build\repo\ant-bin\win-arm64 2>nul & mkdir C:\freedom-build\repo\native\freedom-ipfs-node\prebuilds\win-arm64 2>nul'
+   "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\ant-bin\win-arm64\antd.exe' < ant-bin/win-arm64/antd.exe
    "$UTMCTL" file push "<VM>" 'C:\freedom-build\repo\native\freedom-ipfs-node\prebuilds\win-arm64\freedom_ipfs_native.node' < native/freedom-ipfs-node/prebuilds/win-arm64/freedom_ipfs_native.node
    ```
 
@@ -185,9 +185,9 @@ All commands run via the `cmd.exe /c '… > log 2>&1'` + poll pattern from above
 
 - The build is **unsigned**, so Windows SmartScreen/Defender shows
   "Windows protected your PC" → **More info → Run anyway**.
-- It is an **arm64** build; the bundled Bee/IPFS are the arm64 binaries.
+- It is an **arm64** build; the bundled Ant/IPFS are the arm64 binaries.
 - For issue-#90-class checks: onboarding → create a new wallet → "Setting up node
-  identities" should complete without the `EPERM … statestore` error.
+  identities" should complete without a "node data still in use" error.
 
 ## Cleanup / VM lifecycle
 

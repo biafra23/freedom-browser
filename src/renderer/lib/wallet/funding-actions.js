@@ -12,22 +12,49 @@ import { createTab } from '../tabs.js';
 
 export const GNOSIS_CHAIN_ID = 100;
 export const XDAI_TOKEN_KEY = '100:native';
-export const XBZZ_TOKEN_KEY = '100:0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da';
+export const XBZZ_TOKEN_KEY = normalizeTokenKey('100:0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da');
+
+// Keep in sync with normalizeTokenKey in src/main/token-registry.js.
+export function normalizeTokenKey(rawKey) {
+  if (typeof rawKey !== 'string') return rawKey;
+  const colon = rawKey.indexOf(':');
+  if (colon < 0) return rawKey;
+
+  const chain = rawKey.slice(0, colon);
+  const asset = rawKey.slice(colon + 1);
+  return asset === 'native' ? rawKey : `${chain}:${asset.toLowerCase()}`;
+}
+
+export function getTokenMapEntry(map, tokenKey) {
+  if (!map || !tokenKey) return null;
+
+  const normalizedKey = normalizeTokenKey(tokenKey);
+  if (Object.prototype.hasOwnProperty.call(map, normalizedKey)) return map[normalizedKey];
+  if (Object.prototype.hasOwnProperty.call(map, tokenKey)) return map[tokenKey];
+
+  const match = Object.entries(map).find(([key]) => normalizeTokenKey(key) === normalizedKey);
+  return match ? match[1] : null;
+}
+
+export function hasPositiveTokenBalance(balances, tokenKey) {
+  const balance = getTokenMapEntry(balances, tokenKey);
+  return parseFloat(balance?.formatted || '0') > 0;
+}
 
 /**
  * Top up the Bee wallet with xDAI.
  * - Main wallet has xDAI → open send flow pre-filled to Bee wallet
  * - Main wallet empty → open receive screen (QR + address)
  */
-export function topUpXdai(beeWalletAddress) {
-  const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
+export function topUpXdai(antWalletAddress) {
+  const recipient = antWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
-    return { error: 'Bee wallet address not available.' };
+    return { error: 'Ant wallet address not available.' };
   }
 
-  const mainBalance = parseFloat(walletState.currentBalances[XDAI_TOKEN_KEY]?.formatted || '0');
+  const hasMainXdai = hasPositiveTokenBalance(walletState.currentBalances, XDAI_TOKEN_KEY);
 
-  if (mainBalance <= 0) {
+  if (!hasMainXdai) {
     openReceive();
     return { action: 'receive' };
   }
@@ -47,15 +74,15 @@ export function topUpXdai(beeWalletAddress) {
  * - Main wallet has xDAI but no xBZZ → open CowSwap
  * - Main wallet empty → open receive screen
  */
-export function topUpXbzz(beeWalletAddress) {
-  const recipient = beeWalletAddress || walletState.fullAddresses.swarm;
+export function topUpXbzz(antWalletAddress) {
+  const recipient = antWalletAddress || walletState.fullAddresses.swarm;
   if (!recipient) {
-    return { error: 'Bee wallet address not available.' };
+    return { error: 'Ant wallet address not available.' };
   }
 
-  const mainXbzz = parseFloat(walletState.currentBalances[XBZZ_TOKEN_KEY]?.formatted || '0');
+  const hasMainXbzz = hasPositiveTokenBalance(walletState.currentBalances, XBZZ_TOKEN_KEY);
 
-  if (mainXbzz > 0) {
+  if (hasMainXbzz) {
     openSend({
       recipient,
       chainId: GNOSIS_CHAIN_ID,
@@ -65,10 +92,10 @@ export function topUpXbzz(beeWalletAddress) {
     return { action: 'send' };
   }
 
-  const mainXdai = parseFloat(walletState.currentBalances[XDAI_TOKEN_KEY]?.formatted || '0');
+  const hasMainXdai = hasPositiveTokenBalance(walletState.currentBalances, XDAI_TOKEN_KEY);
 
-  if (mainXdai > 0) {
-    const swapUrl = walletState.registeredTokens[XBZZ_TOKEN_KEY]?.swapUrl;
+  if (hasMainXdai) {
+    const swapUrl = getTokenMapEntry(walletState.registeredTokens, XBZZ_TOKEN_KEY)?.swapUrl;
     if (swapUrl) {
       createTab(swapUrl);
       return { action: 'swap' };

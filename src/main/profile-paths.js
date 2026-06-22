@@ -77,6 +77,10 @@ function getBeeDataDir() {
   return resolveDir('FREEDOM_BEE_DATA', 'bee-data');
 }
 
+function getAntDataDir() {
+  return resolveDir('FREEDOM_ANT_DATA', 'ant-data');
+}
+
 function getIpfsDataDir() {
   return resolveDir('FREEDOM_IPFS_DATA', 'ipfs-data');
 }
@@ -153,6 +157,7 @@ function createProfileTempDir(prefix) {
 
 module.exports = {
   createProfileTempDir,
+  getAntDataDir,
   getBeeDataDir,
   getIdentityDataDir,
   getIpfsDataDir,

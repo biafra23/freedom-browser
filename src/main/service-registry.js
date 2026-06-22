@@ -27,9 +27,9 @@ const registry = {
     tempMessage: null,
     tempMessageTimeout: null,
   },
-  bee: {
+  ant: {
     api: null, // e.g., 'http://127.0.0.1:11633'
-    gateway: null, // Same as api for Bee
+    gateway: null, // Same as api for Ant/Bee-compatible HTTP
     mode: MODE.NONE,
     statusMessage: null,
     tempMessage: null,
@@ -47,7 +47,7 @@ const registry = {
 
 // Default ports
 const DEFAULTS = {
-  bee: {
+  ant: {
     apiPort: 1633,
     // Note: Newer Bee versions serve debug/gateway endpoints on the main API port
     p2pPort: 1634,
@@ -73,7 +73,7 @@ function getService(service) {
 function getRegistry() {
   return {
     ipfs: { ...registry.ipfs },
-    bee: { ...registry.bee },
+    ant: { ...registry.ant },
     radicle: { ...registry.radicle },
   };
 }
@@ -221,17 +221,17 @@ function getIpfsGatewayUrl() {
 }
 
 /**
- * Get URL for Bee API
+ * Get URL for Ant API
  */
-function getBeeApiUrl() {
-  return registry.bee.api;
+function getAntApiUrl() {
+  return registry.ant.api;
 }
 
 /**
- * Get URL for Bee Gateway (same as API in newer Bee versions)
+ * Get URL for Ant Gateway (same as API)
  */
-function getBeeGatewayUrl() {
-  return registry.bee.gateway;
+function getAntGatewayUrl() {
+  return registry.ant.gateway;
 }
 
 /**
@@ -264,8 +264,8 @@ module.exports = {
   getDisplayMessage,
   getIpfsApiUrl,
   getIpfsGatewayUrl,
-  getBeeApiUrl,
-  getBeeGatewayUrl,
+  getAntApiUrl,
+  getAntGatewayUrl,
   getRadicleApiUrl,
   broadcastRegistryUpdate,
   registerServiceRegistryIpc,

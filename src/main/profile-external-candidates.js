@@ -9,7 +9,7 @@ const EXTERNAL_CANDIDATE_PROMPT_KEY = 'externalCandidatePrompt';
 
 const DEFAULT_EXTERNAL_NODE_CANDIDATES = {
   bee: {
-    label: 'Swarm Bee',
+    label: 'Swarm',
     endpoints: ['http://127.0.0.1:1633'],
     externalConfig: {
       mode: 'external',

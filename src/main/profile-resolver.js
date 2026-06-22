@@ -16,7 +16,7 @@ const {
 } = require('./profile-catalog');
 const { isProfileLocked } = require('./profile-lock');
 
-const LEGACY_DEV_DATA_DIRS = ['identity-data', 'bee-data', 'ipfs-data', 'radicle-data'];
+const LEGACY_DEV_DATA_DIRS = ['identity-data', 'bee-data', 'ant-data', 'ipfs-data', 'radicle-data'];
 const LEGACY_DEV_DATA_WARNING_FILE = 'legacy-dev-data-warning.json';
 
 let activeProfile = null;

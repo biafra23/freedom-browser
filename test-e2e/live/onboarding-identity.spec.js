@@ -1,28 +1,28 @@
 // End-to-end regression for the issue #90 follow-up.
 //
-// Boots the real app (no test harness) so an actual Bee node starts and holds
-// the LevelDB `statestore` LOCK, then drives the password onboarding wizard to
-// completion. The wizard's force-reinjection wipes Bee's statestore while it is
-// running — the exact scenario that produced "Failed to inject identity: Could
-// not reset node data because it is still in use." on Windows.
+// Boots the real app (no test harness) so an actual Ant (antd) node starts,
+// then drives the password onboarding wizard to completion. The wizard's
+// force-reinjection stops the running node, wipes its stale state, reinjects
+// the keystore, and restarts it. (The original Bee-era bug was an EPERM on
+// Windows wiping the LevelDB statestore while the node held its LOCK; antd
+// has no statestore, but this stop → wipe → reinject → restart flow is still
+// the cross-platform proof that identity injection works against a live node.)
 //
-// Before the fix this fails (the wizard never reaches the success screen and an
-// error dialog fires, on Windows because of EPERM). After the fix Bee is
-// stopped before the wipe and restarted with the injected key, so the wizard
-// completes and Bee/Radicle identities are reported as injected on every
-// platform. IPFS reports ephemeral identity mode because native freedom-ipfs
-// does not use a durable injected PeerID for retrieval today.
+// On success the wizard reaches the success screen with no error dialog and
+// Ant/Radicle identities are reported as injected on every platform. IPFS
+// reports ephemeral identity mode because native freedom-ipfs does not use a
+// durable injected PeerID for retrieval today.
 //
-// Requires the Bee binary (npm run bee:download); skipped if it is absent.
+// Requires the Ant binary (npm run ant:download); skipped if it is absent.
 
 const { test, expect, HAS_BINARIES } = require('../onboarding-fixtures');
 
 const STRONG_PASSWORD = 'Freedom-E2E-Test-Passphrase-2026!';
 
 test.describe('Onboarding wizard creates node identities (issue #90)', () => {
-  test.skip(!HAS_BINARIES, 'Bee binary missing — run npm run bee:download');
+  test.skip(!HAS_BINARIES, 'Ant binary missing — run npm run ant:download');
 
-  test('completes the password setup with a running Bee node', async ({ window: win }) => {
+  test('completes the password setup with a running Ant node', async ({ window: win }) => {
     // Surface any wizard error dialog (alert) instead of letting Playwright
     // silently auto-dismiss it — these are how onboarding reports failures.
     const dialogMessages = [];
@@ -31,10 +31,10 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
       dialog.dismiss().catch(() => {});
     });
 
-    // 1) Wait for the real Bee node to come up — once healthy it has opened and
-    //    LOCKed its statestore, which is the precondition for the bug.
+    // 1) Wait for the real Ant node to come up — the wizard must inject the
+    //    identity while a live node is running, which is what issue #90 broke.
     await expect
-      .poll(async () => (await win.evaluate(() => window.bee.getStatus())).status, {
+      .poll(async () => (await win.evaluate(() => window.ant.getStatus())).status, {
         timeout: 120_000,
         intervals: [1000],
       })
@@ -46,11 +46,24 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
 
     // 3) Choose the password ("secure setup") path. Works whether the welcome
     //    screen shows the Touch-ID layout (link) or the standard layout (button).
-    await win.locator('[data-step="welcome"] [data-action="create"]:visible').first().click();
+    //    On macOS runners the first click after showModal() is occasionally
+    //    swallowed by the dialog's open/focus handling: Playwright reports the
+    //    click as performed but the wizard stays on the welcome step (the only
+    //    flaky failure this suite has ever had — create-password never becomes
+    //    visible while welcome remains on screen). Retry the click until the
+    //    step actually transitions instead of trusting the first dispatch.
+    const createPasswordStep = win.locator('[data-step="create-password"]');
+    await expect(async () => {
+      if (await createPasswordStep.isVisible()) return;
+      await win
+        .locator('[data-step="welcome"] [data-action="create"]:visible')
+        .first()
+        .click({ timeout: 5_000 });
+      await createPasswordStep.waitFor({ state: 'visible', timeout: 2_000 });
+    }).toPass({ timeout: 60_000 });
 
     // 4) Enter a strong password; the confirm field only appears once the
     //    password is strong enough.
-    await win.locator('[data-step="create-password"]').waitFor({ state: 'visible' });
     await win.fill('#create-password', STRONG_PASSWORD);
     await win.locator('#create-password-confirm').waitFor({ state: 'visible' });
     await win.fill('#create-password-confirm', STRONG_PASSWORD);
@@ -74,7 +87,7 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
 
     // 6) Acknowledge the recovery phrase and finish. This is what triggers
     //    saveVault + injectAll(force) → injectBeeIdentity, which stops the
-    //    running Bee, wipes statestore, reinjects, and restarts it.
+    //    running Ant node, wipes its stale state, reinjects, and restarts it.
     await backupStep.waitFor({ state: 'visible' });
     await win.check('#backup-confirmed');
     const finishBtn = win.locator('[data-step="backup"] [data-action="continue-to-verify"]');
@@ -97,9 +110,9 @@ test.describe('Onboarding wizard creates node identities (issue #90)', () => {
     expect(status.ipfsStableIdentitySupported).toBe(false);
     expect(status.ipfsNativeIdentityActive).toBe(false);
 
-    // Bee was restarted and is healthy again with the injected identity.
+    // The Ant node was restarted and is healthy again with the injected identity.
     await expect
-      .poll(async () => (await win.evaluate(() => window.bee.getStatus())).status, {
+      .poll(async () => (await win.evaluate(() => window.ant.getStatus())).status, {
         timeout: 120_000,
         intervals: [1000],
       })

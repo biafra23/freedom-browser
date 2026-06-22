@@ -40,6 +40,7 @@ function loadJsonFile(filePath, fallback = {}) {
   }
 }
 
+// Keep in sync with normalizeTokenKey in src/renderer/lib/wallet/funding-actions.js.
 // Lowercase the address part of a token key on load + on lookup so
 // EIP-55 checksum-cased keys in tokens.json match the lowercase asset
 // addresses that `tupleFromAccept` (and any other normalized lookup

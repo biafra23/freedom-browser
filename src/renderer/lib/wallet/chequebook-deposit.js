@@ -7,7 +7,7 @@
 
 import { walletState, registerScreenHider } from './wallet-state.js';
 import { formatRawTokenBalance } from './wallet-utils.js';
-import { fetchBeeJson } from './bee-api.js';
+import { fetchAntJson } from './ant-api.js';
 
 const DEPOSIT_PRESETS = [
   { label: '0.1 xBZZ', amount: 0.1 },
@@ -96,8 +96,8 @@ function buildPresets() {
 async function refreshBalances() {
   try {
     const [walletResult, balResult] = await Promise.all([
-      fetchBeeJson('/wallet'),
-      fetchBeeJson('/chequebook/balance'),
+      fetchAntJson('/wallet'),
+      fetchAntJson('/chequebook/balance'),
     ]);
 
     if (walletResult.ok && walletResult.data?.bzzBalance) {

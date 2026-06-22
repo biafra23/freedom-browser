@@ -14,7 +14,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const IPC = require('../shared/ipc-channels');
 const {
-  getBeeDataDir,
+  getAntDataDir,
   getIdentityDataDir,
   getIpfsDataDir,
   getRadicleDataDir,
@@ -296,10 +296,10 @@ async function getUserWalletKey(walletIndex) {
 }
 
 /**
- * Check if Bee identity has been injected
+ * Check if the Swarm identity has been injected into Ant's data directory.
  */
 function isBeeIdentityInjected() {
-  const dataDir = getBeeDataDir();
+  const dataDir = getAntDataDir();
   const keystorePath = path.join(dataDir, 'keys', 'swarm.key');
   return fs.existsSync(keystorePath);
 }
@@ -518,6 +518,19 @@ async function wipeStaleBeeState(dataDir) {
     }
   }
 
+  // antd self-generates a native node identity (identity.json + signing.key)
+  // whenever it starts on a data dir that has no injected `keys/swarm.key`
+  // (e.g. the node auto-started at launch before the vault was unlocked). If
+  // those files survive, antd keeps that throwaway identity instead of loading
+  // the swarm.key we're about to inject — so the node would run under the wrong
+  // wallet (different overlay, none of the user's postage stamps or chequebook).
+  // Remove them so the injected keystore becomes the sole identity on restart.
+  for (const idFile of ['identity.json', 'signing.key']) {
+    if (removePathWithRetry(path.join(dataDir, idFile))) {
+      console.log(`[IdentityManager] Removed antd self-generated ${idFile} (identity injection)`);
+    }
+  }
+
   return beeWasRunning;
 }
 
@@ -533,7 +546,7 @@ async function injectBeeIdentity() {
   }
 
   const identity = await loadIdentityModule();
-  const dataDir = getBeeDataDir();
+  const dataDir = getAntDataDir();
 
   // Ensure directory exists
   if (!fs.existsSync(dataDir)) {
@@ -1342,7 +1355,7 @@ module.exports = {
 
   // Data directories
   getIdentityDataDir,
-  getBeeDataDir,
+  getAntDataDir,
   getIpfsDataDir,
   getRadicleDataDir,
 };
