@@ -1887,31 +1887,36 @@
           <div class="card" id="chain-search-results" style="margin-top: 12px">${searchResultsHtml()}</div>
           ${cardButton('Enter a chain manually', 'add-manual')}`;
 
-        const manualHtml = () => `
-          <div class="card">
-            <div class="rpc-block" style="border-top: none">
-              <p class="row-help" style="margin: 0 0 8px">
-                For a chain not in the catalogue — your own devnet or a private network.
-              </p>
-              <div class="rpc-row" style="margin-bottom: 8px">
-                <input type="text" class="rpc-input" id="man-chainid" placeholder="Chain ID (e.g. 8453)" spellcheck="false" />
+        const manualHtml = () => {
+          const f = addState.manual || {};
+          const decimals = f.decimalsRaw ?? '18';
+          return `
+            <div class="card">
+              <div class="rpc-block" style="border-top: none">
+                <p class="row-help" style="margin: 0 0 8px">
+                  For a chain not in the catalogue — your own devnet or a private network.
+                </p>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <input type="text" class="rpc-input" id="man-chainid" placeholder="Chain ID (e.g. 8453)" spellcheck="false" value="${esc(f.chainId || '')}" />
+                </div>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <input type="text" class="rpc-input" id="man-name" placeholder="Chain name" spellcheck="false" value="${esc(f.name || '')}" />
+                </div>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <input type="text" class="rpc-input" id="man-symbol" placeholder="Currency symbol (e.g. ETH)" spellcheck="false" value="${esc(f.symbol || '')}" />
+                </div>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <input type="number" class="rpc-input" id="man-decimals" placeholder="Currency decimals (e.g. 18)" value="${esc(decimals)}" min="0" step="1" />
+                </div>
+                <div class="rpc-row" style="margin-bottom: 8px">
+                  <input type="text" class="rpc-input" id="man-rpc" placeholder="RPC URL (https://… or http://localhost:8545)" spellcheck="false" value="${esc(f.rpc || '')}" />
+                </div>
+                ${addState.error ? `<p class="rpc-status error" style="margin-bottom: 8px">${esc(addState.error)}</p>` : ''}
+                <button type="button" class="btn" data-action="submit-manual">Add chain</button>
+                <button type="button" class="btn" data-action="add-search" style="margin-left: 8px">Back to search</button>
               </div>
-              <div class="rpc-row" style="margin-bottom: 8px">
-                <input type="text" class="rpc-input" id="man-name" placeholder="Chain name" spellcheck="false" />
-              </div>
-              <div class="rpc-row" style="margin-bottom: 8px">
-                <input type="text" class="rpc-input" id="man-symbol" placeholder="Currency symbol (e.g. ETH)" spellcheck="false" />
-              </div>
-              <div class="rpc-row" style="margin-bottom: 8px">
-                <input type="number" class="rpc-input" id="man-decimals" placeholder="Currency decimals (e.g. 18)" value="18" min="0" step="1" />
-              </div>
-              <div class="rpc-row" style="margin-bottom: 8px">
-                <input type="text" class="rpc-input" id="man-rpc" placeholder="RPC URL (https://…)" spellcheck="false" />
-              </div>
-              <button type="button" class="btn" data-action="submit-manual">Add chain</button>
-              <button type="button" class="btn" data-action="add-search" style="margin-left: 8px">Back to search</button>
-            </div>
-          </div>`;
+            </div>`;
+        };
 
         const renderAddConfirm = () => {
           const c = addState.picked;
@@ -1992,7 +1997,7 @@
               <div class="rpc-block" style="border-top: none">
                 <p class="row-label" style="margin-bottom: 8px">${f.mode === 'edit' ? 'Edit endpoint' : 'Add endpoint'}</p>
                 <div class="rpc-row" style="margin-bottom: 8px">
-                  <input type="text" class="rpc-input" id="ep-url" placeholder="https://..." spellcheck="false" value="${esc(f.url)}" />
+                  <input type="text" class="rpc-input" id="ep-url" placeholder="https://... or http://localhost:8545" spellcheck="false" value="${esc(f.url)}" />
                 </div>
                 ${f.error ? `<p class="rpc-status error" style="margin-bottom: 8px">${esc(f.error)}</p>` : ''}
                 <button type="button" class="btn" data-action="save-endpoint">Save</button>
@@ -2107,11 +2112,13 @@
         };
 
         // Persist a new chain (+ its RPC endpoints), then open its detail.
-        const submitAddChain = async (def, rpcUrls) => {
+        const submitAddChain = async (def, rpcUrls, onError) => {
           try {
             const res = await freedomAPI.addChain(def, rpcUrls);
             if (res && res.success === false) {
-              setStatus(res.error || 'Could not add chain', 'error');
+              const message = res.error || 'Could not add chain';
+              if (onError) onError(message);
+              else setStatus(message, 'error');
               return;
             }
             setStatus('', '');
@@ -2119,7 +2126,9 @@
             await reload();
             location.hash = 'chains/' + def.chainId;
           } catch (err) {
-            setStatus(err?.message || 'Could not add chain', 'error');
+            const message = err?.message || 'Could not add chain';
+            if (onError) onError(message);
+            else setStatus(message, 'error');
           }
         };
 
@@ -2174,6 +2183,7 @@
             // (a global status bar at the page bottom is easy to miss).
             const failForm = (error) => {
               endpointForm = { ...endpointForm, url, error };
+              setStatus('', '');
               render();
               $('ep-url')?.focus();
             };
@@ -2218,11 +2228,17 @@
             render();
             runChainSearch('');
           } else if (action === 'add-manual') {
-            if (addState) { addState.mode = 'manual'; render(); }
+            if (addState) {
+              addState.mode = 'manual';
+              addState.error = null;
+              addState.manual = addState.manual || { decimalsRaw: '18' };
+              render();
+            }
           } else if (action === 'add-search') {
             if (addState) {
               addState.mode = 'search';
               addState.results = null;
+              addState.error = null;
               render();
               runChainSearch('');
             }
@@ -2268,12 +2284,20 @@
             const decimalsRaw = ($('man-decimals')?.value || '').trim();
             const rpc = ($('man-rpc')?.value || '').trim();
             const decimals = decimalsRaw === '' ? 18 : Number(decimalsRaw);
-            if (!chainId || !name || !symbol || !rpc) {
-              setStatus('Chain ID, name, currency symbol and RPC URL are required', 'error');
-              return;
-            }
+            const manual = { chainId, name, symbol, decimalsRaw, rpc };
+            const failManual = (error, focusId = 'man-rpc') => {
+              if (!addState) { setStatus(error, 'error'); return; }
+              addState.manual = manual;
+              addState.error = error;
+              render();
+              $(focusId)?.focus();
+            };
+            if (!chainId) { failManual('Chain ID is required', 'man-chainid'); return; }
+            if (!name) { failManual('Chain name is required', 'man-name'); return; }
+            if (!symbol) { failManual('Currency symbol is required', 'man-symbol'); return; }
+            if (!rpc) { failManual('RPC URL is required'); return; }
             if (!Number.isInteger(decimals) || decimals < 0) {
-              setStatus('Currency decimals must be a non-negative whole number', 'error');
+              failManual('Currency decimals must be a non-negative whole number', 'man-decimals');
               return;
             }
             await submitAddChain(
@@ -2284,7 +2308,8 @@
                 nativeCurrency: { name: symbol, symbol, decimals },
                 blockExplorer: '',
               },
-              [rpc]);
+              [rpc],
+              failManual);
           }
         });
 

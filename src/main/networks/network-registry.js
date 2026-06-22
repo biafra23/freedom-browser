@@ -37,12 +37,23 @@ function readJson(filePath, fallback) {
 }
 
 function normalizeHostname(hostname) {
-  return String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/g, '');
 }
 
-function isInternalIpv4(hostname) {
-  const parts = hostname.split('.').map((part) => Number(part));
+function ipv4Parts(hostname) {
+  const rawParts = hostname.split('.');
+  if (rawParts.length !== 4 || rawParts.some((part) => !/^\d+$/.test(part))) {
+    return null;
+  }
+  const parts = rawParts.map((part) => Number(part));
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return null;
+  }
+  return parts;
+}
+
+function isInternalIpv4Parts(parts) {
+  if (!parts) {
     return true;
   }
 
@@ -60,13 +71,71 @@ function isInternalIpv4(hostname) {
   );
 }
 
-function isInternalIpv6(hostname) {
-  if (hostname === '::' || hostname === '::1') return true;
-  if (hostname.startsWith('fc') || hostname.startsWith('fd')) return true;
-  if (hostname === 'fe80::' || hostname.startsWith('fe80:')) return true;
-  if (hostname.startsWith('::ffff:')) {
-    return isInternalIpv4(hostname.slice('::ffff:'.length));
+function isInternalIpv4(hostname) {
+  return isInternalIpv4Parts(ipv4Parts(hostname));
+}
+
+function parseIpv6Part(part) {
+  if (!part) return [];
+  const segments = [];
+  const pieces = part.split(':');
+  for (let i = 0; i < pieces.length; i += 1) {
+    const piece = pieces[i];
+    if (!piece) return null;
+    if (piece.includes('.')) {
+      if (i !== pieces.length - 1) return null;
+      const ipv4 = ipv4Parts(piece);
+      if (!ipv4) return null;
+      segments.push((ipv4[0] << 8) | ipv4[1], (ipv4[2] << 8) | ipv4[3]);
+      continue;
+    }
+    if (!/^[0-9a-f]{1,4}$/.test(piece)) return null;
+    segments.push(parseInt(piece, 16));
   }
+  return segments;
+}
+
+function ipv6Segments(hostname) {
+  const doubleColon = hostname.indexOf('::');
+  if (doubleColon !== hostname.lastIndexOf('::')) return null;
+
+  if (doubleColon === -1) {
+    const segments = parseIpv6Part(hostname);
+    return segments && segments.length === 8 ? segments : null;
+  }
+
+  const left = parseIpv6Part(hostname.slice(0, doubleColon));
+  const right = parseIpv6Part(hostname.slice(doubleColon + 2));
+  if (!left || !right) return null;
+  const fill = 8 - left.length - right.length;
+  if (fill < 1) return null;
+  return [...left, ...Array(fill).fill(0), ...right];
+}
+
+function mappedIpv4Parts(hostname) {
+  const segments = ipv6Segments(hostname);
+  if (!segments) return null;
+  const mappedPrefix = segments.slice(0, 5).every((segment) => segment === 0) && segments[5] === 0xffff;
+  if (!mappedPrefix) return null;
+  return [
+    segments[6] >> 8,
+    segments[6] & 0xff,
+    segments[7] >> 8,
+    segments[7] & 0xff,
+  ];
+}
+
+function isInternalIpv6(hostname) {
+  const mapped = mappedIpv4Parts(hostname);
+  if (mapped) return isInternalIpv4Parts(mapped);
+
+  const segments = ipv6Segments(hostname);
+  if (!segments) return true;
+  if (segments.every((segment) => segment === 0)) return true; // ::
+  if (segments.slice(0, 7).every((segment) => segment === 0) && segments[7] === 1) return true; // ::1
+  if ((segments[0] & 0xfe00) === 0xfc00) return true; // fc00::/7
+  if ((segments[0] & 0xffc0) === 0xfe80) return true; // fe80::/10
+  if ((segments[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
   return false;
 }
 
@@ -76,10 +145,12 @@ function isLoopbackHostname(hostname) {
   // RFC 6761: localhost (and *.localhost) is reserved to resolve to loopback.
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   const ipVersion = net.isIP(host);
-  if (ipVersion === 4) return host.split('.')[0] === '127'; // 127.0.0.0/8
+  if (ipVersion === 4) return ipv4Parts(host)?.[0] === 127; // 127.0.0.0/8
   if (ipVersion === 6) {
-    if (host === '::1') return true;
-    if (host.startsWith('::ffff:')) return host.slice('::ffff:'.length).split('.')[0] === '127';
+    const mapped = mappedIpv4Parts(host);
+    if (mapped) return mapped[0] === 127;
+    const segments = ipv6Segments(host);
+    return !!segments && segments.slice(0, 7).every((segment) => segment === 0) && segments[7] === 1;
   }
   return false;
 }
