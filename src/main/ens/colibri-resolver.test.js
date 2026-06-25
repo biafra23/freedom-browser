@@ -100,6 +100,7 @@ describe('resolveViaColibri', () => {
       zk_proof: true,
       privacy_mode: 'basic',
       proofStrategy: Strategy.VerifiedOnly,
+      max_latest_age_seconds: 60,
     });
   });
 

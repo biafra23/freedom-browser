@@ -460,6 +460,27 @@ describe('ens-resolver', () => {
       expect(mockUrResolve.mock.calls.length).toBe(callsAfterCold);
     });
 
+    test('does not cache transient NO_CONTENTHASH errors', async () => {
+      mockUrResolve.mockRejectedValue(
+        new Error('response not found during CCIP fetch: 3dnsService:: CCIP_001')
+      );
+
+      const first = await resolveEnsContent('transient-negative.box');
+      const callsAfterFailure = mockUrResolve.mock.calls.length;
+
+      expect(first.type).toBe('not_found');
+      expect(first.reason).toBe('NO_CONTENTHASH');
+      expect(first.error).toContain('CCIP');
+
+      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_V0)));
+
+      const second = await resolveEnsContent('transient-negative.box');
+
+      expect(second.type).toBe('ok');
+      expect(second.uri).toBe(`ipfs://${IPFS_V0}`);
+      expect(mockUrResolve.mock.calls.length).toBeGreaterThan(callsAfterFailure);
+    });
+
     test('makes K UR calls per cold resolution (one per quorum leg)', async () => {
       mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_V0)));
 
@@ -1900,6 +1921,24 @@ describe('ens-resolver', () => {
 
       expect(result.type).toBe('not_found');
       expect(result.trust.method).toBe('colibri');
+    });
+
+    test('CALL_EXCEPTION without revert data falls through to public RPC quorum', async () => {
+      withColibri();
+      const err = Object.assign(new Error('missing response from Colibri prover'), {
+        code: 'CALL_EXCEPTION',
+        info: { error: { code: -32603, message: 'no response' } },
+      });
+      mockResolveViaColibri.mockRejectedValue(err);
+      mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_V0)));
+
+      const result = await resolveEnsContent('prover-down.eth');
+
+      expect(result.type).toBe('ok');
+      expect(result.uri).toBe(`ipfs://${IPFS_V0}`);
+      expect(mockUrResolve).toHaveBeenCalled();
+      expect(result.trust.method).not.toBe('colibri');
+      expect(result.trust.quorum).toEqual({ k: 3, m: 2, achieved: true });
     });
 
     test('non-revert error falls through to the quorum path by default', async () => {
