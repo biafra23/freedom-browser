@@ -64,9 +64,11 @@ module.exports = {
   WINDOW_TOGGLE_FULLSCREEN: 'window:toggle-fullscreen',
   WINDOW_NEW: 'window:new',
   WINDOW_GET_PLATFORM: 'window:get-platform',
+  WINDOW_GET_BUTTON_LAYOUT: 'window:get-button-layout',
 
   // App
   APP_SHOW_ABOUT: 'app:show-about',
+  APP_RELAUNCH: 'app:relaunch',
 
   // Profiles
   PROFILE_GET_ACTIVE: 'profile:get-active',

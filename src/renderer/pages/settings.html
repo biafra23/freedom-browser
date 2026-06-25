@@ -781,6 +781,19 @@
                 </select>
               </div>
             </div>
+            <div class="row" data-linux-only>
+              <div class="row-body">
+                <p class="row-label">Tabs in title bar</p>
+                <p class="row-help">Use the tab strip as the window title bar. Takes effect after restart.</p>
+              </div>
+              <div class="row-control">
+                <button type="button" id="tabs-titlebar-restart" class="btn" hidden>Restart now</button>
+                <label class="toggle">
+                  <input type="checkbox" id="tabs-in-titlebar" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1009,6 +1022,7 @@
 
       const fields = {
         themeMode: $('theme-mode'),
+        tabsInTitlebar: $('tabs-in-titlebar'),
         startAnt: $('start-ant-at-launch'),
         startIpfs: $('start-ipfs-at-launch'),
         blockUnverifiedEns: $('block-unverified-ens'),
@@ -1606,6 +1620,7 @@
 
       const currentFormState = () => ({
         theme: fields.themeMode.value || 'system',
+        tabsInTitlebar: fields.tabsInTitlebar.checked,
         startAntAtLaunch: fields.startAnt.checked,
         startIpfsAtLaunch: fields.startIpfs.checked,
         enableRadicleIntegration: isWindows ? false : fields.enableRadicle.checked,
@@ -1618,6 +1633,7 @@
       const applyFormState = (settings) => {
         if (!settings) return;
         fields.themeMode.value = settings.theme || 'system';
+        fields.tabsInTitlebar.checked = settings.tabsInTitlebar !== false;
         fields.startAnt.checked = settings.startAntAtLaunch !== false;
         fields.startIpfs.checked = settings.startIpfsAtLaunch !== false;
         fields.enableRadicle.checked = settings.enableRadicleIntegration === true;
@@ -1719,6 +1735,11 @@
       };
 
       fields.themeMode.addEventListener('change', save);
+      fields.tabsInTitlebar.addEventListener('change', () => {
+        save();
+        $('tabs-titlebar-restart').hidden = false;
+      });
+      $('tabs-titlebar-restart').addEventListener('click', () => freedomAPI.relaunchApp());
       fields.startAnt.addEventListener('change', save);
       fields.startIpfs.addEventListener('change', save);
       fields.enableRadicle.addEventListener('change', () => {
@@ -1757,6 +1778,12 @@
             // No official Radicle binaries for Windows yet.
             document
               .querySelectorAll('[data-radicle]')
+              .forEach((el) => (el.style.display = 'none'));
+          }
+          if (platform !== 'linux') {
+            // Frameless titlebar is a Linux-only option.
+            document
+              .querySelectorAll('[data-linux-only]')
               .forEach((el) => (el.style.display = 'none'));
           }
         } catch {
