@@ -107,6 +107,11 @@
       "icon": "assets/icons",
       "category": "Network;WebBrowser",
       "executableName": "freedom",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "freedom-browser"
+        }
+      },
       "mimeTypes": [
         "x-scheme-handler/ipfs",
         "x-scheme-handler/ipns",
