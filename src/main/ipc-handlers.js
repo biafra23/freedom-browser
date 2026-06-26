@@ -174,17 +174,6 @@ function broadcastProfileUpdated(profile = serializeActiveProfile()) {
   }
 }
 
-// Rebuild the application menu so the native Profiles menu reflects the
-// current profile set (after create / rename / delete). Lazy-required to
-// avoid a load-order cycle with menu.js.
-function rebuildAppMenuForProfiles() {
-  try {
-    require('./menu').setupApplicationMenu();
-  } catch (err) {
-    log.error('[profile] Failed to rebuild application menu:', err?.message || err);
-  }
-}
-
 function serializeProfileSummary(profile) {
   if (!profile) return null;
   const serialized = {
@@ -372,7 +361,6 @@ function createProfileFromIpc(payload = {}) {
       );
     }
     broadcastProfileUpdated();
-    rebuildAppMenuForProfiles();
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
     return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
@@ -405,7 +393,6 @@ function renameProfileFromIpc(payload = {}) {
     }
     const activeProfile = serializeActiveProfile();
     broadcastProfileUpdated(activeProfile);
-    rebuildAppMenuForProfiles();
     return success({
       profile: serializeProfileMutationResult(result),
       activeProfile,
@@ -505,7 +492,6 @@ async function deleteProfileFromIpc(payload = {}, options = {}) {
       );
     }
     broadcastProfileUpdated();
-    rebuildAppMenuForProfiles();
     return success({
       profile: serializeProfileSummary({
         id: result.record.id,

@@ -133,15 +133,17 @@ describe('webview-preload', () => {
       },
     });
 
-    expect(contextBridge.exposeInMainWorld).toHaveBeenCalledWith(
-      'freedomAPI',
-      expect.any(Object)
-    );
+    expect(contextBridge.exposeInMainWorld).toHaveBeenCalledWith('freedomAPI', expect.any(Object));
     expect(ipcRenderer.sendSync).toHaveBeenCalledWith(IPC.GET_INTERNAL_PAGES);
 
     const invokeCases = [
       ['getHistory', [{ limit: 10 }], IPC.HISTORY_GET, [{ limit: 10 }]],
-      ['addHistory', [{ url: 'https://example.com' }], IPC.HISTORY_ADD, [{ url: 'https://example.com' }]],
+      [
+        'addHistory',
+        [{ url: 'https://example.com' }],
+        IPC.HISTORY_ADD,
+        [{ url: 'https://example.com' }],
+      ],
       ['removeHistory', [5], IPC.HISTORY_REMOVE, [5]],
       ['clearHistory', [], IPC.HISTORY_CLEAR, []],
       ['getSettings', [], IPC.SETTINGS_GET, []],
@@ -153,7 +155,12 @@ describe('webview-preload', () => {
       ['openPublishSetup', [], IPC.SIDEBAR_OPEN_PUBLISH_SETUP, []],
       ['getBookmarks', [], IPC.BOOKMARKS_GET, []],
       ['openInNewTab', ['https://example.com'], IPC.OPEN_URL_IN_NEW_TAB, ['https://example.com']],
-      ['getCachedFavicon', ['https://example.com'], IPC.FAVICON_GET_CACHED, ['https://example.com']],
+      [
+        'getCachedFavicon',
+        ['https://example.com'],
+        IPC.FAVICON_GET_CACHED,
+        ['https://example.com'],
+      ],
       ['seedRadicle', ['z3abc'], IPC.RADICLE_SEED, ['z3abc']],
       ['getRadicleStatus', [], IPC.RADICLE_GET_STATUS, []],
       ['getRadicleRepoPayload', ['z3abc'], IPC.RADICLE_GET_REPO_PAYLOAD, ['z3abc']],
@@ -166,7 +173,9 @@ describe('webview-preload', () => {
       expect(ipcRenderer.invoke).toHaveBeenCalledWith(channel, ...expectedArgs);
     }
 
-    expect(consoleLogSpy).toHaveBeenCalledWith('[webview-preload] Loaded (freedomAPI + context menu + ethereum + swarm provider)');
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      '[webview-preload] Loaded (freedomAPI + context menu + ethereum + swarm provider)'
+    );
   });
 
   test('exposes profile mutation methods only on the settings page', async () => {
@@ -181,10 +190,25 @@ describe('webview-preload', () => {
     const mutationCases = [
       ['createProfile', [{ displayName: 'Work' }], IPC.PROFILE_CREATE, [{ displayName: 'Work' }]],
       ['importProfile', ['work'], IPC.PROFILE_IMPORT, [{ id: 'work' }]],
-      ['renameProfile', ['work', 'Work'], IPC.PROFILE_RENAME, [{ id: 'work', displayName: 'Work' }]],
+      [
+        'renameProfile',
+        ['work', 'Work'],
+        IPC.PROFILE_RENAME,
+        [{ id: 'work', displayName: 'Work' }],
+      ],
       ['openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
-      ['deleteProfile', ['work', 'Work'], IPC.PROFILE_DELETE, [{ id: 'work', confirmDisplayName: 'Work' }]],
-      ['updateProfileNodeConfig', ['bee', { mode: 'disabled' }], IPC.PROFILE_UPDATE_NODE_CONFIG, [{ protocol: 'bee', config: { mode: 'disabled' } }]],
+      [
+        'deleteProfile',
+        ['work', 'Work'],
+        IPC.PROFILE_DELETE,
+        [{ id: 'work', confirmDisplayName: 'Work' }],
+      ],
+      [
+        'updateProfileNodeConfig',
+        ['bee', { mode: 'disabled' }],
+        IPC.PROFILE_UPDATE_NODE_CONFIG,
+        [{ protocol: 'bee', config: { mode: 'disabled' } }],
+      ],
     ];
 
     for (const [method, args, channel, expectedArgs] of mutationCases) {
@@ -203,25 +227,25 @@ describe('webview-preload', () => {
       },
     });
 
+    // createProfile is a profile-management method (allowed on settings +
+    // profiles.html); updateProfileNodeConfig is settings-only. Both are blocked
+    // here on a non-manager internal page.
     await expect(exposures.freedomAPI.createProfile({ displayName: 'Work' })).rejects.toThrow(
-      'freedomAPI profile changes are only available on settings'
+      'freedomAPI profile changes are only available on profile management pages'
     );
-    await expect(exposures.freedomAPI.updateProfileNodeConfig('bee', {
-      mode: 'disabled',
-    })).rejects.toThrow(
-      'freedomAPI profile changes are only available on settings'
-    );
+    await expect(
+      exposures.freedomAPI.updateProfileNodeConfig('bee', {
+        mode: 'disabled',
+      })
+    ).rejects.toThrow('freedomAPI profile changes are only available on settings');
 
-    expect(ipcRenderer.invoke).not.toHaveBeenCalledWith(
-      IPC.PROFILE_CREATE,
-      expect.anything()
-    );
+    expect(ipcRenderer.invoke).not.toHaveBeenCalledWith(IPC.PROFILE_CREATE, expect.anything());
     expect(ipcRenderer.invoke).not.toHaveBeenCalledWith(
       IPC.PROFILE_UPDATE_NODE_CONFIG,
       expect.anything()
     );
     expect(consoleWarnSpy).toHaveBeenCalledWith(
-      '[freedomAPI] blocked settings-only "createProfile" on page: file:///app/pages/history.html'
+      '[freedomAPI] blocked profile-management "createProfile" on page: file:///app/pages/history.html'
     );
   });
 
@@ -621,5 +645,4 @@ describe('webview-preload', () => {
     await flushMicrotasks();
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.any(Error));
   });
-
 });
