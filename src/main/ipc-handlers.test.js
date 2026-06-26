@@ -142,6 +142,10 @@ function loadIpcHandlersModule(options = {}) {
       command: '/electron',
       args: [`--profile=${profileId}`],
     }));
+  const getProfileFocusTargetForActiveApp =
+    options.getProfileFocusTargetForActiveApp || jest.fn(() => null);
+  const requestProfileFocusAsync =
+    options.requestProfileFocusAsync || jest.fn(() => ({ ok: true, nonce: 'test-nonce' }));
   const deleteProfileForActiveApp =
     options.deleteProfileForActiveApp ||
     jest.fn((id, _confirmDisplayName) => ({
@@ -171,6 +175,7 @@ function loadIpcHandlersModule(options = {}) {
         createProfileForActiveApp,
         deleteProfileForActiveApp,
         getActiveProfile: jest.fn(() => activeProfile),
+        getProfileFocusTargetForActiveApp,
         importProfileForActiveApp,
         listProfilesForActiveApp,
         renameProfileForActiveApp,
@@ -178,6 +183,9 @@ function loadIpcHandlersModule(options = {}) {
       }),
       [require.resolve('./profile-launcher')]: () => ({
         launchProfile,
+      }),
+      [require.resolve('./profile-focus-handoff')]: () => ({
+        requestProfileFocusAsync,
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -207,6 +215,8 @@ function loadIpcHandlersModule(options = {}) {
     importProfileForActiveApp,
     listProfilesForActiveApp,
     launchProfile,
+    getProfileFocusTargetForActiveApp,
+    requestProfileFocusAsync,
     invokeProfileMutation: (channel, payload = {}, url = SETTINGS_PAGE_URL) =>
       Promise.resolve(ipcMain.handlers.get(channel)(createIpcEvent(url), payload)),
     renameProfileForActiveApp,
@@ -581,6 +591,67 @@ describe('ipc-handlers', () => {
         },
       })
     );
+    expect(ctx.launchProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'default' }),
+      'work'
+    );
+  });
+
+  test('focuses an already-running profile instead of spawning a new process', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        userDataDir: '/tmp/work',
+        isDev: false,
+        isLocked: true,
+      })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work' },
+      HOST_RENDERER_URL
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.focused).toBe(true);
+    expect(ctx.requestProfileFocusAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'work', isLocked: true })
+    );
+    // No second process should be spawned for an already-running profile.
+    expect(ctx.launchProfile).not.toHaveBeenCalled();
+  });
+
+  test('falls back to launching when the focus request cannot be written', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        userDataDir: '/tmp/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      requestProfileFocusAsync: jest.fn(() => ({ ok: false, error: 'nope' })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work' },
+      HOST_RENDERER_URL
+    );
+
+    expect(result.success).toBe(true);
     expect(ctx.launchProfile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'default' }),
       'work'

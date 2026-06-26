@@ -87,6 +87,29 @@ function requestProfileFocusSync(profile, options = {}) {
   };
 }
 
+// Fire-and-forget variant of requestProfileFocusSync: writes the focus-request
+// file and returns immediately without polling for an ack. Used by a running
+// process to focus ANOTHER already-running profile's window without spawning a
+// throwaway process (and without blocking the main thread on the ack).
+function requestProfileFocusAsync(profile, options = {}) {
+  const paths = getProfileFocusPaths(profile);
+  const nonce = options.nonce || makeNonce();
+  const request = {
+    type: 'focus-window',
+    nonce,
+    profileId: profile.id || null,
+    requestedAtMs: Date.now(),
+    pid: process.pid,
+  };
+
+  try {
+    writeJsonAtomic(paths.requestPath, request);
+    return { ok: true, nonce };
+  } catch (error) {
+    return { ok: false, error: error.message || 'Focus request could not be written', nonce };
+  }
+}
+
 function isFreshRequest(request, maxAgeMs) {
   if (!request || request.type !== 'focus-window' || typeof request.nonce !== 'string') {
     return false;
@@ -171,6 +194,7 @@ module.exports = {
   FOCUS_ACK_FILE,
   FOCUS_REQUEST_FILE,
   getProfileFocusPaths,
+  requestProfileFocusAsync,
   requestProfileFocusSync,
   startProfileFocusRequestWatcher,
 };

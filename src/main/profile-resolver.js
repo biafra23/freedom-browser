@@ -10,6 +10,7 @@ const {
   hashPath,
   importProfile,
   listProfileSummaries,
+  loadCatalog,
   renameProfile,
   sanitizeProfileId,
   updateProfileNodeConfig,
@@ -287,6 +288,39 @@ function renameProfileForActiveApp(profileId, displayName) {
   return result;
 }
 
+// Resolve a registered profile by id into the descriptor the lock / focus
+// helpers need (its userDataDir is its catalog dir), plus whether it is
+// currently running (its lock is held). Returns null when there is no active
+// catalog or the id isn't registered.
+function getProfileFocusTargetForActiveApp(profileId) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  const id = sanitizeProfileId(profileId);
+  const catalog = loadCatalog(activeProfile.appRoot);
+  const record = catalog?.profiles?.find((profile) => profile.id === id);
+  if (!record?.dir) {
+    return null;
+  }
+
+  const target = {
+    id: record.id,
+    displayName: record.displayName,
+    userDataDir: record.dir,
+    isDev: activeProfile.isDev === true,
+  };
+
+  let isLocked;
+  try {
+    isLocked = isProfileLocked(target);
+  } catch {
+    isLocked = false;
+  }
+
+  return { ...target, isLocked };
+}
+
 function deleteProfileForActiveApp(profileId, expectedDisplayName) {
   if (!activeProfile || activeProfile.source !== 'catalog') {
     return null;
@@ -319,6 +353,7 @@ module.exports = {
   getArgValue,
   getDefaultRepoRoot,
   getLegacyDevDataDirs,
+  getProfileFocusTargetForActiveApp,
   getReservedProfilePorts,
   importProfileForActiveApp,
   initializeProfile,
