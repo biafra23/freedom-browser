@@ -64,6 +64,29 @@ function resolveDevAppRoot(app, env, repoRoot) {
   return path.join(app.getPath('appData'), 'Freedom Dev', getCheckoutId(repoRoot));
 }
 
+// Returns the id of the most recently opened registered profile, so a cold
+// start with no explicit profile reopens whatever was last active. Falls back
+// to null when the catalog is empty/unreadable or no profile has been opened.
+function resolveLastOpenedProfileId(appRoot) {
+  let catalog;
+  try {
+    catalog = loadCatalog(appRoot);
+  } catch {
+    return null;
+  }
+
+  let lastId = null;
+  let lastOpenedAt = null;
+  for (const profile of catalog.profiles || []) {
+    if (!profile?.id || !profile.lastOpenedAt) continue;
+    if (lastOpenedAt === null || profile.lastOpenedAt > lastOpenedAt) {
+      lastOpenedAt = profile.lastOpenedAt;
+      lastId = profile.id;
+    }
+  }
+  return lastId;
+}
+
 function resolveProfile(app, options = {}) {
   const env = options.env || process.env;
   const argv = options.argv || process.argv;
@@ -108,7 +131,11 @@ function resolveProfile(app, options = {}) {
   const appRoot = isDev
     ? resolveDevAppRoot(app, env, repoRoot)
     : app.getPath('userData');
-  const profileInput = getArgValue(argv, 'profile') || env.FREEDOM_PROFILE || DEFAULT_PROFILE_ID;
+  const profileInput =
+    getArgValue(argv, 'profile') ||
+    env.FREEDOM_PROFILE ||
+    resolveLastOpenedProfileId(appRoot) ||
+    DEFAULT_PROFILE_ID;
   const profileId = sanitizeProfileId(profileInput);
   const defaultProfileDir = isDev
     ? path.join(appRoot, 'Profiles', DEFAULT_PROFILE_ID)
@@ -359,6 +386,7 @@ module.exports = {
   initializeProfile,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
+  resolveLastOpenedProfileId,
   resolveProfile,
   updateActiveProfileNodeConfig,
   warnAboutLegacyDevData,

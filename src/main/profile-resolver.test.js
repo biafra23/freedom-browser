@@ -111,6 +111,52 @@ describe('profile resolver', () => {
     expect(workMetadata.lastOpenedAt).toBe('2026-05-26T00:00:00.000Z');
   });
 
+  test('reopens the most recently opened profile when launched without an explicit profile', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const { resolveProfile } = require('./profile-resolver');
+
+    // default opened first, then work — work is the last active profile.
+    resolveProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      now: '2026-05-25T00:00:00.000Z',
+    });
+    resolveProfile(app, {
+      argv: ['electron', '.', '--profile=work'],
+      env: {},
+      now: '2026-05-26T00:00:00.000Z',
+    });
+
+    const profile = resolveProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      now: '2026-05-27T00:00:00.000Z',
+    });
+
+    expect(profile.id).toBe('work');
+  });
+
+  test('explicit --profile still overrides the last opened profile', () => {
+    const userDataDir = track(makeTempDir());
+    const app = createAppMock({ isPackaged: true, userDataDir });
+    const { resolveProfile } = require('./profile-resolver');
+
+    resolveProfile(app, {
+      argv: ['electron', '.', '--profile=work'],
+      env: {},
+      now: '2026-05-26T00:00:00.000Z',
+    });
+
+    const profile = resolveProfile(app, {
+      argv: ['electron', '.', '--profile=default'],
+      env: {},
+      now: '2026-05-27T00:00:00.000Z',
+    });
+
+    expect(profile.id).toBe('default');
+  });
+
   test('uses FREEDOM_TEST_USER_DATA as the highest-precedence bypass', () => {
     const userDataDir = track(makeTempDir());
     const testUserData = track(makeTempDir());
