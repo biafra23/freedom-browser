@@ -4,7 +4,7 @@ import { closeMenus } from './menus.js';
 import { hideBookmarkContextMenu } from './bookmarks-ui.js';
 import { showMenuBackdrop, hideMenuBackdrop } from './menu-backdrop.js';
 import { setupWebviewContextMenu } from './page-context-menu.js';
-import { homeUrl } from './page-urls.js';
+import { homeUrl, getInternalPageName, internalPages } from './page-urls.js';
 import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
 import {
@@ -388,11 +388,7 @@ const createWebview = (tabId, initialUrl) => {
         // unconditionally calls `setLoading(false)` and resets the
         // reload button — both wrong for the phantom abort.
         const abortedUrl = event.validatedURL || event.url || null;
-        if (
-          event.errorCode === -3 &&
-          tab.pendingAbortUrl &&
-          abortedUrl === tab.pendingAbortUrl
-        ) {
+        if (event.errorCode === -3 && tab.pendingAbortUrl && abortedUrl === tab.pendingAbortUrl) {
           tab.pendingAbortUrl = null;
           if (tab.pendingAbortTimer) {
             clearTimeout(tab.pendingAbortTimer);
@@ -906,7 +902,7 @@ export const createTab = (url = null) => {
   // that pointing the webview at homeUrl first did, and prevents
   // hostile schemes from ever becoming a direct webview navigation.
   const isDirect = isDirectLoadUrl(url);
-  const webviewUrl = isDirect ? (url || homeUrl) : 'about:blank';
+  const webviewUrl = isDirect ? url || homeUrl : 'about:blank';
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {
@@ -931,7 +927,9 @@ export const createTab = (url = null) => {
   // data:, javascript:, etc.) it falls through to a debug-log no-op,
   // leaving the tab on about:blank.
   if (!isDirect) {
-    setTimeout(() => { if (onLoadTarget) onLoadTarget(url); }, 50);
+    setTimeout(() => {
+      if (onLoadTarget) onLoadTarget(url);
+    }, 50);
   }
 
   pushDebug(`Created tab ${tabId}`);
@@ -1248,8 +1246,25 @@ export const switchTab = (tabId, options = {}) => {
  * @param {string|null} targetName - HTML `target` attribute, if any
  * @returns {object|null} the (possibly new) tab, or null on noop
  */
+// Map a bare `freedom://<page>` URL to its internal page name, or null when it
+// isn't a recognised single-segment internal page (sub-paths like
+// `freedom://settings/appearance` are intentionally excluded).
+const freedomInternalPageName = (url) => {
+  const match = /^freedom:\/\/([a-z0-9-]+)\/?$/i.exec(url || '');
+  const name = match && match[1].toLowerCase();
+  return name && Object.prototype.hasOwnProperty.call(internalPages, name) ? name : null;
+};
+
 export const openInNewTabWithTarget = (url, targetName) => {
   if (!url) return null;
+
+  // Singleton internal pages (freedom://profiles, freedom://history, …) should
+  // focus an existing tab instead of opening duplicates — same behaviour as the
+  // hamburger menu. Named targets keep their explicit reuse semantics below.
+  if (!targetName) {
+    const internalName = freedomInternalPageName(url);
+    if (internalName) return openOrFocusInternalPage(internalName);
+  }
 
   if (targetName && namedTargets.has(targetName)) {
     const existingTabId = namedTargets.get(targetName);
@@ -1267,9 +1282,7 @@ export const openInNewTabWithTarget = (url, targetName) => {
     namedTargets.delete(targetName);
   }
 
-  pushDebug(
-    `Opening new tab with URL: ${url}${targetName ? ` (target: ${targetName})` : ''}`
-  );
+  pushDebug(`Opening new tab with URL: ${url}${targetName ? ` (target: ${targetName})` : ''}`);
 
   // Pass the target URL through to createTab (not homeUrl). createTab
   // already does the right thing for both shapes: direct URLs load
@@ -1286,6 +1299,35 @@ export const openInNewTabWithTarget = (url, targetName) => {
   }
 
   return newTab;
+};
+
+/**
+ * Open an internal page (e.g. 'profiles', 'settings') in its own tab. If a tab
+ * already has that page open, switch to it instead of opening a duplicate.
+ *
+ * `tab.url` holds the resolved `file://…/pages/<page>.html` form once loaded,
+ * but the `freedom://<page>` form while the tab is still resolving — match both.
+ *
+ * @param {string} pageName - internal page name, e.g. 'profiles'
+ * @returns {object|null} the focused or newly created tab, or null on noop
+ */
+export const openOrFocusInternalPage = (pageName) => {
+  if (!pageName) return null;
+
+  const existingTab = tabState.tabs.find((tab) => {
+    if (!tab.url) return false;
+    if (tab.url === `freedom://${pageName}`) return true;
+    return (getInternalPageName(tab.url) || '').split('/')[0] === pageName;
+  });
+
+  if (existingTab) {
+    pushDebug(`Focusing existing ${pageName} tab ${existingTab.id}`);
+    switchTab(existingTab.id);
+    return existingTab;
+  }
+
+  pushDebug(`Opening ${pageName} in a new tab`);
+  return createTab(`freedom://${pageName}`);
 };
 
 // Initialize tabs module

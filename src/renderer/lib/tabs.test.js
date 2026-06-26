@@ -32,6 +32,9 @@ beforeAll(() => {
     electronAPI: { ...mockElectronAPI, getSettings: jest.fn(() => Promise.resolve({})) },
     location: { href: 'file:///app/index.html' },
     addEventListener: jest.fn(),
+    // Lets page-urls.js build the internal-page map used to dedupe
+    // freedom://<page> tabs.
+    internalPages: { routable: { profiles: 'profiles.html', history: 'history.html' } },
   };
 
   global.document = {
@@ -249,9 +252,7 @@ describe('Tab Navigation State Isolation', () => {
       tab.webview.getURL.mockReturnValue('view-source:https://example.com/');
       tab.webview._eventHandlers['did-navigate']({ url: 'https://example.com/' });
 
-      expect(tab.navigationState.committedDisplayUrl).toBe(
-        'view-source:https://example.com/'
-      );
+      expect(tab.navigationState.committedDisplayUrl).toBe('view-source:https://example.com/');
     });
   });
 
@@ -279,5 +280,39 @@ describe('Tab Navigation State Isolation', () => {
       // Either returns null or a default state object
       expect(state === null || typeof state === 'object').toBe(true);
     });
+  });
+});
+
+describe('openOrFocusInternalPage', () => {
+  test('opens a new tab the first time and focuses the same tab afterwards', async () => {
+    const { openOrFocusInternalPage, createTab, getTabs, getActiveTab } = await import('./tabs.js');
+
+    const before = getTabs().length;
+
+    const first = openOrFocusInternalPage('profiles');
+    expect(first).toBeTruthy();
+    expect(first.url).toBe('freedom://profiles');
+    expect(getTabs().length).toBe(before + 1);
+
+    // Open a different tab so 'profiles' is no longer active.
+    createTab('http://example.com/');
+
+    const second = openOrFocusInternalPage('profiles');
+    expect(second.id).toBe(first.id); // reused, not duplicated
+    expect(getTabs().length).toBe(before + 2); // only the example.com tab was added
+    expect(getActiveTab().id).toBe(first.id); // switched back to it
+  });
+
+  test('openInNewTabWithTarget focuses an existing internal page (system menu path)', async () => {
+    const { openInNewTabWithTarget, openOrFocusInternalPage, getTabs } = await import('./tabs.js');
+
+    // Ensure a profiles tab exists, then simulate the native "Manage Profiles"
+    // menu item, which routes through tab:new-with-url → openInNewTabWithTarget.
+    const existing = openOrFocusInternalPage('profiles');
+    const before = getTabs().length;
+
+    const reused = openInNewTabWithTarget('freedom://profiles', null);
+    expect(reused.id).toBe(existing.id); // focused, not duplicated
+    expect(getTabs().length).toBe(before); // no new tab opened
   });
 });

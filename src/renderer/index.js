@@ -34,6 +34,7 @@ import {
   hideTabContextMenu,
   setOnContextMenuOpening as setOnTabContextMenuOpening,
   createTab,
+  openOrFocusInternalPage,
 } from './lib/tabs.js';
 import {
   initNavigation,
@@ -155,7 +156,9 @@ async function initPlatformUI() {
     document
       .getElementById('maximize-btn')
       ?.addEventListener('click', () => electronAPI.maximizeWindow());
-    document.getElementById('close-btn')?.addEventListener('click', () => electronAPI.closeWindow());
+    document
+      .getElementById('close-btn')
+      ?.addEventListener('click', () => electronAPI.closeWindow());
 
     // Double-click the bare titlebar to toggle maximize (native behavior)
     document.querySelector('.title-bar')?.addEventListener('dblclick', (e) => {
@@ -358,7 +361,8 @@ async function initProfileIndicator() {
 
   const openProfilesManager = () => {
     closeAllMenus();
-    loadTarget('freedom://profiles');
+    // Open the manager in its own tab, or focus the tab that already has it.
+    openOrFocusInternalPage('profiles');
   };
 
   const setCreateStatus = (message, kind = '') => {
@@ -698,9 +702,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   initAutocomplete(); // Address bar autocomplete
   initPageContextMenu(); // Page context menu for webviews
   initChromeInputContextMenu({ onOpening: onAnyMenuOpening }); // Address bar edit menu
-  initOnboarding();  // Identity onboarding wizard
-  initSidebar();     // Identity & wallet sidebar
-  initWalletUi();    // Wallet & identity display in sidebar
+  initOnboarding(); // Identity onboarding wizard
+  initSidebar(); // Identity & wallet sidebar
+  initWalletUi(); // Wallet & identity display in sidebar
   loadBookmarks();
   initExternalNodeCandidatesModal();
   initPlatformUI();
