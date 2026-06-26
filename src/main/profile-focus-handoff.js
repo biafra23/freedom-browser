@@ -110,8 +110,33 @@ function requestProfileFocusAsync(profile, options = {}) {
   }
 }
 
+const KNOWN_REQUEST_TYPES = new Set(['focus-window', 'quit-app']);
+
+// Fire-and-forget request asking an already-running profile process to quit
+// (so its profile lock releases). Used when deleting a profile that is open in
+// another window: close it first, then delete. The requester waits for the
+// lock to release rather than for an ack.
+function requestProfileQuitAsync(profile, options = {}) {
+  const paths = getProfileFocusPaths(profile);
+  const nonce = options.nonce || makeNonce();
+  const request = {
+    type: 'quit-app',
+    nonce,
+    profileId: profile.id || null,
+    requestedAtMs: Date.now(),
+    pid: process.pid,
+  };
+
+  try {
+    writeJsonAtomic(paths.requestPath, request);
+    return { ok: true, nonce };
+  } catch (error) {
+    return { ok: false, error: error.message || 'Quit request could not be written', nonce };
+  }
+}
+
 function isFreshRequest(request, maxAgeMs) {
-  if (!request || request.type !== 'focus-window' || typeof request.nonce !== 'string') {
+  if (!request || !KNOWN_REQUEST_TYPES.has(request.type) || typeof request.nonce !== 'string') {
     return false;
   }
 
@@ -126,6 +151,7 @@ function isFreshRequest(request, maxAgeMs) {
 function startProfileFocusRequestWatcher(profile, onFocusWindow, options = {}) {
   const paths = getProfileFocusPaths(profile);
   const logger = options.logger || console;
+  const onQuit = options.onQuit || null;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const maxRequestAgeMs = options.maxRequestAgeMs ?? DEFAULT_MAX_REQUEST_AGE_MS;
 
@@ -158,13 +184,19 @@ function startProfileFocusRequestWatcher(profile, onFocusWindow, options = {}) {
     handling = true;
     lastNonce = request.nonce;
     try {
-      await onFocusWindow(request);
+      if (request.type === 'quit-app') {
+        // Ack before the process winds down so the requester gets a fast
+        // confirmation; it still waits on the lock release for the real signal.
+        await (onQuit ? onQuit(request) : Promise.resolve());
+      } else {
+        await onFocusWindow(request);
+      }
       writeAck(request, { ok: true });
     } catch (error) {
-      logger.warn?.('[profile-focus] Failed to focus existing profile window:', error);
+      logger.warn?.('[profile-focus] Failed to handle profile request:', error);
       writeAck(request, {
         ok: false,
-        error: error.message || 'Focus request failed',
+        error: error.message || 'Profile request failed',
       });
     } finally {
       handling = false;
@@ -196,5 +228,6 @@ module.exports = {
   getProfileFocusPaths,
   requestProfileFocusAsync,
   requestProfileFocusSync,
+  requestProfileQuitAsync,
   startProfileFocusRequestWatcher,
 };

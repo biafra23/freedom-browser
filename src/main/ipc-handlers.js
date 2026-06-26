@@ -13,17 +13,23 @@ const { loadSettings } = require('./settings-store');
 const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
-const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
+const {
+  startProbe: startSwarmProbe,
+  cancelProbe: cancelSwarmProbe,
+} = require('./swarm/swarm-probe');
 const {
   createProfileForActiveApp,
   deleteProfileForActiveApp,
   getActiveProfile,
+  getProfileFocusTargetForActiveApp,
   importProfileForActiveApp,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
   updateActiveProfileNodeConfig,
 } = require('./profile-resolver');
 const { openOrFocusProfile } = require('./profile-launcher');
+const { requestProfileQuitAsync } = require('./profile-focus-handoff');
+const { isProfileLocked } = require('./profile-lock');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -113,9 +119,11 @@ function isTrustedProfileMutationSender(event) {
   const pathname = normalizeFileUrlPath(getIpcSenderUrl(event));
   if (!pathname) return false;
 
-  return pathname.endsWith('/src/renderer/index.html')
-    || pathname.endsWith('/src/renderer/pages/settings.html')
-    || pathname.endsWith('/src/renderer/pages/profiles.html');
+  return (
+    pathname.endsWith('/src/renderer/index.html') ||
+    pathname.endsWith('/src/renderer/pages/settings.html') ||
+    pathname.endsWith('/src/renderer/pages/profiles.html')
+  );
 }
 
 function withTrustedProfileMutationSender(event, fn) {
@@ -227,9 +235,7 @@ function normalizeProfileNodeEndpoint(rawValue) {
   const trimmed = String(rawValue).trim();
   if (!trimmed) return null;
 
-  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
-    ? trimmed
-    : `http://${trimmed}`;
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 
   try {
     const parsed = new URL(withProtocol);
@@ -305,9 +311,13 @@ function validateProfileNodeConfigUpdate(protocol, patch = {}) {
     if (missing.length) {
       return {
         ok: false,
-        response: failure('MISSING_PROFILE_NODE_ENDPOINT', 'External node mode requires endpoints', {
-          fields: missing,
-        }),
+        response: failure(
+          'MISSING_PROFILE_NODE_ENDPOINT',
+          'External node mode requires endpoints',
+          {
+            fields: missing,
+          }
+        ),
       };
     }
   }
@@ -341,7 +351,10 @@ function updateProfileNodeConfigFromIpc(protocol, patch) {
 function listProfilesFromIpc() {
   const profiles = listProfilesForActiveApp();
   if (!profiles) {
-    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    return failure(
+      'PROFILE_CATALOG_UNAVAILABLE',
+      'Profiles are not available for this launch mode'
+    );
   }
   return success({ profiles: profiles.map(serializeProfileSummary) });
 }
@@ -353,7 +366,10 @@ function createProfileFromIpc(payload = {}) {
       id: payload.id,
     });
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
     broadcastProfileUpdated();
     rebuildAppMenuForProfiles();
@@ -367,7 +383,10 @@ function importProfileFromIpc(payload = {}) {
   try {
     const result = importProfileForActiveApp(payload.id);
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
@@ -379,7 +398,10 @@ function renameProfileFromIpc(payload = {}) {
   try {
     const result = renameProfileForActiveApp(payload.id, payload.displayName);
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
     const activeProfile = serializeActiveProfile();
     broadcastProfileUpdated(activeProfile);
@@ -400,7 +422,10 @@ function openProfileFromIpc(payload = {}) {
     return failure('INVALID_PROFILE_ID', 'Missing profile id');
   }
   if (!activeProfile || activeProfile.source !== 'catalog') {
-    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    return failure(
+      'PROFILE_CATALOG_UNAVAILABLE',
+      'Profiles are not available for this launch mode'
+    );
   }
   if (profileId === activeProfile.id) {
     return failure('PROFILE_ALREADY_OPEN', 'This profile is already open');
@@ -426,11 +451,58 @@ function openProfileFromIpc(payload = {}) {
   }
 }
 
-function deleteProfileFromIpc(payload = {}) {
+// Ask a running profile to close and wait for its lock to release, so a delete
+// can proceed. Returns true once the profile is closed (or was never open).
+async function ensureProfileClosedForDelete(profileId, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const intervalMs = options.intervalMs ?? 200;
+
+  const target = getProfileFocusTargetForActiveApp(profileId);
+  if (!target || !target.isLocked) {
+    return true;
+  }
+
+  requestProfileQuitAsync(target);
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    let stillLocked;
+    try {
+      stillLocked = isProfileLocked(target);
+    } catch {
+      stillLocked = false;
+    }
+    if (!stillLocked) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function deleteProfileFromIpc(payload = {}, options = {}) {
   try {
+    const activeProfile = getActiveProfile();
+    if (payload.id && activeProfile && payload.id === activeProfile.id) {
+      return failure('PROFILE_ACTIVE', 'The active profile cannot be deleted');
+    }
+
+    // If the profile is open in another window, close it first so its data is
+    // not in use when we remove it.
+    const closed = await ensureProfileClosedForDelete(payload.id, options);
+    if (!closed) {
+      return failure(
+        'PROFILE_CLOSE_FAILED',
+        'This profile is open and could not be closed automatically. Close its window and try again.'
+      );
+    }
+
     const result = deleteProfileForActiveApp(payload.id, payload.confirmDisplayName);
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
     broadcastProfileUpdated();
     rebuildAppMenuForProfiles();
@@ -611,7 +683,10 @@ function registerBaseIpcHandlers(callbacks = {}) {
         ['get', 'org.gnome.desktop.wm.preferences', 'button-layout'],
         { timeout: 2000 }
       );
-      const tokens = stdout.replace(/['"\n]/g, '').replace(':', ',').split(',');
+      const tokens = stdout
+        .replace(/['"\n]/g, '')
+        .replace(':', ',')
+        .split(',');
       return {
         minimize: tokens.includes('minimize'),
         maximize: tokens.includes('maximize'),

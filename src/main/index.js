@@ -79,7 +79,16 @@ const profileFocusWatcher = startProfileFocusRequestWatcher(
       }
       return focusCurrentProfileWindow();
     }),
-  { logger: console }
+  {
+    logger: console,
+    // Another Freedom process asked us to close — e.g. it is deleting this
+    // profile and needs our lock released first. Quit on the next tick so the
+    // ack is written before shutdown begins.
+    onQuit: () => {
+      setTimeout(() => app.quit(), 0);
+      return Promise.resolve();
+    },
+  }
 );
 
 const { version } = require('../../package.json');
