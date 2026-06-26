@@ -47,44 +47,29 @@
           -apple-system,
           BlinkMacSystemFont,
           sans-serif;
-        background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #21262d 100%);
+        /* Fixed attachment keeps the gradient covering the full viewport even
+           when the page scrolls, so it never truncates at the bottom. */
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #21262d 100%) fixed;
         color: var(--text);
         min-height: 100vh;
       }
 
       .page {
-        max-width: 720px;
+        max-width: 900px;
         margin: 0 auto;
-        padding: 48px 32px 80px;
+        padding: 40px 32px 64px;
       }
 
       .page-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 20px;
+        margin-bottom: 24px;
       }
 
       .page-title {
-        display: flex;
-        align-items: center;
-        gap: 10px;
         margin: 0;
         font-size: 22px;
         font-weight: 600;
+        letter-spacing: -0.01em;
         color: var(--text);
-      }
-
-      .page-title svg {
-        color: var(--accent);
-      }
-
-      .card {
-        background: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        overflow: hidden;
       }
 
       .btn {
@@ -132,126 +117,355 @@
         border-color: var(--danger);
       }
 
-      .rpc-input {
-        flex: 1;
-        min-width: 0;
-        padding: 8px 12px;
-        background: var(--bg-elev);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        color: var(--text);
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 13px;
-        outline: none;
-        transition: border-color 0.1s;
-      }
-
-      .rpc-input:focus {
-        border-color: var(--accent);
-      }
-
-      .rpc-input::placeholder {
-        color: var(--text-subtle);
-      }
-
-      .rpc-status {
-        font-size: 12px;
-        margin-top: 12px;
-        min-height: 16px;
-      }
-
-      .rpc-status.success {
-        color: var(--success);
-      }
-
-      .rpc-status.error {
-        color: var(--danger);
-      }
-
-      .rpc-status.testing {
-        color: var(--warn);
-      }
-
-      .profile-pill {
-        display: inline-flex;
-        align-items: center;
-        min-height: 24px;
-        padding: 0 9px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--bg-elev);
-        color: var(--text-muted);
-        font-size: 12px;
-        line-height: 1;
-      }
-
-      .profile-manager-list {
-        display: flex;
-        flex-direction: column;
-      }
-
-      .profile-manager-row {
+      /* Tiled grid */
+      .profile-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        gap: 12px;
-        padding: 14px 18px;
-        border-bottom: 1px solid var(--border);
-      }
-
-      .profile-manager-row:last-child {
-        border-bottom: 0;
-      }
-
-      .profile-manager-main {
-        min-width: 0;
-      }
-
-      .profile-manager-name {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .profile-manager-name input {
-        max-width: 280px;
-      }
-
-      .profile-manager-actions {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 16px;
+        align-items: stretch;
       }
 
       .profile-manager-empty {
+        grid-column: 1 / -1;
         padding: 18px;
         color: var(--text-muted);
         font-size: 13px;
+        text-align: center;
       }
 
-      .profile-delete-confirm {
-        grid-column: 1 / -1;
-        margin-top: 4px;
-        padding: 14px;
-        border: 1px solid rgba(248, 81, 73, 0.35);
-        border-radius: 8px;
-        background: rgba(248, 81, 73, 0.08);
+      .profile-card {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
       }
 
-      .profile-delete-confirm[hidden] {
+      /* The currently active profile gets a persistent accent-tinted highlight. */
+      .profile-card.is-active {
+        border-color: var(--accent);
+        background: var(--accent-muted);
+      }
+
+      /* Cards and the create tile share one aspect ratio so they're always the
+         same height — including when the create tile wraps onto its own row. */
+      .profile-card,
+      .create-tile {
+        aspect-ratio: 15 / 16;
+      }
+
+      /* Toggled between view and rename modes via the .editing class. */
+      .profile-card .edit-only {
         display: none;
       }
 
-      .profile-delete-copy {
-        margin: 0 0 10px;
-        color: var(--text);
-        font-size: 12px;
-        line-height: 1.45;
+      .profile-card.editing .view-only {
+        display: none;
       }
 
-      .profile-delete-controls {
+      .profile-card.editing .icon-btn.edit-only {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
+      }
+
+      .profile-card.editing .profile-card-name-input.edit-only {
+        display: block;
+      }
+
+      .profile-card-avatar {
+        position: relative;
+        display: block;
+        width: 100%;
+        flex: 1;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+        background: none;
+        cursor: pointer;
+        overflow: hidden;
+      }
+
+      .profile-card-avatar.is-active,
+      .profile-card-avatar:disabled {
+        cursor: default;
+      }
+
+      .avatar-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* Openable profiles get a distinct (neutral) lighten on hover, separate
+         from the active profile's accent highlight. */
+      .profile-card-avatar[data-open-profile]::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.1);
+        opacity: 0;
+        transition: opacity 0.12s ease;
+        pointer-events: none;
+      }
+
+      .profile-card-avatar[data-open-profile]:hover::after {
+        opacity: 1;
+      }
+
+      .avatar-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(13, 17, 23, 0.55);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.4;
+        backdrop-filter: blur(4px);
+      }
+
+      .profile-card-avatar.is-unregistered .avatar-svg {
+        opacity: 0.55;
+      }
+
+      .profile-card-foot {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 7px 7px 7px 11px;
+        border-top: 1px solid var(--border);
+      }
+
+      .profile-card-namewrap {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .profile-card-name {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .profile-card-name-input {
+        width: 100%;
+        padding: 3px 6px;
+        background: var(--bg-elev);
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        outline: none;
+      }
+
+      .profile-card-controls {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        flex-shrink: 0;
+      }
+
+      .icon-btn {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        background: none;
+        border: 0;
+        border-radius: 6px;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition:
+          background 0.1s,
+          color 0.1s;
+      }
+
+      .icon-btn.confirm {
+        color: var(--accent);
+      }
+
+      .icon-btn:hover:not(:disabled) {
+        background: var(--bg-elev);
+        color: var(--text);
+      }
+
+      .icon-btn.danger:hover:not(:disabled) {
+        color: var(--danger);
+      }
+
+      .icon-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+
+      .link-btn {
+        padding: 4px 6px;
+        background: none;
+        border: 0;
+        color: var(--accent);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .link-btn:hover {
+        text-decoration: underline;
+      }
+
+      .create-tile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
         gap: 8px;
+        padding: 18px;
+        background: none;
+        border: 2px dashed var(--border-strong);
+        border-radius: 12px;
+        color: var(--text-muted);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          border-color 0.12s,
+          color 0.12s;
+      }
+
+      .create-tile:hover {
+        border-color: var(--accent);
+        color: var(--text);
+      }
+
+      /* Delete confirmation modal — mirrors the app chrome's Create Profile
+         modal (src/renderer/styles/modal.css) so the two look identical. The
+         chrome palette is scoped here via --m-* tokens. */
+      .modal-overlay {
+        --m-bg: #1a1a1a;
+        --m-border: #4a4a4a;
+        --m-text: #c7c7c7;
+        --m-muted: #c7c7c7;
+        --m-accent: #8ab4f8;
+        --m-danger: #f28b82;
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 50;
+      }
+
+      .modal-overlay[hidden] {
+        display: none;
+      }
+
+      .modal {
+        width: min(420px, calc(100vw - 32px));
+        padding: 20px;
+        background: var(--m-bg);
+        border: 1px solid var(--m-border);
+        border-radius: 8px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+        color: var(--m-text);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .modal-header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--m-text);
+      }
+
+      .close-modal {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border: 0;
+        border-radius: 50%;
+        background: transparent;
+        color: var(--m-text);
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+
+      .close-modal:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .modal-copy {
+        margin: 0;
+        color: var(--m-muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .modal-copy strong {
+        color: var(--m-text);
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .secondary-btn,
+      .primary-btn {
+        padding: 8px 16px;
+        border: 0;
+        border-radius: 6px;
+        font-family: inherit;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+        transition: opacity 0.15s ease;
+      }
+
+      .secondary-btn {
+        background: transparent;
+        border: 1px solid var(--m-border);
+        color: var(--m-text);
+      }
+
+      .primary-btn {
+        background: var(--m-accent);
+        color: #fff;
+      }
+
+      .primary-btn.danger {
+        background: var(--m-danger);
+      }
+
+      .secondary-btn:hover:not(:disabled),
+      .primary-btn:hover:not(:disabled) {
+        opacity: 0.9;
+      }
+
+      .primary-btn:disabled {
+        opacity: 0.55;
+        cursor: default;
       }
 
       /* Light theme */
@@ -279,42 +493,64 @@
         .btn.primary {
           color: #ffffff;
         }
+
+        .modal-overlay {
+          --m-bg: #ffffff;
+          --m-border: #dfe1e5;
+          --m-text: #202124;
+          --m-muted: #5f6368;
+          --m-accent: #1a73e8;
+          --m-danger: #d93025;
+        }
       }
     </style>
   </head>
   <body>
     <main class="page">
       <div class="page-head">
-        <h1 class="page-title">
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M20 21a8 8 0 0 0-16 0"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-          Profiles
-        </h1>
-        <button type="button" class="btn primary" id="create-profile-btn">Create Profile</button>
+        <h1 class="page-title">Profiles</h1>
       </div>
-      <div class="card">
-        <div class="profile-manager-list" id="profile-manager-list">
-          <div class="profile-manager-empty">Loading…</div>
+
+      <div class="profile-grid" id="profile-manager-list">
+        <div class="profile-manager-empty">Loading…</div>
+      </div>
+    </main>
+
+    <div class="modal-overlay" id="delete-modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+        <div class="modal-header">
+          <h2 id="delete-modal-title">Delete Profile</h2>
+          <button type="button" class="close-modal" data-delete-cancel aria-label="Close">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="M6 6 18 18" />
+            </svg>
+          </button>
+        </div>
+        <p class="modal-copy">
+          Permanently delete <strong data-delete-name></strong> and all of its data — browsing,
+          vault, node data, and keys? This can't be undone.
+        </p>
+        <div class="modal-actions">
+          <button type="button" class="secondary-btn" data-delete-cancel>Cancel</button>
+          <button type="button" class="primary-btn danger" data-delete-confirm>Delete</button>
         </div>
       </div>
-      <p id="profile-manager-status" class="rpc-status"></p>
-    </main>
+    </div>
 
     <script>
       const managerList = document.getElementById('profile-manager-list');
-      const managerStatus = document.getElementById('profile-manager-status');
-      const createBtn = document.getElementById('create-profile-btn');
+      const deleteModal = document.getElementById('delete-modal');
 
       const esc = (s) =>
         String(s == null ? '' : s).replace(
@@ -322,73 +558,111 @@
           (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]
         );
 
-      const setStatus = (message, kind) => {
-        if (!managerStatus) return;
-        managerStatus.textContent = message || '';
-        managerStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
+      // Operation failures are logged for diagnosis rather than surfaced as
+      // status text — the UI stays quiet on success and on error.
+      const logError = (message, err) => {
+        // eslint-disable-next-line no-console
+        console.error('[profiles] ' + message, err || '');
       };
+
+      // --- Avatar ------------------------------------------------------------
+      // Every profile uses the same generic icon on a single flat colour; cards
+      // are told apart by their name, not their avatar.
+      const AVATAR = { bg: '#2b303a', fg: '#c3ccd9' };
+      const AVATAR_ICON = '<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>';
+
+      const avatarSvg = () => `
+          <svg class="avatar-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100" height="100" fill="${AVATAR.bg}"/>
+            <g transform="translate(30 30) scale(1.6667)" fill="none" stroke="${AVATAR.fg}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${AVATAR_ICON}</g>
+          </svg>`;
+
+      // --- Card icons --------------------------------------------------------
+      const PENCIL_ICON =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+      const TRASH_ICON =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+      const CHECK_ICON =
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
       const renderProfiles = (profiles) => {
         if (!managerList) return;
+
+        const createTile = `
+          <button type="button" class="create-tile" data-create-profile>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Create a profile
+          </button>`;
+
         if (!profiles?.length) {
-          managerList.innerHTML = '<div class="profile-manager-empty">No profiles found</div>';
+          managerList.innerHTML =
+            '<div class="profile-manager-empty">No profiles found</div>' + createTile;
           return;
         }
 
-        managerList.innerHTML = profiles
+        const cards = profiles
           .map((profile) => {
             const isUnregistered = profile.isUnregistered === true;
-            const canDelete = !profile.isActive && profile.id !== 'default';
+            const isActive = profile.isActive === true;
+            const canDelete = !isActive && profile.id !== 'default' && !isUnregistered;
             const displayName = profile.displayName || profile.id;
-            const badge = profile.isActive
-              ? '<span class="profile-pill">Current</span>'
+
+            const badge = isActive
+              ? '<span class="avatar-badge">Current</span>'
               : isUnregistered
-                ? '<span class="profile-pill">Unregistered</span>'
+                ? '<span class="avatar-badge">Unregistered</span>'
                 : '';
-            const actions = isUnregistered
-              ? `<button type="button" class="btn" data-import-profile>Register</button>`
+
+            // The avatar is the primary action: open a registered profile, or
+            // register an unregistered one. The active profile is inert.
+            const avatarTag = isActive || isUnregistered ? 'div' : 'button';
+            const avatarAttrs = isActive
+              ? 'class="profile-card-avatar is-active"'
+              : isUnregistered
+                ? 'class="profile-card-avatar is-unregistered" role="button" tabindex="0" data-import-profile title="Register this profile"'
+                : 'type="button" class="profile-card-avatar" data-open-profile title="Open ' +
+                  esc(displayName) +
+                  '"';
+
+            // Only registered, non-active, non-default profiles can be deleted,
+            // so omit the trash button entirely for the rest rather than show a
+            // dead, disabled control.
+            const controls = isUnregistered
+              ? '<button type="button" class="link-btn" data-import-profile>Register</button>'
               : `
-              <button type="button" class="btn" data-open-profile ${profile.isActive ? 'disabled' : ''}>Open</button>
-              <button type="button" class="btn" data-rename-profile>Rename</button>
-              <button type="button" class="btn danger" data-delete-profile ${canDelete ? '' : 'disabled'}>Delete</button>
-            `;
+                <button type="button" class="icon-btn view-only" data-rename-profile aria-label="Rename ${esc(displayName)}">${PENCIL_ICON}</button>
+                ${
+                  canDelete
+                    ? `<button type="button" class="icon-btn danger view-only" data-delete-profile aria-label="Delete ${esc(displayName)}">${TRASH_ICON}</button>`
+                    : ''
+                }
+                <button type="button" class="icon-btn confirm edit-only" data-confirm-rename aria-label="Save name">${CHECK_ICON}</button>`;
+
             return `
-          <div class="profile-manager-row" data-profile-id="${esc(profile.id)}" data-profile-display-name="${esc(displayName)}">
-            <div class="profile-manager-main">
-              <div class="profile-manager-name">
-                <input
-                  type="text"
-                  class="rpc-input"
-                  data-profile-name-input
-                  value="${esc(displayName)}"
-                  spellcheck="false"
-                  ${isUnregistered ? 'disabled' : ''}
-                />
-                ${badge}
-              </div>
-            </div>
-            <div class="profile-manager-actions">${actions}</div>
-            <div class="profile-delete-confirm" data-delete-confirm hidden>
-              <p class="profile-delete-copy">
-                Deleting this profile removes its vault data, browser data, node data, RPC keys,
-                local settings, and any local value-bearing node state. Type
-                <strong>${esc(displayName)}</strong> to confirm.
-              </p>
-              <div class="profile-delete-controls">
-                <input
-                  type="text"
-                  class="rpc-input"
-                  data-delete-confirm-input
-                  placeholder="${esc(displayName)}"
-                  spellcheck="false"
-                />
-                <button type="button" class="btn danger" data-confirm-delete-profile>Delete profile</button>
-                <button type="button" class="btn" data-cancel-delete-profile>Cancel</button>
-              </div>
-            </div>
-          </div>`;
+              <div class="profile-card${isActive ? ' is-active' : ''}" data-profile-id="${esc(profile.id)}" data-profile-display-name="${esc(displayName)}">
+                <${avatarTag} ${avatarAttrs}>
+                  ${avatarSvg()}
+                  ${badge}
+                </${avatarTag}>
+                <div class="profile-card-foot">
+                  <div class="profile-card-namewrap">
+                    <span class="profile-card-name view-only" data-profile-name>${esc(displayName)}</span>
+                    <input
+                      type="text"
+                      class="profile-card-name-input edit-only"
+                      data-profile-name-input
+                      value="${esc(displayName)}"
+                      spellcheck="false"
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="profile-card-controls">${controls}</div>
+                </div>
+              </div>`;
           })
           .join('');
+
+        managerList.innerHTML = cards + createTile;
       };
 
       const refreshProfiles = async () => {
@@ -402,134 +676,227 @@
         } catch (err) {
           managerList.innerHTML =
             '<div class="profile-manager-empty">Profile list unavailable</div>';
-          setStatus(err?.message || 'Profile list unavailable', 'error');
+          logError('Failed to load profiles', err);
         }
       };
 
-      createBtn?.addEventListener('click', () => {
-        // Opens the shared chrome create-modal over this page's owning window.
-        freedomAPI.requestCreateProfileModal?.();
-      });
-
-      managerList?.addEventListener('click', async (event) => {
-        const importButton = event.target?.closest?.('[data-import-profile]');
-        if (importButton) {
-          const profileId = importButton.closest('[data-profile-id]')?.dataset.profileId;
-          if (!profileId) return;
-          importButton.disabled = true;
-          setStatus('Registering profile…', 'testing');
-          try {
-            const result = await freedomAPI.importProfile?.(profileId);
-            if (!result?.success) {
-              throw new Error(result?.error?.message || 'Profile could not be registered');
-            }
-            setStatus('Profile registered. You can open it now.', 'success');
-            await refreshProfiles();
-          } catch (err) {
-            setStatus(err?.message || 'Profile could not be registered', 'error');
-            importButton.disabled = false;
-          }
-          return;
-        }
-
-        const deleteButton = event.target?.closest?.('[data-delete-profile]');
-        if (deleteButton) {
-          const row = deleteButton.closest('[data-profile-id]');
-          row?.querySelector('[data-delete-confirm]')?.removeAttribute('hidden');
-          row?.querySelector('[data-delete-confirm-input]')?.focus();
-          setStatus('', '');
-          return;
-        }
-
-        const cancelDeleteButton = event.target?.closest?.('[data-cancel-delete-profile]');
-        if (cancelDeleteButton) {
-          const row = cancelDeleteButton.closest('[data-profile-id]');
-          row?.querySelector('[data-delete-confirm]')?.setAttribute('hidden', '');
-          const input = row?.querySelector('[data-delete-confirm-input]');
-          if (input) input.value = '';
-          return;
-        }
-
-        const confirmDeleteButton = event.target?.closest?.('[data-confirm-delete-profile]');
-        if (confirmDeleteButton) {
-          const row = confirmDeleteButton.closest('[data-profile-id]');
-          const profileId = row?.dataset.profileId;
-          const displayName = row?.dataset.profileDisplayName;
-          const confirmation = row?.querySelector('[data-delete-confirm-input]')?.value || '';
-          if (!profileId || !displayName) return;
-          if (confirmation !== displayName) {
-            setStatus('Profile name confirmation did not match.', 'error');
-            return;
-          }
-          confirmDeleteButton.disabled = true;
-          setStatus('Deleting profile…', 'testing');
-          try {
-            const result = await freedomAPI.deleteProfile?.(profileId, confirmation);
-            if (!result?.success) {
-              throw new Error(result?.error?.message || 'Profile could not be deleted');
-            }
-            setStatus('Profile deleted.', 'success');
-            await refreshProfiles();
-          } catch (err) {
-            setStatus(err?.message || 'Profile could not be deleted', 'error');
-            confirmDeleteButton.disabled = false;
-          }
-          return;
-        }
-
-        const openButton = event.target?.closest?.('[data-open-profile]');
-        if (openButton) {
-          const profileId = openButton.closest('[data-profile-id]')?.dataset.profileId;
-          if (!profileId) return;
-          openButton.disabled = true;
-          setStatus('Opening profile…', 'testing');
-          try {
-            const result = await freedomAPI.openProfile?.(profileId);
-            if (!result?.success) {
-              throw new Error(result?.error?.message || 'Profile could not be opened');
-            }
-            setStatus(
-              `Opening ${result.profile?.displayName || profileId} in a new window…`,
-              'success'
-            );
-          } catch (err) {
-            setStatus(err?.message || 'Profile could not be opened', 'error');
-            openButton.disabled = false;
-          }
-          return;
-        }
-
-        const renameButton = event.target?.closest?.('[data-rename-profile]');
-        if (!renameButton) return;
-        const row = renameButton.closest('[data-profile-id]');
-        const profileId = row?.dataset.profileId;
-        const input = row?.querySelector('[data-profile-name-input]');
-        const displayName = input?.value.trim();
-        if (!profileId || !displayName) {
-          setStatus('Profile name cannot be empty.', 'error');
-          return;
-        }
-        renameButton.disabled = true;
-        setStatus('Saving profile name…', 'testing');
+      // --- Inline rename -----------------------------------------------------
+      const commitRename = async (card, rawName) => {
+        const profileId = card.dataset.profileId;
+        const current = card.dataset.profileDisplayName;
+        const name = (rawName || '').trim();
+        // Empty or unchanged names silently keep the current name.
+        if (!profileId || !name || name === current) return;
         try {
-          const result = await freedomAPI.renameProfile?.(profileId, displayName);
+          const result = await freedomAPI.renameProfile?.(profileId, name);
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profile could not be renamed');
           }
-          setStatus('Profile name saved.', 'success');
+        } catch (err) {
+          logError('Failed to rename profile', err);
+        } finally {
+          await refreshProfiles();
+        }
+      };
+
+      // While renaming, the card's .editing class swaps the name label for an
+      // input and the pencil/trash buttons for a checkmark (see CSS).
+      const beginRename = (card) => {
+        if (!card || card.classList.contains('editing')) return;
+        const input = card.querySelector('[data-profile-name-input]');
+        if (!input) return;
+
+        card.classList.add('editing');
+        input.value = card.dataset.profileDisplayName || '';
+        input.focus();
+        input.select();
+
+        let done = false;
+        const finish = (save) => {
+          if (done) return;
+          done = true;
+          input.removeEventListener('keydown', onKey);
+          input.removeEventListener('blur', onBlur);
+          card.classList.remove('editing');
+          if (save) commitRename(card, input.value);
+        };
+        const onKey = (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            finish(true);
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            finish(false);
+          }
+        };
+        const onBlur = () => finish(true);
+        input.addEventListener('keydown', onKey);
+        input.addEventListener('blur', onBlur);
+      };
+
+      // --- Delete confirmation modal ----------------------------------------
+      // A simple yes/no confirmation (no typed-name challenge).
+      let pendingDelete = null;
+      const deleteConfirmBtn = deleteModal.querySelector('[data-delete-confirm]');
+      const deleteConfirmLabel = deleteConfirmBtn?.textContent || 'Delete';
+
+      const openDeleteModal = (profileId, displayName) => {
+        pendingDelete = { profileId, displayName };
+        deleteModal
+          .querySelectorAll('[data-delete-name]')
+          .forEach((el) => (el.textContent = displayName));
+        if (deleteConfirmBtn) {
+          deleteConfirmBtn.disabled = false;
+          deleteConfirmBtn.textContent = deleteConfirmLabel;
+        }
+        deleteModal.hidden = false;
+        deleteConfirmBtn?.focus();
+      };
+
+      const closeDeleteModal = () => {
+        pendingDelete = null;
+        deleteModal.hidden = true;
+      };
+
+      const confirmDelete = async () => {
+        if (!pendingDelete) return;
+        const { profileId, displayName } = pendingDelete;
+        if (deleteConfirmBtn) {
+          deleteConfirmBtn.disabled = true;
+          deleteConfirmBtn.textContent = 'Deleting…';
+        }
+        try {
+          const result = await freedomAPI.deleteProfile?.(profileId, displayName);
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile could not be deleted');
+          }
+          closeDeleteModal();
           await refreshProfiles();
         } catch (err) {
-          setStatus(err?.message || 'Profile could not be renamed', 'error');
+          logError('Failed to delete profile', err);
+          if (deleteConfirmBtn) {
+            deleteConfirmBtn.disabled = false;
+            deleteConfirmBtn.textContent = deleteConfirmLabel;
+          }
+        }
+      };
+
+      deleteModal
+        .querySelectorAll('[data-delete-cancel]')
+        .forEach((el) => el.addEventListener('click', closeDeleteModal));
+      deleteConfirmBtn?.addEventListener('click', confirmDelete);
+      deleteModal.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeDeleteModal();
+        }
+      });
+      deleteModal.addEventListener('click', (event) => {
+        if (event.target === deleteModal) closeDeleteModal();
+      });
+
+      // --- Profile actions ---------------------------------------------------
+      const openProfile = async (card, trigger) => {
+        const profileId = card?.dataset.profileId;
+        if (!profileId) return;
+        if (trigger) trigger.disabled = true;
+        try {
+          const result = await freedomAPI.openProfile?.(profileId);
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile could not be opened');
+          }
+        } catch (err) {
+          logError('Failed to open profile', err);
         } finally {
-          renameButton.disabled = false;
+          if (trigger) trigger.disabled = false;
+        }
+      };
+
+      const registerProfile = async (card) => {
+        const profileId = card?.dataset.profileId;
+        if (!profileId) return;
+        try {
+          const result = await freedomAPI.importProfile?.(profileId);
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile could not be registered');
+          }
+          await refreshProfiles();
+        } catch (err) {
+          logError('Failed to register profile', err);
+        }
+      };
+
+      // Pressing the checkmark must not blur the input before its click lands,
+      // so suppress the default focus shift on mousedown.
+      managerList?.addEventListener('mousedown', (event) => {
+        if (event.target?.closest?.('[data-confirm-rename]')) {
+          event.preventDefault();
+        }
+      });
+
+      managerList?.addEventListener('click', (event) => {
+        const target = event.target;
+
+        if (target?.closest?.('[data-create-profile]')) {
+          // Opens the shared chrome create-modal over this page's owning window.
+          freedomAPI.requestCreateProfileModal?.();
+          return;
+        }
+
+        const confirmRenameBtn = target?.closest?.('[data-confirm-rename]');
+        if (confirmRenameBtn) {
+          // Commits via the input's blur handler (set up in beginRename).
+          confirmRenameBtn
+            .closest('[data-profile-id]')
+            ?.querySelector('[data-profile-name-input]')
+            ?.blur();
+          return;
+        }
+
+        const renameBtn = target?.closest?.('[data-rename-profile]');
+        if (renameBtn) {
+          beginRename(renameBtn.closest('[data-profile-id]'));
+          return;
+        }
+
+        const deleteBtn = target?.closest?.('[data-delete-profile]');
+        if (deleteBtn) {
+          const card = deleteBtn.closest('[data-profile-id]');
+          if (card) openDeleteModal(card.dataset.profileId, card.dataset.profileDisplayName);
+          return;
+        }
+
+        const importEl = target?.closest?.('[data-import-profile]');
+        if (importEl) {
+          registerProfile(importEl.closest('[data-profile-id]'));
+          return;
+        }
+
+        const openEl = target?.closest?.('[data-open-profile]');
+        if (openEl) {
+          openProfile(openEl.closest('[data-profile-id]'), openEl);
+        }
+      });
+
+      // Keyboard activation for the unregistered avatar (a focusable div).
+      managerList?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const importEl = event.target?.closest?.('[data-import-profile]');
+        if (importEl && importEl.matches('.profile-card-avatar')) {
+          event.preventDefault();
+          registerProfile(importEl.closest('[data-profile-id]'));
         }
       });
 
       // Live-refresh when a profile is created (via the modal), renamed, or
-      // deleted elsewhere — but don't clobber a field the user is editing.
+      // deleted elsewhere. Skip only while the user is mid-action — renaming a
+      // card or confirming a delete — so we don't clobber their input. (Don't
+      // gate on focus being anywhere in the grid: after clicking the create
+      // tile, that button keeps focus while the modal runs in another window,
+      // which would otherwise suppress the post-create refresh.)
       freedomAPI.onProfileUpdated?.(() => {
-        const active = document.activeElement;
-        if (active && managerList?.contains(active)) return;
+        if (managerList?.querySelector('.profile-card.editing')) return;
+        if (!deleteModal.hidden) return;
         refreshProfiles();
       });
 
