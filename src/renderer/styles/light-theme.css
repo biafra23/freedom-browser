@@ -108,7 +108,9 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
-[data-theme='light'] .menu-item:hover {
+/* Covers both the main hamburger rows and the flyout rows (shared .menu-item).
+   The default hover is a white overlay, invisible on the light menu bg. */
+[data-theme='light'] .menu-item:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.1);
 }
 

@@ -30,6 +30,16 @@ function loadMenuModule(platform) {
         isUpdateReady: () => false,
         installUpdate: jest.fn(),
       }),
+      [require.resolve('./profile-resolver')]: () => ({
+        getActiveProfile: () => ({ id: 'alpha', source: 'catalog', isActive: true }),
+        listProfilesForActiveApp: () => [
+          { id: 'alpha', displayName: 'Alpha', isActive: true },
+          { id: 'beta', displayName: 'Beta' },
+        ],
+      }),
+      [require.resolve('./profile-launcher')]: () => ({
+        launchProfile: jest.fn(),
+      }),
     },
   });
 
@@ -84,15 +94,50 @@ describe('menu', () => {
     expect(capturedTemplate.some((item) => item.role === 'windowMenu')).toBe(false);
   });
 
-  test('File menu includes profile management entry', () => {
+  test('Profiles menu lists profiles plus create/manage actions', () => {
+    for (const platform of ['darwin', 'win32', 'linux']) {
+      const { capturedTemplate } = loadMenuModule(platform);
+      const profiles = findTopLabel(capturedTemplate, 'Profiles');
+
+      expect(profiles).toBeTruthy();
+      const labels = profiles.submenu.map((item) => item.label ?? item.type);
+      expect(labels).toEqual(
+        expect.arrayContaining(['Alpha', 'Beta', 'Create Profile...', 'Manage Profiles...'])
+      );
+
+      // Current profile is a checked + disabled checkbox; the other is a plain
+      // selectable item (NOT a checkbox — macOS auto-checks checkbox items on
+      // click, which would leave a phantom checkmark after switching).
+      const alpha = profiles.submenu.find((item) => item.label === 'Alpha');
+      const beta = profiles.submenu.find((item) => item.label === 'Beta');
+      expect(alpha.type).toBe('checkbox');
+      expect(alpha.checked).toBe(true);
+      expect(alpha.enabled).toBe(false);
+      expect(beta.type).not.toBe('checkbox');
+      expect(beta.checked).toBeFalsy();
+      expect(beta.enabled).not.toBe(false);
+      expect(typeof beta.click).toBe('function');
+    }
+  });
+
+  test('File menu no longer includes the profile management entry', () => {
     for (const platform of ['darwin', 'win32', 'linux']) {
       const { capturedTemplate } = loadMenuModule(platform);
       const file = findTopLabel(capturedTemplate, 'File');
 
-      expect(file?.submenu?.map((item) => item.label)).toEqual(
-        expect.arrayContaining(['Manage Profiles...'])
-      );
+      expect(file?.submenu?.map((item) => item.label)).not.toContain('Manage Profiles...');
     }
+  });
+
+  test('Profiles menu sits between History and the Window menu on macOS', () => {
+    const { capturedTemplate } = loadMenuModule('darwin');
+    const labels = capturedTemplate.map((item) => item.label ?? item.role);
+    const historyIndex = labels.indexOf('History');
+    const profilesIndex = labels.indexOf('Profiles');
+    const windowIndex = labels.indexOf('windowMenu');
+
+    expect(profilesIndex).toBe(historyIndex + 1);
+    expect(windowIndex).toBeGreaterThan(profilesIndex);
   });
 
   test('macOS template keeps appMenu and editMenu roles', () => {

@@ -1,7 +1,9 @@
 // Set app name early, before electron-log initializes (it uses app name for log path)
 const { app, dialog } = require('electron');
 const appName = app.isPackaged
-  ? process.platform === 'linux' ? 'freedom' : 'Freedom'
+  ? process.platform === 'linux'
+    ? 'freedom'
+    : 'Freedom'
   : 'Freedom Dev';
 
 // Suppress Electron security warnings in development (CSP handles security in production)
@@ -70,12 +72,13 @@ try {
 let focusCurrentProfileWindow = null;
 const profileFocusWatcher = startProfileFocusRequestWatcher(
   activeProfile,
-  () => app.whenReady().then(() => {
-    if (typeof focusCurrentProfileWindow !== 'function') {
-      throw new Error('Main window focus handler is not ready');
-    }
-    return focusCurrentProfileWindow();
-  }),
+  () =>
+    app.whenReady().then(() => {
+      if (typeof focusCurrentProfileWindow !== 'function') {
+        throw new Error('Main window focus handler is not ready');
+      }
+      return focusCurrentProfileWindow();
+    }),
   { logger: console }
 );
 
@@ -108,7 +111,8 @@ process.on('unhandledRejection', (reason, _promise) => {
 const { registerShutdownSignalHandlers } = require('./shutdown-signals');
 const unregisterShutdownSignalHandlers = registerShutdownSignalHandlers({ app, logger: log });
 const { BrowserWindow, protocol, session } = require('electron');
-const { registerBaseIpcHandlers } = require('./ipc-handlers');
+const { registerBaseIpcHandlers, broadcastProfileUpdated } = require('./ipc-handlers');
+const { watchProfileRegistry } = require('./profile-registry-watcher');
 const { installRequestRewriter } = require('./request-rewriter');
 const { attachWebRequestDispatcher } = require('./webrequest-dispatcher');
 const { installX402Interception } = require('./x402/intercept');
@@ -139,9 +143,25 @@ const { registerBookmarksIpc } = require('./bookmarks-store');
 const { registerHistoryIpc, closeDb: closeHistoryDb } = require('./history');
 const { registerFaviconsIpc } = require('./favicons');
 const { registerEnsIpc } = require('./ens-resolver');
-const { registerAntIpc, createAntLifecycle, stopAnt, startAnt, setUseInjectedIdentity: setAntInjectedIdentity } = require('./ant-manager');
-const { registerIpfsIpc, stopIpfs, startIpfs, setUseInjectedIdentity: setIpfsInjectedIdentity } = require('./ipfs-manager');
-const { registerRadicleIpc, stopRadicle, startRadicle, setUseInjectedIdentity: setRadicleInjectedIdentity } = require('./radicle-manager');
+const {
+  registerAntIpc,
+  createAntLifecycle,
+  stopAnt,
+  startAnt,
+  setUseInjectedIdentity: setAntInjectedIdentity,
+} = require('./ant-manager');
+const {
+  registerIpfsIpc,
+  stopIpfs,
+  startIpfs,
+  setUseInjectedIdentity: setIpfsInjectedIdentity,
+} = require('./ipfs-manager');
+const {
+  registerRadicleIpc,
+  stopRadicle,
+  startRadicle,
+  setUseInjectedIdentity: setRadicleInjectedIdentity,
+} = require('./radicle-manager');
 const { registerIdentityIpc, hasVault, setBeeLifecycle } = require('./identity-manager');
 const { registerQuickUnlockIpc } = require('./quick-unlock');
 const { registerWalletIpc } = require('./wallet/wallet-ipc');
@@ -151,7 +171,10 @@ const { registerNetworkConfigIpc } = require('./networks/network-ipc');
 const { registerDappPermissionsIpc } = require('./wallet/dapp-permissions');
 const { registerSwarmIpc } = require('./swarm/stamp-service');
 const { registerPublishIpc } = require('./swarm/publish-service');
-const { registerPublishHistoryIpc, closeDb: closePublishHistoryDb } = require('./swarm/publish-history');
+const {
+  registerPublishHistoryIpc,
+  closeDb: closePublishHistoryDb,
+} = require('./swarm/publish-history');
 const paymentHistory = require('./payment-history');
 const { getTransactionStatus: getTxStatus } = require('./wallet/transaction-service');
 const { registerSwarmPermissionsIpc } = require('./swarm/swarm-permissions');
@@ -272,6 +295,17 @@ async function bootstrap() {
   registerWebContentsHandlers();
   setupApplicationMenu();
 
+  // Profiles are shared across processes (one process per profile). When any
+  // process renames / creates / deletes a profile, the registry file changes;
+  // pick that up here so this process rebuilds its native Profiles menu and
+  // refreshes its renderers, keeping every window's profile list in sync.
+  if (!TEST_MODE && activeProfile?.source === 'catalog' && activeProfile?.appRoot) {
+    watchProfileRegistry(activeProfile.appRoot, () => {
+      setupApplicationMenu();
+      broadcastProfileUpdated();
+    });
+  }
+
   // Test harness is installed AFTER all production IPC + protocol
   // registrations, so it can override (via removeHandler + re-register)
   // the channels it needs to stub — ENS resolution, the bzz: probe,
@@ -302,7 +336,8 @@ async function bootstrap() {
       window: mainWindow,
       enabledProtocols: {
         bee: settings.startBeeAtLaunch !== false,
-        radicle: settings.enableRadicleIntegration === true && settings.startRadicleAtLaunch !== false,
+        radicle:
+          settings.enableRadicleIntegration === true && settings.startRadicleAtLaunch !== false,
       },
       logger: log,
     });
@@ -401,7 +436,6 @@ app.on('before-quit', async (event) => {
   log.info('[App] Waiting for Ant, IPFS, and Radicle to stop...');
   await Promise.all([stopAnt(), stopIpfs(), stopRadicle()]);
   log.info('[App] All processes stopped, quitting...');
-
 
   app.quit();
 });

@@ -161,8 +161,14 @@
   font-family: inherit;
 }
 
-.menu-item:hover {
+.menu-item:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
+}
+
+.menu-item:disabled {
+  color: var(--muted);
+  opacity: 0.62;
+  cursor: default;
 }
 
 .menu-item-label {
@@ -174,6 +180,97 @@
   font-size: 12px;
   margin-left: 16px;
   font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+/* Inline icon before a menu-item label (e.g. the Profiles row). Sits inline
+   without creating a gutter, so other rows are not indented. */
+.menu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  /* Keep the icon within the 13px text's line box so the Profiles row is
+     exactly the same height as the text-only rows (New Tab, History, …). */
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  color: var(--text);
+}
+
+.menu-item-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.menu-item-chevron {
+  color: var(--muted);
+  font-size: 14px;
+  /* Cap the line box so the larger glyph doesn't make the Profiles row taller
+     than the text-only rows (New Tab, History, …). */
+  line-height: 1;
+  margin-left: 8px;
+}
+
+/* A menu row that anchors a side flyout (submenu). */
+.menu-item-has-flyout {
+  position: relative;
+}
+
+/* Side flyout / submenu. It reuses the .menu-dropdown container chrome (this
+   element carries BOTH classes), so background, border, radius, padding and
+   item metrics are shared with the main hamburger menu — one source of truth.
+   This rule only re-anchors it to the LEFT of the parent row (the hamburger is
+   pinned top-right) and drives its show/hide via the `hidden` attribute instead
+   of the .open class the main dropdown uses. It stays a child of #menu-dropdown
+   so the hamburger's outside-click handler treats flyout clicks as inside. */
+.menu-flyout {
+  top: -4px;
+  right: 100%;
+  /* Flush against the menu edge so the cursor can cross into the flyout
+     without passing over a dead gap (macOS-style submenu hover). */
+  margin: 0;
+  min-width: 220px;
+  z-index: 10001;
+}
+
+.menu-flyout:not([hidden]) {
+  display: block;
+}
+
+.menu-flyout[hidden] {
+  display: none;
+}
+
+.menu-flyout-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* Leading check gutter on a profile row — reuses the .menu-item-icon box so
+   profile names align with the hamburger's Profiles row. */
+.menu-item-check {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.menu-flyout-empty,
+.menu-flyout-status {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.menu-flyout-status[hidden] {
+  display: none;
+}
+
+.menu-flyout-status.error {
+  color: var(--danger);
 }
 
 .menu-divider {

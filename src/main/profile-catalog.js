@@ -50,7 +50,7 @@ function sanitizeProfileId(value) {
 }
 
 function displayNameFromId(profileId) {
-  if (profileId === DEFAULT_PROFILE_ID) return 'Default';
+  if (profileId === DEFAULT_PROFILE_ID) return 'My Profile';
   return profileId
     .split(/[-_]+/)
     .filter(Boolean)

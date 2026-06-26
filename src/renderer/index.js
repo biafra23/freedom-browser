@@ -1,5 +1,9 @@
 // Renderer process entry point
-import { updateRegistry, setRadicleIntegrationEnabled, setBlockUnverifiedEns } from './lib/state.js';
+import {
+  updateRegistry,
+  setRadicleIntegrationEnabled,
+  setBlockUnverifiedEns,
+} from './lib/state.js';
 import { initAntUi, updateAntStatusLine, updateAntToggleState } from './lib/ant-ui.js';
 import { initIpfsUi, updateIpfsStatusLine, updateIpfsToggleState } from './lib/ipfs-ui.js';
 import {
@@ -58,6 +62,7 @@ import { pushDebug } from './lib/debug.js';
 import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
+import { attachSubmenuHover } from './lib/submenu-hover.js';
 
 const electronAPI = window.electronAPI;
 
@@ -318,11 +323,10 @@ function initExternalNodeCandidatesModal() {
 }
 
 async function initProfileIndicator() {
-  const indicator = document.getElementById('profile-indicator');
-  const nameEl = document.getElementById('profile-indicator-name');
+  const indicator = document.getElementById('profile-menu-btn');
+  const nameEl = document.getElementById('profile-current-name');
+  const menuWrap = document.getElementById('profile-menu-wrap');
   const menu = document.getElementById('profile-menu');
-  const menuName = document.getElementById('profile-menu-name');
-  const menuMeta = document.getElementById('profile-menu-meta');
   const profileList = document.getElementById('profile-menu-list');
   const createBtn = document.getElementById('profile-create-btn');
   const manageBtn = document.getElementById('profile-manage-btn');
@@ -348,13 +352,13 @@ async function initProfileIndicator() {
   const setMenuStatus = (message, kind = '') => {
     if (!menuStatus) return;
     menuStatus.textContent = message || '';
-    menuStatus.className = 'profile-menu-status' + (kind ? ` ${kind}` : '');
+    menuStatus.className = 'menu-flyout-status' + (kind ? ` ${kind}` : '');
     menuStatus.hidden = !message;
   };
 
-  const openProfilesSettings = (subroute = '') => {
-    setMenuOpen(false);
-    loadTarget(subroute ? `freedom://settings/profiles/${subroute}` : 'freedom://settings/profiles');
+  const openProfilesManager = () => {
+    closeAllMenus();
+    loadTarget('freedom://profiles');
   };
 
   const setCreateStatus = (message, kind = '') => {
@@ -382,7 +386,7 @@ async function initProfileIndicator() {
   };
 
   const openCreateModal = () => {
-    setMenuOpen(false);
+    closeAllMenus();
     setCreateBusy(false);
     setCreateStatus('', '');
     if (createNameInput) createNameInput.value = '';
@@ -394,12 +398,6 @@ async function initProfileIndicator() {
     requestAnimationFrame(() => {
       createNameInput?.focus();
     });
-  };
-
-  const profileMetaText = (profile, isCurrent) => {
-    if (isCurrent) return 'Current profile';
-    if (profile?.isUnregistered) return 'Needs registration';
-    return 'Open in new window';
   };
 
   const renderProfileList = (profiles = []) => {
@@ -415,7 +413,7 @@ async function initProfileIndicator() {
 
     if (!rows.length) {
       const empty = document.createElement('div');
-      empty.className = 'profile-menu-empty';
+      empty.className = 'menu-flyout-empty';
       empty.textContent = 'No profiles available';
       profileList.append(empty);
       return;
@@ -426,28 +424,23 @@ async function initProfileIndicator() {
       const displayName = profile?.displayName || profile?.id || 'Unnamed profile';
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'profile-menu-item profile-menu-profile-item';
+      button.className = 'menu-item';
       button.setAttribute('role', 'menuitem');
       button.disabled = isCurrent;
       if (isCurrent) button.setAttribute('aria-current', 'true');
 
+      // Leading check gutter (reuses .menu-item-icon) so names align with the
+      // hamburger's Profiles row; only the current profile shows the ✓.
       const check = document.createElement('span');
-      check.className = 'profile-menu-check';
+      check.className = 'menu-item-icon menu-item-check';
+      check.setAttribute('aria-hidden', 'true');
       check.textContent = isCurrent ? '✓' : '';
 
-      const text = document.createElement('span');
-      text.className = 'profile-menu-item-text';
-
       const label = document.createElement('span');
-      label.className = 'profile-menu-item-label';
+      label.className = 'menu-item-label';
       label.textContent = displayName;
 
-      const meta = document.createElement('span');
-      meta.className = 'profile-menu-item-meta';
-      meta.textContent = profileMetaText(profile, isCurrent);
-
-      text.append(label, meta);
-      button.append(check, text);
+      button.append(check, label);
 
       if (!isCurrent) {
         button.addEventListener('click', async () => {
@@ -485,18 +478,38 @@ async function initProfileIndicator() {
     }
   };
 
-  closeProfileMenu = () => setMenuOpen(false);
+  // macOS-style submenu: open after a short hover delay, close shortly after
+  // the cursor leaves (the close delay lets the cursor cross the small gap to
+  // the flyout). The flyout is a child of #menu-dropdown, so the hamburger's
+  // outside-click handler treats flyout clicks as inside — the hamburger stays
+  // open with it. Timing lives in the shared attachSubmenuHover helper.
+  const openFlyout = () => {
+    // Don't open while the hamburger itself is closed (the dropdown — and thus
+    // this wrapper — isn't rendered), e.g. if a hover open-timer fires just
+    // after the menu was dismissed.
+    if (!menuWrap || menuWrap.offsetParent === null) return;
+    if (menu?.hidden !== false) {
+      setMenuOpen(true);
+      refreshProfileList();
+    }
+  };
 
-  indicator.addEventListener('click', (event) => {
-    event.stopPropagation();
-    const shouldOpen = menu?.hidden !== false;
-    closeAllMenus();
-    setMenuOpen(shouldOpen);
-    if (shouldOpen) refreshProfileList();
+  const flyoutHover = attachSubmenuHover(menuWrap, {
+    open: openFlyout,
+    close: () => setMenuOpen(false),
   });
 
+  closeProfileMenu = () => {
+    flyoutHover.cancel();
+    setMenuOpen(false);
+  };
+
+  // Click opens immediately (keyboard/tap), bypassing the hover delay; it never
+  // toggles closed while the cursor is over the row.
+  indicator.addEventListener('click', flyoutHover.openNow);
+
   createBtn?.addEventListener('click', openCreateModal);
-  manageBtn?.addEventListener('click', () => openProfilesSettings());
+  manageBtn?.addEventListener('click', openProfilesManager);
   createCancelBtn?.addEventListener('click', closeCreateModal);
   createCloseBtn?.addEventListener('click', closeCreateModal);
   createModal?.addEventListener('cancel', (event) => {
@@ -533,7 +546,9 @@ async function initProfileIndicator() {
       setCreateStatus(`Opening ${profile.displayName || displayName}...`, 'success');
       const openResult = await electronAPI.openProfile?.(profileId);
       if (!openResult?.success) {
-        throw new Error(openResult?.error?.message || 'Profile was created but could not be opened');
+        throw new Error(
+          openResult?.error?.message || 'Profile was created but could not be opened'
+        );
       }
 
       setCreateBusy(false);
@@ -545,16 +560,9 @@ async function initProfileIndicator() {
       createNameInput?.focus();
     }
   });
-  document.addEventListener('click', (event) => {
-    if (
-      menu?.hidden === false &&
-      !menu.contains(event.target) &&
-      !indicator.contains(event.target)
-    ) {
-      setMenuOpen(false);
-    }
-  });
-  window.addEventListener('blur', () => setMenuOpen(false));
+  // The native menu and the manager page open this same create modal via a
+  // main→renderer round trip, regardless of which tab/page is active.
+  electronAPI.onShowCreateProfileModal?.(() => openCreateModal());
 
   const renderProfile = (profile) => {
     activeProfile = profile;
@@ -563,14 +571,6 @@ async function initProfileIndicator() {
 
     nameEl.textContent = label;
     indicator.title = profile?.isDev ? `${label} (dev)` : label;
-    if (menuName) menuName.textContent = label;
-    if (menuMeta) {
-      const meta = [];
-      if (profile?.isDev) meta.push('Development');
-      menuMeta.textContent = meta.join(' · ');
-      menuMeta.hidden = meta.length === 0;
-    }
-    indicator.hidden = false;
     if (menu?.hidden === false) refreshProfileList();
   };
 

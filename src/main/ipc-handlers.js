@@ -114,7 +114,8 @@ function isTrustedProfileMutationSender(event) {
   if (!pathname) return false;
 
   return pathname.endsWith('/src/renderer/index.html')
-    || pathname.endsWith('/src/renderer/pages/settings.html');
+    || pathname.endsWith('/src/renderer/pages/settings.html')
+    || pathname.endsWith('/src/renderer/pages/profiles.html');
 }
 
 function withTrustedProfileMutationSender(event, fn) {
@@ -162,6 +163,17 @@ function broadcastProfileUpdated(profile = serializeActiveProfile()) {
     } catch {
       // The target may have been destroyed between enumeration and send.
     }
+  }
+}
+
+// Rebuild the application menu so the native Profiles menu reflects the
+// current profile set (after create / rename / delete). Lazy-required to
+// avoid a load-order cycle with menu.js.
+function rebuildAppMenuForProfiles() {
+  try {
+    require('./menu').setupApplicationMenu();
+  } catch (err) {
+    log.error('[profile] Failed to rebuild application menu:', err?.message || err);
   }
 }
 
@@ -343,6 +355,8 @@ function createProfileFromIpc(payload = {}) {
     if (!result) {
       return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
     }
+    broadcastProfileUpdated();
+    rebuildAppMenuForProfiles();
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
     return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
@@ -369,6 +383,7 @@ function renameProfileFromIpc(payload = {}) {
     }
     const activeProfile = serializeActiveProfile();
     broadcastProfileUpdated(activeProfile);
+    rebuildAppMenuForProfiles();
     return success({
       profile: serializeProfileMutationResult(result),
       activeProfile,
@@ -415,6 +430,8 @@ function deleteProfileFromIpc(payload = {}) {
     if (!result) {
       return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
     }
+    broadcastProfileUpdated();
+    rebuildAppMenuForProfiles();
     return success({
       profile: serializeProfileSummary({
         id: result.record.id,
@@ -654,6 +671,15 @@ function registerBaseIpcHandlers(callbacks = {}) {
       updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
     )
   );
+
+  // A manager page (webview) requests the chrome's create-profile modal.
+  // Resolve the webview's owning BrowserWindow and tell it to show the modal.
+  ipcMain.on(IPC.PROFILE_REQUEST_CREATE_MODAL, (event) => {
+    const win = event.sender.getOwnerBrowserWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC.PROFILE_SHOW_CREATE_MODAL);
+    }
+  });
 
   ipcMain.handle(IPC.GET_WEBVIEW_PRELOAD_PATH, () => {
     return webviewPreloadPath;

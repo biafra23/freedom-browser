@@ -54,6 +54,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('profile:updated', handler);
     return () => ipcRenderer.removeListener('profile:updated', handler);
   },
+  onShowCreateProfileModal: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('profile:show-create-modal', handler);
+    return () => ipcRenderer.removeListener('profile:show-create-modal', handler);
+  },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   getBookmarks: () => ipcRenderer.invoke('bookmarks:get'),

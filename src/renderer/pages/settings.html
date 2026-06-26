@@ -428,6 +428,13 @@
         white-space: nowrap;
       }
 
+      .profile-name-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 280px;
+      }
+
       .profile-pill {
         display: inline-flex;
         align-items: center;
@@ -708,12 +715,20 @@
             </svg>
             Appearance
           </button>
-          <button type="button" class="nav-item" data-target="profiles">
+          <button type="button" class="nav-item" data-target="profile">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 21a8 8 0 0 0-16 0"></path>
               <circle cx="12" cy="7" r="4"></circle>
             </svg>
-            Profiles
+            Profile
+          </button>
+          <button type="button" class="nav-item" data-target="nodes">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M3 5v14a9 3 0 0 0 18 0V5"></path>
+              <path d="M3 12a9 3 0 0 0 18 0"></path>
+            </svg>
+            Nodes
           </button>
           <button type="button" class="nav-item" data-target="startup">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -797,60 +812,38 @@
           </div>
         </section>
 
-        <!-- Profiles -->
-        <section class="section" id="profiles">
-          <h2 class="section-title">Profiles</h2>
+        <!-- Profile (current profile identity) -->
+        <section class="section" id="profile">
+          <h2 class="section-title">Profile</h2>
           <div class="card">
             <div class="row">
               <div class="row-body">
-                <p class="row-label">Current profile</p>
-                <p class="row-help" id="profile-id">Loading…</p>
+                <p class="row-label">Name</p>
+                <p class="row-help">The display name for the current profile.</p>
               </div>
-              <div class="row-control">
-                <div class="profile-value" id="profile-display-name">Loading…</div>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">Runtime</p>
-              </div>
-              <div class="row-control">
-                <span class="profile-pill" id="profile-runtime">Loading…</span>
-              </div>
-            </div>
-            <div class="row">
-              <div class="row-body">
-                <p class="row-label">Slot</p>
-              </div>
-              <div class="row-control">
-                <span class="profile-pill" id="profile-slot">Loading…</span>
+              <div class="row-control profile-name-control">
+                <input
+                  type="text"
+                  id="profile-name-input"
+                  class="rpc-input"
+                  spellcheck="false"
+                  placeholder="Profile name"
+                />
+                <button type="button" class="btn" id="profile-name-save">Save</button>
               </div>
             </div>
           </div>
+          <p id="profile-save-status" class="rpc-status"></p>
+          <a class="back-link" id="manage-profiles-link" href="freedom://profiles">Manage all profiles →</a>
+        </section>
 
-          <h2 class="section-title" style="margin-top: 28px">Nodes</h2>
+        <!-- Nodes (per-profile node configuration) -->
+        <section class="section" id="nodes">
+          <h2 class="section-title">Nodes</h2>
           <div class="card" id="profile-nodes-card">
             <div class="profile-node-empty">Loading…</div>
           </div>
-          <p id="profile-save-status" class="rpc-status"></p>
-
-          <h2 class="section-title" style="margin-top: 28px">Manage Profiles</h2>
-          <div class="card">
-            <div class="profile-manager-list" id="profile-manager-list">
-              <div class="profile-manager-empty">Loading…</div>
-            </div>
-            <div class="profile-manager-create">
-              <input
-                type="text"
-                id="create-profile-name"
-                class="rpc-input"
-                placeholder="New profile name"
-                spellcheck="false"
-              />
-              <button type="button" class="btn" id="create-profile-btn">Create</button>
-            </div>
-          </div>
-          <p id="profile-manager-status" class="rpc-status"></p>
+          <p id="profile-nodes-status" class="rpc-status"></p>
         </section>
 
         <!-- Startup -->
@@ -1036,17 +1029,13 @@
       const swarmModeHelp = $('swarm-mode-help');
       const swarmModeBtn = $('swarm-mode-action-btn');
       const profileFields = {
-        displayName: $('profile-display-name'),
-        id: $('profile-id'),
-        runtime: $('profile-runtime'),
-        slot: $('profile-slot'),
-        nodesCard: $('profile-nodes-card'),
+        nameInput: $('profile-name-input'),
+        nameSave: $('profile-name-save'),
         saveStatus: $('profile-save-status'),
-        managerList: $('profile-manager-list'),
-        managerStatus: $('profile-manager-status'),
-        createName: $('create-profile-name'),
-        createButton: $('create-profile-btn'),
+        nodesCard: $('profile-nodes-card'),
+        nodesStatus: $('profile-nodes-status'),
       };
+      let activeProfileId = null;
 
       let isWindows = false;
       let profileRefreshTimer = null;
@@ -1078,19 +1067,10 @@
         navItems.forEach((item) =>
           item.classList.toggle('active', item.dataset.target === section)
         );
-        setProfileRefreshActive(section === 'profiles');
+        setProfileRefreshActive(section === 'profile' || section === 'nodes');
         // Always scroll the content area to the top when switching — avoids a
         // stale scroll offset from a taller prior section.
         window.scrollTo({ top: 0 });
-        if (
-          section === 'profiles' &&
-          location.hash.replace(/^#/, '').toLowerCase() === 'profiles/create'
-        ) {
-          setTimeout(() => {
-            profileFields.createName?.focus();
-            profileFields.createName?.select();
-          }, 0);
-        }
       };
 
       navItems.forEach((item) => {
@@ -1155,13 +1135,6 @@
         return mode.charAt(0).toUpperCase() + mode.slice(1);
       };
 
-      const profileSourceLabel = (source) => {
-        if (source === 'catalog') return 'Profile catalog';
-        if (source === 'profile-dir') return 'Profile directory';
-        if (source === 'test-user-data') return 'Test profile';
-        return source || 'Unknown';
-      };
-
       const endpointLines = (protocol, config, service) => {
         if (config?.mode === 'disabled') return [];
         if (protocol === 'bee') {
@@ -1222,122 +1195,14 @@
         profileFields.saveStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
       };
 
-      const setManagerStatus = (message, kind) => {
-        if (!profileFields.managerStatus) return;
-        profileFields.managerStatus.textContent = message || '';
-        profileFields.managerStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
+      const setNodesStatus = (message, kind) => {
+        if (!profileFields.nodesStatus) return;
+        profileFields.nodesStatus.textContent = message || '';
+        profileFields.nodesStatus.className = 'rpc-status' + (kind ? ' ' + kind : '');
       };
 
       const setExternalEditorVisible = (row, mode) => {
         row?.querySelector('[data-external-editor]')?.toggleAttribute('hidden', mode !== 'external');
-      };
-
-      const formatProfileDate = (value) => {
-        if (!value) return 'Never opened';
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return 'Unknown';
-        return date.toLocaleString();
-      };
-
-      const nodeModeSummary = (profile) => {
-        const nodes = profile?.nodes || {};
-        return ['bee', 'ipfs', 'radicle']
-          .map((protocol) => `${SERVICE_LABELS[protocol]}: ${NODE_MODE_LABELS[nodes[protocol]?.mode || 'managed'] || 'Managed'}`)
-          .join(' · ');
-      };
-
-      const renderProfileManager = (profiles) => {
-        if (!profileFields.managerList) return;
-        if (!profiles?.length) {
-          profileFields.managerList.innerHTML =
-            '<div class="profile-manager-empty">No profiles found</div>';
-          return;
-        }
-
-        profileFields.managerList.innerHTML = profiles.map((profile) => {
-          const isUnregistered = profile.isUnregistered === true;
-          const canDelete = !profile.isActive && profile.id !== 'default';
-          const displayName = profile.displayName || profile.id;
-          const statusBadge = profile.isActive
-            ? '<span class="profile-pill">Current</span>'
-            : isUnregistered
-              ? '<span class="profile-pill">Unregistered</span>'
-              : '';
-          const metaPrefix = isUnregistered ? 'Unregistered profile directory · ' : '';
-          const actions = isUnregistered
-            ? `
-              <button type="button" class="btn" data-import-profile>
-                Register
-              </button>
-            `
-            : `
-              <button type="button" class="btn" data-rename-profile>Save</button>
-              <button type="button" class="btn" data-open-profile ${profile.isActive ? 'disabled' : ''}>
-                Open
-              </button>
-              <button type="button" class="btn danger" data-delete-profile ${canDelete ? '' : 'disabled'}>
-                Delete
-              </button>
-            `;
-          return `
-          <div class="profile-manager-row" data-profile-id="${esc(profile.id)}" data-profile-display-name="${esc(displayName)}">
-            <div class="profile-manager-main">
-              <div class="profile-manager-name">
-                <input
-                  type="text"
-                  class="rpc-input"
-                  data-profile-name-input
-                  value="${esc(displayName)}"
-                  spellcheck="false"
-                  ${isUnregistered ? 'disabled' : ''}
-                />
-                ${statusBadge}
-              </div>
-              <div class="profile-manager-meta">
-                ${metaPrefix}ID: ${esc(profile.id)} · Slot ${Number.isInteger(profile.slot) ? profile.slot : 'unassigned'} · Last opened: ${esc(formatProfileDate(profile.lastOpenedAt))}
-              </div>
-              <div class="profile-manager-meta">${esc(nodeModeSummary(profile))}</div>
-            </div>
-            <div class="profile-manager-actions">${actions}</div>
-            <div class="profile-delete-confirm" data-delete-confirm hidden>
-              <p class="profile-delete-copy">
-                Deleting this profile removes its vault data, browser data, node data, RPC keys,
-                local settings, and any local value-bearing node state. Type
-                <strong>${esc(displayName)}</strong> to confirm.
-              </p>
-              <div class="profile-delete-controls">
-                <input
-                  type="text"
-                  class="rpc-input"
-                  data-delete-confirm-input
-                  placeholder="${esc(displayName)}"
-                  spellcheck="false"
-                />
-                <button type="button" class="btn danger" data-confirm-delete-profile>
-                  Delete Profile
-                </button>
-                <button type="button" class="btn" data-cancel-delete-profile>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>`;
-        }).join('');
-      };
-
-      const refreshProfileManager = async () => {
-        if (!profileFields.managerList) return;
-        try {
-          const result = await freedomAPI.listProfiles?.();
-          if (!result?.success) {
-            throw new Error(result?.error?.message || 'Profiles unavailable');
-          }
-          renderProfileManager(result.profiles || []);
-        } catch (err) {
-          profileFields.managerList.innerHTML =
-            '<div class="profile-manager-empty">Profile list unavailable</div>';
-          setManagerStatus(err?.message || 'Profile list unavailable', 'error');
-        }
       };
 
       const renderProfileNodes = (profile, registry) => {
@@ -1380,8 +1245,7 @@
           !force &&
           document.activeElement &&
           (profileFields.nodesCard.contains(document.activeElement) ||
-            profileFields.managerList?.contains(document.activeElement) ||
-            profileFields.createName === document.activeElement)
+            profileFields.nameInput === document.activeElement)
         ) {
           return;
         }
@@ -1391,16 +1255,12 @@
             freedomAPI.getActiveProfile?.(),
             freedomAPI.getServiceRegistry().catch(() => null),
           ]);
-          const label = profile?.displayName || profile?.id || 'Unknown';
-          profileFields.displayName.textContent = label;
-          profileFields.id.textContent = profile?.id ? `ID: ${profile.id}` : '';
-          profileFields.runtime.textContent = profile?.isDev ? 'Development' : 'Packaged';
-          profileFields.runtime.title = profileSourceLabel(profile?.source);
-          profileFields.slot.textContent = Number.isInteger(profile?.slot)
-            ? `Slot ${profile.slot}`
-            : 'Unassigned';
+          activeProfileId = profile?.id || null;
+          const label = profile?.displayName || profile?.id || '';
+          if (profileFields.nameInput && profileFields.nameInput !== document.activeElement) {
+            profileFields.nameInput.value = label;
+          }
           renderProfileNodes(profile, registry);
-          await refreshProfileManager();
         } catch {
           profileFields.nodesCard.innerHTML =
             '<div class="profile-node-empty">Profile data unavailable</div>';
@@ -1418,10 +1278,46 @@
           profileRefreshTimer = setInterval(refreshProfileSection, 5000);
         }
       };
-      setProfileRefreshActive(resolveSection(location.hash) === 'profiles');
+      const isProfileOrNodesSection = () => {
+        const section = resolveSection(location.hash);
+        return section === 'profile' || section === 'nodes';
+      };
+      setProfileRefreshActive(isProfileOrNodesSection());
       freedomAPI.onProfileUpdated?.(() => {
-        if (resolveSection(location.hash) === 'profiles') {
+        if (isProfileOrNodesSection()) {
           refreshProfileSection(true);
+        }
+      });
+
+      profileFields.nameSave?.addEventListener('click', async () => {
+        const displayName = profileFields.nameInput?.value.trim();
+        if (!activeProfileId) {
+          setProfileStatus('Active profile is not editable.', 'error');
+          return;
+        }
+        if (!displayName) {
+          setProfileStatus('Profile name cannot be empty.', 'error');
+          return;
+        }
+        profileFields.nameSave.disabled = true;
+        setProfileStatus('Saving profile name…', 'testing');
+        try {
+          const result = await freedomAPI.renameProfile?.(activeProfileId, displayName);
+          if (!result?.success) {
+            throw new Error(result?.error?.message || 'Profile could not be renamed');
+          }
+          setProfileStatus('Profile name saved.', 'success');
+        } catch (err) {
+          setProfileStatus(err?.message || 'Profile could not be renamed', 'error');
+        } finally {
+          profileFields.nameSave.disabled = false;
+        }
+      });
+
+      profileFields.nameInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          profileFields.nameSave?.click();
         }
       });
 
@@ -1450,171 +1346,24 @@
             .filter((input) => !input.value.trim())
             .map((input) => input.previousElementSibling?.textContent || 'Endpoint');
           if (missing.length) {
-            setProfileStatus(`External ${SERVICE_LABELS[protocol]} requires: ${missing.join(', ')}`, 'error');
+            setNodesStatus(`External ${SERVICE_LABELS[protocol]} requires: ${missing.join(', ')}`, 'error');
             return;
           }
         }
 
         saveButton.disabled = true;
-        setProfileStatus(`Saving ${SERVICE_LABELS[protocol]} node settings…`, 'testing');
+        setNodesStatus(`Saving ${SERVICE_LABELS[protocol]} node settings…`, 'testing');
         try {
           const result = await freedomAPI.updateProfileNodeConfig?.(protocol, config);
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profile node settings were not saved');
           }
-          setProfileStatus('Saved. Restart the node to apply mode or endpoint changes.', 'success');
+          setNodesStatus('Saved. Restart the node to apply mode or endpoint changes.', 'success');
           await refreshProfileSection(true);
         } catch (err) {
-          setProfileStatus(err?.message || 'Profile node settings were not saved', 'error');
+          setNodesStatus(err?.message || 'Profile node settings were not saved', 'error');
         } finally {
           saveButton.disabled = false;
-        }
-      });
-
-      profileFields.createButton?.addEventListener('click', async () => {
-        const displayName = profileFields.createName?.value.trim();
-        if (!displayName) {
-          setManagerStatus('Enter a profile name.', 'error');
-          return;
-        }
-
-        profileFields.createButton.disabled = true;
-        setManagerStatus('Creating profile…', 'testing');
-        try {
-          const result = await freedomAPI.createProfile?.({ displayName });
-          if (!result?.success) {
-            throw new Error(result?.error?.message || 'Profile could not be created');
-          }
-          profileFields.createName.value = '';
-          setManagerStatus('Profile created. You can open it from the profile list.', 'success');
-          await refreshProfileManager();
-        } catch (err) {
-          setManagerStatus(err?.message || 'Profile could not be created', 'error');
-        } finally {
-          profileFields.createButton.disabled = false;
-        }
-      });
-
-      profileFields.createName?.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          profileFields.createButton?.click();
-        }
-      });
-
-      profileFields.managerList?.addEventListener('click', async (event) => {
-        const importButton = event.target?.closest?.('[data-import-profile]');
-        if (importButton) {
-          const profileId = importButton.closest('[data-profile-id]')?.dataset.profileId;
-          if (!profileId) return;
-
-          importButton.disabled = true;
-          setManagerStatus('Registering profile…', 'testing');
-          try {
-            const result = await freedomAPI.importProfile?.(profileId);
-            if (!result?.success) {
-              throw new Error(result?.error?.message || 'Profile could not be registered');
-            }
-            setManagerStatus('Profile registered. You can open it now.', 'success');
-            await refreshProfileManager();
-          } catch (err) {
-            setManagerStatus(err?.message || 'Profile could not be registered', 'error');
-            importButton.disabled = false;
-          }
-          return;
-        }
-
-        const deleteButton = event.target?.closest?.('[data-delete-profile]');
-        if (deleteButton) {
-          const row = deleteButton.closest('[data-profile-id]');
-          row?.querySelector('[data-delete-confirm]')?.removeAttribute('hidden');
-          row?.querySelector('[data-delete-confirm-input]')?.focus();
-          setManagerStatus('', '');
-          return;
-        }
-
-        const cancelDeleteButton = event.target?.closest?.('[data-cancel-delete-profile]');
-        if (cancelDeleteButton) {
-          const row = cancelDeleteButton.closest('[data-profile-id]');
-          row?.querySelector('[data-delete-confirm]')?.setAttribute('hidden', '');
-          const input = row?.querySelector('[data-delete-confirm-input]');
-          if (input) input.value = '';
-          return;
-        }
-
-        const confirmDeleteButton = event.target?.closest?.('[data-confirm-delete-profile]');
-        if (confirmDeleteButton) {
-          const row = confirmDeleteButton.closest('[data-profile-id]');
-          const profileId = row?.dataset.profileId;
-          const displayName = row?.dataset.profileDisplayName;
-          const confirmation = row?.querySelector('[data-delete-confirm-input]')?.value || '';
-          if (!profileId || !displayName) return;
-          if (confirmation !== displayName) {
-            setManagerStatus('Profile name confirmation did not match.', 'error');
-            return;
-          }
-
-          confirmDeleteButton.disabled = true;
-          setManagerStatus('Deleting profile…', 'testing');
-          try {
-            const result = await freedomAPI.deleteProfile?.(profileId, confirmation);
-            if (!result?.success) {
-              throw new Error(result?.error?.message || 'Profile could not be deleted');
-            }
-            setManagerStatus('Profile deleted.', 'success');
-            await refreshProfileManager();
-          } catch (err) {
-            setManagerStatus(err?.message || 'Profile could not be deleted', 'error');
-            confirmDeleteButton.disabled = false;
-          }
-          return;
-        }
-
-        const openButton = event.target?.closest?.('[data-open-profile]');
-        if (openButton) {
-          const profileId = openButton.closest('[data-profile-id]')?.dataset.profileId;
-          if (!profileId) return;
-
-          openButton.disabled = true;
-          setManagerStatus('Opening profile…', 'testing');
-          try {
-            const result = await freedomAPI.openProfile?.(profileId);
-            if (!result?.success) {
-              throw new Error(result?.error?.message || 'Profile could not be opened');
-            }
-            setManagerStatus(`Opening ${result.profile?.displayName || profileId} in a new window…`, 'success');
-          } catch (err) {
-            setManagerStatus(err?.message || 'Profile could not be opened', 'error');
-            openButton.disabled = false;
-          }
-          return;
-        }
-
-        const renameButton = event.target?.closest?.('[data-rename-profile]');
-        if (!renameButton) return;
-
-        const row = renameButton.closest('[data-profile-id]');
-        const profileId = row?.dataset.profileId;
-        const input = row?.querySelector('[data-profile-name-input]');
-        const displayName = input?.value.trim();
-        if (!profileId || !displayName) {
-          setManagerStatus('Profile name cannot be empty.', 'error');
-          return;
-        }
-
-        renameButton.disabled = true;
-        setManagerStatus('Saving profile name…', 'testing');
-        try {
-          const result = await freedomAPI.renameProfile?.(profileId, displayName);
-          if (!result?.success) {
-            throw new Error(result?.error?.message || 'Profile could not be renamed');
-          }
-          setManagerStatus('Profile name saved.', 'success');
-          await refreshProfileSection(true);
-        } catch (err) {
-          setManagerStatus(err?.message || 'Profile could not be renamed', 'error');
-        } finally {
-          renameButton.disabled = false;
         }
       });
 

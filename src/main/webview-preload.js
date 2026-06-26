@@ -36,6 +36,19 @@ const isSettingsPage = () => {
   return pathname.endsWith(`/pages/${settingsFile}`);
 };
 
+const isProfilesPage = () => {
+  const location = globalThis.location;
+  if (!location || location.protocol !== 'file:') return false;
+  const pathname = location.pathname || '';
+  const profilesFile = internalPages.routable?.profiles || 'profiles.html';
+  return pathname.endsWith(`/pages/${profilesFile}`);
+};
+
+// Profile management (rename / delete / import / open + the create-modal
+// trigger) is allowed from the settings Profile section and the dedicated
+// freedom://profiles manager page.
+const isProfileManagerPage = () => isSettingsPage() || isProfilesPage();
+
 const guardInternal =
   (name, fn) =>
   (...args) => {
@@ -54,6 +67,19 @@ const guardSettingsPage =
       const url = globalThis.location?.href || 'unknown';
       console.warn(`[freedomAPI] blocked settings-only "${name}" on page: ${url}`);
       return Promise.reject(new Error('freedomAPI profile changes are only available on settings'));
+    }
+    return fn(...args);
+  };
+
+const guardProfileManagerPage =
+  (name, fn) =>
+  (...args) => {
+    if (!isProfileManagerPage()) {
+      const url = globalThis.location?.href || 'unknown';
+      console.warn(`[freedomAPI] blocked profile-management "${name}" on page: ${url}`);
+      return Promise.reject(
+        new Error('freedomAPI profile changes are only available on profile management pages')
+      );
     }
     return fn(...args);
   };
@@ -245,20 +271,25 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   createProfile: guardSettingsPage('createProfile', (profile) =>
     ipcRenderer.invoke('profile:create', profile)
   ),
-  importProfile: guardSettingsPage('importProfile', (id) =>
+  importProfile: guardProfileManagerPage('importProfile', (id) =>
     ipcRenderer.invoke('profile:import', { id })
   ),
-  renameProfile: guardSettingsPage('renameProfile', (id, displayName) =>
+  renameProfile: guardProfileManagerPage('renameProfile', (id, displayName) =>
     ipcRenderer.invoke('profile:rename', { id, displayName })
   ),
-  openProfile: guardSettingsPage('openProfile', (id) =>
+  openProfile: guardProfileManagerPage('openProfile', (id) =>
     ipcRenderer.invoke('profile:open', { id })
   ),
-  deleteProfile: guardSettingsPage('deleteProfile', (id, confirmDisplayName) =>
+  deleteProfile: guardProfileManagerPage('deleteProfile', (id, confirmDisplayName) =>
     ipcRenderer.invoke('profile:delete', { id, confirmDisplayName })
   ),
   updateProfileNodeConfig: guardSettingsPage('updateProfileNodeConfig', (protocol, config) =>
     ipcRenderer.invoke('profile:update-node-config', { protocol, config })
+  ),
+  // Asks main to open the chrome's shared create-profile modal over this
+  // webview's owning window.
+  requestCreateProfileModal: guardProfileManagerPage('requestCreateProfileModal', () =>
+    ipcRenderer.send('profile:request-create-modal')
   ),
 
   // Network configuration (the Networks settings page + the ENS lens).
