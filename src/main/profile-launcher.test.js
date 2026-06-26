@@ -3,6 +3,7 @@ const {
   buildProfileLaunchCommand,
   getMacAppBundlePath,
   launchProfile,
+  openOrFocusProfile,
 } = require('./profile-launcher');
 
 describe('profile launcher', () => {
@@ -96,5 +97,69 @@ describe('profile launcher', () => {
       stdio: 'ignore',
     });
     expect(child.unref).toHaveBeenCalled();
+  });
+
+  describe('openOrFocusProfile', () => {
+    const activeProfile = { isDev: true, repoRoot: '/repo/freedom-browser', source: 'catalog' };
+
+    test('focuses an already-running profile without spawning', () => {
+      const spawn = jest.fn();
+      const requestFocus = jest.fn(() => ({ ok: true, nonce: 'n' }));
+      const getFocusTarget = jest.fn(() => ({ id: 'work', userDataDir: '/p/work', isLocked: true }));
+
+      const result = openOrFocusProfile(activeProfile, 'work', {
+        getFocusTarget,
+        requestFocus,
+        spawn,
+      });
+
+      expect(result).toEqual({ focused: true });
+      expect(requestFocus).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'work', isLocked: true })
+      );
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    test('launches when the profile is not running', () => {
+      const child = { unref: jest.fn() };
+      const spawn = jest.fn(() => child);
+      const requestFocus = jest.fn();
+      const getFocusTarget = jest.fn(() => ({ id: 'work', userDataDir: '/p/work', isLocked: false }));
+
+      const result = openOrFocusProfile(activeProfile, 'work', {
+        getFocusTarget,
+        requestFocus,
+        spawn,
+        execPath: '/electron',
+        platform: 'linux',
+      });
+
+      expect(result.focused).toBe(false);
+      expect(result.launch).toEqual({
+        command: '/electron',
+        args: ['/repo/freedom-browser', '--profile=work'],
+        cwd: '/repo/freedom-browser',
+      });
+      expect(requestFocus).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalled();
+    });
+
+    test('falls back to launching when the focus request cannot be written', () => {
+      const child = { unref: jest.fn() };
+      const spawn = jest.fn(() => child);
+      const requestFocus = jest.fn(() => ({ ok: false, error: 'nope' }));
+      const getFocusTarget = jest.fn(() => ({ id: 'work', userDataDir: '/p/work', isLocked: true }));
+
+      const result = openOrFocusProfile(activeProfile, 'work', {
+        getFocusTarget,
+        requestFocus,
+        spawn,
+        execPath: '/electron',
+        platform: 'linux',
+      });
+
+      expect(result.focused).toBe(false);
+      expect(spawn).toHaveBeenCalled();
+    });
   });
 });

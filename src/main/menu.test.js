@@ -38,7 +38,7 @@ function loadMenuModule(platform) {
         ],
       }),
       [require.resolve('./profile-launcher')]: () => ({
-        launchProfile: jest.fn(),
+        openOrFocusProfile: jest.fn(),
       }),
     },
   });

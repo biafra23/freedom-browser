@@ -58,8 +58,34 @@ function launchProfile(activeProfile, profileId, options = {}) {
   return command;
 }
 
+// Open a profile, shared by the renderer IPC path and the native menu so both
+// behave identically. If the target profile is already running, focus its
+// window (fast — no new process); otherwise cold-start it. Deps are injectable
+// for testing. Returns { focused: true } or { focused: false, launch }.
+function openOrFocusProfile(activeProfile, profileId, options = {}) {
+  // Lazy-required so this module stays loadable in isolation (and to avoid any
+  // load-order coupling with profile-resolver).
+  const resolveFocusTarget =
+    options.getFocusTarget ||
+    require('./profile-resolver').getProfileFocusTargetForActiveApp;
+  const requestFocus =
+    options.requestFocus || require('./profile-focus-handoff').requestProfileFocusAsync;
+
+  const target = resolveFocusTarget(profileId);
+  if (target?.isLocked) {
+    const focus = requestFocus(target);
+    if (focus?.ok) {
+      return { focused: true };
+    }
+  }
+
+  const launch = launchProfile(activeProfile, profileId, options);
+  return { focused: false, launch };
+}
+
 module.exports = {
   buildProfileLaunchCommand,
   getMacAppBundlePath,
   launchProfile,
+  openOrFocusProfile,
 };

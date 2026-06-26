@@ -18,14 +18,12 @@ const {
   createProfileForActiveApp,
   deleteProfileForActiveApp,
   getActiveProfile,
-  getProfileFocusTargetForActiveApp,
   importProfileForActiveApp,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
   updateActiveProfileNodeConfig,
 } = require('./profile-resolver');
-const { launchProfile } = require('./profile-launcher');
-const { requestProfileFocusAsync } = require('./profile-focus-handoff');
+const { openOrFocusProfile } = require('./profile-launcher');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -414,26 +412,13 @@ function openProfileFromIpc(payload = {}) {
     return failure('PROFILE_NOT_FOUND', 'Profile not found', { id: profileId });
   }
 
-  // Fast path: if the target profile is already running in another process,
-  // ask its window to focus instead of cold-starting a second Electron
-  // process (~300-500ms). Falls through to launch if the request can't be
-  // written or the profile isn't actually running.
-  const focusTarget = getProfileFocusTargetForActiveApp(profileId);
-  if (focusTarget?.isLocked) {
-    const focus = requestProfileFocusAsync(focusTarget);
-    if (focus.ok) {
-      return success({
-        profile: serializeProfileSummary(target),
-        focused: true,
-      });
-    }
-  }
-
   try {
-    const launch = launchProfile(activeProfile, profileId);
+    // Focuses an already-running profile (fast) or cold-starts it. Shared with
+    // the native Profiles menu so both paths behave identically.
+    const opened = openOrFocusProfile(activeProfile, profileId);
     return success({
       profile: serializeProfileSummary(target),
-      launch,
+      ...(opened.focused ? { focused: true } : { launch: opened.launch }),
     });
   } catch (err) {
     log.error('[profile] Failed to open profile:', err);

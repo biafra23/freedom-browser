@@ -136,16 +136,12 @@ function loadIpcHandlersModule(options = {}) {
         nodes: {},
       },
     }));
-  const launchProfile =
-    options.launchProfile ||
+  const openOrFocusProfile =
+    options.openOrFocusProfile ||
     jest.fn((_activeProfile, profileId) => ({
-      command: '/electron',
-      args: [`--profile=${profileId}`],
+      focused: false,
+      launch: { command: '/electron', args: [`--profile=${profileId}`] },
     }));
-  const getProfileFocusTargetForActiveApp =
-    options.getProfileFocusTargetForActiveApp || jest.fn(() => null);
-  const requestProfileFocusAsync =
-    options.requestProfileFocusAsync || jest.fn(() => ({ ok: true, nonce: 'test-nonce' }));
   const deleteProfileForActiveApp =
     options.deleteProfileForActiveApp ||
     jest.fn((id, _confirmDisplayName) => ({
@@ -175,17 +171,13 @@ function loadIpcHandlersModule(options = {}) {
         createProfileForActiveApp,
         deleteProfileForActiveApp,
         getActiveProfile: jest.fn(() => activeProfile),
-        getProfileFocusTargetForActiveApp,
         importProfileForActiveApp,
         listProfilesForActiveApp,
         renameProfileForActiveApp,
         updateActiveProfileNodeConfig,
       }),
       [require.resolve('./profile-launcher')]: () => ({
-        launchProfile,
-      }),
-      [require.resolve('./profile-focus-handoff')]: () => ({
-        requestProfileFocusAsync,
+        openOrFocusProfile,
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -214,9 +206,7 @@ function loadIpcHandlersModule(options = {}) {
     deleteProfileForActiveApp,
     importProfileForActiveApp,
     listProfilesForActiveApp,
-    launchProfile,
-    getProfileFocusTargetForActiveApp,
-    requestProfileFocusAsync,
+    openOrFocusProfile,
     invokeProfileMutation: (channel, payload = {}, url = SETTINGS_PAGE_URL) =>
       Promise.resolve(ipcMain.handlers.get(channel)(createIpcEvent(url), payload)),
     renameProfileForActiveApp,
@@ -591,24 +581,19 @@ describe('ipc-handlers', () => {
         },
       })
     );
-    expect(ctx.launchProfile).toHaveBeenCalledWith(
+    expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'default' }),
       'work'
     );
   });
 
-  test('focuses an already-running profile instead of spawning a new process', async () => {
+  test('reports focused (no launch) when the profile is already running', async () => {
     const ctx = loadIpcHandlersModule({
       profiles: [
         { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
         { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
       ],
-      getProfileFocusTargetForActiveApp: jest.fn(() => ({
-        id: 'work',
-        userDataDir: '/tmp/work',
-        isDev: false,
-        isLocked: true,
-      })),
+      openOrFocusProfile: jest.fn(() => ({ focused: true })),
     });
 
     ctx.mod.registerBaseIpcHandlers();
@@ -621,38 +606,8 @@ describe('ipc-handlers', () => {
 
     expect(result.success).toBe(true);
     expect(result.focused).toBe(true);
-    expect(ctx.requestProfileFocusAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'work', isLocked: true })
-    );
-    // No second process should be spawned for an already-running profile.
-    expect(ctx.launchProfile).not.toHaveBeenCalled();
-  });
-
-  test('falls back to launching when the focus request cannot be written', async () => {
-    const ctx = loadIpcHandlersModule({
-      profiles: [
-        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
-        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
-      ],
-      getProfileFocusTargetForActiveApp: jest.fn(() => ({
-        id: 'work',
-        userDataDir: '/tmp/work',
-        isDev: false,
-        isLocked: true,
-      })),
-      requestProfileFocusAsync: jest.fn(() => ({ ok: false, error: 'nope' })),
-    });
-
-    ctx.mod.registerBaseIpcHandlers();
-
-    const result = await ctx.invokeProfileMutation(
-      IPC.PROFILE_OPEN,
-      { id: 'work' },
-      HOST_RENDERER_URL
-    );
-
-    expect(result.success).toBe(true);
-    expect(ctx.launchProfile).toHaveBeenCalledWith(
+    expect(result.launch).toBeUndefined();
+    expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'default' }),
       'work'
     );
@@ -707,7 +662,7 @@ describe('ipc-handlers', () => {
     await expect(ctx.invokeProfileMutation(IPC.PROFILE_OPEN, { id: 'default' })).resolves.toEqual(
       failure('PROFILE_ALREADY_OPEN', 'This profile is already open')
     );
-    expect(ctx.launchProfile).not.toHaveBeenCalled();
+    expect(ctx.openOrFocusProfile).not.toHaveBeenCalled();
   });
 
   test('deletes inactive profiles through typed confirmation IPC', async () => {

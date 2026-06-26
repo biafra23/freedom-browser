@@ -8,7 +8,7 @@ const {
   installUpdate,
 } = require('./updater');
 const { getActiveProfile, listProfilesForActiveApp } = require('./profile-resolver');
-const { launchProfile } = require('./profile-launcher');
+const { openOrFocusProfile } = require('./profile-launcher');
 const IPC = require('../shared/ipc-channels');
 
 // Helper to get the best target window for tab operations
@@ -31,14 +31,14 @@ function openProfilesManager() {
   createMainWindow('freedom://profiles');
 }
 
-// Switch to another profile (opens it in a new window via the launcher),
-// mirroring the renderer's PROFILE_OPEN handler.
+// Switch to another profile, mirroring the renderer's PROFILE_OPEN handler:
+// focus the profile's window if it's already running, otherwise launch it.
 function switchToProfile(profileId) {
   const activeProfile = getActiveProfile();
   if (!activeProfile || activeProfile.source !== 'catalog') return;
   if (!profileId || profileId === activeProfile.id) return;
   try {
-    launchProfile(activeProfile, profileId);
+    openOrFocusProfile(activeProfile, profileId);
   } catch (err) {
     log.error('[menu] Failed to switch profile:', err?.message || err);
   }
