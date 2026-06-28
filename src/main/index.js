@@ -69,15 +69,21 @@ try {
   }
   throw error;
 }
+// Deep-link the profile manager's edit button lands an opened profile on. The
+// intent crosses process boundaries as a boolean (focus request field / the
+// `--open-settings` launch flag); this is the only place it becomes a URL.
+const PROFILE_SETTINGS_DEEPLINK = 'freedom://settings/profile';
 let focusCurrentProfileWindow = null;
 const profileFocusWatcher = startProfileFocusRequestWatcher(
   activeProfile,
-  () =>
+  (request) =>
     app.whenReady().then(() => {
       if (typeof focusCurrentProfileWindow !== 'function') {
         throw new Error('Main window focus handler is not ready');
       }
-      return focusCurrentProfileWindow();
+      return focusCurrentProfileWindow(
+        request?.openSettings ? PROFILE_SETTINGS_DEEPLINK : null
+      );
     }),
   {
     logger: console,
@@ -338,7 +344,12 @@ async function bootstrap() {
   }
 
   const settings = loadSettings();
-  const mainWindow = createMainWindow();
+  // A profile cold-started from another window's "edit" button (Profiles
+  // manager) carries --open-settings; land its first tab on Profile settings.
+  const coldStartUrl = process.argv.includes('--open-settings')
+    ? PROFILE_SETTINGS_DEEPLINK
+    : null;
+  const mainWindow = createMainWindow(coldStartUrl);
 
   if (!TEST_MODE) {
     await promptForDefaultExternalCandidates(activeProfile, {

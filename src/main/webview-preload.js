@@ -286,6 +286,12 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   openProfile: guardProfileManagerPage('openProfile', (id) =>
     ipcRenderer.invoke('profile:open', { id })
   ),
+  // Opens the profile and lands its window on the Profile settings page (where
+  // renaming now lives). The intent is a boolean flag — main maps it to the
+  // internal deep-link so an arbitrary URL never crosses this boundary.
+  openProfileSettings: guardProfileManagerPage('openProfileSettings', (id) =>
+    ipcRenderer.invoke('profile:open', { id, openSettings: true })
+  ),
   deleteProfile: guardProfileManagerPage('deleteProfile', (id, confirmDisplayName) =>
     ipcRenderer.invoke('profile:delete', { id, confirmDisplayName })
   ),

@@ -155,23 +155,6 @@
         aspect-ratio: 15 / 16;
       }
 
-      /* Toggled between view and rename modes via the .editing class. */
-      .profile-card .edit-only {
-        display: none;
-      }
-
-      .profile-card.editing .view-only {
-        display: none;
-      }
-
-      .profile-card.editing .icon-btn.edit-only {
-        display: grid;
-      }
-
-      .profile-card.editing .profile-card-name-input.edit-only {
-        display: block;
-      }
-
       .profile-card-avatar {
         position: relative;
         display: block;
@@ -253,19 +236,6 @@
         text-overflow: ellipsis;
       }
 
-      .profile-card-name-input {
-        width: 100%;
-        padding: 3px 6px;
-        background: var(--bg-elev);
-        border: 1px solid var(--accent);
-        border-radius: 6px;
-        color: var(--text);
-        font-family: inherit;
-        font-size: 13px;
-        font-weight: 600;
-        outline: none;
-      }
-
       .profile-card-controls {
         display: flex;
         align-items: center;
@@ -287,10 +257,6 @@
         transition:
           background 0.1s,
           color 0.1s;
-      }
-
-      .icon-btn.confirm {
-        color: var(--accent);
       }
 
       .icon-btn:hover:not(:disabled) {
@@ -582,8 +548,6 @@
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
       const TRASH_ICON =
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
-      const CHECK_ICON =
-        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
       const renderProfiles = (profiles) => {
         if (!managerList) return;
@@ -630,13 +594,12 @@
             const controls = isUnregistered
               ? '<button type="button" class="link-btn" data-import-profile>Register</button>'
               : `
-                <button type="button" class="icon-btn view-only" data-rename-profile aria-label="Rename ${esc(displayName)}">${PENCIL_ICON}</button>
+                <button type="button" class="icon-btn" data-edit-profile aria-label="Profile settings for ${esc(displayName)}">${PENCIL_ICON}</button>
                 ${
                   canDelete
-                    ? `<button type="button" class="icon-btn danger view-only" data-delete-profile aria-label="Delete ${esc(displayName)}">${TRASH_ICON}</button>`
+                    ? `<button type="button" class="icon-btn danger" data-delete-profile aria-label="Delete ${esc(displayName)}">${TRASH_ICON}</button>`
                     : ''
-                }
-                <button type="button" class="icon-btn confirm edit-only" data-confirm-rename aria-label="Save name">${CHECK_ICON}</button>`;
+                }`;
 
             return `
               <div class="profile-card${isActive ? ' is-active' : ''}" data-profile-id="${esc(profile.id)}" data-profile-display-name="${esc(displayName)}">
@@ -646,15 +609,7 @@
                 </${avatarTag}>
                 <div class="profile-card-foot">
                   <div class="profile-card-namewrap">
-                    <span class="profile-card-name view-only" data-profile-name>${esc(displayName)}</span>
-                    <input
-                      type="text"
-                      class="profile-card-name-input edit-only"
-                      data-profile-name-input
-                      value="${esc(displayName)}"
-                      spellcheck="false"
-                      autocomplete="off"
-                    />
+                    <span class="profile-card-name">${esc(displayName)}</span>
                   </div>
                   <div class="profile-card-controls">${controls}</div>
                 </div>
@@ -680,58 +635,27 @@
         }
       };
 
-      // --- Inline rename -----------------------------------------------------
-      const commitRename = async (card, rawName) => {
-        const profileId = card.dataset.profileId;
-        const current = card.dataset.profileDisplayName;
-        const name = (rawName || '').trim();
-        // Empty or unchanged names silently keep the current name.
-        if (!profileId || !name || name === current) return;
+      // --- Edit (open profile + its settings) -------------------------------
+      // Renaming now lives on the profile's own Settings page. The pencil opens
+      // that profile and lands it on freedom://settings/profile. The active
+      // profile is this window's own process, so open its settings here rather
+      // than asking another process to do it.
+      const SETTINGS_PROFILE_URL = 'freedom://settings/profile';
+      const editProfile = async (card) => {
+        const profileId = card?.dataset.profileId;
+        if (!profileId) return;
+        if (card.classList.contains('is-active')) {
+          freedomAPI.openInNewTab?.(SETTINGS_PROFILE_URL);
+          return;
+        }
         try {
-          const result = await freedomAPI.renameProfile?.(profileId, name);
+          const result = await freedomAPI.openProfileSettings?.(profileId);
           if (!result?.success) {
-            throw new Error(result?.error?.message || 'Profile could not be renamed');
+            throw new Error(result?.error?.message || 'Profile could not be opened');
           }
         } catch (err) {
-          logError('Failed to rename profile', err);
-        } finally {
-          await refreshProfiles();
+          logError('Failed to open profile settings', err);
         }
-      };
-
-      // While renaming, the card's .editing class swaps the name label for an
-      // input and the pencil/trash buttons for a checkmark (see CSS).
-      const beginRename = (card) => {
-        if (!card || card.classList.contains('editing')) return;
-        const input = card.querySelector('[data-profile-name-input]');
-        if (!input) return;
-
-        card.classList.add('editing');
-        input.value = card.dataset.profileDisplayName || '';
-        input.focus();
-        input.select();
-
-        let done = false;
-        const finish = (save) => {
-          if (done) return;
-          done = true;
-          input.removeEventListener('keydown', onKey);
-          input.removeEventListener('blur', onBlur);
-          card.classList.remove('editing');
-          if (save) commitRename(card, input.value);
-        };
-        const onKey = (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            finish(true);
-          } else if (event.key === 'Escape') {
-            event.preventDefault();
-            finish(false);
-          }
-        };
-        const onBlur = () => finish(true);
-        input.addEventListener('keydown', onKey);
-        input.addEventListener('blur', onBlur);
       };
 
       // --- Delete confirmation modal ----------------------------------------
@@ -826,14 +750,6 @@
         }
       };
 
-      // Pressing the checkmark must not blur the input before its click lands,
-      // so suppress the default focus shift on mousedown.
-      managerList?.addEventListener('mousedown', (event) => {
-        if (event.target?.closest?.('[data-confirm-rename]')) {
-          event.preventDefault();
-        }
-      });
-
       managerList?.addEventListener('click', (event) => {
         const target = event.target;
 
@@ -843,19 +759,9 @@
           return;
         }
 
-        const confirmRenameBtn = target?.closest?.('[data-confirm-rename]');
-        if (confirmRenameBtn) {
-          // Commits via the input's blur handler (set up in beginRename).
-          confirmRenameBtn
-            .closest('[data-profile-id]')
-            ?.querySelector('[data-profile-name-input]')
-            ?.blur();
-          return;
-        }
-
-        const renameBtn = target?.closest?.('[data-rename-profile]');
-        if (renameBtn) {
-          beginRename(renameBtn.closest('[data-profile-id]'));
+        const editBtn = target?.closest?.('[data-edit-profile]');
+        if (editBtn) {
+          editProfile(editBtn.closest('[data-profile-id]'));
           return;
         }
 
@@ -889,13 +795,9 @@
       });
 
       // Live-refresh when a profile is created (via the modal), renamed, or
-      // deleted elsewhere. Skip only while the user is mid-action — renaming a
-      // card or confirming a delete — so we don't clobber their input. (Don't
-      // gate on focus being anywhere in the grid: after clicking the create
-      // tile, that button keeps focus while the modal runs in another window,
-      // which would otherwise suppress the post-create refresh.)
+      // deleted elsewhere. Skip only while a delete is being confirmed, so we
+      // don't pull the card out from under the modal.
       freedomAPI.onProfileUpdated?.(() => {
-        if (managerList?.querySelector('.profile-card.editing')) return;
         if (!deleteModal.hidden) return;
         refreshProfiles();
       });

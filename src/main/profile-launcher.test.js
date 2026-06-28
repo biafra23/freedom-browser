@@ -68,6 +68,24 @@ describe('profile launcher', () => {
     });
   });
 
+  test('appends --open-settings after the profile arg when requested', () => {
+    expect(
+      buildProfileLaunchCommand(
+        { isDev: true, repoRoot: '/repo/freedom-browser' },
+        'work',
+        { execPath: '/electron', platform: 'linux', openSettings: true }
+      ).args
+    ).toEqual(['/repo/freedom-browser', '--profile=work', '--open-settings']);
+
+    expect(
+      buildProfileLaunchCommand(
+        { isDev: false },
+        'work',
+        { execPath: '/Applications/Freedom.app/Contents/MacOS/Freedom', platform: 'darwin', openSettings: true }
+      ).args
+    ).toEqual(['-n', '/Applications/Freedom.app', '--args', '--profile=work', '--open-settings']);
+  });
+
   test('spawns detached and unrefs the launched process', () => {
     const child = { unref: jest.fn() };
     const spawn = jest.fn(() => child);
@@ -115,9 +133,24 @@ describe('profile launcher', () => {
 
       expect(result).toEqual({ focused: true });
       expect(requestFocus).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'work', isLocked: true })
+        expect.objectContaining({ id: 'work', isLocked: true }),
+        { openSettings: false }
       );
       expect(spawn).not.toHaveBeenCalled();
+    });
+
+    test('forwards openSettings to the focus request', () => {
+      const requestFocus = jest.fn(() => ({ ok: true, nonce: 'n' }));
+      const getFocusTarget = jest.fn(() => ({ id: 'work', userDataDir: '/p/work', isLocked: true }));
+
+      openOrFocusProfile(activeProfile, 'work', {
+        getFocusTarget,
+        requestFocus,
+        spawn: jest.fn(),
+        openSettings: true,
+      });
+
+      expect(requestFocus).toHaveBeenCalledWith(expect.any(Object), { openSettings: true });
     });
 
     test('launches when the profile is not running', () => {

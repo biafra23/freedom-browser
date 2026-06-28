@@ -13,12 +13,15 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
   const platform = options.platform || process.platform;
   const execPath = options.execPath || process.execPath;
   const profileArg = `--profile=${profileId}`;
+  // Intent flag only — the cold-started process maps it to the internal
+  // settings deep-link, so no URL travels on the command line.
+  const extraArgs = options.openSettings ? ['--open-settings'] : [];
 
   if (activeProfile?.isDev) {
     const repoRoot = activeProfile.repoRoot || path.join(__dirname, '..', '..');
     return {
       command: execPath,
-      args: [repoRoot, profileArg],
+      args: [repoRoot, profileArg, ...extraArgs],
       cwd: repoRoot,
     };
   }
@@ -28,7 +31,7 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
     if (appBundlePath) {
       return {
         command: 'open',
-        args: ['-n', appBundlePath, '--args', profileArg],
+        args: ['-n', appBundlePath, '--args', profileArg, ...extraArgs],
         cwd: undefined,
       };
     }
@@ -36,7 +39,7 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
 
   return {
     command: execPath,
-    args: [profileArg],
+    args: [profileArg, ...extraArgs],
     cwd: undefined,
   };
 }
@@ -73,7 +76,7 @@ function openOrFocusProfile(activeProfile, profileId, options = {}) {
 
   const target = resolveFocusTarget(profileId);
   if (target?.isLocked) {
-    const focus = requestFocus(target);
+    const focus = requestFocus(target, { openSettings: options.openSettings === true });
     if (focus?.ok) {
       return { focused: true };
     }

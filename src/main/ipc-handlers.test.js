@@ -597,7 +597,8 @@ describe('ipc-handlers', () => {
     );
     expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'default' }),
-      'work'
+      'work',
+      { openSettings: false }
     );
   });
 
@@ -623,7 +624,33 @@ describe('ipc-handlers', () => {
     expect(result.launch).toBeUndefined();
     expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'default' }),
-      'work'
+      'work',
+      { openSettings: false }
+    );
+  });
+
+  test('forwards openSettings (edit button) to openOrFocusProfile', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      openOrFocusProfile: jest.fn(() => ({ focused: true })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work', openSettings: true },
+      HOST_RENDERER_URL
+    );
+
+    expect(result.success).toBe(true);
+    expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'default' }),
+      'work',
+      { openSettings: true }
     );
   });
 

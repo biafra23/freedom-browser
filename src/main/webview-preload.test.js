@@ -197,6 +197,7 @@ describe('webview-preload', () => {
         [{ id: 'work', displayName: 'Work' }],
       ],
       ['openProfile', ['work'], IPC.PROFILE_OPEN, [{ id: 'work' }]],
+      ['openProfileSettings', ['work'], IPC.PROFILE_OPEN, [{ id: 'work', openSettings: true }]],
       [
         'deleteProfile',
         ['work', 'Work'],

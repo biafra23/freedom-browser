@@ -426,8 +426,12 @@ function openProfileFromIpc(payload = {}) {
 
   try {
     // Focuses an already-running profile (fast) or cold-starts it. Shared with
-    // the native Profiles menu so both paths behave identically.
-    const opened = openOrFocusProfile(activeProfile, profileId);
+    // the native Profiles menu so both paths behave identically. `openSettings`
+    // (from the profile manager's edit button) lands the opened window on its
+    // Profile settings page.
+    const opened = openOrFocusProfile(activeProfile, profileId, {
+      openSettings: payload.openSettings === true,
+    });
     return success({
       profile: serializeProfileSummary(target),
       ...(opened.focused ? { focused: true } : { launch: opened.launch }),

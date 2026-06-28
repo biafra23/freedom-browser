@@ -100,6 +100,9 @@ function requestProfileFocusAsync(profile, options = {}) {
     profileId: profile.id || null,
     requestedAtMs: Date.now(),
     pid: process.pid,
+    // When set, the focused window also opens its Profile settings page (from
+    // the profile manager's edit button).
+    ...(options.openSettings ? { openSettings: true } : {}),
   };
 
   try {
