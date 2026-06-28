@@ -812,14 +812,17 @@
                   spellcheck="false"
                   placeholder="Profile name"
                 />
-                <button type="button" class="btn" id="profile-name-save">Save</button>
               </div>
             </div>
           </div>
+          <div class="card" style="margin-top: 12px">
+            <div class="rpc-block" style="border-top: none">
+              <button type="button" class="btn" id="manage-profiles-link">
+                Manage all profiles →
+              </button>
+            </div>
+          </div>
           <p id="profile-save-status" class="rpc-status"></p>
-          <a class="back-link" id="manage-profiles-link" href="freedom://profiles"
-            >Manage all profiles →</a
-          >
         </section>
 
         <!-- Nodes (per-profile node configuration) -->
@@ -1026,12 +1029,19 @@
       const swarmModeBtn = $('swarm-mode-action-btn');
       const profileFields = {
         nameInput: $('profile-name-input'),
-        nameSave: $('profile-name-save'),
         saveStatus: $('profile-save-status'),
         nodesCard: $('profile-nodes-card'),
         nodesStatus: $('profile-nodes-status'),
       };
+      // Navigate the settings tab to the profile manager (was an <a href>,
+      // now a card button matching the chain settings' "Add a chain").
+      $('manage-profiles-link')?.addEventListener('click', () => {
+        window.location.href = 'freedom://profiles';
+      });
       let activeProfileId = null;
+      // The committed profile name — the baseline an in-progress edit reverts
+      // to (Esc, an empty/unchanged value, or a failed save).
+      let savedProfileName = '';
 
       let isWindows = false;
       let profileRefreshTimer = null;
@@ -1265,6 +1275,7 @@
           const label = profile?.displayName || profile?.id || '';
           if (profileFields.nameInput && profileFields.nameInput !== document.activeElement) {
             profileFields.nameInput.value = label;
+            savedProfileName = label;
           }
           renderProfileNodes(profile, registry);
         } catch {
@@ -1295,35 +1306,45 @@
         }
       });
 
-      profileFields.nameSave?.addEventListener('click', async () => {
-        const displayName = profileFields.nameInput?.value.trim();
-        if (!activeProfileId) {
-          setProfileStatus('Active profile is not editable.', 'error');
+      // Renaming auto-saves when the field is left (blur) or Enter is hit.
+      // There is no success message — only failures surface. Empty, unchanged,
+      // or non-editable values silently revert to the committed name.
+      const commitProfileName = async () => {
+        const input = profileFields.nameInput;
+        if (!input) return;
+        setProfileStatus('', null);
+        const displayName = input.value.trim();
+        if (!activeProfileId || !displayName || displayName === savedProfileName) {
+          input.value = savedProfileName;
           return;
         }
-        if (!displayName) {
-          setProfileStatus('Profile name cannot be empty.', 'error');
-          return;
-        }
-        profileFields.nameSave.disabled = true;
-        setProfileStatus('Saving profile name…', 'testing');
         try {
           const result = await freedomAPI.renameProfile?.(activeProfileId, displayName);
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profile could not be renamed');
           }
-          setProfileStatus('Profile name saved.', 'success');
+          savedProfileName = displayName;
+          input.value = displayName;
         } catch (err) {
           setProfileStatus(err?.message || 'Profile could not be renamed', 'error');
-        } finally {
-          profileFields.nameSave.disabled = false;
+          input.value = savedProfileName;
         }
+      };
+
+      profileFields.nameInput?.addEventListener('blur', () => {
+        commitProfileName();
       });
 
       profileFields.nameInput?.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
-          profileFields.nameSave?.click();
+          // Blur commits via the blur handler.
+          profileFields.nameInput.blur();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          // Restore the committed name first so the blur commit is a no-op.
+          profileFields.nameInput.value = savedProfileName;
+          profileFields.nameInput.blur();
         }
       });
 
