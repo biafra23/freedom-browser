@@ -1,5 +1,5 @@
 const log = require('./logger');
-const { BrowserWindow, Menu, app, ipcMain } = require('electron');
+const { BrowserWindow, Menu, app, dialog, ipcMain } = require('electron');
 const { isMainBrowserWindow, getMainWindows, createMainWindow } = require('./windows/mainWindow');
 const {
   checkForUpdates,
@@ -38,9 +38,22 @@ async function switchToProfile(profileId) {
   if (!activeProfile || activeProfile.source !== 'catalog') return;
   if (!profileId || profileId === activeProfile.id) return;
   try {
-    await openOrFocusProfile(activeProfile, profileId);
+    // openOrFocusProfile resolves with { error } (it does NOT throw) when the
+    // profile is running but never acknowledged the focus request. The native
+    // menu has no status line like the hamburger flyout, so surface it with a
+    // dialog instead of failing silently — mirrors the renderer's
+    // PROFILE_FOCUS_FAILED handling.
+    const result = await openOrFocusProfile(activeProfile, profileId);
+    if (result?.error) {
+      log.warn('[menu] Profile switch did not complete:', result.error);
+      dialog.showErrorBox('Could not switch profile', result.error);
+    }
   } catch (err) {
     log.error('[menu] Failed to switch profile:', err?.message || err);
+    dialog.showErrorBox(
+      'Could not switch profile',
+      err?.message || 'The profile could not be opened.'
+    );
   }
 }
 

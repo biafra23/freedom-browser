@@ -864,6 +864,13 @@ describe('ipc-handlers', () => {
       )
     );
     expect(ctx.deleteProfileForActiveApp).not.toHaveBeenCalled();
+    // The no-ack fallback must probe the lock with an effectively-infinite
+    // stale window, so a still-held lock can't read as released merely because
+    // its heartbeat lapsed (dev profiles have a 5s stale < the delete wait).
+    expect(ctx.isProfileLocked).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'work' }),
+      { staleMs: Number.MAX_SAFE_INTEGER }
+    );
   });
 
   test('updates active profile node config through validated IPC', async () => {

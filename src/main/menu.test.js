@@ -1,13 +1,14 @@
 const { loadMainModule } = require('../../test/helpers/main-process-test-utils');
 
-function loadMenuModule(platform) {
+function loadMenuModule(platform, options = {}) {
   let capturedTemplate = null;
   const menuInstance = {
     on: jest.fn(),
     getMenuItemById: jest.fn(),
   };
+  const openOrFocusProfile = options.openOrFocusProfile || jest.fn();
 
-  const { mod } = loadMainModule(require.resolve('./menu'), {
+  const { mod, dialog } = loadMainModule(require.resolve('./menu'), {
     electronOverrides: {
       Menu: {
         buildFromTemplate: jest.fn((template) => {
@@ -38,7 +39,7 @@ function loadMenuModule(platform) {
         ],
       }),
       [require.resolve('./profile-launcher')]: () => ({
-        openOrFocusProfile: jest.fn(),
+        openOrFocusProfile,
       }),
     },
   });
@@ -52,7 +53,7 @@ function loadMenuModule(platform) {
     Object.defineProperty(process, 'platform', { value: originalPlatform });
   }
 
-  return { capturedTemplate, mod };
+  return { capturedTemplate, mod, dialog, openOrFocusProfile };
 }
 
 function findTopLabel(template, label) {
@@ -118,6 +119,31 @@ describe('menu', () => {
       expect(beta.enabled).not.toBe(false);
       expect(typeof beta.click).toBe('function');
     }
+  });
+
+  test('surfaces a dialog when a native-menu profile switch does not complete', async () => {
+    // openOrFocusProfile resolves with { error } (it doesn't throw) when the
+    // target profile is running but never acked the focus request — the native
+    // menu must not swallow that.
+    const openOrFocusProfile = jest.fn().mockResolvedValue({
+      focused: false,
+      error: 'The running profile did not respond',
+    });
+    const { capturedTemplate, dialog } = loadMenuModule('darwin', { openOrFocusProfile });
+
+    const profiles = findTopLabel(capturedTemplate, 'Profiles');
+    const beta = profiles.submenu.find((item) => item.label === 'Beta');
+
+    await beta.click();
+
+    expect(openOrFocusProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'alpha' }),
+      'beta'
+    );
+    expect(dialog.showErrorBox).toHaveBeenCalledWith(
+      'Could not switch profile',
+      'The running profile did not respond'
+    );
   });
 
   test('File menu no longer includes the profile management entry', () => {

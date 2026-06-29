@@ -505,10 +505,18 @@ async function ensureProfileClosedForDelete(profileId, options = {}) {
       continue;
     }
 
-    // No usable ack yet — fall back to the lock-release signal.
+    // No usable ack (older build, crash before ack, unreadable) — fall back to
+    // the lock-release signal. Use an effectively-infinite stale window so a
+    // still-held lock can't read as "released" merely because its heartbeat
+    // lapsed mid-shutdown. This matters for dev profiles, whose stale timeout
+    // (5s) is shorter than this wait (15s): without it, a slow dev shutdown
+    // could look closed while the process is still touching profile data. An
+    // already-dead, genuinely-stale lock from a crash is handled earlier by the
+    // target.isLocked gate (and resolves on a retry), so here we only accept a
+    // real release — the lock dir actually going away.
     let stillLocked;
     try {
-      stillLocked = isProfileLocked(target);
+      stillLocked = isProfileLocked(target, { staleMs: Number.MAX_SAFE_INTEGER });
     } catch {
       stillLocked = false;
     }
