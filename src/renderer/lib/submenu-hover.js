@@ -26,11 +26,21 @@ export const SUBMENU_CLOSE_DELAY_MS = 180;
  * @param {() => void} opts.close  Hide the submenu.
  * @param {number} [opts.openDelay]
  * @param {number} [opts.closeDelay]
+ * @param {boolean} [opts.closeOnLeave=true]  When false, leaving the wrapper
+ *   does NOT close the submenu (it stays open until dismissed some other way,
+ *   e.g. an outside click). Leaving still cancels a not-yet-fired open so a
+ *   quick brush over the trigger won't pop it open after the cursor has gone.
  * @returns {{ openNow: () => void, cancel: () => void, destroy: () => void }}
  */
 export function attachSubmenuHover(
   wrap,
-  { open, close, openDelay = SUBMENU_OPEN_DELAY_MS, closeDelay = SUBMENU_CLOSE_DELAY_MS } = {}
+  {
+    open,
+    close,
+    openDelay = SUBMENU_OPEN_DELAY_MS,
+    closeDelay = SUBMENU_CLOSE_DELAY_MS,
+    closeOnLeave = true,
+  } = {}
 ) {
   if (!wrap) {
     return { openNow: () => {}, cancel: () => {}, destroy: () => {} };
@@ -64,6 +74,7 @@ export function attachSubmenuHover(
   const handleLeave = () => {
     clearOpenTimer();
     clearCloseTimer();
+    if (!closeOnLeave) return;
     closeTimer = setTimeout(() => {
       closeTimer = null;
       close?.();

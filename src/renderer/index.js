@@ -494,9 +494,9 @@ async function initProfileIndicator() {
     }
   };
 
-  // macOS-style submenu: open after a short hover delay, close shortly after
-  // the cursor leaves (the close delay lets the cursor cross the small gap to
-  // the flyout). The flyout is a child of #menu-dropdown, so the hamburger's
+  // macOS-style submenu: open after a short hover delay. It deliberately does
+  // NOT close on mouse-out — once open it stays until a click lands outside it
+  // (handled below). The flyout is a child of #menu-dropdown, so the hamburger's
   // outside-click handler treats flyout clicks as inside — the hamburger stays
   // open with it. Timing lives in the shared attachSubmenuHover helper.
   const openFlyout = () => {
@@ -512,7 +512,7 @@ async function initProfileIndicator() {
 
   const flyoutHover = attachSubmenuHover(menuWrap, {
     open: openFlyout,
-    close: () => setMenuOpen(false),
+    closeOnLeave: false,
   });
 
   closeProfileMenu = () => {
@@ -523,6 +523,19 @@ async function initProfileIndicator() {
   // Click opens immediately (keyboard/tap), bypassing the hover delay; it never
   // toggles closed while the cursor is over the row.
   indicator.addEventListener('click', flyoutHover.openNow);
+
+  // The flyout no longer closes on mouse-out, so dismiss it on click-out: a
+  // click inside the wrapper (trigger or flyout) keeps it open; a click on any
+  // other hamburger row collapses just the flyout. Clicks fully outside the
+  // hamburger are handled in menus.js, which hides the flyout when the dropdown
+  // closes. Pointerdown (not click) so the dismissal isn't pre-empted by a row
+  // that closes the whole menu on click.
+  document.addEventListener('pointerdown', (event) => {
+    if (menu?.hidden !== false) return;
+    if (menuWrap?.contains(event.target)) return;
+    flyoutHover.cancel();
+    setMenuOpen(false);
+  });
 
   createBtn?.addEventListener('click', openCreateModal);
   manageBtn?.addEventListener('click', openProfilesManager);
