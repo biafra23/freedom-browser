@@ -446,4 +446,65 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
     expect(ctx.state.ipfsInfoInterval).toBeNull();
   });
+
+  test('reverts the switch back on when a stop() IPC rejects but the node is still running', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'running',
+      statusResult: { status: 'running', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    // stop() throws at the IPC layer; the node is in fact still running.
+    ctx.ipfsApi.stop.mockRejectedValueOnce(new Error('ipc boom'));
+    ctx.ipfsApi.getStatus.mockResolvedValueOnce({ status: 'running', error: null });
+
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    // Optimistically off right after the click.
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // Re-queried status shows the node never stopped, so the switch flips back
+    // on and stats polling resumes.
+    expect(ctx.ipfsApi.getStatus).toHaveBeenCalled();
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+    expect(ctx.state.ipfsInfoInterval).not.toBeNull();
+  });
+
+  test('a stale rejected stop() does not wipe a newer "on" intent', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'running',
+      statusResult: { status: 'running', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+    ctx.ipfsApi.getStatus.mockClear();
+
+    // First click off dispatches a stop() that will reject; the immediate second
+    // click on supersedes it with a start() we leave pending.
+    ctx.ipfsApi.stop.mockRejectedValueOnce(new Error('stale stop'));
+    ctx.ipfsApi.start.mockReturnValueOnce(new Promise(() => {}));
+
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // The stale stop() rejection is for the superseded "off" intent, so it must
+    // bail without clearing the newer "on" intent. (A non-bailing reconcile
+    // would have nulled the intent.)
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+  });
 });
