@@ -411,6 +411,34 @@
         color: var(--m-text);
       }
 
+      .modal-profile {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 14px;
+        padding: 10px 12px;
+        border: 1px solid var(--m-border);
+        border-radius: 8px;
+      }
+
+      .modal-profile-avatar {
+        flex: none;
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .modal-profile-name {
+        min-width: 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--m-text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       .modal-actions {
         display: flex;
         justify-content: flex-end;
@@ -506,7 +534,7 @@
     <div class="modal-overlay" id="delete-modal" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
         <div class="modal-header">
-          <h2 id="delete-modal-title">Delete Profile</h2>
+          <h2 id="delete-modal-title">Delete profile?</h2>
           <button type="button" class="close-modal" data-delete-cancel aria-label="Close">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -524,13 +552,17 @@
             </svg>
           </button>
         </div>
+        <div class="modal-profile">
+          <span class="modal-profile-avatar" data-delete-avatar></span>
+          <span class="modal-profile-name" data-delete-name></span>
+        </div>
         <p class="modal-copy">
-          Permanently delete <strong data-delete-name></strong> and all of its data — browsing,
-          vault, node data, and keys? This can't be undone.
+          This permanently deletes this profile and its browsing data, vault, node
+          data, and keys. This cannot be undone.
         </p>
         <div class="modal-actions">
           <button type="button" class="secondary-btn" data-delete-cancel>Cancel</button>
-          <button type="button" class="primary-btn danger" data-delete-confirm>Delete</button>
+          <button type="button" class="primary-btn danger" data-delete-confirm>Delete Profile</button>
         </div>
       </div>
     </div>
@@ -728,23 +760,38 @@
       // A simple yes/no confirmation (no typed-name challenge).
       let pendingDelete = null;
       const deleteConfirmBtn = deleteModal.querySelector('[data-delete-confirm]');
+      const deleteCancelBtn = deleteModal.querySelector('.secondary-btn[data-delete-cancel]');
       const deleteConfirmLabel = deleteConfirmBtn?.textContent || 'Delete';
+
+      // Keep the destructive button inert briefly after opening so the dialog
+      // can't be confirmed by reflex; it arms after a short, deliberate pause.
+      const DELETE_ARM_DELAY_MS = 1500;
+      let deleteArmTimer = null;
 
       const openDeleteModal = (profileId, displayName) => {
         pendingDelete = { profileId, displayName };
         deleteModal
           .querySelectorAll('[data-delete-name]')
           .forEach((el) => (el.textContent = displayName));
+        deleteModal
+          .querySelectorAll('[data-delete-avatar]')
+          .forEach((el) => (el.innerHTML = avatarSvg()));
         if (deleteConfirmBtn) {
-          deleteConfirmBtn.disabled = false;
           deleteConfirmBtn.textContent = deleteConfirmLabel;
+          deleteConfirmBtn.disabled = true;
         }
+        clearTimeout(deleteArmTimer);
+        deleteArmTimer = setTimeout(() => {
+          if (deleteConfirmBtn) deleteConfirmBtn.disabled = false;
+        }, DELETE_ARM_DELAY_MS);
         deleteModal.hidden = false;
-        deleteConfirmBtn?.focus();
+        // Focus Cancel (not the destructive action) so a stray Enter can't delete.
+        deleteCancelBtn?.focus();
       };
 
       const closeDeleteModal = () => {
         pendingDelete = null;
+        clearTimeout(deleteArmTimer);
         deleteModal.hidden = true;
       };
 
@@ -772,14 +819,17 @@
         .querySelectorAll('[data-delete-cancel]')
         .forEach((el) => el.addEventListener('click', closeDeleteModal));
       deleteConfirmBtn?.addEventListener('click', confirmDelete);
-      deleteModal.addEventListener('keydown', (event) => {
+      // Listen on the document, not the modal: clicking the modal body moves
+      // focus off the buttons, so a modal-scoped keydown would stop firing.
+      document.addEventListener('keydown', (event) => {
+        if (deleteModal.hidden) return;
         if (event.key === 'Escape') {
           event.preventDefault();
           closeDeleteModal();
+        } else if (event.key === 'Enter') {
+          // Enter is a no-op: deleting is destructive, so it must be a deliberate click.
+          event.preventDefault();
         }
-      });
-      deleteModal.addEventListener('click', (event) => {
-        if (event.target === deleteModal) closeDeleteModal();
       });
 
       // --- Profile actions ---------------------------------------------------
