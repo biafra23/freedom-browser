@@ -151,6 +151,38 @@ test('use: switching to another profile via the chrome menu records a launch', a
   expect(active.id).not.toBe(target.id);
 });
 
+// --- use / focus fast path -------------------------------------------------
+
+test('use: opening an already-running profile focuses it without recording a launch', async ({
+  window,
+  electronApp,
+}) => {
+  const target = await createProfileViaApi(window, 'QA Running');
+
+  // Mark the target as already running so openOrFocusProfile takes the focus
+  // fast path (focus its window) instead of cold-starting a second process.
+  await electronApp.evaluate(
+    (id) => globalThis.__FREEDOM_TEST_HARNESS__.simulateProfileFocus(id, { focused: true }),
+    target.id
+  );
+  await clearLaunches(electronApp);
+
+  // Drive the same trusted IPC the flyout invokes; it resolves once the focus
+  // decision is made, so the no-launch assertion below isn't racy.
+  const result = await window.evaluate(
+    (id) => window.electronAPI.openProfile(id),
+    target.id
+  );
+  expect(result?.success).toBe(true);
+  expect(result?.focused).toBe(true);
+
+  // Focus fast path: no second process was launched for the target…
+  expect(await recordedLaunchIds(electronApp)).not.toContain(target.id);
+  // …and the chrome stayed on its own (default) profile.
+  const active = await window.evaluate(() => window.electronAPI.getActiveProfile());
+  expect(active.id).not.toBe(target.id);
+});
+
 // --- manage / rename -------------------------------------------------------
 
 test('manage: the manager lists profiles and a rename updates the catalog', async ({ window }) => {
@@ -272,4 +304,57 @@ test('delete: confirming in the manager dialog removes the profile from the cata
   await expect
     .poll(() => managerEval(window, `!document.querySelector('[data-profile-id="${created.id}"]')`))
     .toBe(true);
+});
+
+test('delete: a failed delete restores the card and surfaces the error toast', async ({
+  window,
+  electronApp,
+}) => {
+  const created = await createProfileViaApi(window, 'QA Delete Fail');
+
+  // Force the delete IPC to fail as if the profile were open elsewhere and
+  // couldn't be closed (PROFILE_CLOSE_FAILED) — the renderer can't be made to
+  // fail from the page (freedomAPI is a read-only contextBridge object), so the
+  // failure is injected in the main process.
+  await electronApp.evaluate(
+    (id) => globalThis.__FREEDOM_TEST_HARNESS__.simulateProfileDelete(id),
+    created.id
+  );
+
+  await openManager(window);
+  await expect
+    .poll(() =>
+      managerEval(window, `!!document.querySelector('[data-profile-id="${created.id}"]')`)
+    )
+    .toBe(true);
+
+  // Open the confirm dialog and confirm once it arms.
+  await managerEval(
+    window,
+    `document.querySelector('[data-profile-id="${created.id}"] [data-delete-profile]').click(); true`
+  );
+  await expect
+    .poll(
+      () =>
+        managerEval(window, `document.querySelector('[data-delete-confirm]').disabled === false`),
+      { message: 'waiting for the delete-confirm button to arm', timeout: 5_000 }
+    )
+    .toBe(true);
+  await managerEval(window, `document.querySelector('[data-delete-confirm]').click(); true`);
+
+  // The toast appears with the failure reason…
+  await expect
+    .poll(() =>
+      managerEval(
+        window,
+        `(() => { const t = document.getElementById('profile-toast'); return t && t.hidden === false ? t.textContent : null; })()`
+      )
+    )
+    .toContain('could not be closed');
+
+  // …and the optimistically-removed card is restored (still in the catalog).
+  await expect
+    .poll(() => managerEval(window, `!!document.querySelector('[data-profile-id="${created.id}"]')`))
+    .toBe(true);
+  expect(await findProfile(window, (p) => p.id === created.id)).not.toBeNull();
 });

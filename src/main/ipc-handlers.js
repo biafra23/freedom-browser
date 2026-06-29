@@ -536,6 +536,16 @@ async function ensureProfileClosedForDelete(profileId, options = {}) {
 
 async function deleteProfileFromIpc(payload = {}, options = {}) {
   try {
+    // Test seam (E2E): simulate a delete outcome (e.g. PROFILE_CLOSE_FAILED for
+    // a profile open in another window) without a second process, so the
+    // manager's failure handling — card restore + error toast — can be
+    // exercised end-to-end. Inert in production (global undefined).
+    const deleteSim = globalThis.__FREEDOM_TEST_DELETE_SIM__;
+    if (typeof deleteSim === 'function') {
+      const simulated = deleteSim(payload.id);
+      if (simulated) return simulated;
+    }
+
     const activeProfile = getActiveProfile();
     if (payload.id && activeProfile && payload.id === activeProfile.id) {
       return failure('PROFILE_ACTIVE', 'The active profile cannot be deleted');

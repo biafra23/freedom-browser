@@ -88,6 +88,18 @@ function launchProfile(activeProfile, profileId, options = {}) {
 // The ack round-trip is what lets callers report a *confirmed* focus instead of
 // merely "the request was written" — see requestProfileFocusAsyncAwait.
 async function openOrFocusProfile(activeProfile, profileId, options = {}) {
+  // Test seam (E2E): simulate a profile that is already running, so the
+  // focus-fast-path can be exercised without spawning a real second process.
+  // When the harness has registered a simulated result for this id we return it
+  // verbatim ({ focused: true } or { focused: false, error }) and never reach
+  // launchProfile — mirroring the launch-recorder global used below. Inert in
+  // production, where the global is undefined.
+  const focusSim = globalThis.__FREEDOM_TEST_FOCUS_SIM__;
+  if (typeof focusSim === 'function') {
+    const simulated = focusSim(profileId, { openSettings: options.openSettings === true });
+    if (simulated) return simulated;
+  }
+
   // Lazy-required so this module stays loadable in isolation (and to avoid any
   // load-order coupling with profile-resolver).
   const resolveFocusTarget =

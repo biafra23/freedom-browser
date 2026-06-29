@@ -57,6 +57,25 @@ function resetProfileLaunches() {
   profileLaunches.length = 0;
 }
 
+// Simulated focus results keyed by profileId: lets E2E exercise the
+// focus-fast-path (target already running → focus it, no new launch) without a
+// second process. See installProfileFocusSimulator / profile-launcher.js.
+const profileFocusSims = new Map();
+
+function resetProfileFocusSims() {
+  profileFocusSims.clear();
+}
+
+// Simulated delete outcomes keyed by profileId: lets E2E exercise the manager's
+// delete failure handling (PROFILE_CLOSE_FAILED → restore card + toast) without
+// a second process holding the lock. See installProfileDeleteSimulator /
+// ipc-handlers.js (deleteProfileFromIpc).
+const profileDeleteSims = new Map();
+
+function resetProfileDeleteSims() {
+  profileDeleteSims.clear();
+}
+
 function resetFixtures() {
   contentFixtures.clear();
   ensFixtures.clear();
@@ -362,6 +381,23 @@ function installProfileLaunchRecorder() {
   };
 }
 
+// Counterpart to the launch recorder: when a spec has registered a simulated
+// focus result for a profileId, openOrFocusProfile returns it instead of
+// resolving a real lock / writing a focus-request file. Returns null for ids
+// with no simulation so normal (launch-recording) behaviour applies.
+function installProfileFocusSimulator() {
+  globalThis.__FREEDOM_TEST_FOCUS_SIM__ = (profileId) =>
+    profileFocusSims.has(profileId) ? { ...profileFocusSims.get(profileId) } : null;
+}
+
+// Counterpart for deletes: when a spec has registered a simulated outcome for a
+// profileId, deleteProfileFromIpc returns it (an ipc-contract failure/success
+// object) instead of running the real close-and-remove path. null → real path.
+function installProfileDeleteSimulator() {
+  globalThis.__FREEDOM_TEST_DELETE_SIM__ = (profileId) =>
+    profileDeleteSims.has(profileId) ? { ...profileDeleteSims.get(profileId) } : null;
+}
+
 // Expose a synchronous shim on the main-process global so the Playwright
 // runner can drive fixtures via `electronApp.evaluate(() => globalThis
 // .__FREEDOM_TEST_HARNESS__.setContentFixture(...))` without an IPC
@@ -383,6 +419,30 @@ function exposeGlobalShim() {
     // these to confirm a profile "open"/switch fired for the expected id.
     profileLaunches: () => profileLaunches.map((entry) => ({ ...entry })),
     clearProfileLaunches: resetProfileLaunches,
+    // Focus-fast-path simulation (see installProfileFocusSimulator). A spec
+    // marks a profile as already-running so opening it focuses (no launch);
+    // pass a result like { focused: true } or { focused: false, error }.
+    simulateProfileFocus: (profileId, result) => {
+      profileFocusSims.set(profileId, result || { focused: true });
+    },
+    clearProfileFocusSims: resetProfileFocusSims,
+    // Delete-failure simulation (see installProfileDeleteSimulator). A spec
+    // registers a failure-shaped result for a profileId so the manager's
+    // delete IPC reports failure without a real second process.
+    simulateProfileDelete: (profileId, result) => {
+      profileDeleteSims.set(
+        profileId,
+        result || {
+          success: false,
+          error: {
+            code: 'PROFILE_CLOSE_FAILED',
+            message:
+              'This profile is open and could not be closed automatically. Close its window and try again.',
+          },
+        }
+      );
+    },
+    clearProfileDeleteSims: resetProfileDeleteSims,
     state: () => ({
       content: [...contentFixtures.keys()],
       ens: [...ensFixtures.keys()],
@@ -397,6 +457,8 @@ function installTestHarness({ defaultSession }) {
   log.info('[test-harness] FREEDOM_TEST_MODE=1 — installing harness');
   resetFixtures();
   resetProfileLaunches();
+  resetProfileFocusSims();
+  resetProfileDeleteSims();
   registerStubProtocols(defaultSession);
   overrideEnsIpc();
   overrideProbeIpc();
@@ -404,6 +466,8 @@ function installTestHarness({ defaultSession }) {
   registerTestOps();
   seedRegistry();
   installProfileLaunchRecorder();
+  installProfileFocusSimulator();
+  installProfileDeleteSimulator();
   exposeGlobalShim();
   return true;
 }

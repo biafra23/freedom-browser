@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;"
     />
     <title>Profiles</title>
     <link
@@ -598,6 +598,10 @@
 
     <div class="profile-toast" id="profile-toast" role="status" aria-live="polite" hidden></div>
 
+    <!-- Shared hover tooltip for internal pages; exposes window.bindHoverTooltip
+         / window.hideHoverTooltip. Loaded before the inline script below so they
+         are defined when card rendering binds them. -->
+    <script src="scripts/hover-tooltip.js"></script>
     <script>
       const managerList = document.getElementById('profile-manager-list');
       const deleteModal = document.getElementById('delete-modal');
@@ -632,41 +636,10 @@
         }
       };
 
-      // --- Hover tooltip ------------------------------------------------------
-      // Inline mirror of lib/hover-tooltip.js (this page can't import modules).
-      // Keep the delay and behaviour in sync with that module.
-      const TOOLTIP_HOVER_DELAY_MS = 250;
-      let hoverTooltipEl = null;
-      let hoverTooltipTimer = null;
-
-      const hideHoverTooltip = () => {
-        clearTimeout(hoverTooltipTimer);
-        hoverTooltipTimer = null;
-        if (hoverTooltipEl) hoverTooltipEl.hidden = true;
-      };
-
-      const bindHoverTooltip = (el, getText) => {
-        el.addEventListener('mouseenter', (event) => {
-          const text = getText(el);
-          if (!text) return;
-          clearTimeout(hoverTooltipTimer);
-          const x = event.clientX;
-          const y = event.clientY;
-          hoverTooltipTimer = setTimeout(() => {
-            if (!hoverTooltipEl) {
-              hoverTooltipEl = document.createElement('div');
-              hoverTooltipEl.className = 'hover-tooltip';
-              hoverTooltipEl.hidden = true;
-              document.body.appendChild(hoverTooltipEl);
-            }
-            hoverTooltipEl.textContent = text;
-            hoverTooltipEl.style.left = `${x + 12}px`;
-            hoverTooltipEl.style.top = `${y + 18}px`;
-            hoverTooltipEl.hidden = false;
-          }, TOOLTIP_HOVER_DELAY_MS);
-        });
-        el.addEventListener('mouseleave', hideHoverTooltip);
-      };
+      // Hover tooltip for clipped names comes from the shared
+      // scripts/hover-tooltip.js loaded above (window.bindHoverTooltip /
+      // window.hideHoverTooltip).
+      const { bindHoverTooltip, hideHoverTooltip } = window;
 
       // --- Avatar ------------------------------------------------------------
       // Every profile uses the same generic icon on a single flat colour; cards
