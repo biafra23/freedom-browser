@@ -685,23 +685,20 @@
       const confirmDelete = async () => {
         if (!pendingDelete) return;
         const { profileId, displayName } = pendingDelete;
-        if (deleteConfirmBtn) {
-          deleteConfirmBtn.disabled = true;
-          deleteConfirmBtn.textContent = 'Deleting…';
-        }
+        // Optimistic: drop the card and return to the manager immediately, then
+        // delete in the background. On failure we re-fetch to restore the card.
+        closeDeleteModal();
+        managerList
+          ?.querySelector(`[data-profile-id="${CSS.escape(profileId)}"]`)
+          ?.remove();
         try {
           const result = await freedomAPI.deleteProfile?.(profileId, displayName);
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profile could not be deleted');
           }
-          closeDeleteModal();
-          await refreshProfiles();
         } catch (err) {
           logError('Failed to delete profile', err);
-          if (deleteConfirmBtn) {
-            deleteConfirmBtn.disabled = false;
-            deleteConfirmBtn.textContent = deleteConfirmLabel;
-          }
+          await refreshProfiles();
         }
       };
 
