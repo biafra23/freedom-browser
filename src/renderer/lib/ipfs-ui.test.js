@@ -415,4 +415,35 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsVersionText.textContent).toBe('Freedom IPFS');
     expect(ctx.state.ipfsVersionValue).toBe('Freedom IPFS');
   });
+
+  test('reverts optimistic UI to real status when a toggle IPC rejects', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'stopped',
+      statusResult: { status: 'stopped', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    // start() throws at the IPC layer; a follow-up status query shows the node
+    // never came up.
+    ctx.ipfsApi.start.mockRejectedValueOnce(new Error('ipc boom'));
+    ctx.ipfsApi.getStatus.mockResolvedValueOnce({ status: 'stopped', error: null });
+
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    // Optimistically on right after the click.
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // The rejection dropped the optimistic intent, re-queried status, and
+    // settled the switch back off instead of polling a node that never started.
+    expect(ctx.ipfsApi.getStatus).toHaveBeenCalled();
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+    expect(ctx.state.ipfsInfoInterval).toBeNull();
+  });
 });

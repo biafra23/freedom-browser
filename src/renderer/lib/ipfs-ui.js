@@ -224,6 +224,28 @@ export const updateIpfsToggleState = () => {
   }
 };
 
+// A rejected start()/stop() IPC (a thrown call, not a `{ status: 'error' }`
+// result) skips the .then reconciliation, so the optimistic switch/polling state
+// we applied on click would otherwise linger. Re-query the real status and feed
+// it back through updateIpfsUi so the UI settles to the truth instead of the
+// intent we guessed.
+const reconcileToggleError = (err) => {
+  console.error('Failed to toggle IPFS', err);
+  pushDebug(`Failed to toggle IPFS: ${err.message}`);
+  // The call threw, so the action never took effect. Drop the optimistic intent
+  // we applied on click — otherwise a held intent would mask the real status and
+  // keep the switch on a state that never happened.
+  state.ipfsDesiredRunning = null;
+  window.ipfs
+    ?.getStatus?.()
+    .then(({ status, error }) => updateIpfsUi(status, error))
+    .catch(() => {
+      // Status re-query also failed; settle the switch on the last-known status
+      // and let the periodic refresh poll correct it later.
+      updateIpfsUi(state.currentIpfsStatus);
+    });
+};
+
 export const initIpfsUi = () => {
   // Initialize DOM elements
   ipfsToggleBtn = document.getElementById('ipfs-toggle-btn');
@@ -271,10 +293,7 @@ export const initIpfsUi = () => {
       window.ipfs
         .stop()
         .then(({ status, error }) => updateIpfsUi(status, error))
-        .catch((err) => {
-          console.error('Failed to toggle IPFS', err);
-          pushDebug(`Failed to toggle IPFS: ${err.message}`);
-        });
+        .catch((err) => reconcileToggleError(err));
     } else {
       state.ipfsDesiredRunning = true;
       ipfsToggleSwitch?.classList.add('running');
@@ -283,10 +302,7 @@ export const initIpfsUi = () => {
       window.ipfs
         .start()
         .then(({ status, error }) => updateIpfsUi(status, error))
-        .catch((err) => {
-          console.error('Failed to toggle IPFS', err);
-          pushDebug(`Failed to toggle IPFS: ${err.message}`);
-        });
+        .catch((err) => reconcileToggleError(err));
     }
   });
 
