@@ -133,6 +133,35 @@
         text-align: center;
       }
 
+      /* Transient status toast for action failures (delete/open/register/edit).
+         Mirrors the hamburger flyout's status line: quiet on success, a brief
+         message on error so failures aren't silent. */
+      .profile-toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        max-width: min(90vw, 440px);
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.4;
+        text-align: center;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        z-index: 1000;
+      }
+
+      .profile-toast.error {
+        background: #b3261e;
+        color: #fff;
+      }
+
+      .profile-toast.info {
+        background: var(--bg-card);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
       .profile-card {
         display: flex;
         flex-direction: column;
@@ -567,9 +596,12 @@
       </div>
     </div>
 
+    <div class="profile-toast" id="profile-toast" role="status" aria-live="polite" hidden></div>
+
     <script>
       const managerList = document.getElementById('profile-manager-list');
       const deleteModal = document.getElementById('delete-modal');
+      const profileToast = document.getElementById('profile-toast');
 
       const esc = (s) =>
         String(s == null ? '' : s).replace(
@@ -577,11 +609,27 @@
           (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]
         );
 
-      // Operation failures are logged for diagnosis rather than surfaced as
-      // status text — the UI stays quiet on success and on error.
       const logError = (message, err) => {
         // eslint-disable-next-line no-console
         console.error('[profiles] ' + message, err || '');
+      };
+
+      // Surface action failures (delete/open/register/edit) as a brief toast so
+      // they aren't silent — e.g. an optimistic-delete failure that restores the
+      // card now also says why. Auto-dismisses; passing no message hides it.
+      let toastTimer = null;
+      const STATUS_TIMEOUT_MS = 6000;
+      const showStatus = (message, kind = 'error') => {
+        if (!profileToast) return;
+        profileToast.textContent = message || '';
+        profileToast.className = 'profile-toast' + (kind ? ' ' + kind : '');
+        profileToast.hidden = !message;
+        clearTimeout(toastTimer);
+        if (message) {
+          toastTimer = setTimeout(() => {
+            profileToast.hidden = true;
+          }, STATUS_TIMEOUT_MS);
+        }
       };
 
       // --- Hover tooltip ------------------------------------------------------
@@ -759,6 +807,7 @@
           }
         } catch (err) {
           logError('Failed to open profile settings', err);
+          showStatus(err.message || 'Profile settings could not be opened');
         }
       };
 
@@ -806,7 +855,30 @@
 
       const confirmDelete = async () => {
         if (!pendingDelete) return;
-        const { profileId, displayName } = pendingDelete;
+        const { profileId } = pendingDelete;
+
+        // The modal captured the display name when it opened; a rename in
+        // another window since then would make that confirmation stale and the
+        // server rejects it. Re-read the current name from the catalog by id so
+        // we confirm against what the profile is actually called *now*. If it's
+        // already gone (deleted elsewhere), there's nothing to do but refresh.
+        let confirmDisplayName = pendingDelete.displayName;
+        try {
+          const listed = await freedomAPI.listProfiles?.();
+          if (listed?.success) {
+            const current = listed.profiles?.find((p) => p.id === profileId);
+            if (!current) {
+              closeDeleteModal();
+              await refreshProfiles();
+              return;
+            }
+            confirmDisplayName = current.displayName || confirmDisplayName;
+          }
+        } catch (err) {
+          // Fall back to the captured name; the server still guards the match.
+          logError('Failed to re-read profile name before delete', err);
+        }
+
         // Optimistic: drop the card and return to the manager immediately, then
         // delete in the background. On failure we re-fetch to restore the card.
         // Mark the id as deleting so a concurrent onProfileUpdated refresh can't
@@ -817,7 +889,7 @@
           ?.querySelector(`[data-profile-id="${CSS.escape(profileId)}"]`)
           ?.remove();
         try {
-          const result = await freedomAPI.deleteProfile?.(profileId, displayName);
+          const result = await freedomAPI.deleteProfile?.(profileId, confirmDisplayName);
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profile could not be deleted');
           }
@@ -826,6 +898,7 @@
           pendingDeleteIds.delete(profileId);
         } catch (err) {
           logError('Failed to delete profile', err);
+          showStatus(err.message || 'Profile could not be deleted');
           pendingDeleteIds.delete(profileId);
           await refreshProfiles();
         }
@@ -860,6 +933,7 @@
           }
         } catch (err) {
           logError('Failed to open profile', err);
+          showStatus(err.message || 'Profile could not be opened');
         } finally {
           if (trigger) trigger.disabled = false;
         }
@@ -876,6 +950,7 @@
           await refreshProfiles();
         } catch (err) {
           logError('Failed to register profile', err);
+          showStatus(err.message || 'Profile could not be registered');
         }
       };
 

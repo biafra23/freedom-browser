@@ -27,6 +27,9 @@ const findProfile = async (window, predicate) => {
   return (result?.profiles || []).find(predicate) || null;
 };
 
+const recordedLaunches = (electronApp) =>
+  electronApp.evaluate(() => globalThis.__FREEDOM_TEST_HARNESS__.profileLaunches());
+
 const recordedLaunchIds = (electronApp) =>
   electronApp.evaluate(() =>
     globalThis.__FREEDOM_TEST_HARNESS__.profileLaunches().map((l) => l.profileId)
@@ -183,6 +186,40 @@ test('manage: the manager lists profiles and a rename updates the catalog', asyn
       )
     )
     .toBe(renamed);
+});
+
+// --- edit (open settings deep link) ----------------------------------------
+
+test('edit: the pencil opens a non-active profile on its Settings page (openSettings deep link)', async ({
+  window,
+  electronApp,
+}) => {
+  const created = await createProfileViaApi(window, 'QA Edit');
+  await clearLaunches(electronApp);
+
+  await openManager(window);
+  await expect
+    .poll(() =>
+      managerEval(window, `!!document.querySelector('[data-profile-id="${created.id}"]')`)
+    )
+    .toBe(true);
+
+  // Click the card's pencil. For a non-active profile this routes through
+  // openProfileSettings → profile:open with openSettings:true, which (since the
+  // target isn't running here) cold-starts it — recorded by the harness with
+  // the openSettings flag set.
+  await managerEval(
+    window,
+    `document.querySelector('[data-profile-id="${created.id}"] [data-edit-profile]').click(); true`
+  );
+
+  await expect
+    .poll(async () =>
+      (await recordedLaunches(electronApp)).some(
+        (l) => l.profileId === created.id && l.openSettings === true
+      )
+    )
+    .toBe(true);
 });
 
 // --- delete ----------------------------------------------------------------
