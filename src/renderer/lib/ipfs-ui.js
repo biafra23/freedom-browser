@@ -49,13 +49,31 @@ const parseNativeBuildInfo = (raw) => {
   }
 };
 
-const formatNativeVersionLabel = (diagnostics = {}) => {
+const readNativeVersion = (diagnostics = {}) => {
   const buildInfo = parseNativeBuildInfo(diagnostics.nativeBuildInfo);
-  const version =
+  return (
     (typeof buildInfo?.version === 'string' && buildInfo.version) ||
     (typeof diagnostics.nativeVersion === 'string' && diagnostics.nativeVersion) ||
-    '';
-  return version ? `Freedom IPFS v${version}` : 'Freedom IPFS';
+    ''
+  );
+};
+
+// The native node only reports its version once it's actually running. Read it
+// off each stats poll and cache it the first time a real version appears — and
+// only then. A poll taken while the node is still spinning up (stopped status /
+// no diagnostics) shows the bare 'Freedom IPFS' fallback but does NOT mark the
+// version fetched, so later polls keep upgrading it instead of locking in the
+// fallback forever.
+const updateVersionFromDiagnostics = (diagnostics) => {
+  if (state.ipfsVersionFetched) return;
+  const version = readNativeVersion(diagnostics);
+  if (version) {
+    state.ipfsVersionValue = `Freedom IPFS v${version}`;
+    state.ipfsVersionFetched = true;
+  } else if (!state.ipfsVersionValue) {
+    state.ipfsVersionValue = 'Freedom IPFS';
+  }
+  if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 
 // The node counts as running for UI purposes when a pending toggle wants it on,
@@ -85,24 +103,11 @@ const fetchNativeStats = async () => {
     if (ipfsDataRead) {
       ipfsDataRead.textContent = formatBytes(stats.bytes_read || 0);
     }
+    updateVersionFromDiagnostics(status?.diagnostics);
   } catch {
     if (ipfsActiveRequestsCount) ipfsActiveRequestsCount.textContent = '0';
     if (ipfsDataRead) ipfsDataRead.textContent = '';
   }
-};
-
-const fetchVersionOnce = async () => {
-  if (state.ipfsVersionFetched) return;
-  state.ipfsVersionFetched = true;
-  let versionLabel = null;
-  try {
-    const status = await window.ipfs?.getStatus?.();
-    versionLabel = formatNativeVersionLabel(status?.diagnostics);
-  } catch {
-    // Fall back below; version display must not block status polling.
-  }
-  state.ipfsVersionValue = versionLabel || 'Freedom IPFS';
-  if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 
 export const startIpfsInfoPolling = () => {
@@ -113,8 +118,10 @@ export const startIpfsInfoPolling = () => {
 
   ipfsInfoPanel?.classList.add('visible');
 
+  // fetchNativeStats also reads the node version off the same getStatus call and
+  // upgrades the label once a real version is available (see
+  // updateVersionFromDiagnostics).
   fetchNativeStats();
-  if (!state.ipfsVersionFetched) fetchVersionOnce();
 
   if (state.ipfsInfoInterval) clearInterval(state.ipfsInfoInterval);
   state.ipfsInfoInterval = setInterval(fetchNativeStats, 1000);

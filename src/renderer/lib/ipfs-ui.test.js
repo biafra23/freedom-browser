@@ -416,6 +416,40 @@ describe('ipfs-ui', () => {
     expect(ctx.state.ipfsVersionValue).toBe('Freedom IPFS');
   });
 
+  test('upgrades the version label once IPFS reports a real version after starting', async () => {
+    // Node has no version yet (still spinning up after a start from stopped).
+    let diagnostics = { nativeGatewayStats: JSON.stringify({ bytes_read: 0 }) };
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'running',
+    });
+    ctx.ipfsApi.getStatus.mockImplementation(async () => ({
+      status: 'running',
+      error: null,
+      diagnostics,
+    }));
+
+    ctx.mod.initIpfsUi();
+    ctx.mod.startIpfsInfoPolling();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // First poll ran before a version was available: show the fallback but do
+    // NOT cache it, so later polls can still upgrade.
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Freedom IPFS');
+    expect(ctx.state.ipfsVersionFetched).toBe(false);
+
+    // The node finishes starting and now reports a version; the next poll tick
+    // upgrades the label and caches it.
+    diagnostics = { nativeVersion: '0.4.2' };
+    const statsPoll = ctx.setIntervalMock.mock.calls.find((call) => call[1] === 1000)[0];
+    await statsPoll();
+    await flushMicrotasks();
+
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Freedom IPFS v0.4.2');
+    expect(ctx.state.ipfsVersionFetched).toBe(true);
+  });
+
   test('reverts optimistic UI to real status when a toggle IPC rejects', async () => {
     const ctx = await loadIpfsModule({
       antMenuOpen: true,
