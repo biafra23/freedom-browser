@@ -297,41 +297,64 @@ describe('ipfs-ui', () => {
     expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('User toggled IPFS Off');
   });
 
-  test('keeps the switch on the latest intent through a rapid off/on toggle', async () => {
+  test('switches the toggle instantly on each click and converges the backend to the final state', async () => {
     const ctx = await loadIpfsModule({
       antMenuOpen: true,
       currentIpfsStatus: 'running',
       statusResult: { status: 'running', error: null },
+      stopResult: { status: 'stopped', error: null },
+      startResult: { status: 'running', error: null },
     });
 
     ctx.mod.initIpfsUi();
     await flushMicrotasks();
 
-    // Click off, then immediately back on before the backend has settled.
+    // Each click flips the switch immediately — no waiting on the backend.
     ctx.elements.ipfsToggleBtn.dispatch('click');
     expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
     ctx.elements.ipfsToggleBtn.dispatch('click');
     expect(ctx.state.ipfsDesiredRunning).toBe(true);
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
 
-    // The reversal must actually reach the backend: stop() fired on the first
-    // click and start() on the second, in that order — not just settle the UI.
+    // The background reconcile loop drives the node to the final "on" target
+    // (stop() then start(), in order), then clears the pending intent.
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
     expect(ctx.ipfsApi.stop).toHaveBeenCalledTimes(1);
     expect(ctx.ipfsApi.start).toHaveBeenCalledTimes(1);
     expect(ctx.ipfsApi.stop.mock.invocationCallOrder[0]).toBeLessThan(
       ctx.ipfsApi.start.mock.invocationCallOrder[0]
     );
-
-    // Transient backend states from the stop/start churn must not flip it off.
-    ctx.mod.updateIpfsUi('stopping');
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+  });
+
+  test('never flickers the switch to an intermediate backend status during convergence', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'stopped',
+      statusResult: { status: 'stopped', error: null },
+      startResult: { status: 'running', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+
+    // Stale/intermediate backend updates arriving mid-transition must not move
+    // the switch off the user's latest click.
     ctx.mod.updateIpfsUi('stopped');
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
     ctx.mod.updateIpfsUi('starting');
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
 
-    // Once the in-flight start() call settles, the superseded stop() result is
-    // ignored, the intent clears, and the switch follows the confirmed status.
+    // Once the loop reaches the target the intent clears and the switch stays on.
     await flushMicrotasks();
     await flushMicrotasks();
     expect(ctx.state.ipfsDesiredRunning).toBeNull();
@@ -533,67 +556,40 @@ describe('ipfs-ui', () => {
     expect(ctx.state.ipfsInfoInterval).not.toBeNull();
   });
 
-  test('a stale rejected stop() does not wipe a newer "on" intent', async () => {
-    const ctx = await loadIpfsModule({
-      antMenuOpen: true,
-      currentIpfsStatus: 'running',
-      statusResult: { status: 'running', error: null },
-    });
-
-    ctx.mod.initIpfsUi();
-    await flushMicrotasks();
-    ctx.ipfsApi.getStatus.mockClear();
-
-    // First click off dispatches a stop() that will reject; the immediate second
-    // click on supersedes it with a start() we leave pending.
-    ctx.ipfsApi.stop.mockRejectedValueOnce(new Error('stale stop'));
-    ctx.ipfsApi.start.mockReturnValueOnce(new Promise(() => {}));
-
-    ctx.elements.ipfsToggleBtn.dispatch('click');
-    expect(ctx.state.ipfsDesiredRunning).toBe(false);
-    ctx.elements.ipfsToggleBtn.dispatch('click');
-    expect(ctx.state.ipfsDesiredRunning).toBe(true);
-
-    await flushMicrotasks();
-    await flushMicrotasks();
-
-    // The stale stop() rejection is for the superseded "off" intent, so it must
-    // bail without clearing the newer "on" intent. (A non-bailing reconcile
-    // would have nulled the intent.)
-    expect(ctx.state.ipfsDesiredRunning).toBe(true);
-    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
-  });
-
-  test('a stale rejected start() does not wipe a newer "off" intent', async () => {
+  test('a click made while the reconcile loop is working redirects it to the new target', async () => {
     const ctx = await loadIpfsModule({
       antMenuOpen: true,
       currentIpfsStatus: 'stopped',
       statusResult: { status: 'stopped', error: null },
+      startResult: { status: 'running', error: null },
+      stopResult: { status: 'stopped', error: null },
     });
 
     ctx.mod.initIpfsUi();
     await flushMicrotasks();
 
-    // First click on dispatches a start() that will reject; the immediate second
-    // click off supersedes it with a stop() we leave pending.
-    ctx.ipfsApi.start.mockRejectedValueOnce(new Error('stale start'));
-    ctx.ipfsApi.stop.mockReturnValueOnce(new Promise(() => {}));
-
+    // Click on — the loop dispatches start() and suspends awaiting it. Before it
+    // resolves, click off: the switch follows instantly and the loop will pick up
+    // the new "off" target once start() returns.
     ctx.elements.ipfsToggleBtn.dispatch('click');
     expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
     ctx.elements.ipfsToggleBtn.dispatch('click');
     expect(ctx.state.ipfsDesiredRunning).toBe(false);
-
-    await flushMicrotasks();
-    await flushMicrotasks();
-
-    // The stale start() rejection is for the superseded "on" intent, so it must
-    // bail — leaving the newer "off" intent and switch untouched, and without
-    // logging the superseded failure.
-    expect(ctx.state.ipfsDesiredRunning).toBe(false);
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
-    expect(ctx.debugMocks.pushDebug).not.toHaveBeenCalledWith(
-      'Failed to toggle IPFS: stale start'
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // The loop reached the latest target: it started the node, then stopped it to
+    // honor the final "off" click, and the switch ends off with no pending intent.
+    expect(ctx.ipfsApi.start).toHaveBeenCalledTimes(1);
+    expect(ctx.ipfsApi.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.ipfsApi.start.mock.invocationCallOrder[0]).toBeLessThan(
+      ctx.ipfsApi.stop.mock.invocationCallOrder[0]
     );
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
   });
 });

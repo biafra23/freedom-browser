@@ -76,14 +76,16 @@ const updateVersionFromDiagnostics = (diagnostics) => {
   if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 
-// The node counts as running for UI purposes when a pending toggle wants it on,
-// or — with no toggle in flight — when the live status says so. Toggle handling
-// and stats polling share this so a pending "on" doesn't leave the panel blank
-// while the backend is still reporting the stale 'stopped' status.
+// The real backend state, ignoring any pending user intent.
+const isIpfsLiveRunning = () =>
+  state.currentIpfsStatus === 'running' || state.currentIpfsStatus === 'starting';
+
+// What the UI should show: the user's target while a toggle is pending
+// (ipfsDesiredRunning !== null), otherwise the live backend state. The switch
+// and stats polling read this so the toggle reflects the latest click instantly
+// and never flickers back to a transient/stale backend status mid-transition.
 const isIpfsEffectivelyRunning = () =>
-  state.ipfsDesiredRunning !== null
-    ? state.ipfsDesiredRunning
-    : state.currentIpfsStatus === 'running' || state.currentIpfsStatus === 'starting';
+  state.ipfsDesiredRunning !== null ? state.ipfsDesiredRunning : isIpfsLiveRunning();
 
 const fetchNativeStats = async () => {
   if (!state.antMenuOpen) return;
@@ -136,12 +138,10 @@ export const updateIpfsUi = (status, error) => {
 
   if (!ipfsToggleBtn || !ipfsToggleSwitch) return;
 
-  // While a toggle is in flight (ipfsDesiredRunning !== null) the switch follows
-  // the user's intent and ignores transient/stale backend states. The intent is
-  // not cleared here: it's cleared when the initiating start()/stop() call
-  // settles (see settleToggle / reconcileToggleError), so once the action is
-  // truly done the switch follows live status — including re-syncing to
-  // 'running' when a stop failed and left the node up.
+  // While a toggle is pending (ipfsDesiredRunning !== null) the switch follows
+  // the user's target and ignores transient/stale backend states. The intent is
+  // cleared by the reconcile loop once it reaches the target or gives up (see
+  // reconcileIpfsToggle), after which the switch follows live status again.
   const showRunning = isIpfsEffectivelyRunning();
 
   ipfsToggleSwitch.classList.toggle('running', showRunning);
@@ -217,42 +217,52 @@ export const updateIpfsToggleState = () => {
   }
 };
 
-// The initiating start()/stop() call has resolved. If a newer click hasn't
-// superseded this action, the transition is over: drop the pending intent and
-// let the reported status drive the UI. This is what re-syncs the switch when a
-// stop "failed" but left the node running (status comes back 'running'), instead
-// of holding it off forever.
-const settleToggle = (expectedIntent, result) => {
-  if (state.ipfsDesiredRunning !== expectedIntent) return; // superseded by a newer click
-  state.ipfsDesiredRunning = null;
-  const { status, error } = result || {};
-  updateIpfsUi(status, error);
-};
+// True while the background reconcile loop is converging the backend toward the
+// user's target, so a flurry of clicks doesn't spawn overlapping loops.
+let ipfsReconciling = false;
 
-// A rejected start()/stop() IPC (a thrown call, not a `{ status: 'error' }`
-// result) skips the settle path, so the optimistic switch/polling state we
-// applied on click would otherwise linger. Re-query the real status and feed it
-// back through updateIpfsUi so the UI settles to the truth instead of the intent
-// we guessed.
-const reconcileToggleError = (expectedIntent, err) => {
-  // A newer click may have already changed the intent while this call was in
-  // flight; if so, this rejection is stale — bail (without logging the noise)
-  // so it can't wipe the newer intent or settle the switch from outdated status.
-  if (state.ipfsDesiredRunning !== expectedIntent) return;
-  console.error('Failed to toggle IPFS', err);
-  pushDebug(`Failed to toggle IPFS: ${err.message}`);
-  // The call threw, so the action never took effect. Drop the optimistic intent
-  // we applied on click — otherwise a held intent would mask the real status and
-  // keep the switch on a state that never happened.
-  state.ipfsDesiredRunning = null;
-  window.ipfs
-    ?.getStatus?.()
-    .then(({ status, error } = {}) => updateIpfsUi(status, error))
-    .catch(() => {
-      // Status re-query also failed; settle the switch on the last-known status
-      // and let the periodic refresh poll correct it later.
-      updateIpfsUi(state.currentIpfsStatus);
-    });
+// Drive the backend toward state.ipfsDesiredRunning. The click handler sets the
+// target and the switch instantly; this loop does the slow start()/stop() work
+// in the background and always converges to the *latest* target, so the user can
+// toggle rapidly and the node ends up where they last left the switch.
+//
+// Each iteration re-reads the target, so a click made mid-flight redirects the
+// loop. If an operation completes without reaching a still-unchanged target
+// (e.g. a stop that left the node running, or a start that failed), the loop
+// gives up rather than spinning, and the switch falls back to the real status.
+const reconcileIpfsToggle = async () => {
+  if (ipfsReconciling) return;
+  ipfsReconciling = true;
+  try {
+    while (state.ipfsDesiredRunning !== null && state.ipfsDesiredRunning !== isIpfsLiveRunning()) {
+      const target = state.ipfsDesiredRunning;
+      let status;
+      let error;
+      try {
+        const result = (target ? await window.ipfs.start() : await window.ipfs.stop()) || {};
+        ({ status, error } = result);
+      } catch (err) {
+        console.error('Failed to toggle IPFS', err);
+        pushDebug(`Failed to toggle IPFS: ${err.message}`);
+        // The call threw; re-query the real status so the UI reflects reality.
+        const live = await window.ipfs?.getStatus?.()?.catch(() => null);
+        status = live?.status ?? state.currentIpfsStatus;
+        error = live?.error;
+      }
+      updateIpfsUi(status, error);
+      // If the target hasn't changed but the op didn't reach it, don't spin —
+      // accept reality. If the target changed mid-flight, loop again toward it.
+      if (state.ipfsDesiredRunning === target && state.ipfsDesiredRunning !== isIpfsLiveRunning()) {
+        break;
+      }
+    }
+  } finally {
+    ipfsReconciling = false;
+    // Stop overriding the switch: the loop reached the target or gave up, so the
+    // live status is now the source of truth.
+    state.ipfsDesiredRunning = null;
+    updateIpfsUi(state.currentIpfsStatus);
+  }
 };
 
 export const initIpfsUi = () => {
@@ -289,30 +299,22 @@ export const initIpfsUi = () => {
     const mode = state.registry?.ipfs?.mode;
     if (mode === 'reused') return;
 
-    // Base the decision on a pending toggle if one is in flight, otherwise on
-    // the live status — so a quick second click reverses the user's last intent
-    // rather than reacting to a transient stopping/starting state.
-    const currentlyOn = isIpfsEffectivelyRunning();
+    // Flip to the opposite of whatever the switch currently shows (the pending
+    // target if one is set, otherwise live status), so each click reverses the
+    // last one even mid-transition.
+    const desired = !isIpfsEffectivelyRunning();
+    state.ipfsDesiredRunning = desired;
 
-    if (currentlyOn) {
-      state.ipfsDesiredRunning = false;
-      ipfsToggleSwitch?.classList.remove('running');
-      stopIpfsInfoPolling();
-      pushDebug('User toggled IPFS Off');
-      window.ipfs
-        .stop()
-        .then((result) => settleToggle(false, result))
-        .catch((err) => reconcileToggleError(false, err));
-    } else {
-      state.ipfsDesiredRunning = true;
-      ipfsToggleSwitch?.classList.add('running');
+    // Update the switch and stats panel instantly; the reconcile loop drives the
+    // backend toward this target in the background and coalesces rapid clicks.
+    ipfsToggleSwitch?.classList.toggle('running', desired);
+    if (desired) {
       startIpfsInfoPolling();
-      pushDebug('User toggled IPFS On');
-      window.ipfs
-        .start()
-        .then((result) => settleToggle(true, result))
-        .catch((err) => reconcileToggleError(true, err));
+    } else {
+      stopIpfsInfoPolling();
     }
+    pushDebug(`User toggled IPFS ${desired ? 'On' : 'Off'}`);
+    reconcileIpfsToggle();
   });
 
   // Listen for status updates from main process
