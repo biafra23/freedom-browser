@@ -1,0 +1,238 @@
+// Profile lifecycle E2E — create, use (switch), manage (list/rename), delete.
+//
+// Runs against the in-process harness in *catalog* mode (see
+// profiles-fixtures.js) across macOS / Linux / Windows in CI. Profile "open"
+// normally spawns a detached second Electron process; the harness records the
+// intended launch instead (globalThis.__FREEDOM_TEST_HARNESS__.profileLaunches),
+// so "use"/switch is asserted without a second window appearing.
+//
+// The chrome (index.html) is a trusted profile-mutation sender, so its exposed
+// electronAPI can create/list/open profiles directly. Rename/delete are only
+// exposed to the profiles manager page (freedom://profiles), so those steps
+// drive that page's real markup + IPC inside its <webview>.
+
+const { test, expect } = require('./profiles-fixtures');
+
+// --- helpers ---------------------------------------------------------------
+
+const listProfiles = (window) => window.evaluate(() => window.electronAPI.listProfiles());
+
+const profileNames = async (window) => {
+  const result = await listProfiles(window);
+  return (result?.profiles || []).map((p) => p.displayName);
+};
+
+const findProfile = async (window, predicate) => {
+  const result = await listProfiles(window);
+  return (result?.profiles || []).find(predicate) || null;
+};
+
+const recordedLaunchIds = (electronApp) =>
+  electronApp.evaluate(() =>
+    globalThis.__FREEDOM_TEST_HARNESS__.profileLaunches().map((l) => l.profileId)
+  );
+
+const clearLaunches = (electronApp) =>
+  electronApp.evaluate(() => globalThis.__FREEDOM_TEST_HARNESS__.clearProfileLaunches());
+
+// Create a profile directly via the chrome's trusted IPC (faster than the modal
+// when the spec only needs a fixture profile to act on).
+const createProfileViaApi = async (window, displayName) => {
+  const result = await window.evaluate(
+    (name) => window.electronAPI.createProfile({ displayName: name }),
+    displayName
+  );
+  expect(result?.success, `createProfile(${displayName}) should succeed`).toBe(true);
+  return result.profile;
+};
+
+// Run JS inside the profiles manager page (it loads in a <webview>; the chrome
+// can only reach it via executeJavaScript). `script` must be an expression; a
+// returned promise is awaited by Electron before resolving.
+const managerEval = (window, script) =>
+  window.evaluate(async (s) => {
+    const wvs = [...document.querySelectorAll('webview')];
+    const wv =
+      wvs.find((w) => {
+        try {
+          return /profiles/.test(w.getURL() || '');
+        } catch {
+          return false;
+        }
+      }) ||
+      document.querySelector('webview.active') ||
+      document.querySelector('webview:not(.hidden)');
+    if (!wv || typeof wv.executeJavaScript !== 'function') return null;
+    return wv.executeJavaScript(s);
+  }, script);
+
+// Open the profiles manager tab (the "Manage Profiles…" menu item) and wait for
+// its cards to render. Programmatic .click() fires the real handler regardless
+// of the flyout's hover state, keeping this robust across platforms.
+const openManager = async (window) => {
+  await window.evaluate(() => document.getElementById('profile-manage-btn')?.click());
+  await expect
+    .poll(() => managerEval(window, `document.querySelectorAll('[data-profile-id]').length`), {
+      message: 'waiting for the profiles manager to render cards',
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0);
+};
+
+// --- create ----------------------------------------------------------------
+
+test('create: a new profile via the chrome modal lands in the catalog and is opened', async ({
+  window,
+  electronApp,
+}) => {
+  const name = 'QA Personal';
+
+  expect(await profileNames(window)).not.toContain(name);
+  await clearLaunches(electronApp);
+
+  // Drive the real create-profile modal the menu item opens.
+  await window.evaluate(() => document.getElementById('profile-create-btn')?.click());
+  await expect(window.locator('#profile-create-modal')).toBeVisible();
+  await window.fill('#profile-create-name', name);
+  await window.click('#profile-create-submit');
+
+  // On success the modal closes itself.
+  await expect(window.locator('#profile-create-modal')).toBeHidden();
+
+  // It now exists in the catalog.
+  await expect.poll(() => profileNames(window)).toContain(name);
+
+  // Creating via the modal also opens (switches to) the new profile, so a
+  // launch must have been recorded for its id.
+  const created = await findProfile(window, (p) => p.displayName === name);
+  expect(created).not.toBeNull();
+  await expect.poll(() => recordedLaunchIds(electronApp)).toContain(created.id);
+});
+
+// --- use / switch ----------------------------------------------------------
+
+test('use: switching to another profile via the chrome menu records a launch', async ({
+  window,
+  electronApp,
+}) => {
+  const target = await createProfileViaApi(window, 'QA Work');
+  await clearLaunches(electronApp);
+
+  // Open the hamburger first — the profile flyout only renders its list when
+  // its wrapper is laid out (offsetParent guard), i.e. the menu is open.
+  await window.click('#menu-button');
+  // Then open the profile flyout (its list renders async from listProfiles).
+  await window.evaluate(() => document.getElementById('profile-menu-btn')?.click());
+
+  // Wait for the (enabled, non-active) target row to render, then activate it
+  // programmatically. A real mouse click would move the cursor and trip the
+  // submenu's hover open/close timers, which can hide the list mid-click.
+  await expect
+    .poll(() =>
+      window.evaluate((name) => {
+        const items = [...document.querySelectorAll('#profile-menu-list [role="menuitem"]')];
+        return items.some((b) => b.textContent.includes(name) && !b.disabled);
+      }, 'QA Work')
+    )
+    .toBe(true);
+  await window.evaluate((name) => {
+    const items = [...document.querySelectorAll('#profile-menu-list [role="menuitem"]')];
+    items.find((b) => b.textContent.includes(name) && !b.disabled)?.click();
+  }, 'QA Work');
+
+  await expect.poll(() => recordedLaunchIds(electronApp)).toContain(target.id);
+
+  // Sanity: the chrome itself stays on the original (default) profile — the
+  // harness recorded the switch instead of cold-starting the target's window.
+  const active = await window.evaluate(() => window.electronAPI.getActiveProfile());
+  expect(active.id).not.toBe(target.id);
+});
+
+// --- manage / rename -------------------------------------------------------
+
+test('manage: the manager lists profiles and a rename updates the catalog', async ({ window }) => {
+  const original = 'QA Manage';
+  const renamed = 'QA Renamed';
+  const created = await createProfileViaApi(window, original);
+
+  await openManager(window);
+
+  // The created profile's card is present in the manager.
+  expect(
+    await managerEval(window, `!!document.querySelector('[data-profile-id="${created.id}"]')`)
+  ).toBe(true);
+
+  // Rename through the manager page's real (guarded) IPC path.
+  const result = await managerEval(
+    window,
+    `window.freedomAPI.renameProfile(${JSON.stringify(created.id)}, ${JSON.stringify(renamed)})`
+  );
+  expect(result?.success).toBe(true);
+
+  // The catalog reflects the new name…
+  await expect
+    .poll(async () => (await findProfile(window, (p) => p.id === created.id))?.displayName)
+    .toBe(renamed);
+
+  // …and the manager card's stored display name updates (broadcast-driven).
+  await expect
+    .poll(() =>
+      managerEval(
+        window,
+        `document.querySelector('[data-profile-id="${created.id}"]')?.dataset.profileDisplayName || null`
+      )
+    )
+    .toBe(renamed);
+});
+
+// --- delete ----------------------------------------------------------------
+
+test('delete: confirming in the manager dialog removes the profile from the catalog', async ({
+  window,
+}) => {
+  const name = 'QA Delete';
+  const created = await createProfileViaApi(window, name);
+
+  await openManager(window);
+  await expect
+    .poll(() =>
+      managerEval(window, `!!document.querySelector('[data-profile-id="${created.id}"]')`)
+    )
+    .toBe(true);
+
+  // Click the card's trash button → the delete-confirm dialog opens.
+  await managerEval(
+    window,
+    `document.querySelector('[data-profile-id="${created.id}"] [data-delete-profile]').click(); true`
+  );
+  await expect
+    .poll(() => managerEval(window, `document.getElementById('delete-modal').hidden === false`))
+    .toBe(true);
+
+  // The destructive button is inert immediately (guards against reflex clicks)…
+  expect(
+    await managerEval(window, `document.querySelector('[data-delete-confirm]').disabled`)
+  ).toBe(true);
+  // …and arms after the deliberate delay.
+  await expect
+    .poll(
+      () =>
+        managerEval(window, `document.querySelector('[data-delete-confirm]').disabled === false`),
+      {
+        message: 'waiting for the delete-confirm button to arm',
+        timeout: 5_000,
+      }
+    )
+    .toBe(true);
+
+  await managerEval(window, `document.querySelector('[data-delete-confirm]').click(); true`);
+
+  // Gone from the catalog…
+  await expect
+    .poll(async () => (await findProfile(window, (p) => p.id === created.id)) !== null)
+    .toBe(false);
+  // …and removed from the manager DOM.
+  await expect
+    .poll(() => managerEval(window, `!document.querySelector('[data-profile-id="${created.id}"]')`))
+    .toBe(true);
+});

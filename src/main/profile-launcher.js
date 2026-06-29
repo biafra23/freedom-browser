@@ -45,8 +45,20 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
 }
 
 function launchProfile(activeProfile, profileId, options = {}) {
-  const spawnImpl = options.spawn || spawn;
   const command = buildProfileLaunchCommand(activeProfile, profileId, options);
+
+  // E2E test mode: the harness installs a recorder so "open profile" doesn't
+  // cold-start a real second Electron instance against the shared dev-home —
+  // it records the intended launch for the spec to assert on instead. Mirrors
+  // how the harness stubs ant/ipfs spawns (see src/main/test-harness.js). An
+  // explicitly-injected `options.spawn` (unit tests) always wins over the hook.
+  const recorder = !options.spawn && globalThis.__FREEDOM_TEST_PROFILE_LAUNCH__;
+  if (typeof recorder === 'function') {
+    recorder({ profileId, command, openSettings: options.openSettings === true });
+    return command;
+  }
+
+  const spawnImpl = options.spawn || spawn;
   const child = spawnImpl(command.command, command.args, {
     cwd: command.cwd,
     detached: true,
@@ -79,8 +91,7 @@ async function openOrFocusProfile(activeProfile, profileId, options = {}) {
   // Lazy-required so this module stays loadable in isolation (and to avoid any
   // load-order coupling with profile-resolver).
   const resolveFocusTarget =
-    options.getFocusTarget ||
-    require('./profile-resolver').getProfileFocusTargetForActiveApp;
+    options.getFocusTarget || require('./profile-resolver').getProfileFocusTargetForActiveApp;
   const requestFocus =
     options.requestFocus || require('./profile-focus-handoff').requestProfileFocusAsyncAwait;
 

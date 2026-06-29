@@ -49,6 +49,14 @@ const contentFixtures = new Map();
 const ensFixtures = new Map();
 const probeFixtures = new Map();
 
+// Records profile "open" launches instead of cold-starting a real second
+// Electron instance. See installProfileLaunchRecorder / profile-launcher.js.
+const profileLaunches = [];
+
+function resetProfileLaunches() {
+  profileLaunches.length = 0;
+}
+
 function resetFixtures() {
   contentFixtures.clear();
   ensFixtures.clear();
@@ -341,6 +349,19 @@ function registerTestOps() {
   }));
 }
 
+// Neutralize profile "open"/switch in test mode: opening a profile normally
+// spawns a detached second Electron process (profile-launcher.js). In E2E that
+// would cold-start a real app against the shared dev-home, racing on locks and
+// leaking processes. The launcher checks this global and, when present, records
+// the intended launch instead of spawning — so a spec can assert that a switch
+// was triggered for the right profile without a second window appearing.
+function installProfileLaunchRecorder() {
+  globalThis.__FREEDOM_TEST_PROFILE_LAUNCH__ = (entry) => {
+    profileLaunches.push(entry);
+    log.info(`[test-harness] recorded profile launch: ${entry?.profileId}`);
+  };
+}
+
 // Expose a synchronous shim on the main-process global so the Playwright
 // runner can drive fixtures via `electronApp.evaluate(() => globalThis
 // .__FREEDOM_TEST_HARNESS__.setContentFixture(...))` without an IPC
@@ -358,10 +379,15 @@ function exposeGlobalShim() {
       probeFixtures.set(hash, outcome ?? { ok: true });
     },
     resetFixtures,
+    // Profile-launch recording (see installProfileLaunchRecorder). Specs read
+    // these to confirm a profile "open"/switch fired for the expected id.
+    profileLaunches: () => profileLaunches.map((entry) => ({ ...entry })),
+    clearProfileLaunches: resetProfileLaunches,
     state: () => ({
       content: [...contentFixtures.keys()],
       ens: [...ensFixtures.keys()],
       probes: [...probeFixtures.keys()],
+      profileLaunches: profileLaunches.map((entry) => ({ ...entry })),
     }),
   };
 }
@@ -370,12 +396,14 @@ function installTestHarness({ defaultSession }) {
   if (!TEST_MODE_ENABLED) return false;
   log.info('[test-harness] FREEDOM_TEST_MODE=1 — installing harness');
   resetFixtures();
+  resetProfileLaunches();
   registerStubProtocols(defaultSession);
   overrideEnsIpc();
   overrideProbeIpc();
   overrideNodeIpc();
   registerTestOps();
   seedRegistry();
+  installProfileLaunchRecorder();
   exposeGlobalShim();
   return true;
 }
