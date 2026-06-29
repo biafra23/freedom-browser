@@ -58,9 +58,18 @@ const formatNativeVersionLabel = (diagnostics = {}) => {
   return version ? `Freedom IPFS v${version}` : 'Freedom IPFS';
 };
 
+// The node counts as running for UI purposes when a pending toggle wants it on,
+// or — with no toggle in flight — when the live status says so. Toggle handling
+// and stats polling share this so a pending "on" doesn't leave the panel blank
+// while the backend is still reporting the stale 'stopped' status.
+const isIpfsEffectivelyRunning = () =>
+  state.ipfsDesiredRunning !== null
+    ? state.ipfsDesiredRunning
+    : state.currentIpfsStatus === 'running' || state.currentIpfsStatus === 'starting';
+
 const fetchNativeStats = async () => {
   if (!state.antMenuOpen) return;
-  if (state.currentIpfsStatus === 'stopped') {
+  if (!isIpfsEffectivelyRunning()) {
     stopIpfsInfoPolling();
     return;
   }
@@ -97,7 +106,7 @@ const fetchVersionOnce = async () => {
 };
 
 export const startIpfsInfoPolling = () => {
-  if (!state.antMenuOpen || state.currentIpfsStatus === 'stopped') {
+  if (!state.antMenuOpen || !isIpfsEffectivelyRunning()) {
     stopIpfsInfoPolling();
     return;
   }
@@ -114,17 +123,21 @@ export const startIpfsInfoPolling = () => {
 export const updateIpfsUi = (status, error) => {
   state.currentIpfsStatus = status;
 
-  // Reconcile a pending user toggle. Once the backend reaches the state the
-  // user asked for (or errors out), the transition is over and the live status
-  // drives the switch again. Until then we keep the pending intent so that a
-  // rapid on/off/on sequence — which makes the backend emit transient
-  // stopping/starting and stale stopped/running states — can't flip the switch
-  // out from under the user before the node data settles.
-  if (
-    status === 'error' ||
+  // Reconcile a pending user toggle. Once the backend confirms the state the
+  // user asked for, the transition is over and the live status drives the switch
+  // again. Until then we keep the pending intent so that a rapid on/off/on
+  // sequence — which makes the backend emit transient stopping/starting and
+  // stale stopped/running states — can't flip the switch out from under the user
+  // before the node data settles.
+  const reachedDesired =
     (state.ipfsDesiredRunning === true && status === 'running') ||
-    (state.ipfsDesiredRunning === false && status === 'stopped')
-  ) {
+    (state.ipfsDesiredRunning === false && status === 'stopped');
+  // A failed *start* (intent was "on") ends that attempt, so let the switch fall
+  // back to the error/live status. A failed *stop* (intent was "off") leaves the
+  // node running, so we hold the user's intent rather than letting a later
+  // 'running' poll silently flip the switch back on.
+  const failedStart = status === 'error' && state.ipfsDesiredRunning === true;
+  if (reachedDesired || failedStart) {
     state.ipfsDesiredRunning = null;
   }
 
@@ -136,10 +149,7 @@ export const updateIpfsUi = (status, error) => {
 
   // While a toggle is in flight the switch follows the user's intent; once it
   // settles (ipfsDesiredRunning === null) it follows the live status.
-  const showRunning =
-    state.ipfsDesiredRunning !== null
-      ? state.ipfsDesiredRunning
-      : status === 'running' || status === 'starting';
+  const showRunning = isIpfsEffectivelyRunning();
 
   ipfsToggleSwitch.classList.toggle('running', showRunning);
 
@@ -251,10 +261,7 @@ export const initIpfsUi = () => {
     // Base the decision on a pending toggle if one is in flight, otherwise on
     // the live status — so a quick second click reverses the user's last intent
     // rather than reacting to a transient stopping/starting state.
-    const currentlyOn =
-      state.ipfsDesiredRunning !== null
-        ? state.ipfsDesiredRunning
-        : state.currentIpfsStatus === 'running' || state.currentIpfsStatus === 'starting';
+    const currentlyOn = isIpfsEffectivelyRunning();
 
     if (currentlyOn) {
       state.ipfsDesiredRunning = false;

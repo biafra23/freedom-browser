@@ -314,6 +314,14 @@ describe('ipfs-ui', () => {
     expect(ctx.state.ipfsDesiredRunning).toBe(true);
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
 
+    // The reversal must actually reach the backend: stop() fired on the first
+    // click and start() on the second, in that order — not just settle the UI.
+    expect(ctx.ipfsApi.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.ipfsApi.start).toHaveBeenCalledTimes(1);
+    expect(ctx.ipfsApi.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      ctx.ipfsApi.start.mock.invocationCallOrder[0]
+    );
+
     // Transient backend states from the stop/start churn must not flip it off.
     ctx.mod.updateIpfsUi('stopping');
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
@@ -327,5 +335,84 @@ describe('ipfs-ui', () => {
     ctx.mod.updateIpfsUi('running');
     expect(ctx.state.ipfsDesiredRunning).toBeNull();
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+  });
+
+  test('clears intent on a failed start but holds it through a failed stop', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'starting',
+      statusResult: { status: 'starting', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    // Failed start (intent was "on"): the attempt is over, so intent clears and
+    // the switch falls back to the live status (off).
+    ctx.state.ipfsDesiredRunning = true;
+    ctx.mod.updateIpfsUi('error', 'offline');
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+
+    // Failed stop (intent was "off"): the node may still be running, so intent
+    // is preserved and a later stale 'running' update can't flip it back on.
+    ctx.state.ipfsDesiredRunning = false;
+    ctx.mod.updateIpfsUi('error', 'stop failed');
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+
+    ctx.mod.updateIpfsUi('running');
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+  });
+
+  test('polls stats during a pending "on" toggle while live status is still stopped', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'stopped',
+      statusResult: {
+        status: 'stopped',
+        error: null,
+        diagnostics: {
+          nativeGatewayStats: JSON.stringify({ active_native_handles: 2, bytes_read: 2048 }),
+        },
+      },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    // User just clicked on; the backend hasn't confirmed yet (live status is
+    // still 'stopped'). Polling must run on the pending intent, not bail and
+    // leave the panel blank.
+    ctx.state.ipfsDesiredRunning = true;
+    ctx.mod.startIpfsInfoPolling();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(true);
+    expect(ctx.state.ipfsInfoInterval).not.toBeNull();
+    expect(ctx.elements.ipfsActiveRequestsCount.textContent).toBe('2');
+    expect(ctx.elements.ipfsDataRead.textContent).toBe('2.0 KB');
+  });
+
+  test('falls back to a bare product label when version diagnostics are missing', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'running',
+      statusResult: {
+        status: 'running',
+        error: null,
+        diagnostics: { nativeVersion: '', nativeBuildInfo: '' },
+      },
+    });
+
+    ctx.mod.initIpfsUi();
+    ctx.mod.startIpfsInfoPolling();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Freedom IPFS');
+    expect(ctx.state.ipfsVersionValue).toBe('Freedom IPFS');
   });
 });
