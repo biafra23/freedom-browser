@@ -26,6 +26,7 @@ const {
   listProfilesForActiveApp,
   renameProfileForActiveApp,
   updateActiveProfileNodeConfig,
+  validateProfileDeletionForActiveApp,
 } = require('./profile-resolver');
 const { openOrFocusProfile } = require('./profile-launcher');
 const { readProfileFocusAck, requestProfileQuitAsync } = require('./profile-focus-handoff');
@@ -550,6 +551,15 @@ async function deleteProfileFromIpc(payload = {}, options = {}) {
     if (payload.id && activeProfile && payload.id === activeProfile.id) {
       return failure('PROFILE_ACTIVE', 'The active profile cannot be deleted');
     }
+
+    // Validate the request (existence, confirmation, path safety) BEFORE closing
+    // anything. ensureProfileClosedForDelete asks a running profile to quit; if
+    // we ran it first, a stale or mismatched confirmation would quit a live
+    // window and only then fail the delete. deleteProfile re-validates under the
+    // catalog write lock — this pre-flight just gates the quit request.
+    // (Returns null in non-catalog launch modes, where the delete below also
+    // no-ops into PROFILE_CATALOG_UNAVAILABLE.)
+    validateProfileDeletionForActiveApp(payload.id, payload.confirmDisplayName);
 
     // If the profile is open in another window, close it first so its data is
     // not in use when we remove it.

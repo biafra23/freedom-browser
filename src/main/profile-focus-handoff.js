@@ -70,6 +70,7 @@ function requestProfileFocusSync(profile, options = {}) {
   } catch (error) {
     return {
       ok: false,
+      requestWritten: false,
       error: error.message || 'Focus request could not be written',
       nonce,
     };
@@ -81,6 +82,7 @@ function requestProfileFocusSync(profile, options = {}) {
     if (ack?.nonce === nonce) {
       return {
         ok: ack.ok === true,
+        requestWritten: true,
         error: ack.error || null,
         nonce,
       };
@@ -90,6 +92,7 @@ function requestProfileFocusSync(profile, options = {}) {
 
   return {
     ok: false,
+    requestWritten: true,
     error: 'The running profile did not respond',
     nonce,
   };
@@ -102,12 +105,18 @@ function requestProfileFocusSync(profile, options = {}) {
 // IPC path (which can await) so it can report a *confirmed* focus rather than
 // just "the request was written".
 //
-// Return shape distinguishes the failure modes so callers can react correctly:
-//   { ok: true }                       — the target acknowledged the focus
-//   { ok: false }                      — the request could not be written
-//                                        (target dir gone) → caller may cold-start
-//   { ok: false, timedOut: true }      — request written but no ack in time
-//                                        (target running but unresponsive)
+// Return shape distinguishes the failure modes so callers can react correctly.
+// The `requestWritten` flag is the one that matters for the cold-start decision:
+// only a profile whose request could not even be written is safe to launch.
+//   { ok: true,  requestWritten: true  } — the target acknowledged the focus
+//   { ok: false, requestWritten: false } — the request could not be written
+//                                          (target dir gone) → caller may cold-start
+//   { ok: false, requestWritten: true  } — the request reached the target but it
+//                                          did not focus: either it acked a failure
+//                                          (e.g. its focus handler is not ready yet)
+//                                          or never acked at all (timedOut: true).
+//                                          A live process holds the lock — the caller
+//                                          must NOT cold-start a duplicate into it.
 async function requestProfileFocusAsyncAwait(profile, options = {}) {
   const paths = getProfileFocusPaths(profile);
   const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -127,6 +136,7 @@ async function requestProfileFocusAsyncAwait(profile, options = {}) {
   } catch (error) {
     return {
       ok: false,
+      requestWritten: false,
       error: error.message || 'Focus request could not be written',
       nonce,
     };
@@ -138,6 +148,7 @@ async function requestProfileFocusAsyncAwait(profile, options = {}) {
     if (ack?.nonce === nonce) {
       return {
         ok: ack.ok === true,
+        requestWritten: true,
         error: ack.error || null,
         nonce,
       };
@@ -147,6 +158,7 @@ async function requestProfileFocusAsyncAwait(profile, options = {}) {
 
   return {
     ok: false,
+    requestWritten: true,
     timedOut: true,
     error: 'The running profile did not respond',
     nonce,

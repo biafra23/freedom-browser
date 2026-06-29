@@ -891,6 +891,23 @@ const isDirectLoadUrl = (url) => {
   return /^https?:\/\//i.test(url);
 };
 
+// Resolve a trusted `freedom://<page>[/<sub>]` URL to the real internal page URL
+// (file://…/pages/<page>.html[#<sub>]) it ultimately loads, or null if `url`
+// isn't a recognised internal page. This mirrors loadTarget's freedom://
+// handling, but lets `createTab` load the resolved URL as the webview's *initial*
+// src — so a freshly opened internal-page tab never parks on about:blank first.
+// Parking it (the generic non-direct path) left an about:blank entry in the
+// webview's back history, so the toolbar Back button landed on a blank page.
+// Only URLs derived from the known internalPages map resolve here; arbitrary
+// file:// stays excluded and keeps flowing through about:blank + loadTarget.
+const resolveInternalPageUrl = (url) => {
+  const target = freedomInternalPageTarget(url);
+  if (!target) return null;
+  const pageUrl = internalPages[target.pageName];
+  if (!pageUrl) return null;
+  return target.subPath ? `${pageUrl}#${target.subPath}` : pageUrl;
+};
+
 // Create a new tab
 export const createTab = (url = null) => {
   const tabId = tabState.nextTabId++;
@@ -901,8 +918,14 @@ export const createTab = (url = null) => {
   // ~50 ms) without producing the GUEST_VIEW_MANAGER_CALL log noise
   // that pointing the webview at homeUrl first did, and prevents
   // hostile schemes from ever becoming a direct webview navigation.
-  const isDirect = isDirectLoadUrl(url);
-  const webviewUrl = isDirect ? url || homeUrl : 'about:blank';
+  // Trusted internal freedom:// pages resolve to their real file://…/pages URL up
+  // front and load directly — no about:blank parking step (which otherwise leaves
+  // a blank entry in the back history; see resolveInternalPageUrl). tab.url keeps
+  // the friendly freedom:// form so the address bar and singleton-tab reuse still
+  // match on it while the page loads.
+  const resolvedInternalUrl = resolveInternalPageUrl(url);
+  const isDirect = resolvedInternalUrl != null || isDirectLoadUrl(url);
+  const webviewUrl = resolvedInternalUrl || (isDirect ? url || homeUrl : 'about:blank');
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {
@@ -922,10 +945,11 @@ export const createTab = (url = null) => {
 
   // Anything that isn't a direct-load URL flows through the resolution
   // pipeline. For routed schemes (bzz://, ipfs://, ens://, rad:,
-  // freedom://, ethereum:, view-source:, bare ENS names) loadTarget
-  // performs the real navigation; for unrecognised inputs (file://,
-  // data:, javascript:, etc.) it falls through to a debug-log no-op,
-  // leaving the tab on about:blank.
+  // ethereum:, view-source:, bare ENS names, and freedom:// pages that
+  // aren't recognised internal pages) loadTarget performs the real
+  // navigation; for unrecognised inputs (file://, data:, javascript:,
+  // etc.) it falls through to a debug-log no-op, leaving the tab on
+  // about:blank. Recognised freedom:// pages took the direct path above.
   if (!isDirect) {
     setTimeout(() => {
       if (onLoadTarget) onLoadTarget(url);
@@ -1253,7 +1277,7 @@ export const switchTab = (tabId, options = {}) => {
 // to the right section. Anything deeper or unrecognised returns null.
 const freedomInternalPageTarget = (url) => {
   const match = /^freedom:\/\/([a-z0-9-]+)(?:\/([a-z0-9-]+))?\/?$/i.exec(url || '');
-  if (!match) return null;
+  if (!match || !internalPages) return null;
   const pageName = match[1].toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(internalPages, pageName)) return null;
   return { pageName, subPath: match[2] ? match[2].toLowerCase() : null };

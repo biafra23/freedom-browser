@@ -328,7 +328,15 @@ describe('openOrFocusInternalPage', () => {
     const opened = openInNewTabWithTarget('freedom://settings/profile', null);
 
     expect(getTabs().length).toBe(before + 1); // a new tab, since none to reuse
-    expect(opened.url).toBe('freedom://settings/profile'); // created on the deep link
+    expect(opened.url).toBe('freedom://settings/profile'); // tab.url keeps the friendly form
+
+    // A trusted internal page is resolved to its real file:// URL and loaded as
+    // the webview's initial src — NOT parked on about:blank first. Parking left a
+    // blank entry in the back history, so the toolbar Back button went blank.
+    const srcCalls = opened.webview.setAttribute.mock.calls.filter(([attr]) => attr === 'src');
+    const srcValue = srcCalls.at(-1)?.[1];
+    expect(srcValue).toBe('file:///app/pages/settings.html#profile');
+    expect(srcValue).not.toBe('about:blank');
   });
 
   test('openInNewTabWithTarget reuses a settings tab for a settings sub-path', async () => {

@@ -6,6 +6,7 @@ const {
   deleteProfile,
   ensureProfile,
   getCatalogLockPaths,
+  validateProfileDeletion,
   withCatalogWriteLock,
 } = require('./profile-catalog');
 
@@ -261,5 +262,49 @@ describe('profile catalog', () => {
 
     expect(fs.existsSync(record.dir)).toBe(false);
     expect(fs.existsSync(radicleDir)).toBe(false);
+  });
+
+  describe('validateProfileDeletion', () => {
+    function seedWorkProfile() {
+      const appRoot = track(makeTempDir());
+      const defaultProfileDir = path.join(appRoot, 'Profiles', 'default');
+      fs.mkdirSync(defaultProfileDir, { recursive: true });
+      ensureProfile(appRoot, 'default', { defaultProfileDir });
+      ensureProfile(appRoot, 'work', { defaultProfileDir });
+      return appRoot;
+    }
+
+    test('passes for a registered profile with a matching display name', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'work', 'Work')).not.toThrow();
+    });
+
+    test('rejects a mismatched display-name confirmation', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'work', 'Wrong')).toThrow(
+        'Profile display name confirmation did not match'
+      );
+    });
+
+    test('rejects an unknown profile id', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'ghost', 'Ghost')).toThrow(
+        'Profile not found: ghost'
+      );
+    });
+
+    test('rejects deleting the default profile', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'default', 'Default')).toThrow(
+        'The default profile cannot be deleted'
+      );
+    });
+
+    test('does not remove anything (pure validation)', () => {
+      const appRoot = seedWorkProfile();
+      const workDir = path.join(appRoot, 'Profiles', 'work');
+      validateProfileDeletion(appRoot, 'work', 'Work');
+      expect(fs.existsSync(workDir)).toBe(true);
+    });
   });
 });

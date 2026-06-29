@@ -65,6 +65,7 @@ describe('profile focus handoff', () => {
 
     expect(result).toEqual({
       ok: false,
+      requestWritten: true,
       error: 'The running profile did not respond',
       nonce: 'focus-1',
     });
@@ -86,7 +87,12 @@ describe('profile focus handoff', () => {
       timeoutMs: 1000,
     });
 
-    expect(result).toEqual({ ok: true, error: null, nonce: 'focus-await-1' });
+    expect(result).toEqual({
+      ok: true,
+      requestWritten: true,
+      error: null,
+      nonce: 'focus-await-1',
+    });
     expect(onFocusWindow).toHaveBeenCalledTimes(1);
   });
 
@@ -101,6 +107,7 @@ describe('profile focus handoff', () => {
 
     expect(result).toEqual({
       ok: false,
+      requestWritten: true,
       timedOut: true,
       error: 'The running profile did not respond',
       nonce: 'focus-await-2',

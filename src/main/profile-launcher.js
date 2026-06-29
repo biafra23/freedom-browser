@@ -113,14 +113,17 @@ async function openOrFocusProfile(activeProfile, profileId, options = {}) {
     if (focus?.ok) {
       return { focused: true };
     }
-    // The request was written but the running profile never acknowledged it.
-    // It holds a live lock, so cold-starting would just spawn a process that
-    // bounces off ELOCKED — surface the failure instead.
-    if (focus?.timedOut) {
-      return { focused: false, error: focus.error || 'The running profile did not respond' };
+    // Cold-start ONLY when the focus request could not even be written (e.g. the
+    // profile's data dir is gone) — there is no live process to focus, so a fresh
+    // launch is correct. In every other failure mode the request reached a
+    // running process that holds the lock: it may have acked a failure (its focus
+    // handler isn't ready yet) or never acked in time (focus.timedOut). Launching
+    // then would just spawn a duplicate that bounces off ELOCKED, so surface the
+    // failure instead of falling through.
+    if (focus?.requestWritten !== false) {
+      return { focused: false, error: focus?.error || 'The running profile did not respond' };
     }
-    // Otherwise the request couldn't even be written (e.g. the profile's data
-    // dir is gone): fall through and cold-start.
+    // requestWritten === false: fall through and cold-start.
   }
 
   const launch = launchProfile(activeProfile, profileId, options);

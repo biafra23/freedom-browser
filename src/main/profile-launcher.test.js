@@ -180,7 +180,9 @@ describe('profile launcher', () => {
     test('falls back to launching when the focus request cannot be written', async () => {
       const child = { unref: jest.fn() };
       const spawn = jest.fn(() => child);
-      const requestFocus = jest.fn(() => ({ ok: false, error: 'nope' }));
+      // requestWritten === false: the request never reached a process, so there
+      // is nothing live to focus and cold-starting is correct.
+      const requestFocus = jest.fn(() => ({ ok: false, requestWritten: false, error: 'nope' }));
       const getFocusTarget = jest.fn(() => ({ id: 'work', userDataDir: '/p/work', isLocked: true }));
 
       const result = await openOrFocusProfile(activeProfile, 'work', {
@@ -201,6 +203,7 @@ describe('profile launcher', () => {
       // Request was written but the running profile never acked (timed out).
       const requestFocus = jest.fn(() => ({
         ok: false,
+        requestWritten: true,
         timedOut: true,
         error: 'The running profile did not respond',
       }));
@@ -218,6 +221,34 @@ describe('profile launcher', () => {
       expect(result.error).toBe('The running profile did not respond');
       expect(result.launch).toBeUndefined();
       // Must not cold-start a duplicate against the still-live lock.
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    test('reports failure (no spawn) when the running profile acks a focus failure', async () => {
+      const spawn = jest.fn();
+      // The running profile received the request and acked, but could not focus
+      // (e.g. at startup its window focus handler is not yet assigned). This is
+      // an explicit acknowledged failure — ok:false, requestWritten:true, and
+      // crucially NOT timedOut. A live process still holds the lock, so we must
+      // surface the failure rather than cold-start a duplicate into it.
+      const requestFocus = jest.fn(() => ({
+        ok: false,
+        requestWritten: true,
+        error: 'Main window focus handler is not ready',
+      }));
+      const getFocusTarget = jest.fn(() => ({ id: 'work', userDataDir: '/p/work', isLocked: true }));
+
+      const result = await openOrFocusProfile(activeProfile, 'work', {
+        getFocusTarget,
+        requestFocus,
+        spawn,
+        execPath: '/electron',
+        platform: 'linux',
+      });
+
+      expect(result.focused).toBe(false);
+      expect(result.error).toBe('Main window focus handler is not ready');
+      expect(result.launch).toBeUndefined();
       expect(spawn).not.toHaveBeenCalled();
     });
   });

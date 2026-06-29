@@ -14,6 +14,7 @@ const {
   renameProfile,
   sanitizeProfileId,
   updateProfileNodeConfig,
+  validateProfileDeletion,
 } = require('./profile-catalog');
 const { isProfileLocked } = require('./profile-lock');
 
@@ -348,6 +349,25 @@ function getProfileFocusTargetForActiveApp(profileId) {
   return { ...target, isLocked };
 }
 
+// Pre-flight validation of a delete request (existence + confirmation + path
+// safety) against the active catalog, WITHOUT touching the lock or removing
+// anything. Returns null when there is no active catalog (mirrors
+// deleteProfileForActiveApp), true when the request is valid, and throws on a
+// bad request. Callers run this before closing a running profile so an invalid
+// delete can never quit a live window only to fail afterwards.
+function validateProfileDeletionForActiveApp(profileId, expectedDisplayName) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  if (profileId === activeProfile.id) {
+    throw new Error('The active profile cannot be deleted');
+  }
+
+  validateProfileDeletion(activeProfile.appRoot, profileId, expectedDisplayName);
+  return true;
+}
+
 function deleteProfileForActiveApp(profileId, expectedDisplayName) {
   if (!activeProfile || activeProfile.source !== 'catalog') {
     return null;
@@ -389,5 +409,6 @@ module.exports = {
   resolveLastOpenedProfileId,
   resolveProfile,
   updateActiveProfileNodeConfig,
+  validateProfileDeletionForActiveApp,
   warnAboutLegacyDevData,
 };

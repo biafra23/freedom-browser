@@ -154,6 +154,8 @@ function loadIpcHandlersModule(options = {}) {
     }));
   const getProfileFocusTargetForActiveApp =
     options.getProfileFocusTargetForActiveApp || jest.fn(() => null);
+  const validateProfileDeletionForActiveApp =
+    options.validateProfileDeletionForActiveApp || jest.fn(() => true);
   const requestProfileQuitAsync = options.requestProfileQuitAsync || jest.fn(() => ({ ok: true }));
   const isProfileLocked = options.isProfileLocked || jest.fn(() => false);
 
@@ -180,6 +182,7 @@ function loadIpcHandlersModule(options = {}) {
         listProfilesForActiveApp,
         renameProfileForActiveApp,
         updateActiveProfileNodeConfig,
+        validateProfileDeletionForActiveApp,
       }),
       [require.resolve('./profile-launcher')]: () => ({
         openOrFocusProfile,
@@ -216,6 +219,7 @@ function loadIpcHandlersModule(options = {}) {
     createProfileForActiveApp,
     deleteProfileForActiveApp,
     getProfileFocusTargetForActiveApp,
+    validateProfileDeletionForActiveApp,
     requestProfileQuitAsync,
     isProfileLocked,
     importProfileForActiveApp,
@@ -798,6 +802,35 @@ describe('ipc-handlers', () => {
 
     expect(ctx.requestProfileQuitAsync).toHaveBeenCalledTimes(1);
     expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
+  });
+
+  test('validates the request before closing a running profile', async () => {
+    // A stale/mismatched confirmation must be rejected up front — BEFORE we ask
+    // a running profile to quit. Otherwise an invalid delete would close a live
+    // window only to fail validation afterwards.
+    const ctx = loadIpcHandlersModule({
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        displayName: 'Work',
+        userDataDir: '/tmp/freedom-user-data/Profiles/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      validateProfileDeletionForActiveApp: jest.fn(() => {
+        throw new Error('Profile display name confirmation did not match');
+      }),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.mod.deleteProfileFromIpc({ id: 'work', confirmDisplayName: 'Wrong' });
+
+    expect(result).toEqual(
+      failure('PROFILE_DELETE_FAILED', 'Profile display name confirmation did not match')
+    );
+    // The running profile must NOT have been asked to quit, and no delete ran.
+    expect(ctx.requestProfileQuitAsync).not.toHaveBeenCalled();
+    expect(ctx.deleteProfileForActiveApp).not.toHaveBeenCalled();
   });
 
   test('waits for the holder process to exit before deleting (not just lock release)', async () => {
