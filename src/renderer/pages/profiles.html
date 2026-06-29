@@ -654,6 +654,12 @@
         }
 
         const cards = profiles
+          // Hide any profile whose optimistic delete is still in flight: an
+          // unrelated onProfileUpdated refresh can fire before the deletion
+          // lands in the registry, and we don't want it to briefly re-render
+          // the card the user just removed. The delete path clears the id on
+          // completion (or failure, followed by a refresh that restores it).
+          .filter((profile) => !pendingDeleteIds.has(profile.id))
           .map((profile) => {
             const isUnregistered = profile.isUnregistered === true;
             const isActive = profile.isActive === true;
@@ -759,6 +765,9 @@
       // --- Delete confirmation modal ----------------------------------------
       // A simple yes/no confirmation (no typed-name challenge).
       let pendingDelete = null;
+      // Ids whose optimistic delete is in flight; renderProfiles filters these
+      // out so a concurrent refresh can't resurrect a card mid-delete.
+      const pendingDeleteIds = new Set();
       const deleteConfirmBtn = deleteModal.querySelector('[data-delete-confirm]');
       const deleteCancelBtn = deleteModal.querySelector('.secondary-btn[data-delete-cancel]');
       const deleteConfirmLabel = deleteConfirmBtn?.textContent || 'Delete';
@@ -800,7 +809,10 @@
         const { profileId, displayName } = pendingDelete;
         // Optimistic: drop the card and return to the manager immediately, then
         // delete in the background. On failure we re-fetch to restore the card.
+        // Mark the id as deleting so a concurrent onProfileUpdated refresh can't
+        // re-render the card before the deletion lands in the registry.
         closeDeleteModal();
+        pendingDeleteIds.add(profileId);
         managerList
           ?.querySelector(`[data-profile-id="${CSS.escape(profileId)}"]`)
           ?.remove();
@@ -809,8 +821,12 @@
           if (!result?.success) {
             throw new Error(result?.error?.message || 'Profile could not be deleted');
           }
+          // Deletion landed in the registry; the id can leave the guard set
+          // (subsequent refreshes already won't list it).
+          pendingDeleteIds.delete(profileId);
         } catch (err) {
           logError('Failed to delete profile', err);
+          pendingDeleteIds.delete(profileId);
           await refreshProfiles();
         }
       };
