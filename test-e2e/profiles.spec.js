@@ -73,12 +73,24 @@ const managerEval = (window, script) =>
 // its cards to render. Programmatic .click() fires the real handler regardless
 // of the flyout's hover state, keeping this robust across platforms.
 const openManager = async (window) => {
-  await window.evaluate(() => document.getElementById('profile-manage-btn')?.click());
+  // The manager loads in a <webview> navigating to freedom://profiles; on cold
+  // CI runners the tab can be slow to attach/render and the very first click can
+  // land before the button's handler is wired. Re-click the (idempotent) "Manage
+  // Profiles" button each poll until its webview renders cards — focusing an
+  // already-open manager tab is a no-op, so repeated clicks are safe.
   await expect
-    .poll(() => managerEval(window, `document.querySelectorAll('[data-profile-id]').length`), {
-      message: 'waiting for the profiles manager to render cards',
-      timeout: 15_000,
-    })
+    .poll(
+      async () => {
+        const count = await managerEval(
+          window,
+          `document.querySelectorAll('[data-profile-id]').length`
+        );
+        if (count > 0) return count;
+        await window.evaluate(() => document.getElementById('profile-manage-btn')?.click());
+        return count ?? 0;
+      },
+      { message: 'waiting for the profiles manager to render cards', timeout: 30_000 }
+    )
     .toBeGreaterThan(0);
 };
 
