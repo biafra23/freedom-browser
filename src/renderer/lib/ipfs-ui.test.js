@@ -18,7 +18,7 @@ const loadIpfsModule = async (options = {}) => {
     ipfsInfoInterval: null,
     ipfsVersionFetched: options.ipfsVersionFetched ?? false,
     ipfsVersionValue: options.ipfsVersionValue || '',
-    suppressIpfsRunningStatus: options.suppressIpfsRunningStatus ?? false,
+    ipfsDesiredRunning: options.ipfsDesiredRunning ?? null,
     registry: {
       ipfs: {
         api: 'http://ipfs.test',
@@ -185,7 +185,7 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(true);
     expect(ctx.elements.ipfsActiveRequestsCount.textContent).toBe('3');
     expect(ctx.elements.ipfsDataRead.textContent).toBe('1.5 KB');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs 0.4.1');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Freedom IPFS v0.4.1');
     expect(ctx.state.ipfsVersionFetched).toBe(true);
     expect(ctx.state.ipfsInfoInterval).toBe(2);
     expect(ctx.setIntervalMock).toHaveBeenCalledWith(expect.any(Function), 1000);
@@ -197,7 +197,7 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsInfoPanel.classList.contains('visible')).toBe(false);
     expect(ctx.elements.ipfsActiveRequestsCount.textContent).toBe('0');
     expect(ctx.elements.ipfsDataRead.textContent).toBe('');
-    expect(ctx.elements.ipfsVersionText.textContent).toBe('freedom-ipfs 0.4.1');
+    expect(ctx.elements.ipfsVersionText.textContent).toBe('Freedom IPFS v0.4.1');
   });
 
   test('updates IPFS status lines, toggle state, and running transitions', async () => {
@@ -231,10 +231,13 @@ describe('ipfs-ui', () => {
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
     expect(ctx.state.currentIpfsStatus).toBe('starting');
 
-    ctx.state.suppressIpfsRunningStatus = true;
+    // While a stop is pending, a stale 'running' update must not flip the
+    // switch back on before the node data settles.
+    ctx.state.ipfsDesiredRunning = false;
     ctx.elements.ipfsToggleSwitch.classList.remove('running');
     ctx.mod.updateIpfsUi('running');
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
 
     ctx.mod.updateIpfsUi('error', 'offline');
     expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('IPFS Error: offline');
@@ -292,5 +295,37 @@ describe('ipfs-ui', () => {
 
     expect(ctx.ipfsApi.stop).toHaveBeenCalled();
     expect(ctx.debugMocks.pushDebug).toHaveBeenCalledWith('User toggled IPFS Off');
+  });
+
+  test('keeps the switch on the latest intent through a rapid off/on toggle', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'running',
+      statusResult: { status: 'running', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    // Click off, then immediately back on before the backend has settled.
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+
+    // Transient backend states from the stop/start churn must not flip it off.
+    ctx.mod.updateIpfsUi('stopping');
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+    ctx.mod.updateIpfsUi('stopped');
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+    ctx.mod.updateIpfsUi('starting');
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+
+    // Once the backend confirms the requested state, the intent clears and the
+    // switch follows live status again.
+    ctx.mod.updateIpfsUi('running');
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
   });
 });

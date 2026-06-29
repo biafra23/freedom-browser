@@ -16,6 +16,10 @@ let ipfsStatusValue = null;
 // Binary availability state
 let ipfsBinaryAvailable = true;
 
+// Guards one-time listener/subscription wiring so re-running initIpfsUi (e.g.
+// to re-check binary availability) doesn't bind the click handler twice.
+let ipfsListenersAttached = false;
+
 export const stopIpfsInfoPolling = () => {
   if (state.ipfsInfoInterval) {
     clearInterval(state.ipfsInfoInterval);
@@ -51,7 +55,7 @@ const formatNativeVersionLabel = (diagnostics = {}) => {
     (typeof buildInfo?.version === 'string' && buildInfo.version) ||
     (typeof diagnostics.nativeVersion === 'string' && diagnostics.nativeVersion) ||
     '';
-  return version ? `freedom-ipfs ${version}` : 'freedom-ipfs';
+  return version ? `Freedom IPFS v${version}` : 'Freedom IPFS';
 };
 
 const fetchNativeStats = async () => {
@@ -88,7 +92,7 @@ const fetchVersionOnce = async () => {
   } catch {
     // Fall back below; version display must not block status polling.
   }
-  state.ipfsVersionValue = versionLabel || 'freedom-ipfs';
+  state.ipfsVersionValue = versionLabel || 'Freedom IPFS';
   if (ipfsVersionText) ipfsVersionText.textContent = state.ipfsVersionValue;
 };
 
@@ -108,42 +112,48 @@ export const startIpfsInfoPolling = () => {
 };
 
 export const updateIpfsUi = (status, error) => {
-  if (state.suppressIpfsRunningStatus && status === 'running') {
-    return;
-  }
-  if (status === 'stopped' || status === 'error') {
-    state.suppressIpfsRunningStatus = false;
-  }
-
   state.currentIpfsStatus = status;
 
-  // Update status line and toggle state from registry
+  // Reconcile a pending user toggle. Once the backend reaches the state the
+  // user asked for (or errors out), the transition is over and the live status
+  // drives the switch again. Until then we keep the pending intent so that a
+  // rapid on/off/on sequence — which makes the backend emit transient
+  // stopping/starting and stale stopped/running states — can't flip the switch
+  // out from under the user before the node data settles.
+  if (
+    status === 'error' ||
+    (state.ipfsDesiredRunning === true && status === 'running') ||
+    (state.ipfsDesiredRunning === false && status === 'stopped')
+  ) {
+    state.ipfsDesiredRunning = null;
+  }
+
+  // Update status line and toggle disabled/external state from registry
   updateIpfsStatusLine();
   updateIpfsToggleState();
 
   if (!ipfsToggleBtn || !ipfsToggleSwitch) return;
 
-  ipfsToggleSwitch.classList.remove('running');
-  switch (status) {
-    case 'running':
-    case 'starting':
-      ipfsToggleSwitch.classList.add('running');
-      break;
-    case 'error':
-      if (error) pushDebug(`IPFS Error: ${error}`);
-      break;
-    case 'stopping':
-    case 'stopped':
-    default:
-      // Clear status row when stopped
-      if (ipfsStatusRow) ipfsStatusRow.classList.remove('visible');
-      break;
+  // While a toggle is in flight the switch follows the user's intent; once it
+  // settles (ipfsDesiredRunning === null) it follows the live status.
+  const showRunning =
+    state.ipfsDesiredRunning !== null
+      ? state.ipfsDesiredRunning
+      : status === 'running' || status === 'starting';
+
+  ipfsToggleSwitch.classList.toggle('running', showRunning);
+
+  if (status === 'error') {
+    if (error) pushDebug(`IPFS Error: ${error}`);
+  } else if (!showRunning && ipfsStatusRow) {
+    // Clear the status row once the node is no longer running.
+    ipfsStatusRow.classList.remove('visible');
   }
 
   if (state.antMenuOpen) {
-    if (status === 'stopped') {
+    if (!showRunning) {
       stopIpfsInfoPolling();
-    } else if (!state.ipfsInfoInterval && ipfsToggleSwitch?.classList.contains('running')) {
+    } else if (!state.ipfsInfoInterval) {
       startIpfsInfoPolling();
     }
   }
@@ -227,6 +237,9 @@ export const initIpfsUi = () => {
     });
   }
 
+  if (ipfsListenersAttached) return;
+  ipfsListenersAttached = true;
+
   // Toggle button listener
   ipfsToggleBtn?.addEventListener('click', () => {
     if (!ipfsBinaryAvailable) return;
@@ -235,8 +248,16 @@ export const initIpfsUi = () => {
     const mode = state.registry?.ipfs?.mode;
     if (mode === 'reused') return;
 
-    if (state.currentIpfsStatus === 'running' || state.currentIpfsStatus === 'starting') {
-      state.suppressIpfsRunningStatus = true;
+    // Base the decision on a pending toggle if one is in flight, otherwise on
+    // the live status — so a quick second click reverses the user's last intent
+    // rather than reacting to a transient stopping/starting state.
+    const currentlyOn =
+      state.ipfsDesiredRunning !== null
+        ? state.ipfsDesiredRunning
+        : state.currentIpfsStatus === 'running' || state.currentIpfsStatus === 'starting';
+
+    if (currentlyOn) {
+      state.ipfsDesiredRunning = false;
       ipfsToggleSwitch?.classList.remove('running');
       stopIpfsInfoPolling();
       pushDebug('User toggled IPFS Off');
@@ -248,7 +269,7 @@ export const initIpfsUi = () => {
           pushDebug(`Failed to toggle IPFS: ${err.message}`);
         });
     } else {
-      state.suppressIpfsRunningStatus = false;
+      state.ipfsDesiredRunning = true;
       ipfsToggleSwitch?.classList.add('running');
       startIpfsInfoPolling();
       pushDebug('User toggled IPFS On');
