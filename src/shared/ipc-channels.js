@@ -82,6 +82,11 @@ module.exports = {
   PROFILE_EXTERNAL_CANDIDATES: 'profile:external-candidates',
   PROFILE_EXTERNAL_CANDIDATES_DECISION: 'profile:external-candidates-decision',
   PROFILE_UPDATED: 'profile:updated',
+  // Create-modal round trip: a page/menu requests the chrome's create modal
+  // (renderer→main), main relays a show command to the owning/focused window
+  // (main→renderer) which opens the shared #profile-create-modal.
+  PROFILE_REQUEST_CREATE_MODAL: 'profile:request-create-modal',
+  PROFILE_SHOW_CREATE_MODAL: 'profile:show-create-modal',
 
   // History
   HISTORY_GET: 'history:get',
@@ -121,7 +126,6 @@ module.exports = {
 
   // Bookmarks bar
   BOOKMARKS_TOGGLE_BAR: 'bookmarks:toggle-bar',
-
 
   // GitHub Bridge
   GITHUB_BRIDGE_IMPORT: 'github-bridge:import',

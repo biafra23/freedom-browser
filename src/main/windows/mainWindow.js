@@ -139,6 +139,11 @@ function focusOrCreateMainWindow(initialUrl = null) {
   let window = [...mainWindows].find((candidate) => !candidate.isDestroyed());
   if (!window) {
     window = createMainWindow(initialUrl);
+  } else if (initialUrl) {
+    // A window already exists, so createMainWindow's initialUrl path doesn't
+    // run — open the target in a new tab on the existing window instead (e.g.
+    // the Profiles manager's edit button focusing an already-running profile).
+    window.webContents.send('tab:new-with-url', initialUrl);
   }
   focusBrowserWindow(window);
   return window;

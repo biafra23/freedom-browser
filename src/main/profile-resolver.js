@@ -10,9 +10,11 @@ const {
   hashPath,
   importProfile,
   listProfileSummaries,
+  loadCatalog,
   renameProfile,
   sanitizeProfileId,
   updateProfileNodeConfig,
+  validateProfileDeletion,
 } = require('./profile-catalog');
 const { isProfileLocked } = require('./profile-lock');
 
@@ -63,6 +65,29 @@ function resolveDevAppRoot(app, env, repoRoot) {
   return path.join(app.getPath('appData'), 'Freedom Dev', getCheckoutId(repoRoot));
 }
 
+// Returns the id of the most recently opened registered profile, so a cold
+// start with no explicit profile reopens whatever was last active. Falls back
+// to null when the catalog is empty/unreadable or no profile has been opened.
+function resolveLastOpenedProfileId(appRoot) {
+  let catalog;
+  try {
+    catalog = loadCatalog(appRoot);
+  } catch {
+    return null;
+  }
+
+  let lastId = null;
+  let lastOpenedAt = null;
+  for (const profile of catalog.profiles || []) {
+    if (!profile?.id || !profile.lastOpenedAt) continue;
+    if (lastOpenedAt === null || profile.lastOpenedAt > lastOpenedAt) {
+      lastOpenedAt = profile.lastOpenedAt;
+      lastId = profile.id;
+    }
+  }
+  return lastId;
+}
+
 function resolveProfile(app, options = {}) {
   const env = options.env || process.env;
   const argv = options.argv || process.argv;
@@ -107,7 +132,11 @@ function resolveProfile(app, options = {}) {
   const appRoot = isDev
     ? resolveDevAppRoot(app, env, repoRoot)
     : app.getPath('userData');
-  const profileInput = getArgValue(argv, 'profile') || env.FREEDOM_PROFILE || DEFAULT_PROFILE_ID;
+  const profileInput =
+    getArgValue(argv, 'profile') ||
+    env.FREEDOM_PROFILE ||
+    resolveLastOpenedProfileId(appRoot) ||
+    DEFAULT_PROFILE_ID;
   const profileId = sanitizeProfileId(profileInput);
   const defaultProfileDir = isDev
     ? path.join(appRoot, 'Profiles', DEFAULT_PROFILE_ID)
@@ -287,6 +316,58 @@ function renameProfileForActiveApp(profileId, displayName) {
   return result;
 }
 
+// Resolve a registered profile by id into the descriptor the lock / focus
+// helpers need (its userDataDir is its catalog dir), plus whether it is
+// currently running (its lock is held). Returns null when there is no active
+// catalog or the id isn't registered.
+function getProfileFocusTargetForActiveApp(profileId) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  const id = sanitizeProfileId(profileId);
+  const catalog = loadCatalog(activeProfile.appRoot);
+  const record = catalog?.profiles?.find((profile) => profile.id === id);
+  if (!record?.dir) {
+    return null;
+  }
+
+  const target = {
+    id: record.id,
+    displayName: record.displayName,
+    userDataDir: record.dir,
+    isDev: activeProfile.isDev === true,
+  };
+
+  let isLocked;
+  try {
+    isLocked = isProfileLocked(target);
+  } catch {
+    isLocked = false;
+  }
+
+  return { ...target, isLocked };
+}
+
+// Pre-flight validation of a delete request (existence + confirmation + path
+// safety) against the active catalog, WITHOUT touching the lock or removing
+// anything. Returns null when there is no active catalog (mirrors
+// deleteProfileForActiveApp), true when the request is valid, and throws on a
+// bad request. Callers run this before closing a running profile so an invalid
+// delete can never quit a live window only to fail afterwards.
+function validateProfileDeletionForActiveApp(profileId, expectedDisplayName) {
+  if (!activeProfile || activeProfile.source !== 'catalog') {
+    return null;
+  }
+
+  if (profileId === activeProfile.id) {
+    throw new Error('The active profile cannot be deleted');
+  }
+
+  validateProfileDeletion(activeProfile.appRoot, profileId, expectedDisplayName);
+  return true;
+}
+
 function deleteProfileForActiveApp(profileId, expectedDisplayName) {
   if (!activeProfile || activeProfile.source !== 'catalog') {
     return null;
@@ -319,12 +400,15 @@ module.exports = {
   getArgValue,
   getDefaultRepoRoot,
   getLegacyDevDataDirs,
+  getProfileFocusTargetForActiveApp,
   getReservedProfilePorts,
   importProfileForActiveApp,
   initializeProfile,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
+  resolveLastOpenedProfileId,
   resolveProfile,
   updateActiveProfileNodeConfig,
+  validateProfileDeletionForActiveApp,
   warnAboutLegacyDevData,
 };

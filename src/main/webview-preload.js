@@ -36,6 +36,19 @@ const isSettingsPage = () => {
   return pathname.endsWith(`/pages/${settingsFile}`);
 };
 
+const isProfilesPage = () => {
+  const location = globalThis.location;
+  if (!location || location.protocol !== 'file:') return false;
+  const pathname = location.pathname || '';
+  const profilesFile = internalPages.routable?.profiles || 'profiles.html';
+  return pathname.endsWith(`/pages/${profilesFile}`);
+};
+
+// Profile management (rename / delete / import / open + the create-modal
+// trigger) is allowed from the settings Profile section and the dedicated
+// freedom://profiles manager page.
+const isProfileManagerPage = () => isSettingsPage() || isProfilesPage();
+
 const guardInternal =
   (name, fn) =>
   (...args) => {
@@ -54,6 +67,19 @@ const guardSettingsPage =
       const url = globalThis.location?.href || 'unknown';
       console.warn(`[freedomAPI] blocked settings-only "${name}" on page: ${url}`);
       return Promise.reject(new Error('freedomAPI profile changes are only available on settings'));
+    }
+    return fn(...args);
+  };
+
+const guardProfileManagerPage =
+  (name, fn) =>
+  (...args) => {
+    if (!isProfileManagerPage()) {
+      const url = globalThis.location?.href || 'unknown';
+      console.warn(`[freedomAPI] blocked profile-management "${name}" on page: ${url}`);
+      return Promise.reject(
+        new Error('freedomAPI profile changes are only available on profile management pages')
+      );
     }
     return fn(...args);
   };
@@ -220,13 +246,19 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   clearHistory: guardInternal('clearHistory', () => ipcRenderer.invoke('history:clear')),
 
   // Unified payment history (read-only — producers record in main directly).
-  getPayments: guardInternal('getPayments', (filters) => ipcRenderer.invoke('payments:get-recent', filters)),
-  getPaymentsCount: guardInternal('getPaymentsCount', (filters) => ipcRenderer.invoke('payments:get-count', filters)),
+  getPayments: guardInternal('getPayments', (filters) =>
+    ipcRenderer.invoke('payments:get-recent', filters)
+  ),
+  getPaymentsCount: guardInternal('getPaymentsCount', (filters) =>
+    ipcRenderer.invoke('payments:get-count', filters)
+  ),
   clearPayments: guardInternal('clearPayments', () => ipcRenderer.invoke('payments:clear')),
 
   // Token registry — used by the payments page to resolve asset
   // metadata (symbol, decimals) per chainId:address.
-  getTokens: guardInternal('getTokens', (chainId) => ipcRenderer.invoke('tokens:get-tokens', chainId)),
+  getTokens: guardInternal('getTokens', (chainId) =>
+    ipcRenderer.invoke('tokens:get-tokens', chainId)
+  ),
 
   // Settings
   getSettings: guardInternal('getSettings', () => ipcRenderer.invoke('settings:get')),
@@ -242,23 +274,34 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   ),
   onProfileUpdated: guardInternalSubscription('onProfileUpdated', 'profile:updated'),
   listProfiles: guardInternal('listProfiles', () => ipcRenderer.invoke('profile:list')),
-  createProfile: guardSettingsPage('createProfile', (profile) =>
+  createProfile: guardProfileManagerPage('createProfile', (profile) =>
     ipcRenderer.invoke('profile:create', profile)
   ),
-  importProfile: guardSettingsPage('importProfile', (id) =>
+  importProfile: guardProfileManagerPage('importProfile', (id) =>
     ipcRenderer.invoke('profile:import', { id })
   ),
-  renameProfile: guardSettingsPage('renameProfile', (id, displayName) =>
+  renameProfile: guardProfileManagerPage('renameProfile', (id, displayName) =>
     ipcRenderer.invoke('profile:rename', { id, displayName })
   ),
-  openProfile: guardSettingsPage('openProfile', (id) =>
+  openProfile: guardProfileManagerPage('openProfile', (id) =>
     ipcRenderer.invoke('profile:open', { id })
   ),
-  deleteProfile: guardSettingsPage('deleteProfile', (id, confirmDisplayName) =>
+  // Opens the profile and lands its window on the Profile settings page (where
+  // renaming now lives). The intent is a boolean flag — main maps it to the
+  // internal deep-link so an arbitrary URL never crosses this boundary.
+  openProfileSettings: guardProfileManagerPage('openProfileSettings', (id) =>
+    ipcRenderer.invoke('profile:open', { id, openSettings: true })
+  ),
+  deleteProfile: guardProfileManagerPage('deleteProfile', (id, confirmDisplayName) =>
     ipcRenderer.invoke('profile:delete', { id, confirmDisplayName })
   ),
   updateProfileNodeConfig: guardSettingsPage('updateProfileNodeConfig', (protocol, config) =>
     ipcRenderer.invoke('profile:update-node-config', { protocol, config })
+  ),
+  // Asks main to open the chrome's shared create-profile modal over this
+  // webview's owning window.
+  requestCreateProfileModal: guardProfileManagerPage('requestCreateProfileModal', () =>
+    ipcRenderer.send('profile:request-create-modal')
   ),
 
   // Network configuration (the Networks settings page + the ENS lens).
@@ -343,7 +386,9 @@ contextBridge.exposeInMainWorld('freedomAPI', {
 
   // Radicle
   seedRadicle: guardInternal('seedRadicle', (rid) => ipcRenderer.invoke('radicle:seed', rid)),
-  getRadicleStatus: guardInternal('getRadicleStatus', () => ipcRenderer.invoke('radicle:getStatus')),
+  getRadicleStatus: guardInternal('getRadicleStatus', () =>
+    ipcRenderer.invoke('radicle:getStatus')
+  ),
   getRadicleRepoPayload: guardInternal('getRadicleRepoPayload', (rid) =>
     ipcRenderer.invoke('radicle:getRepoPayload', rid)
   ),
@@ -352,9 +397,7 @@ contextBridge.exposeInMainWorld('freedomAPI', {
   ),
 
   // Clipboard
-  copyText: guardInternal('copyText', (text) =>
-    ipcRenderer.invoke('clipboard:copy-text', text)
-  ),
+  copyText: guardInternal('copyText', (text) => ipcRenderer.invoke('clipboard:copy-text', text)),
 
   // Swarm publishing (internal-only, path-based methods)
   swarm: {
@@ -370,9 +413,7 @@ contextBridge.exposeInMainWorld('freedomAPI', {
     getUploadStatus: guardInternal('swarm.getUploadStatus', (tagUid) =>
       ipcRenderer.invoke('swarm:get-upload-status', tagUid)
     ),
-    getStamps: guardInternal('swarm.getStamps', () =>
-      ipcRenderer.invoke('swarm:get-stamps')
-    ),
+    getStamps: guardInternal('swarm.getStamps', () => ipcRenderer.invoke('swarm:get-stamps')),
     pickFileForPublish: guardInternal('swarm.pickFileForPublish', () =>
       ipcRenderer.invoke('swarm:pick-file')
     ),
@@ -542,20 +583,26 @@ window.addEventListener('message', (event) => {
 // Bridge IPC responses back to page
 ipcRenderer.on('dapp:provider-response', (_event, { id, result, error }) => {
   console.log('[webview-preload] Received provider response:', { id, result, error });
-  window.postMessage({
-    type: 'FREEDOM_ETHEREUM_RESPONSE',
-    id,
-    result,
-    error,
-  }, window.location.origin);
+  window.postMessage(
+    {
+      type: 'FREEDOM_ETHEREUM_RESPONSE',
+      id,
+      result,
+      error,
+    },
+    window.location.origin
+  );
 });
 
 ipcRenderer.on('dapp:provider-event', (_event, { event, data }) => {
-  window.postMessage({
-    type: 'FREEDOM_ETHEREUM_EVENT',
-    event,
-    data,
-  }, window.location.origin);
+  window.postMessage(
+    {
+      type: 'FREEDOM_ETHEREUM_EVENT',
+      event,
+      data,
+    },
+    window.location.origin
+  );
 });
 
 // ============================================
@@ -683,20 +730,26 @@ window.addEventListener('message', (event) => {
 
 // Bridge IPC responses back to page (Swarm)
 ipcRenderer.on('swarm:provider-response', (_event, { id, result, error }) => {
-  window.postMessage({
-    type: 'FREEDOM_SWARM_RESPONSE',
-    id,
-    result,
-    error,
-  }, window.location.origin);
+  window.postMessage(
+    {
+      type: 'FREEDOM_SWARM_RESPONSE',
+      id,
+      result,
+      error,
+    },
+    window.location.origin
+  );
 });
 
 ipcRenderer.on('swarm:provider-event', (_event, { event, data }) => {
-  window.postMessage({
-    type: 'FREEDOM_SWARM_EVENT',
-    event,
-    data,
-  }, window.location.origin);
+  window.postMessage(
+    {
+      type: 'FREEDOM_SWARM_EVENT',
+      event,
+      data,
+    },
+    window.location.origin
+  );
 });
 
 // Note: transient 404/500 recovery for bzz:// sub-resources is handled by the

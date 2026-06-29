@@ -1,5 +1,9 @@
 // Renderer process entry point
-import { updateRegistry, setRadicleIntegrationEnabled, setBlockUnverifiedEns } from './lib/state.js';
+import {
+  updateRegistry,
+  setRadicleIntegrationEnabled,
+  setBlockUnverifiedEns,
+} from './lib/state.js';
 import { initAntUi, updateAntStatusLine, updateAntToggleState } from './lib/ant-ui.js';
 import { initIpfsUi, updateIpfsStatusLine, updateIpfsToggleState } from './lib/ipfs-ui.js';
 import {
@@ -30,6 +34,7 @@ import {
   hideTabContextMenu,
   setOnContextMenuOpening as setOnTabContextMenuOpening,
   createTab,
+  openOrFocusInternalPage,
 } from './lib/tabs.js';
 import {
   initNavigation,
@@ -58,6 +63,8 @@ import { pushDebug } from './lib/debug.js';
 import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
+import { attachSubmenuHover } from './lib/submenu-hover.js';
+import { bindHoverTooltip } from './lib/hover-tooltip.js';
 
 const electronAPI = window.electronAPI;
 
@@ -150,7 +157,9 @@ async function initPlatformUI() {
     document
       .getElementById('maximize-btn')
       ?.addEventListener('click', () => electronAPI.maximizeWindow());
-    document.getElementById('close-btn')?.addEventListener('click', () => electronAPI.closeWindow());
+    document
+      .getElementById('close-btn')
+      ?.addEventListener('click', () => electronAPI.closeWindow());
 
     // Double-click the bare titlebar to toggle maximize (native behavior)
     document.querySelector('.title-bar')?.addEventListener('dblclick', (e) => {
@@ -318,11 +327,10 @@ function initExternalNodeCandidatesModal() {
 }
 
 async function initProfileIndicator() {
-  const indicator = document.getElementById('profile-indicator');
-  const nameEl = document.getElementById('profile-indicator-name');
+  const indicator = document.getElementById('profile-menu-btn');
+  const nameEl = document.getElementById('profile-current-name');
+  const menuWrap = document.getElementById('profile-menu-wrap');
   const menu = document.getElementById('profile-menu');
-  const menuName = document.getElementById('profile-menu-name');
-  const menuMeta = document.getElementById('profile-menu-meta');
   const profileList = document.getElementById('profile-menu-list');
   const createBtn = document.getElementById('profile-create-btn');
   const manageBtn = document.getElementById('profile-manage-btn');
@@ -348,13 +356,14 @@ async function initProfileIndicator() {
   const setMenuStatus = (message, kind = '') => {
     if (!menuStatus) return;
     menuStatus.textContent = message || '';
-    menuStatus.className = 'profile-menu-status' + (kind ? ` ${kind}` : '');
+    menuStatus.className = 'menu-flyout-status' + (kind ? ` ${kind}` : '');
     menuStatus.hidden = !message;
   };
 
-  const openProfilesSettings = (subroute = '') => {
-    setMenuOpen(false);
-    loadTarget(subroute ? `freedom://settings/profiles/${subroute}` : 'freedom://settings/profiles');
+  const openProfilesManager = () => {
+    closeAllMenus();
+    // Open the manager in its own tab, or focus the tab that already has it.
+    openOrFocusInternalPage('profiles');
   };
 
   const setCreateStatus = (message, kind = '') => {
@@ -382,7 +391,7 @@ async function initProfileIndicator() {
   };
 
   const openCreateModal = () => {
-    setMenuOpen(false);
+    closeAllMenus();
     setCreateBusy(false);
     setCreateStatus('', '');
     if (createNameInput) createNameInput.value = '';
@@ -394,12 +403,6 @@ async function initProfileIndicator() {
     requestAnimationFrame(() => {
       createNameInput?.focus();
     });
-  };
-
-  const profileMetaText = (profile, isCurrent) => {
-    if (isCurrent) return 'Current profile';
-    if (profile?.isUnregistered) return 'Needs registration';
-    return 'Open in new window';
   };
 
   const renderProfileList = (profiles = []) => {
@@ -415,7 +418,7 @@ async function initProfileIndicator() {
 
     if (!rows.length) {
       const empty = document.createElement('div');
-      empty.className = 'profile-menu-empty';
+      empty.className = 'menu-flyout-empty';
       empty.textContent = 'No profiles available';
       profileList.append(empty);
       return;
@@ -426,42 +429,48 @@ async function initProfileIndicator() {
       const displayName = profile?.displayName || profile?.id || 'Unnamed profile';
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'profile-menu-item profile-menu-profile-item';
+      button.className = 'menu-item';
       button.setAttribute('role', 'menuitem');
       button.disabled = isCurrent;
       if (isCurrent) button.setAttribute('aria-current', 'true');
 
+      // Leading check gutter (reuses .menu-item-icon) so names align with the
+      // hamburger's Profiles row; only the current profile shows the ✓.
       const check = document.createElement('span');
-      check.className = 'profile-menu-check';
+      check.className = 'menu-item-icon menu-item-check';
+      check.setAttribute('aria-hidden', 'true');
       check.textContent = isCurrent ? '✓' : '';
 
-      const text = document.createElement('span');
-      text.className = 'profile-menu-item-text';
-
       const label = document.createElement('span');
-      label.className = 'profile-menu-item-label';
+      label.className = 'menu-item-label';
       label.textContent = displayName;
+      // Recover the full name on hover when the label clips to "…", using the
+      // app-wide hover tooltip (shared appear delay) rather than native `title`.
+      bindHoverTooltip(label, (el) => (el.scrollWidth > el.clientWidth ? displayName : ''));
 
-      const meta = document.createElement('span');
-      meta.className = 'profile-menu-item-meta';
-      meta.textContent = profileMetaText(profile, isCurrent);
-
-      text.append(label, meta);
-      button.append(check, text);
+      button.append(check, label);
 
       if (!isCurrent) {
         button.addEventListener('click', async () => {
+          // The disabled row is the in-progress feedback; deliberately no
+          // "Opening…" status line — it renders as a stray item at the bottom
+          // of the flyout and now lingers because the open awaits a real focus
+          // ack. Only surface the error case below.
           button.disabled = true;
-          setMenuStatus(`Opening ${displayName}...`, 'success');
           try {
             const result = await electronAPI.openProfile?.(profile.id);
             if (!result?.success) {
               throw new Error(result?.error?.message || 'Profile could not be opened');
             }
-            setMenuOpen(false);
+            // Switching focuses/opens the target profile's own window; dismiss
+            // the whole hamburger here rather than just collapsing the flyout.
+            closeAllMenus();
           } catch (err) {
-            button.disabled = false;
             setMenuStatus(err?.message || 'Profile could not be opened', 'error');
+          } finally {
+            // Always re-enable: on failure so the user can retry, on success so
+            // the row isn't left stuck disabled when the menu is reopened.
+            button.disabled = false;
           }
         });
       }
@@ -485,18 +494,60 @@ async function initProfileIndicator() {
     }
   };
 
-  closeProfileMenu = () => setMenuOpen(false);
+  // macOS-style submenu: open after a short hover delay. It deliberately does
+  // NOT close on mouse-out — once open it stays until a click lands outside it
+  // (handled below). The flyout is a child of #menu-dropdown, so the hamburger's
+  // outside-click handler treats flyout clicks as inside — the hamburger stays
+  // open with it. Timing lives in the shared attachSubmenuHover helper.
+  const openFlyout = () => {
+    // Don't open while the hamburger itself is closed (the dropdown — and thus
+    // this wrapper — isn't rendered), e.g. if a hover open-timer fires just
+    // after the menu was dismissed.
+    if (!menuWrap || menuWrap.offsetParent === null) return;
+    if (menu?.hidden !== false) {
+      setMenuOpen(true);
+      refreshProfileList();
+    }
+  };
 
-  indicator.addEventListener('click', (event) => {
-    event.stopPropagation();
-    const shouldOpen = menu?.hidden !== false;
-    closeAllMenus();
-    setMenuOpen(shouldOpen);
-    if (shouldOpen) refreshProfileList();
+  const flyoutHover = attachSubmenuHover(menuWrap, {
+    open: openFlyout,
+    closeOnLeave: false,
+  });
+
+  closeProfileMenu = () => {
+    flyoutHover.cancel();
+    setMenuOpen(false);
+  };
+
+  // Click opens immediately (keyboard/tap), bypassing the hover delay; it never
+  // toggles closed while the cursor is over the row.
+  indicator.addEventListener('click', flyoutHover.openNow);
+
+  // The flyout no longer closes on mouse-out, so dismiss it on click-out: a
+  // click inside the wrapper (trigger or flyout) keeps it open; a click on any
+  // other hamburger row collapses just the flyout. Clicks fully outside the
+  // hamburger are handled in menus.js, which hides the flyout when the dropdown
+  // closes. Pointerdown (not click) so the dismissal isn't pre-empted by a row
+  // that closes the whole menu on click.
+  document.addEventListener('pointerdown', (event) => {
+    if (menu?.hidden !== false) return;
+    if (menuWrap?.contains(event.target)) return;
+    flyoutHover.cancel();
+    setMenuOpen(false);
+  });
+
+  // Also dismiss when the window loses focus (e.g. alt-tab), matching the app's
+  // other transient menus (bookmarks, tab/context menus, autocomplete) and the
+  // old profile menu's behaviour — the flyout shouldn't linger over an inactive
+  // window.
+  window.addEventListener('blur', () => {
+    if (menu?.hidden !== false) return;
+    closeProfileMenu();
   });
 
   createBtn?.addEventListener('click', openCreateModal);
-  manageBtn?.addEventListener('click', () => openProfilesSettings());
+  manageBtn?.addEventListener('click', openProfilesManager);
   createCancelBtn?.addEventListener('click', closeCreateModal);
   createCloseBtn?.addEventListener('click', closeCreateModal);
   createModal?.addEventListener('cancel', (event) => {
@@ -533,7 +584,9 @@ async function initProfileIndicator() {
       setCreateStatus(`Opening ${profile.displayName || displayName}...`, 'success');
       const openResult = await electronAPI.openProfile?.(profileId);
       if (!openResult?.success) {
-        throw new Error(openResult?.error?.message || 'Profile was created but could not be opened');
+        throw new Error(
+          openResult?.error?.message || 'Profile was created but could not be opened'
+        );
       }
 
       setCreateBusy(false);
@@ -545,16 +598,9 @@ async function initProfileIndicator() {
       createNameInput?.focus();
     }
   });
-  document.addEventListener('click', (event) => {
-    if (
-      menu?.hidden === false &&
-      !menu.contains(event.target) &&
-      !indicator.contains(event.target)
-    ) {
-      setMenuOpen(false);
-    }
-  });
-  window.addEventListener('blur', () => setMenuOpen(false));
+  // The native menu and the manager page open this same create modal via a
+  // main→renderer round trip, regardless of which tab/page is active.
+  electronAPI.onShowCreateProfileModal?.(() => openCreateModal());
 
   const renderProfile = (profile) => {
     activeProfile = profile;
@@ -563,14 +609,6 @@ async function initProfileIndicator() {
 
     nameEl.textContent = label;
     indicator.title = profile?.isDev ? `${label} (dev)` : label;
-    if (menuName) menuName.textContent = label;
-    if (menuMeta) {
-      const meta = [];
-      if (profile?.isDev) meta.push('Development');
-      menuMeta.textContent = meta.join(' · ');
-      menuMeta.hidden = meta.length === 0;
-    }
-    indicator.hidden = false;
     if (menu?.hidden === false) refreshProfileList();
   };
 
@@ -698,9 +736,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   initAutocomplete(); // Address bar autocomplete
   initPageContextMenu(); // Page context menu for webviews
   initChromeInputContextMenu({ onOpening: onAnyMenuOpening }); // Address bar edit menu
-  initOnboarding();  // Identity onboarding wizard
-  initSidebar();     // Identity & wallet sidebar
-  initWalletUi();    // Wallet & identity display in sidebar
+  initOnboarding(); // Identity onboarding wizard
+  initSidebar(); // Identity & wallet sidebar
+  initWalletUi(); // Wallet & identity display in sidebar
   loadBookmarks();
   initExternalNodeCandidatesModal();
   initPlatformUI();
