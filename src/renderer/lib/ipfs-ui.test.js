@@ -507,4 +507,37 @@ describe('ipfs-ui', () => {
     expect(ctx.state.ipfsDesiredRunning).toBe(true);
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
   });
+
+  test('a stale rejected start() does not wipe a newer "off" intent', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'stopped',
+      statusResult: { status: 'stopped', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    // First click on dispatches a start() that will reject; the immediate second
+    // click off supersedes it with a stop() we leave pending.
+    ctx.ipfsApi.start.mockRejectedValueOnce(new Error('stale start'));
+    ctx.ipfsApi.stop.mockReturnValueOnce(new Promise(() => {}));
+
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    // The stale start() rejection is for the superseded "on" intent, so it must
+    // bail — leaving the newer "off" intent and switch untouched, and without
+    // logging the superseded failure.
+    expect(ctx.state.ipfsDesiredRunning).toBe(false);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+    expect(ctx.debugMocks.pushDebug).not.toHaveBeenCalledWith(
+      'Failed to toggle IPFS: stale start'
+    );
+  });
 });

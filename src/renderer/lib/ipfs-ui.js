@@ -230,12 +230,12 @@ export const updateIpfsToggleState = () => {
 // it back through updateIpfsUi so the UI settles to the truth instead of the
 // intent we guessed.
 const reconcileToggleError = (expectedIntent, err) => {
+  // A newer click may have already changed the intent while this call was in
+  // flight; if so, this rejection is stale — bail (without logging the noise)
+  // so it can't wipe the newer intent or settle the switch from outdated status.
+  if (state.ipfsDesiredRunning !== expectedIntent) return;
   console.error('Failed to toggle IPFS', err);
   pushDebug(`Failed to toggle IPFS: ${err.message}`);
-  // A newer click may have already changed the intent while this call was in
-  // flight; if so, this rejection is stale — bail so it can't wipe the newer
-  // intent or settle the switch from outdated status.
-  if (state.ipfsDesiredRunning !== expectedIntent) return;
   // The call threw, so the action never took effect. Drop the optimistic intent
   // we applied on click — otherwise a held intent would mask the real status and
   // keep the switch on a state that never happened.
