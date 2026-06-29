@@ -537,6 +537,15 @@ async function initProfileIndicator() {
     setMenuOpen(false);
   });
 
+  // Also dismiss when the window loses focus (e.g. alt-tab), matching the app's
+  // other transient menus (bookmarks, tab/context menus, autocomplete) and the
+  // old profile menu's behaviour — the flyout shouldn't linger over an inactive
+  // window.
+  window.addEventListener('blur', () => {
+    if (menu?.hidden !== false) return;
+    closeProfileMenu();
+  });
+
   createBtn?.addEventListener('click', openCreateModal);
   manageBtn?.addEventListener('click', openProfilesManager);
   createCancelBtn?.addEventListener('click', closeCreateModal);

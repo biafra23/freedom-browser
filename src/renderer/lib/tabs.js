@@ -1262,11 +1262,13 @@ const freedomInternalPageTarget = (url) => {
 export const openInNewTabWithTarget = (url, targetName) => {
   if (!url) return null;
 
-  // Singleton internal pages (freedom://profiles, freedom://settings/profile, …)
-  // should focus an existing tab instead of opening duplicates — same behaviour
-  // as the hamburger menu. A sub-path (settings/profile) reuses the base page's
-  // tab and routes it to that section. Named targets keep their explicit reuse
-  // semantics below.
+  // EVERY freedom:// internal page (profiles, history, settings, …) is treated
+  // as a singleton: an untargeted open focuses the existing tab instead of
+  // opening a duplicate — same behaviour as the hamburger menu, and deliberately
+  // applied to all internal pages, not just profiles. (Trade-off: you can no
+  // longer open two history/settings tabs via a link or tab:new-with-url; use a
+  // named target to keep the explicit reuse semantics below.) A sub-path
+  // (settings/profile) reuses the base page's tab and routes it to that section.
   if (!targetName) {
     const internal = freedomInternalPageTarget(url);
     if (internal) return openOrFocusInternalPage(internal.pageName, internal.subPath);

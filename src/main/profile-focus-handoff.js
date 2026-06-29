@@ -153,32 +153,6 @@ async function requestProfileFocusAsyncAwait(profile, options = {}) {
   };
 }
 
-// Fire-and-forget variant of requestProfileFocusSync: writes the focus-request
-// file and returns immediately without polling for an ack. Used by a running
-// process to focus ANOTHER already-running profile's window without spawning a
-// throwaway process (and without blocking the main thread on the ack).
-function requestProfileFocusAsync(profile, options = {}) {
-  const paths = getProfileFocusPaths(profile);
-  const nonce = options.nonce || makeNonce();
-  const request = {
-    type: 'focus-window',
-    nonce,
-    profileId: profile.id || null,
-    requestedAtMs: Date.now(),
-    pid: process.pid,
-    // When set, the focused window also opens its Profile settings page (from
-    // the profile manager's edit button).
-    ...(options.openSettings ? { openSettings: true } : {}),
-  };
-
-  try {
-    writeJsonAtomic(paths.requestPath, request);
-    return { ok: true, nonce };
-  } catch (error) {
-    return { ok: false, error: error.message || 'Focus request could not be written', nonce };
-  }
-}
-
 const KNOWN_REQUEST_TYPES = new Set(['focus-window', 'quit-app']);
 
 // Fire-and-forget request asking an already-running profile process to quit
@@ -296,7 +270,6 @@ module.exports = {
   FOCUS_REQUEST_FILE,
   getProfileFocusPaths,
   readProfileFocusAck,
-  requestProfileFocusAsync,
   requestProfileFocusAsyncAwait,
   requestProfileFocusSync,
   requestProfileQuitAsync,

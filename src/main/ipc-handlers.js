@@ -395,6 +395,13 @@ function renameProfileFromIpc(payload = {}) {
       );
     }
     const activeProfile = serializeActiveProfile();
+    // Unlike create/delete (which let the registry watcher rebuild the menu and
+    // re-broadcast), rename keeps a direct broadcast on purpose: renaming the
+    // active profile changes its display name in this window's UI, and we want
+    // that reflected immediately rather than on the next watcher tick. It's also
+    // the only sync path under TEST_MODE, where the watcher is disabled — the
+    // E2E rename assertion relies on it. In production this overlaps the
+    // watcher's broadcast; the duplicate is harmless.
     broadcastProfileUpdated(activeProfile);
     return success({
       profile: serializeProfileMutationResult(result),
