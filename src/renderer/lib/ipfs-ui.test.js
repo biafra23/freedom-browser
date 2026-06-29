@@ -330,40 +330,62 @@ describe('ipfs-ui', () => {
     ctx.mod.updateIpfsUi('starting');
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
 
-    // Once the backend confirms the requested state, the intent clears and the
-    // switch follows live status again.
-    ctx.mod.updateIpfsUi('running');
+    // Once the in-flight start() call settles, the superseded stop() result is
+    // ignored, the intent clears, and the switch follows the confirmed status.
+    await flushMicrotasks();
+    await flushMicrotasks();
     expect(ctx.state.ipfsDesiredRunning).toBeNull();
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
   });
 
-  test('clears intent on a failed start but holds it through a failed stop', async () => {
+  test('settles the switch off when a start fails to bring the node up', async () => {
     const ctx = await loadIpfsModule({
       antMenuOpen: true,
-      currentIpfsStatus: 'starting',
-      statusResult: { status: 'starting', error: null },
+      currentIpfsStatus: 'stopped',
+      statusResult: { status: 'stopped', error: null },
+      startResult: { status: 'error', error: 'boom' },
     });
 
     ctx.mod.initIpfsUi();
     await flushMicrotasks();
 
-    // Failed start (intent was "on"): the attempt is over, so intent clears and
-    // the switch falls back to the live status (off).
-    ctx.state.ipfsDesiredRunning = true;
-    ctx.mod.updateIpfsUi('error', 'offline');
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    // Optimistically on right after the click.
+    expect(ctx.state.ipfsDesiredRunning).toBe(true);
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+
+    await flushMicrotasks();
+
+    // start() reported the node never came up: intent clears and the switch
+    // settles off to match reality.
     expect(ctx.state.ipfsDesiredRunning).toBeNull();
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+  });
 
-    // Failed stop (intent was "off"): the node may still be running, so intent
-    // is preserved and a later stale 'running' update can't flip it back on.
-    ctx.state.ipfsDesiredRunning = false;
-    ctx.mod.updateIpfsUi('error', 'stop failed');
+  test('re-syncs the switch back on when a stop settles but the node is still running', async () => {
+    const ctx = await loadIpfsModule({
+      antMenuOpen: true,
+      currentIpfsStatus: 'running',
+      statusResult: { status: 'running', error: null },
+      // The stop didn't take effect — the node reports it's still running.
+      stopResult: { status: 'running', error: null },
+    });
+
+    ctx.mod.initIpfsUi();
+    await flushMicrotasks();
+
+    ctx.elements.ipfsToggleBtn.dispatch('click');
+    // Optimistically off right after the click.
     expect(ctx.state.ipfsDesiredRunning).toBe(false);
     expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
 
-    ctx.mod.updateIpfsUi('running');
-    expect(ctx.state.ipfsDesiredRunning).toBe(false);
-    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(false);
+    await flushMicrotasks();
+
+    // The stop settled but the node is still up: rather than stay stuck off, the
+    // intent clears and the switch re-syncs to the live 'running' status.
+    expect(ctx.state.ipfsDesiredRunning).toBeNull();
+    expect(ctx.elements.ipfsToggleSwitch.classList.contains('running')).toBe(true);
+    expect(ctx.state.ipfsInfoInterval).not.toBeNull();
   });
 
   test('polls stats during a pending "on" toggle while live status is still stopped', async () => {
