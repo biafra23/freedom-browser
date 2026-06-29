@@ -234,6 +234,27 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        cursor: default;
+      }
+
+      /* Floating hover tooltip for clipped names. Mirrors lib/hover-tooltip.js
+         (this page is sandboxed inline script, so it can't import that module);
+         keep the chrome and the 250ms delay below in sync with it. */
+      .hover-tooltip {
+        position: fixed;
+        pointer-events: none;
+        padding: 2px 8px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        font-size: 11px;
+        color: var(--text);
+        white-space: nowrap;
+        z-index: 10001;
+      }
+
+      .hover-tooltip[hidden] {
+        display: none !important;
       }
 
       .profile-card-controls {
@@ -531,6 +552,42 @@
         console.error('[profiles] ' + message, err || '');
       };
 
+      // --- Hover tooltip ------------------------------------------------------
+      // Inline mirror of lib/hover-tooltip.js (this page can't import modules).
+      // Keep the delay and behaviour in sync with that module.
+      const TOOLTIP_HOVER_DELAY_MS = 250;
+      let hoverTooltipEl = null;
+      let hoverTooltipTimer = null;
+
+      const hideHoverTooltip = () => {
+        clearTimeout(hoverTooltipTimer);
+        hoverTooltipTimer = null;
+        if (hoverTooltipEl) hoverTooltipEl.hidden = true;
+      };
+
+      const bindHoverTooltip = (el, getText) => {
+        el.addEventListener('mouseenter', (event) => {
+          const text = getText(el);
+          if (!text) return;
+          clearTimeout(hoverTooltipTimer);
+          const x = event.clientX;
+          const y = event.clientY;
+          hoverTooltipTimer = setTimeout(() => {
+            if (!hoverTooltipEl) {
+              hoverTooltipEl = document.createElement('div');
+              hoverTooltipEl.className = 'hover-tooltip';
+              hoverTooltipEl.hidden = true;
+              document.body.appendChild(hoverTooltipEl);
+            }
+            hoverTooltipEl.textContent = text;
+            hoverTooltipEl.style.left = `${x + 12}px`;
+            hoverTooltipEl.style.top = `${y + 18}px`;
+            hoverTooltipEl.hidden = false;
+          }, TOOLTIP_HOVER_DELAY_MS);
+        });
+        el.addEventListener('mouseleave', hideHoverTooltip);
+      };
+
       // --- Avatar ------------------------------------------------------------
       // Every profile uses the same generic icon on a single flat colour; cards
       // are told apart by their name, not their avatar.
@@ -618,6 +675,15 @@
           .join('');
 
         managerList.innerHTML = cards + createTile;
+
+        // A name clipped to "…" gets a hover tooltip so the full name is
+        // recoverable; names that fit are left alone (no redundant tip).
+        hideHoverTooltip();
+        managerList.querySelectorAll('.profile-card-name').forEach((el) => {
+          bindHoverTooltip(el, (node) =>
+            node.scrollWidth > node.clientWidth ? node.textContent : ''
+          );
+        });
       };
 
       const refreshProfiles = async () => {

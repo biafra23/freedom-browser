@@ -58,6 +58,7 @@ import { openSendFlow } from './wallet-ui.js';
 import { walletState } from './wallet/wallet-state.js';
 import { formatWeiToDecimal } from './wallet/send.js';
 import { startIpfsProgressStatus, stopIpfsProgressStatus } from './ipfs-progress-status.js';
+import { TOOLTIP_HOVER_DELAY_MS } from './hover-tooltip.js';
 
 // Helper to get active tab's navigation state (with fallback to empty object)
 const getNavState = () => getActiveTabState() || {};
@@ -320,7 +321,9 @@ let trustTooltipShowTimer = null;
 let trustTooltipCopiedTimer = null;
 let trustTooltipCopiedActive = false;
 
-const TRUST_TOOLTIP_HOVER_DELAY_MS = 250;
+// Appear delay is shared app-wide (see hover-tooltip.js); the "Copied" hold is
+// specific to this copy-confirmation tooltip.
+const TRUST_TOOLTIP_HOVER_DELAY_MS = TOOLTIP_HOVER_DELAY_MS;
 const TRUST_TOOLTIP_COPIED_HOLD_MS = 1200;
 
 const resetTrustTooltip = () => {

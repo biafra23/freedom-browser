@@ -64,6 +64,7 @@ import { initOnboarding } from './lib/onboarding.js';
 import { initSidebar } from './lib/sidebar.js';
 import { initWalletUi, openPublishSetupFlow } from './lib/wallet-ui.js';
 import { attachSubmenuHover } from './lib/submenu-hover.js';
+import { bindHoverTooltip } from './lib/hover-tooltip.js';
 
 const electronAPI = window.electronAPI;
 
@@ -443,6 +444,9 @@ async function initProfileIndicator() {
       const label = document.createElement('span');
       label.className = 'menu-item-label';
       label.textContent = displayName;
+      // Recover the full name on hover when the label clips to "…", using the
+      // app-wide hover tooltip (shared appear delay) rather than native `title`.
+      bindHoverTooltip(label, (el) => (el.scrollWidth > el.clientWidth ? displayName : ''));
 
       button.append(check, label);
 
