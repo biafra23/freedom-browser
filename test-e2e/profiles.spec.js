@@ -162,7 +162,9 @@ test('use: opening an already-running profile focuses it without recording a lau
   // Mark the target as already running so openOrFocusProfile takes the focus
   // fast path (focus its window) instead of cold-starting a second process.
   await electronApp.evaluate(
-    (id) => globalThis.__FREEDOM_TEST_HARNESS__.simulateProfileFocus(id, { focused: true }),
+    // electronApp.evaluate calls back with the Electron module as the first arg;
+    // the spec's value (target.id) arrives as the second.
+    (_electron, id) => globalThis.__FREEDOM_TEST_HARNESS__.simulateProfileFocus(id, { focused: true }),
     target.id
   );
   await clearLaunches(electronApp);
@@ -317,7 +319,9 @@ test('delete: a failed delete restores the card and surfaces the error toast', a
   // fail from the page (freedomAPI is a read-only contextBridge object), so the
   // failure is injected in the main process.
   await electronApp.evaluate(
-    (id) => globalThis.__FREEDOM_TEST_HARNESS__.simulateProfileDelete(id),
+    // electronApp.evaluate calls back with the Electron module as the first arg;
+    // the spec's value (created.id) arrives as the second.
+    (_electron, id) => globalThis.__FREEDOM_TEST_HARNESS__.simulateProfileDelete(id),
     created.id
   );
 
