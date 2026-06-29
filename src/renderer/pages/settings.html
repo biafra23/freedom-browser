@@ -1033,10 +1033,16 @@
         nodesCard: $('profile-nodes-card'),
         nodesStatus: $('profile-nodes-status'),
       };
-      // Navigate the settings tab to the profile manager (was an <a href>,
-      // now a card button matching the chain settings' "Add a chain").
+      // Open the profile manager in its own tab, reusing an existing
+      // freedom://profiles tab if one is already open (same as the hamburger
+      // and system menus). window.open routes through the main process'
+      // setWindowOpenHandler → tab:new-with-url → openInNewTabWithTarget,
+      // which focuses an existing singleton internal-page tab instead of
+      // duplicating it. A plain location.href would instead navigate the
+      // Settings tab in place — never reusing, and orphaning any profiles
+      // tab already open.
       $('manage-profiles-link')?.addEventListener('click', () => {
-        window.location.href = 'freedom://profiles';
+        window.open('freedom://profiles', '_blank');
       });
       let activeProfileId = null;
       // The committed profile name — the baseline an in-progress edit reverts

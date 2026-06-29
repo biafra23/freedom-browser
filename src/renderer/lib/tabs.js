@@ -1246,24 +1246,30 @@ export const switchTab = (tabId, options = {}) => {
  * @param {string|null} targetName - HTML `target` attribute, if any
  * @returns {object|null} the (possibly new) tab, or null on noop
  */
-// Map a bare `freedom://<page>` URL to its internal page name, or null when it
-// isn't a recognised single-segment internal page (sub-paths like
-// `freedom://settings/appearance` are intentionally excluded).
-const freedomInternalPageName = (url) => {
-  const match = /^freedom:\/\/([a-z0-9-]+)\/?$/i.exec(url || '');
-  const name = match && match[1].toLowerCase();
-  return name && Object.prototype.hasOwnProperty.call(internalPages, name) ? name : null;
+// Parse a `freedom://<page>[/<sub>]` URL into `{ pageName, subPath }` when
+// `<page>` is a recognised internal page, else null. A single sub-path segment
+// is accepted (e.g. `freedom://settings/profile`) so deep links still resolve
+// to the page's singleton tab — the sub-path routes the (possibly reused) tab
+// to the right section. Anything deeper or unrecognised returns null.
+const freedomInternalPageTarget = (url) => {
+  const match = /^freedom:\/\/([a-z0-9-]+)(?:\/([a-z0-9-]+))?\/?$/i.exec(url || '');
+  if (!match) return null;
+  const pageName = match[1].toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(internalPages, pageName)) return null;
+  return { pageName, subPath: match[2] ? match[2].toLowerCase() : null };
 };
 
 export const openInNewTabWithTarget = (url, targetName) => {
   if (!url) return null;
 
-  // Singleton internal pages (freedom://profiles, freedom://history, …) should
-  // focus an existing tab instead of opening duplicates — same behaviour as the
-  // hamburger menu. Named targets keep their explicit reuse semantics below.
+  // Singleton internal pages (freedom://profiles, freedom://settings/profile, …)
+  // should focus an existing tab instead of opening duplicates — same behaviour
+  // as the hamburger menu. A sub-path (settings/profile) reuses the base page's
+  // tab and routes it to that section. Named targets keep their explicit reuse
+  // semantics below.
   if (!targetName) {
-    const internalName = freedomInternalPageName(url);
-    if (internalName) return openOrFocusInternalPage(internalName);
+    const internal = freedomInternalPageTarget(url);
+    if (internal) return openOrFocusInternalPage(internal.pageName, internal.subPath);
   }
 
   if (targetName && namedTargets.has(targetName)) {
@@ -1308,11 +1314,19 @@ export const openInNewTabWithTarget = (url, targetName) => {
  * `tab.url` holds the resolved `file://…/pages/<page>.html` form once loaded,
  * but the `freedom://<page>` form while the tab is still resolving — match both.
  *
+ * An optional `subPath` (e.g. 'profile' for `freedom://settings/profile`)
+ * routes the page to a section: a reused tab is navigated there, and a freshly
+ * opened tab is created on the deep link. Tab matching is always by base page,
+ * so the edit pencil's `settings/profile` reuses a plain `settings` tab.
+ *
  * @param {string} pageName - internal page name, e.g. 'profiles'
+ * @param {string|null} [subPath] - optional section within the page
  * @returns {object|null} the focused or newly created tab, or null on noop
  */
-export const openOrFocusInternalPage = (pageName) => {
+export const openOrFocusInternalPage = (pageName, subPath = null) => {
   if (!pageName) return null;
+
+  const fullUrl = subPath ? `freedom://${pageName}/${subPath}` : `freedom://${pageName}`;
 
   const existingTab = tabState.tabs.find((tab) => {
     if (!tab.url) return false;
@@ -1323,11 +1337,17 @@ export const openOrFocusInternalPage = (pageName) => {
   if (existingTab) {
     pushDebug(`Focusing existing ${pageName} tab ${existingTab.id}`);
     switchTab(existingTab.id);
+    // Route the reused tab to the requested section. switchTab makes it active,
+    // so onLoadTarget lands in its webview. (Same switch-then-load handoff the
+    // named-target reuse path above uses.) Bare pages need no re-navigation.
+    if (subPath && onLoadTarget) {
+      setTimeout(() => onLoadTarget(fullUrl), 50);
+    }
     return existingTab;
   }
 
   pushDebug(`Opening ${pageName} in a new tab`);
-  return createTab(`freedom://${pageName}`);
+  return createTab(fullUrl);
 };
 
 // Initialize tabs module

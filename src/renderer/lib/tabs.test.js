@@ -34,7 +34,9 @@ beforeAll(() => {
     addEventListener: jest.fn(),
     // Lets page-urls.js build the internal-page map used to dedupe
     // freedom://<page> tabs.
-    internalPages: { routable: { profiles: 'profiles.html', history: 'history.html' } },
+    internalPages: {
+      routable: { profiles: 'profiles.html', history: 'history.html', settings: 'settings.html' },
+    },
   };
 
   global.document = {
@@ -314,5 +316,44 @@ describe('openOrFocusInternalPage', () => {
     const reused = openInNewTabWithTarget('freedom://profiles', null);
     expect(reused.id).toBe(existing.id); // focused, not duplicated
     expect(getTabs().length).toBe(before); // no new tab opened
+  });
+
+  // Runs before any bare `freedom://settings` tab is created below — a
+  // `settings/profile` URL only reuses a base `settings` tab, and none exists
+  // yet, so this must open a fresh deep-link tab.
+  test('openInNewTabWithTarget opens a deep-link tab when no settings tab exists', async () => {
+    const { openInNewTabWithTarget, getTabs } = await import('./tabs.js');
+
+    const before = getTabs().length;
+    const opened = openInNewTabWithTarget('freedom://settings/profile', null);
+
+    expect(getTabs().length).toBe(before + 1); // a new tab, since none to reuse
+    expect(opened.url).toBe('freedom://settings/profile'); // created on the deep link
+  });
+
+  test('openInNewTabWithTarget reuses a settings tab for a settings sub-path', async () => {
+    jest.useFakeTimers();
+    try {
+      const { openInNewTabWithTarget, openOrFocusInternalPage, getTabs, setLoadTargetHandler } =
+        await import('./tabs.js');
+
+      const onLoadTarget = jest.fn();
+      setLoadTargetHandler(onLoadTarget);
+
+      // A plain settings tab is open; the profile-manager edit pencil opens
+      // freedom://settings/profile, which must reuse it (not open a duplicate)
+      // and route the reused tab to the profile section.
+      const existing = openOrFocusInternalPage('settings');
+      const before = getTabs().length;
+
+      const reused = openInNewTabWithTarget('freedom://settings/profile', null);
+      expect(reused.id).toBe(existing.id); // focused, not duplicated
+      expect(getTabs().length).toBe(before); // no new tab opened
+
+      jest.runOnlyPendingTimers();
+      expect(onLoadTarget).toHaveBeenCalledWith('freedom://settings/profile'); // routed to section
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
