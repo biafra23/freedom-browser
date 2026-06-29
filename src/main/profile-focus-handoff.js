@@ -27,6 +27,14 @@ function readJsonFile(filePath) {
   }
 }
 
+// Read the most recent ack a profile process wrote (for either a focus or a
+// quit request). The ack carries the responding process's pid, which lets a
+// requester confirm that process has actually exited. Returns null when no ack
+// exists or it can't be parsed.
+function readProfileFocusAck(profile) {
+  return readJsonFile(getProfileFocusPaths(profile).ackPath);
+}
+
 function writeJsonAtomic(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -82,6 +90,64 @@ function requestProfileFocusSync(profile, options = {}) {
 
   return {
     ok: false,
+    error: 'The running profile did not respond',
+    nonce,
+  };
+}
+
+// Async (non-blocking) counterpart of requestProfileFocusSync. Writes the
+// focus-request file, then awaits the target's ack by polling on a timer
+// (setTimeout) rather than Atomics.wait, so the main process stays responsive
+// while a running profile is asked to focus its window. Used by the renderer
+// IPC path (which can await) so it can report a *confirmed* focus rather than
+// just "the request was written".
+//
+// Return shape distinguishes the failure modes so callers can react correctly:
+//   { ok: true }                       — the target acknowledged the focus
+//   { ok: false }                      — the request could not be written
+//                                        (target dir gone) → caller may cold-start
+//   { ok: false, timedOut: true }      — request written but no ack in time
+//                                        (target running but unresponsive)
+async function requestProfileFocusAsyncAwait(profile, options = {}) {
+  const paths = getProfileFocusPaths(profile);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? 50;
+  const nonce = options.nonce || makeNonce();
+  const request = {
+    type: 'focus-window',
+    nonce,
+    profileId: profile.id || null,
+    requestedAtMs: Date.now(),
+    pid: process.pid,
+    ...(options.openSettings ? { openSettings: true } : {}),
+  };
+
+  try {
+    writeJsonAtomic(paths.requestPath, request);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message || 'Focus request could not be written',
+      nonce,
+    };
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const ack = readJsonFile(paths.ackPath);
+    if (ack?.nonce === nonce) {
+      return {
+        ok: ack.ok === true,
+        error: ack.error || null,
+        nonce,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  return {
+    ok: false,
+    timedOut: true,
     error: 'The running profile did not respond',
     nonce,
   };
@@ -229,7 +295,9 @@ module.exports = {
   FOCUS_ACK_FILE,
   FOCUS_REQUEST_FILE,
   getProfileFocusPaths,
+  readProfileFocusAck,
   requestProfileFocusAsync,
+  requestProfileFocusAsyncAwait,
   requestProfileFocusSync,
   requestProfileQuitAsync,
   startProfileFocusRequestWatcher,

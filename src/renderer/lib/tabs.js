@@ -1330,8 +1330,14 @@ export const openOrFocusInternalPage = (pageName, subPath = null) => {
 
   const existingTab = tabState.tabs.find((tab) => {
     if (!tab.url) return false;
-    if (tab.url === `freedom://${pageName}`) return true;
-    return (getInternalPageName(tab.url) || '').split('/')[0] === pageName;
+    // Resolved file://…/pages/<page>.html form (page already loaded).
+    if ((getInternalPageName(tab.url) || '').split('/')[0] === pageName) return true;
+    // Unresolved freedom://<page>[/<sub>] form while the tab is still resolving.
+    // Matching by base page (sub-path and all) lets a rapid second open of
+    // e.g. freedom://settings/profile reuse the in-flight tab instead of
+    // racing it to a duplicate. getInternalPageName only recognises the
+    // resolved file:// form, so this arm is what covers the resolving window.
+    return freedomInternalPageTarget(tab.url)?.pageName === pageName;
   });
 
   if (existingTab) {

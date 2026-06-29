@@ -33,12 +33,12 @@ function openProfilesManager() {
 
 // Switch to another profile, mirroring the renderer's PROFILE_OPEN handler:
 // focus the profile's window if it's already running, otherwise launch it.
-function switchToProfile(profileId) {
+async function switchToProfile(profileId) {
   const activeProfile = getActiveProfile();
   if (!activeProfile || activeProfile.source !== 'catalog') return;
   if (!profileId || profileId === activeProfile.id) return;
   try {
-    openOrFocusProfile(activeProfile, profileId);
+    await openOrFocusProfile(activeProfile, profileId);
   } catch (err) {
     log.error('[menu] Failed to switch profile:', err?.message || err);
   }

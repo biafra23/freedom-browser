@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const log = require('./logger');
 
 // The profile catalog/registry is shared across processes: each profile runs
@@ -18,6 +19,16 @@ const DEBOUNCE_MS = 150;
 
 let watcher = null;
 let debounceTimer = null;
+let lastRegistryMtimeMs = null;
+
+function readRegistryMtimeMs(appRoot) {
+  try {
+    return fs.statSync(path.join(appRoot, PROFILE_REGISTRY_FILE)).mtimeMs;
+  } catch {
+    // Missing/unreadable (e.g. mid atomic-rename): treat as "can't tell".
+    return null;
+  }
+}
 
 function stopWatchingProfileRegistry() {
   if (debounceTimer) {
@@ -44,6 +55,7 @@ function stopWatchingProfileRegistry() {
 function watchProfileRegistry(appRoot, onChange) {
   if (!appRoot || typeof onChange !== 'function') return () => {};
   stopWatchingProfileRegistry();
+  lastRegistryMtimeMs = readRegistryMtimeMs(appRoot);
 
   try {
     watcher = fs.watch(appRoot, (_eventType, filename) => {
@@ -53,6 +65,17 @@ function watchProfileRegistry(appRoot, onChange) {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
+        // On platforms that report the filename we've already confirmed it's the
+        // registry file. On platforms that omit it, this watched dir is shared
+        // with busy siblings (the catalog write-lock, Profiles/…), so confirm
+        // the registry file actually changed via mtime before rebuilding the
+        // menu + rebroadcasting. When the mtime can't be read we fall open and
+        // fire, so a missed stat never suppresses a real change.
+        const mtimeMs = readRegistryMtimeMs(appRoot);
+        if (filename == null && mtimeMs != null && mtimeMs === lastRegistryMtimeMs) {
+          return;
+        }
+        lastRegistryMtimeMs = mtimeMs;
         try {
           onChange();
         } catch (err) {

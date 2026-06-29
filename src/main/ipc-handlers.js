@@ -28,7 +28,7 @@ const {
   updateActiveProfileNodeConfig,
 } = require('./profile-resolver');
 const { openOrFocusProfile } = require('./profile-launcher');
-const { requestProfileQuitAsync } = require('./profile-focus-handoff');
+const { readProfileFocusAck, requestProfileQuitAsync } = require('./profile-focus-handoff');
 const { isProfileLocked } = require('./profile-lock');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
@@ -360,7 +360,10 @@ function createProfileFromIpc(payload = {}) {
         'Profiles are not available for this launch mode'
       );
     }
-    broadcastProfileUpdated();
+    // No direct broadcast/menu rebuild here: writing the registry trips the
+    // profile-registry watcher in *every* process (including this one), and its
+    // onChange both rebuilds the native Profiles menu and re-broadcasts. Firing
+    // here too would just duplicate that work in the originating process.
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
     return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
@@ -402,7 +405,7 @@ function renameProfileFromIpc(payload = {}) {
   }
 }
 
-function openProfileFromIpc(payload = {}) {
+async function openProfileFromIpc(payload = {}) {
   const activeProfile = getActiveProfile();
   const profileId = payload.id;
   if (!profileId || typeof profileId !== 'string') {
@@ -429,9 +432,14 @@ function openProfileFromIpc(payload = {}) {
     // the native Profiles menu so both paths behave identically. `openSettings`
     // (from the profile manager's edit button) lands the opened window on its
     // Profile settings page.
-    const opened = openOrFocusProfile(activeProfile, profileId, {
+    const opened = await openOrFocusProfile(activeProfile, profileId, {
       openSettings: payload.openSettings === true,
     });
+    // The profile is running but didn't acknowledge the focus request — report
+    // it so the UI can show an error instead of falsely claiming success.
+    if (opened.error) {
+      return failure('PROFILE_FOCUS_FAILED', opened.error);
+    }
     return success({
       profile: serializeProfileSummary(target),
       ...(opened.focused ? { focused: true } : { launch: opened.launch }),
@@ -442,22 +450,62 @@ function openProfileFromIpc(payload = {}) {
   }
 }
 
-// Ask a running profile to close and wait for its lock to release, so a delete
-// can proceed. Returns true once the profile is closed (or was never open).
+// Liveness probe: signal 0 tests for the process without delivering a signal.
+// ESRCH → the process is gone; EPERM → it's alive but owned by another user.
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+// Ask a running profile to close and wait until its data is safe to remove, so
+// a delete can proceed. Returns true once the profile is closed (or was never
+// open).
+//
+// A released lock alone is NOT a safe signal: the profile lock can read as free
+// while the holder is still winding down — its heartbeat lapses during a slow
+// shutdown and `isProfileLocked` honours the stale timeout, so we could delete
+// node/vault data the process is still touching. When the target acks our quit
+// request it includes its pid; we wait for that process to actually exit, which
+// (per the will-quit ordering in index.js) only happens after it has finished
+// closing databases and stopping its nodes. We fall back to the lock signal
+// when no usable ack is available (older build, crash before ack).
 async function ensureProfileClosedForDelete(profileId, options = {}) {
   const timeoutMs = options.timeoutMs ?? 15000;
   const intervalMs = options.intervalMs ?? 200;
+  const processAlive = options.isProcessAlive || isProcessAlive;
+  const readAck = options.readProfileFocusAck || readProfileFocusAck;
 
   const target = getProfileFocusTargetForActiveApp(profileId);
   if (!target || !target.isLocked) {
     return true;
   }
 
-  requestProfileQuitAsync(target);
+  const quit = requestProfileQuitAsync(target);
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+
+    // Prefer the definitive signal: the acking process has actually exited.
+    let ack;
+    try {
+      ack = readAck(target);
+    } catch {
+      ack = null;
+    }
+    const holderPid =
+      ack && ack.nonce === quit?.nonce && Number.isInteger(ack.pid) ? ack.pid : null;
+    if (holderPid != null) {
+      if (!processAlive(holderPid)) return true;
+      continue;
+    }
+
+    // No usable ack yet — fall back to the lock-release signal.
     let stillLocked;
     try {
       stillLocked = isProfileLocked(target);
@@ -495,7 +543,9 @@ async function deleteProfileFromIpc(payload = {}, options = {}) {
         'Profiles are not available for this launch mode'
       );
     }
-    broadcastProfileUpdated();
+    // The registry write trips the profile-registry watcher (in this and every
+    // other process), which rebuilds the native menu and re-broadcasts — no
+    // need to duplicate that here. See createProfileFromIpc.
     return success({
       profile: serializeProfileSummary({
         id: result.record.id,
@@ -741,7 +791,11 @@ function registerBaseIpcHandlers(callbacks = {}) {
 
   // A manager page (webview) requests the chrome's create-profile modal.
   // Resolve the webview's owning BrowserWindow and tell it to show the modal.
+  // Gate on the same trust boundary as the profile-mutation IPC: only the
+  // trusted profile UI may pop the create modal, so a hostile page loaded in a
+  // webview can't drive the chrome into showing it.
   ipcMain.on(IPC.PROFILE_REQUEST_CREATE_MODAL, (event) => {
+    if (!isTrustedProfileMutationSender(event)) return;
     const win = event.sender.getOwnerBrowserWindow();
     if (win && !win.isDestroyed()) {
       win.webContents.send(IPC.PROFILE_SHOW_CREATE_MODAL);

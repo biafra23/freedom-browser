@@ -61,6 +61,46 @@ describe('profile-registry-watcher', () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  test('with no filename, only fires when the registry file actually changed', () => {
+    // On null-filename platforms the watched dir is shared with busy siblings
+    // (catalog lock, Profiles/…). Gate on the registry mtime so unrelated
+    // writes don't rebuild the menu + rebroadcast.
+    let mtimeMs = 1000;
+    jest.spyOn(fs, 'statSync').mockImplementation(() => ({ mtimeMs }));
+
+    const onChange = jest.fn();
+    watchProfileRegistry('/app/root', onChange); // captures initial mtime 1000
+
+    // A sibling write fires the watcher but the registry mtime is unchanged.
+    watchCallback('change', null);
+    jest.advanceTimersByTime(150);
+    expect(onChange).not.toHaveBeenCalled();
+
+    // The registry file itself changes → fire.
+    mtimeMs = 2000;
+    watchCallback('change', null);
+    jest.advanceTimersByTime(150);
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    // Another sibling write at the same mtime → suppressed again.
+    watchCallback('change', null);
+    jest.advanceTimersByTime(150);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  test('with a named registry-file event, fires regardless of mtime', () => {
+    // The named-filename path has already confirmed it's the registry file, so
+    // it must not be gated by the mtime check.
+    jest.spyOn(fs, 'statSync').mockImplementation(() => ({ mtimeMs: 1000 }));
+
+    const onChange = jest.fn();
+    watchProfileRegistry('/app/root', onChange);
+
+    watchCallback('change', 'profile-registry.json');
+    jest.advanceTimersByTime(150);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
   test('no-ops without an appRoot or callback', () => {
     expect(typeof watchProfileRegistry()).toBe('function');
     expect(fs.watch).not.toHaveBeenCalled();

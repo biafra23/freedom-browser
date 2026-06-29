@@ -629,6 +629,31 @@ describe('ipc-handlers', () => {
     );
   });
 
+  test('reports PROFILE_FOCUS_FAILED when a running profile does not respond', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      openOrFocusProfile: jest.fn(() => ({
+        focused: false,
+        error: 'The running profile did not respond',
+      })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work' },
+      HOST_RENDERER_URL
+    );
+
+    expect(result).toEqual(
+      failure('PROFILE_FOCUS_FAILED', 'The running profile did not respond')
+    );
+  });
+
   test('forwards openSettings (edit button) to openOrFocusProfile', async () => {
     const ctx = loadIpcHandlersModule({
       profiles: [
@@ -665,6 +690,30 @@ describe('ipc-handlers', () => {
       failure('PROFILE_IPC_FORBIDDEN', 'Profile changes are only available from trusted profile UI')
     );
     expect(ctx.createProfileForActiveApp).not.toHaveBeenCalled();
+  });
+
+  test('shows the create-profile modal only for trusted senders', () => {
+    const ctx = loadIpcHandlersModule();
+    ctx.mod.registerBaseIpcHandlers();
+
+    const makeEvent = (url) => {
+      const win = { isDestroyed: () => false, webContents: { send: jest.fn() } };
+      return {
+        win,
+        senderFrame: { url },
+        sender: { getURL: () => url, getOwnerBrowserWindow: () => win },
+      };
+    };
+
+    // A hostile page loaded in a webview must not be able to pop the modal.
+    const untrusted = makeEvent('file:///app/src/renderer/pages/history.html');
+    ctx.ipcMain.emit(IPC.PROFILE_REQUEST_CREATE_MODAL, untrusted);
+    expect(untrusted.win.webContents.send).not.toHaveBeenCalled();
+
+    // The trusted profiles manager page may.
+    const trusted = makeEvent('file:///app/src/renderer/pages/profiles.html');
+    ctx.ipcMain.emit(IPC.PROFILE_REQUEST_CREATE_MODAL, trusted);
+    expect(trusted.win.webContents.send).toHaveBeenCalledWith(IPC.PROFILE_SHOW_CREATE_MODAL);
   });
 
   test('imports unregistered profile directories through profile IPC', async () => {
@@ -748,6 +797,41 @@ describe('ipc-handlers', () => {
     ).resolves.toEqual(expect.objectContaining({ success: true }));
 
     expect(ctx.requestProfileQuitAsync).toHaveBeenCalledTimes(1);
+    expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
+  });
+
+  test('waits for the holder process to exit before deleting (not just lock release)', async () => {
+    const ctx = loadIpcHandlersModule({
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        displayName: 'Work',
+        userDataDir: '/tmp/freedom-user-data/Profiles/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      requestProfileQuitAsync: jest.fn(() => ({ ok: true, nonce: 'quit-nonce' })),
+      // The lock reads as free immediately (e.g. went stale during a slow
+      // shutdown), but the holder process is still alive and touching data.
+      isProfileLocked: jest.fn(() => false),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    let alive = true;
+    const isProcessAlive = jest.fn(() => alive);
+    // Holder acks the quit with its pid; it exits on the third poll.
+    const readProfileFocusAck = jest.fn(() => ({ nonce: 'quit-nonce', ok: true, pid: 4321 }));
+    setTimeout(() => {
+      alive = false;
+    }, 5);
+
+    const result = await ctx.mod.deleteProfileFromIpc(
+      { id: 'work', confirmDisplayName: 'Work' },
+      { timeoutMs: 200, intervalMs: 1, isProcessAlive, readProfileFocusAck }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ success: true }));
+    expect(isProcessAlive).toHaveBeenCalledWith(4321);
     expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
   });
 

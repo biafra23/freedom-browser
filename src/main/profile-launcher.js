@@ -64,22 +64,40 @@ function launchProfile(activeProfile, profileId, options = {}) {
 // Open a profile, shared by the renderer IPC path and the native menu so both
 // behave identically. If the target profile is already running, focus its
 // window (fast — no new process); otherwise cold-start it. Deps are injectable
-// for testing. Returns { focused: true } or { focused: false, launch }.
-function openOrFocusProfile(activeProfile, profileId, options = {}) {
+// for testing.
+//
+// Returns one of:
+//   { focused: true }              — a running profile acknowledged the focus
+//   { focused: false, launch }     — cold-started a new process
+//   { focused: false, error }      — the profile is running but did not respond
+//                                    to the focus request (we don't cold-start a
+//                                    duplicate against its live lock)
+//
+// The ack round-trip is what lets callers report a *confirmed* focus instead of
+// merely "the request was written" — see requestProfileFocusAsyncAwait.
+async function openOrFocusProfile(activeProfile, profileId, options = {}) {
   // Lazy-required so this module stays loadable in isolation (and to avoid any
   // load-order coupling with profile-resolver).
   const resolveFocusTarget =
     options.getFocusTarget ||
     require('./profile-resolver').getProfileFocusTargetForActiveApp;
   const requestFocus =
-    options.requestFocus || require('./profile-focus-handoff').requestProfileFocusAsync;
+    options.requestFocus || require('./profile-focus-handoff').requestProfileFocusAsyncAwait;
 
   const target = resolveFocusTarget(profileId);
   if (target?.isLocked) {
-    const focus = requestFocus(target, { openSettings: options.openSettings === true });
+    const focus = await requestFocus(target, { openSettings: options.openSettings === true });
     if (focus?.ok) {
       return { focused: true };
     }
+    // The request was written but the running profile never acknowledged it.
+    // It holds a live lock, so cold-starting would just spawn a process that
+    // bounces off ELOCKED — surface the failure instead.
+    if (focus?.timedOut) {
+      return { focused: false, error: focus.error || 'The running profile did not respond' };
+    }
+    // Otherwise the request couldn't even be written (e.g. the profile's data
+    // dir is gone): fall through and cold-start.
   }
 
   const launch = launchProfile(activeProfile, profileId, options);

@@ -452,17 +452,25 @@ async function initProfileIndicator() {
 
       if (!isCurrent) {
         button.addEventListener('click', async () => {
+          // The disabled row is the in-progress feedback; deliberately no
+          // "Opening…" status line — it renders as a stray item at the bottom
+          // of the flyout and now lingers because the open awaits a real focus
+          // ack. Only surface the error case below.
           button.disabled = true;
-          setMenuStatus(`Opening ${displayName}...`, 'success');
           try {
             const result = await electronAPI.openProfile?.(profile.id);
             if (!result?.success) {
               throw new Error(result?.error?.message || 'Profile could not be opened');
             }
-            setMenuOpen(false);
+            // Switching focuses/opens the target profile's own window; dismiss
+            // the whole hamburger here rather than just collapsing the flyout.
+            closeAllMenus();
           } catch (err) {
-            button.disabled = false;
             setMenuStatus(err?.message || 'Profile could not be opened', 'error');
+          } finally {
+            // Always re-enable: on failure so the user can retry, on success so
+            // the row isn't left stuck disabled when the menu is reopened.
+            button.disabled = false;
           }
         });
       }

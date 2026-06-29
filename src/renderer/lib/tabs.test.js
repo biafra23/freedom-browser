@@ -356,4 +356,25 @@ describe('openOrFocusInternalPage', () => {
       jest.useRealTimers();
     }
   });
+
+  test('reuses a still-resolving sub-path tab instead of racing it to a duplicate', async () => {
+    const { openOrFocusInternalPage, getTabs } = await import('./tabs.js');
+
+    // First open lands a tab whose url is still the unresolved
+    // freedom://history/recent form (not yet loaded to file://…/history.html).
+    const first = openOrFocusInternalPage('history', 'recent');
+    expect(first.url).toBe('freedom://history/recent');
+    const after = getTabs().length;
+
+    // A rapid second open (before the tab resolves) must reuse it. The matcher
+    // recognises the freedom://<page>/<sub> form, so no duplicate is created.
+    const second = openOrFocusInternalPage('history', 'recent');
+    expect(second.id).toBe(first.id);
+    expect(getTabs().length).toBe(after);
+
+    // The bare-page open also reuses the resolving sub-path tab.
+    const third = openOrFocusInternalPage('history');
+    expect(third.id).toBe(first.id);
+    expect(getTabs().length).toBe(after);
+  });
 });

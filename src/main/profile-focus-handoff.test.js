@@ -3,6 +3,8 @@ const os = require('os');
 const path = require('path');
 const {
   getProfileFocusPaths,
+  readProfileFocusAck,
+  requestProfileFocusAsyncAwait,
   requestProfileFocusSync,
   startProfileFocusRequestWatcher,
 } = require('./profile-focus-handoff');
@@ -71,6 +73,52 @@ describe('profile focus handoff', () => {
       nonce: 'focus-1',
       profileId: 'work',
     });
+  });
+
+  test('async-await focus request resolves ok once the watcher acks', async () => {
+    const profile = trackProfile(makeTempProfile('work'));
+    const onFocusWindow = jest.fn().mockResolvedValue(undefined);
+    trackWatcher(startProfileFocusRequestWatcher(profile, onFocusWindow, { pollIntervalMs: 10 }));
+
+    const result = await requestProfileFocusAsyncAwait(profile, {
+      nonce: 'focus-await-1',
+      pollIntervalMs: 10,
+      timeoutMs: 1000,
+    });
+
+    expect(result).toEqual({ ok: true, error: null, nonce: 'focus-await-1' });
+    expect(onFocusWindow).toHaveBeenCalledTimes(1);
+  });
+
+  test('async-await focus request reports timedOut when no process responds', async () => {
+    const profile = trackProfile(makeTempProfile('work'));
+
+    const result = await requestProfileFocusAsyncAwait(profile, {
+      nonce: 'focus-await-2',
+      pollIntervalMs: 5,
+      timeoutMs: 20,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      timedOut: true,
+      error: 'The running profile did not respond',
+      nonce: 'focus-await-2',
+    });
+  });
+
+  test('readProfileFocusAck returns the latest ack and null when none exists', () => {
+    const profile = trackProfile(makeTempProfile('work'));
+    const paths = getProfileFocusPaths(profile);
+
+    expect(readProfileFocusAck(profile)).toBeNull();
+
+    fs.writeFileSync(
+      paths.ackPath,
+      JSON.stringify({ nonce: 'n', ok: true, pid: 1234 }),
+      'utf-8'
+    );
+    expect(readProfileFocusAck(profile)).toMatchObject({ nonce: 'n', ok: true, pid: 1234 });
   });
 
   test('focus watcher handles a fresh request and writes an acknowledgement', async () => {
