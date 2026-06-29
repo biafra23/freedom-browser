@@ -27,7 +27,21 @@ let currentState = STATUS.STOPPED;
 let lastError = null;
 let activeNode = null;
 let healthCheckInterval = null;
-let pendingStart = false;
+
+// Serializes start/stop transitions. The renderer's optimistic toggle awaits
+// start()/stop() and treats the resolved status as the *settled* backend state
+// (see reconcileIpfsToggle in renderer/lib/ipfs-ui.js). To honor that contract
+// even when the user flips the switch mid-transition, every transition runs to
+// completion before the next begins — a start requested during a stop waits for
+// the stop, then runs, and only then does its promise resolve.
+let opChain = Promise.resolve();
+
+function enqueueOp(op) {
+  const result = opChain.then(op, op);
+  // A failing op must not poison the chain for the next transition.
+  opChain = result.catch(() => {});
+  return result;
+}
 
 function defaultNativeDiagnostics() {
   return {
@@ -153,19 +167,12 @@ function startDisabledIpfs() {
   log.info('[IPFS] Disabled for active profile');
 }
 
-async function startIpfs() {
+async function doStartIpfs() {
   if (currentState === STATUS.RUNNING || currentState === STATUS.STARTING) {
     log.info(`[IPFS] Ignoring start request, current state: ${currentState}`);
     return;
   }
 
-  if (currentState === STATUS.STOPPING) {
-    log.info('[IPFS] Currently stopping, queuing start for after stop completes');
-    pendingStart = true;
-    return;
-  }
-
-  pendingStart = false;
   updateState(STATUS.STARTING);
 
   if (isDisabledIpfsConfig()) {
@@ -212,8 +219,7 @@ async function startIpfs() {
   log.info(`[IPFS] ${nodeLabel} native node started at ${dataDir}`);
 }
 
-async function stopIpfs() {
-  pendingStart = false;
+async function doStopIpfs() {
   if (currentState === STATUS.STOPPED && !activeNode) {
     clearService('ipfs');
     return;
@@ -234,11 +240,16 @@ async function stopIpfs() {
   updateState(STATUS.STOPPED);
   clearErrorState('ipfs');
   clearService('ipfs');
+}
 
-  if (pendingStart) {
-    pendingStart = false;
-    setTimeout(() => startIpfs(), 100);
-  }
+// Public entry points. Each returns a promise that resolves once the transition
+// has fully settled, so awaiting start()/stop() yields the final node status.
+function startIpfs() {
+  return enqueueOp(doStartIpfs);
+}
+
+function stopIpfs() {
+  return enqueueOp(doStopIpfs);
 }
 
 async function serveNativeGatewayRequest({ path: gatewayPath, method, headers, signal }) {
@@ -292,13 +303,13 @@ function getActiveGatewayPort() {
 }
 
 function registerIpfsIpc() {
-  ipcMain.handle(IPC.IPFS_START, () => {
-    startIpfs();
+  ipcMain.handle(IPC.IPFS_START, async () => {
+    await startIpfs();
     return { status: currentState, error: lastError };
   });
 
-  ipcMain.handle(IPC.IPFS_STOP, () => {
-    stopIpfs();
+  ipcMain.handle(IPC.IPFS_STOP, async () => {
+    await stopIpfs();
     return { status: currentState, error: lastError };
   });
 
