@@ -68,7 +68,14 @@ const isIpfsProgressUrl = (value) => {
   return normalized.startsWith('ipfs://') || normalized.startsWith('ipns://');
 };
 
+// Experimental opt-in (Settings → Experimental, default off). Mirrors the
+// `showIpfsProgressStatus` setting, seeded in initNavigation and kept live via
+// the `settings:updated` broadcast. While off, the IPFS progress poller never
+// starts, so the link bar stays a pure hover-URL surface.
+let ipfsProgressStatusEnabled = false;
+
 const shouldShowIpfsProgress = ({ data = {}, tab = null, navState = null } = {}) => {
+  if (!ipfsProgressStatusEnabled) return false;
   const candidates = [
     data.url,
     data.pendingNavigationUrl,
@@ -1792,6 +1799,16 @@ export const initNavigation = () => {
       bookmarkBarOverride = settings.showBookmarkBar;
       electronAPI?.setBookmarkBarChecked?.(bookmarkBarOverride);
     }
+    ipfsProgressStatusEnabled = settings?.showIpfsProgressStatus === true;
+  });
+
+  // Keep the IPFS-progress opt-in live. When it's switched off mid-load, stop
+  // any running poller so the link bar reverts to hover URLs immediately.
+  window.addEventListener('settings:updated', (event) => {
+    const next = event.detail?.showIpfsProgressStatus === true;
+    if (next === ipfsProgressStatusEnabled) return;
+    ipfsProgressStatusEnabled = next;
+    if (!next) stopIpfsProgressStatus({ immediate: true });
   });
 
   // Address bar events

@@ -550,11 +550,14 @@ describe('navigation', () => {
   });
 
   test('processes webview lifecycle events and records history', async () => {
-    const ctx = await loadNavigationModule();
+    const ctx = await loadNavigationModule({
+      initialSettings: { showBookmarkBar: true, showIpfsProgressStatus: true },
+    });
     const onHistoryRecorded = jest.fn();
 
     ctx.mod.setOnHistoryRecorded(onHistoryRecorded);
     await ctx.mod.initNavigation();
+    await flushMicrotasks();
 
     ctx.tabsMocks.webviewEventHandler('did-start-loading', {
       tabId: ctx.activeRef.tab.id,
@@ -828,8 +831,11 @@ describe('navigation', () => {
   });
 
   test('starts IPFS progress polling only for IPFS/IPNS navigations', async () => {
-    const ctx = await loadNavigationModule();
+    const ctx = await loadNavigationModule({
+      initialSettings: { showBookmarkBar: true, showIpfsProgressStatus: true },
+    });
     await ctx.mod.initNavigation();
+    await flushMicrotasks();
 
     ctx.tabsMocks.webviewEventHandler('did-start-loading', {
       tabId: ctx.activeRef.tab.id,
@@ -850,6 +856,36 @@ describe('navigation', () => {
 
     expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).toHaveBeenCalled();
     expect(ctx.ipfsProgressMocks.stopIpfsProgressStatus).not.toHaveBeenCalled();
+  });
+
+  test('IPFS progress polling stays gated behind the experimental flag', async () => {
+    const ctx = await loadNavigationModule({
+      initialSettings: { showBookmarkBar: true, showIpfsProgressStatus: false },
+    });
+    await ctx.mod.initNavigation();
+    await flushMicrotasks();
+
+    // Flag off (default): an ipfs:// load must not start the progress poller.
+    ctx.tabsMocks.webviewEventHandler('did-start-loading', {
+      tabId: ctx.activeRef.tab.id,
+      pendingNavigationUrl: 'ipfs://bafybeigdyrzt',
+    });
+    expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).not.toHaveBeenCalled();
+
+    // Enabling it live (settings:updated broadcast) lets the next load start it.
+    ctx.windowHandlers['settings:updated']({ detail: { showIpfsProgressStatus: true } });
+    ctx.tabsMocks.webviewEventHandler('did-start-loading', {
+      tabId: ctx.activeRef.tab.id,
+      pendingNavigationUrl: 'ipfs://bafybeigdyrzt',
+    });
+    expect(ctx.ipfsProgressMocks.startIpfsProgressStatus).toHaveBeenCalled();
+
+    // Disabling it live stops any running poller immediately.
+    ctx.ipfsProgressMocks.stopIpfsProgressStatus.mockClear();
+    ctx.windowHandlers['settings:updated']({ detail: { showIpfsProgressStatus: false } });
+    expect(ctx.ipfsProgressMocks.stopIpfsProgressStatus).toHaveBeenCalledWith({
+      immediate: true,
+    });
   });
 
   test('restores tab state on tab switches and updates navigation display', async () => {

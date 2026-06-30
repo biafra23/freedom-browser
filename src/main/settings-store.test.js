@@ -48,6 +48,7 @@ describe('settings-store', () => {
         sidebarOpen: false,
         sidebarWidth: 320,
         blockUnverifiedEns: true,
+        showIpfsProgressStatus: false,
       })
     );
     expect(nativeTheme.themeSource).toBe('system');
