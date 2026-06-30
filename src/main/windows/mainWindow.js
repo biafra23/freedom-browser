@@ -78,6 +78,17 @@ function createMainWindow(initialUrl = null) {
 
   window.on('ready-to-show', () => {
     window.setTitle(currentWindowTitle);
+
+    // Linux cold start: a freshly-spawned profile process has no valid
+    // startup-activation token, so Mutter denies focus to the new window and
+    // posts a "'Freedom' is ready" notification instead of raising it. Nudge
+    // focus with the always-on-top toggle, which bypasses focus-stealing
+    // prevention. Skip the headless test path, which deliberately stays hidden.
+    if (isLinux && !hideWindow) {
+      window.setAlwaysOnTop(true);
+      window.focus();
+      window.setAlwaysOnTop(false);
+    }
   });
 
   window.on('page-title-updated', (event) => {
