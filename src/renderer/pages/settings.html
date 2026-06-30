@@ -951,6 +951,17 @@
                 </label>
               </div>
             </div>
+            <div class="row">
+              <div class="row-body">
+                <p class="row-label">Show IPFS load progress in the status bar</p>
+              </div>
+              <div class="row-control">
+                <label class="toggle">
+                  <input type="checkbox" id="show-ipfs-progress-status" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
             <div class="row" id="swarm-mode-row">
               <div class="row-body">
                 <p class="row-label">Swarm node mode</p>
@@ -1022,6 +1033,7 @@
         startRadicleRow: $('start-radicle-row'),
         startRadicle: $('start-radicle-at-launch'),
         enableIdentity: $('enable-identity-wallet'),
+        showIpfsProgressStatus: $('show-ipfs-progress-status'),
         autoUpdate: $('auto-update'),
       };
 
@@ -1411,6 +1423,7 @@
         enableRadicleIntegration: isWindows ? false : fields.enableRadicle.checked,
         startRadicleAtLaunch: isWindows ? false : fields.startRadicle.checked,
         enableIdentityWallet: fields.enableIdentity.checked,
+        showIpfsProgressStatus: fields.showIpfsProgressStatus.checked,
         autoUpdate: fields.autoUpdate.checked,
         blockUnverifiedEns: fields.blockUnverifiedEns.checked,
       });
@@ -1424,6 +1437,7 @@
         fields.enableRadicle.checked = settings.enableRadicleIntegration === true;
         fields.startRadicle.checked = settings.startRadicleAtLaunch === true;
         fields.enableIdentity.checked = settings.enableIdentityWallet === true;
+        fields.showIpfsProgressStatus.checked = settings.showIpfsProgressStatus === true;
         fields.autoUpdate.checked = settings.autoUpdate !== false;
         fields.blockUnverifiedEns.checked = settings.blockUnverifiedEns !== false;
         setFieldEnabled(fields.enableRadicle, fields.startRadicleRow, fields.startRadicle);
@@ -1533,6 +1547,7 @@
       });
       fields.startRadicle.addEventListener('change', save);
       fields.enableIdentity.addEventListener('change', save);
+      fields.showIpfsProgressStatus.addEventListener('change', save);
       fields.autoUpdate.addEventListener('change', save);
       fields.blockUnverifiedEns.addEventListener('change', save);
 
