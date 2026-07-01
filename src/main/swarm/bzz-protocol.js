@@ -107,11 +107,11 @@ function sanitizeRequestHeaders(requestHeaders) {
  *
  * `<host>` is either:
  *  - a 64- or 128-char hex Swarm ref (synchronous path), OR
- *  - an ENS name ending in .eth / .box, resolved via the in-process
- *    `ens-resolver` cache. ENS resolution running here (not just in the
+ *  - a supported Ethereum name, resolved via the in-process
+ *    `ens-resolver` cache. Name resolution running here (not just in the
  *    renderer's address-bar pipeline) is what makes `bzz://name.eth/`
  *    survive as the URL Chromium loads — so DevTools, `window.location`,
- *    storage origin, and subresource fetches all see the ENS name rather
+ *    storage origin, and subresource fetches all see the name rather
  *    than the resolved hash.
  *
  * Returns one of:
@@ -164,31 +164,54 @@ function hasEmptyLabel(host) {
   return host.split('.').some((label) => label.length === 0);
 }
 
-// Resolve an ENS host to a Bee gateway URL. `parsed` is the original
-// `bzz://name.eth/path?q` URL — pathname/search are forwarded verbatim.
+function nameSystemLabelForHost(host) {
+  const lower = String(host || '').toLowerCase();
+  if (lower.endsWith('.wei')) return 'WNS';
+  if (lower.endsWith('.gwei')) return 'GNS';
+  return 'ENS';
+}
+
+function nameSystemLabelForResult(result, host) {
+  if (result?.system === 'wns') return 'WNS';
+  if (result?.system === 'gns') return 'GNS';
+  return nameSystemLabelForHost(host);
+}
+
+// Resolve a supported Ethereum name host to a Bee gateway URL. `parsed` is the
+// original `bzz://name.eth/path?q` URL — pathname/search are forwarded verbatim.
 // Cross-transport mismatches (e.g. bzz://swarm.eth where the contenthash
 // is IPFS) return 404 with an explanatory body, mirroring the renderer's
 // transport assertion: a typed scheme is taken as user intent and we
 // don't silently switch transports.
 async function resolveEnsToGatewayUrl(host, parsed, antApiUrl) {
   let result;
+  const fallbackSystemLabel = nameSystemLabelForHost(host);
   try {
     result = await resolveEnsContent(host);
   } catch (err) {
-    log.warn(`[bzz-protocol] ENS resolver threw for ${host}: ${err.message}`);
-    return { ok: false, status: 502, message: `ENS resolver error: ${err.message}` };
+    log.warn(`[bzz-protocol] ${fallbackSystemLabel} resolver threw for ${host}: ${err.message}`);
+    return {
+      ok: false,
+      status: 502,
+      message: `${fallbackSystemLabel} resolver error: ${err.message}`,
+    };
   }
 
   if (!result) {
-    return { ok: false, status: 502, message: `ENS resolver returned no result for ${host}` };
+    return {
+      ok: false,
+      status: 502,
+      message: `${fallbackSystemLabel} resolver returned no result for ${host}`,
+    };
   }
 
   if (result.type === 'ok') {
+    const systemLabel = nameSystemLabelForResult(result, host);
     if (result.protocol !== 'bzz') {
       return {
         ok: false,
         status: 404,
-        message: `ENS name ${host} resolves to ${result.protocol}, not Swarm`,
+        message: `${systemLabel} name ${host} resolves to ${result.protocol}, not Swarm`,
       };
     }
     return {
@@ -198,36 +221,39 @@ async function resolveEnsToGatewayUrl(host, parsed, antApiUrl) {
   }
 
   if (result.type === 'not_found') {
+    const systemLabel = nameSystemLabelForResult(result, host);
     return {
       ok: false,
       status: 404,
-      message: `ENS name ${host} has no contenthash (${result.reason || 'unknown'})`,
+      message: `${systemLabel} name ${host} has no contenthash (${result.reason || 'unknown'})`,
     };
   }
 
   if (result.type === 'unsupported') {
+    const systemLabel = nameSystemLabelForResult(result, host);
     return {
       ok: false,
       status: 415,
-      message: `ENS name ${host} contenthash format unsupported`,
+      message: `${systemLabel} name ${host} contenthash format unsupported`,
     };
   }
 
   if (result.type === 'conflict') {
-    return { ok: false, status: 502, message: `ENS providers disagree on ${host}` };
+    const systemLabel = nameSystemLabelForResult(result, host);
+    return { ok: false, status: 502, message: `${systemLabel} providers disagree on ${host}` };
   }
 
   // result.type === 'error' or anything we didn't model — degrade to 502.
   return {
     ok: false,
     status: 502,
-    message: `ENS resolution failed for ${host}: ${result.error || result.reason || 'unknown'}`,
+    message: `${nameSystemLabelForResult(result, host)} resolution failed for ${host}: ${result.error || result.reason || 'unknown'}`,
   };
 }
 
 // JSON 4xx/5xx response with the Swarm-shaped body the rest of the handler
 // emits, so error pages and developer console messages don't see schema
-// drift between hex-host and ENS-host failures.
+// drift between hex-host and name-host failures.
 function jsonErrorResponse(status, message) {
   return new Response(JSON.stringify({ code: status, message }), {
     status,

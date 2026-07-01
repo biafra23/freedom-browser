@@ -2,14 +2,14 @@ import { applyEnsNamePreservation, deriveDisplayValue } from './url-utils.js';
 import { getInternalPageName, parseEnsInput } from './page-urls.js';
 import { isEnsHost } from './origin-utils.js';
 
-// Extract the ENS name from an address bar value, or null if the value isn't
-// an ENS resolution input. Thin wrapper around `parseEnsInput` so the
+// Extract the Ethereum name from an address bar value, or null if the value isn't
+// a supported name-resolution input. Thin wrapper around `parseEnsInput` so the
 // render-loop helpers (protocol icon, trust shield) share the single
 // parsing implementation in `page-urls.js`.
 const extractEnsName = (normalizedValue) => parseEnsInput(normalizedValue)?.name ?? null;
 
 // Trust-shield state for the address bar. Returns `null` to hide the shield
-// (non-ENS URLs, or ENS name we haven't resolved this session). Otherwise
+// (non-name URLs, or names we haven't resolved this session). Otherwise
 // returns `{ level, name, trust }` so the shield can render and the popover
 // can fill in details.
 export const resolveTrustBadge = ({ value = '', ensTrustByName = new Map() } = {}) => {
@@ -34,6 +34,22 @@ export const TRUST_STATUS_SENTENCE = {
   conflict: 'Verification failed: RPCs disagree',
 };
 
+const nameSystemLabel = (trust = {}) => {
+  if (trust.system === 'wns') return 'WNS';
+  if (trust.system === 'gns') return 'GNS';
+  return 'ENS';
+};
+
+export const getTrustStatusSentence = (statusKey, trust = {}) => {
+  if (statusKey === 'verified' || statusKey === 'verified-colibri') {
+    return `${nameSystemLabel(trust)} resolution verified`;
+  }
+  if (statusKey === 'unverified') {
+    return `${nameSystemLabel(trust)} resolution not verified`;
+  }
+  return TRUST_STATUS_SENTENCE[statusKey] || null;
+};
+
 // Long-form warning for a recipient name whose forward lookup completed
 // without cryptographic proof or public-RPC quorum. The send flow still
 // shows the resolved address, but the name should not look verified.
@@ -49,7 +65,7 @@ export const describeUnverifiedForward = (name) =>
 export const describeUnverifiedReverse = (claimedName) =>
   claimedName
     ? `This address claims to be "${claimedName}", but the name doesn't forward-resolve back to it. Treat the name as untrusted — could be a stale record or a spoofing attempt.`
-    : `This address has a primary ENS name set, but it doesn't forward-verify back. Treat the claim as untrusted.`;
+    : `This address has a primary name set, but it doesn't forward-verify back. Treat the claim as untrusted.`;
 
 // Friendly names for the network row, keyed by the URI's protocol scheme
 // (the `bzz` / `ipfs` / `ipns` prefix from the resolved contenthash URI).
@@ -121,7 +137,7 @@ export const buildTrustRows = ({
   const method = trust.method;
   const isColibri = level === 'verified' && method === 'colibri';
   const statusKey = isColibri ? 'verified-colibri' : level;
-  const status = TRUST_STATUS_SENTENCE[statusKey] || null;
+  const status = getTrustStatusSentence(statusKey, trust);
 
   const agreed = Array.isArray(trust.agreed) ? trust.agreed : [];
   const queried = Array.isArray(trust.queried) ? trust.queried : [];

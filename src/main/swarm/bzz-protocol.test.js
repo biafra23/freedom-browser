@@ -111,6 +111,38 @@ describe('buildGatewayUrl', () => {
       });
     });
 
+    test('resolves .wei host via WNS resolver result', async () => {
+      mockResolveEnsContent.mockResolvedValue({
+        type: 'ok',
+        system: 'wns',
+        protocol: 'bzz',
+        decoded: HASH,
+        uri: `bzz://${HASH}`,
+      });
+
+      await expect(buildGatewayUrl('bzz://alice.wei/')).resolves.toEqual({
+        ok: true,
+        url: `http://127.0.0.1:1633/bzz/${HASH}/`,
+      });
+      expect(mockResolveEnsContent).toHaveBeenCalledWith('alice.wei');
+    });
+
+    test('resolves .gwei host via GNS resolver result', async () => {
+      mockResolveEnsContent.mockResolvedValue({
+        type: 'ok',
+        system: 'gns',
+        protocol: 'bzz',
+        decoded: HASH,
+        uri: `bzz://${HASH}`,
+      });
+
+      await expect(buildGatewayUrl('bzz://apoorv.gwei/')).resolves.toEqual({
+        ok: true,
+        url: `http://127.0.0.1:1633/bzz/${HASH}/`,
+      });
+      expect(mockResolveEnsContent).toHaveBeenCalledWith('apoorv.gwei');
+    });
+
     test('returns 404 when ENS contenthash is IPFS, not Swarm', async () => {
       mockResolveEnsContent.mockResolvedValue({
         type: 'ok',
@@ -124,6 +156,40 @@ describe('buildGatewayUrl', () => {
         ok: false,
         status: 404,
         message: 'ENS name vitalik.eth resolves to ipfs, not Swarm',
+      });
+    });
+
+    test('uses WNS label for .wei transport mismatch errors', async () => {
+      mockResolveEnsContent.mockResolvedValue({
+        type: 'ok',
+        system: 'wns',
+        protocol: 'ipfs',
+        decoded: 'QmFakeCid',
+        uri: 'ipfs://QmFakeCid',
+      });
+
+      const result = await buildGatewayUrl('bzz://alice.wei/');
+      expect(result).toEqual({
+        ok: false,
+        status: 404,
+        message: 'WNS name alice.wei resolves to ipfs, not Swarm',
+      });
+    });
+
+    test('uses GNS label for .gwei transport mismatch errors', async () => {
+      mockResolveEnsContent.mockResolvedValue({
+        type: 'ok',
+        system: 'gns',
+        protocol: 'ipfs',
+        decoded: 'QmFakeCid',
+        uri: 'ipfs://QmFakeCid',
+      });
+
+      const result = await buildGatewayUrl('bzz://apoorv.gwei/');
+      expect(result).toEqual({
+        ok: false,
+        status: 404,
+        message: 'GNS name apoorv.gwei resolves to ipfs, not Swarm',
       });
     });
 

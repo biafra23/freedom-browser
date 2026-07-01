@@ -3,6 +3,7 @@ const { ipcMain } = require('electron');
 const { ethers } = require('ethers');
 const { ens_normalize } = require('@adraffy/ens-normalize');
 const IPC = require('../shared/ipc-channels');
+const { cidV1BytesToBase32 } = require('../shared/cid-utils');
 const registry = require('./networks/network-registry');
 const { prefetchGatewayUrl, NOOP_HANDLE: NOOP_PREFETCH } = require('./ens-prefetch');
 
@@ -18,6 +19,41 @@ const UR_ABI = [
   'function reverse(bytes lookupAddress, uint256 coinType) view returns (string primary, address resolver, address reverseResolver)',
 ];
 
+// Contract-backed Ethereum name systems on mainnet. WNS and GNS store
+// resolver data directly on NameNFT-style ERC-721 contracts, using ENS-style
+// namehash token IDs and ENS-compatible resolver function signatures.
+const WNS_ADDRESS = '0x0000000000696760E15f265e828DB644A0c242EB';
+const GNS_ADDRESS = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
+const NAME_NFT_ABI = [
+  'function contenthash(bytes32 node) view returns (bytes)',
+  'function addr(bytes32 node) view returns (address)',
+  'function reverseResolve(address addr) view returns (string)',
+];
+
+const NAME_SYSTEMS = {
+  ens: { id: 'ens', label: 'ENS' },
+  wns: {
+    id: 'wns',
+    label: 'WNS',
+    suffix: '.wei',
+    contractAddress: WNS_ADDRESS,
+  },
+  gns: {
+    id: 'gns',
+    label: 'GNS',
+    suffix: '.gwei',
+    contractAddress: GNS_ADDRESS,
+  },
+};
+
+function nameSystemForName(name) {
+  const lower = String(name || '').toLowerCase();
+  for (const system of [NAME_SYSTEMS.wns, NAME_SYSTEMS.gns]) {
+    if (lower.endsWith(system.suffix)) return system;
+  }
+  return NAME_SYSTEMS.ens;
+}
+
 // bytes4(keccak256("contenthash(bytes32)"))
 const CONTENTHASH_SELECTOR = '0xbc1c58d1';
 // bytes4(keccak256("addr(bytes32)"))
@@ -27,14 +63,19 @@ const ADDR_SELECTOR = '0x3b3b57de';
 const ETH_COIN_TYPE = 60n;
 
 // ENS contenthash byte patterns (EIP-1577). We preserve the CIDv0 base58
-// output ("QmFoo…") for IPFS/IPNS to stay byte-compatible with the
+// output ("QmFoo…") for IPFS dag-pb to stay byte-compatible with the
 // previous ethers-based implementation — users' bookmarks and history
-// entries keyed on the old URI form keep matching.
+// entries keyed on the old URI form keep matching. Non-dag-pb CIDv1 IPFS
+// records are returned as CIDv1 base32, which is Chromium-safe.
 //   0xe3 01 70             — ipfs-ns, cidv1, dag-pb
+//   0xe3 01 55             — ipfs-ns, cidv1, raw
 //   0xe5 01 72             — ipns-ns, cidv1, libp2p-key
 //   0xe4 01 01 fa 01 1b 20 — swarm-ns + manifest codec, 32-byte keccak
-const IPFS_CONTENTHASH_RE =
-  /^0x(?<codecPrefix>e3010170|e5010172)(?<multihash>(?<mhCode>[0-9a-f]{2})(?<mhLen>[0-9a-f]{2})(?<digest>[0-9a-f]*))$/;
+const IPFS_DAG_PB_CONTENTHASH_RE =
+  /^0xe3010170(?<multihash>(?<mhCode>[0-9a-f]{2})(?<mhLen>[0-9a-f]{2})(?<digest>[0-9a-f]*))$/;
+const IPFS_CIDV1_CONTENTHASH_RE = /^0xe301(?<cid>01[0-9a-f]+)$/;
+const IPNS_CONTENTHASH_RE =
+  /^0xe5010172(?<multihash>(?<mhCode>[0-9a-f]{2})(?<mhLen>[0-9a-f]{2})(?<digest>[0-9a-f]*))$/;
 const SWARM_CONTENTHASH_RE = /^0xe40101fa011b20(?<swarmHash>[0-9a-f]{64})$/;
 
 // ---------------------------------------------------------------------------
@@ -623,6 +664,56 @@ async function universalResolverCall(provider, name, callData, overrides = {}) {
   return { resolvedData, resolverAddress };
 }
 
+function nodeFromResolverCallData(callData) {
+  const hex = typeof callData === 'string' ? callData : '';
+  if (!/^0x[0-9a-fA-F]{72,}$/.test(hex)) {
+    throw new Error('Invalid resolver call data');
+  }
+  return '0x' + hex.slice(10, 74);
+}
+
+// NameNFT-backed systems store ENS-compatible resolver records directly on
+// their registry contracts. This adapter returns the same raw `resolvedData`
+// shape as the Universal Resolver path so the quorum analyzer and record
+// decoders can be shared unchanged.
+async function nameNftResolverCall(provider, name, callData, overrides = {}) {
+  const nameSystem = nameSystemForName(name);
+  if (!nameSystem.contractAddress) {
+    throw new Error(`No NameNFT contract configured for ${nameSystem.label}`);
+  }
+  const selector = String(callData || '').slice(0, 10).toLowerCase();
+  const node = nodeFromResolverCallData(callData);
+  const registryContract = new ethers.Contract(
+    nameSystem.contractAddress,
+    NAME_NFT_ABI,
+    provider
+  );
+
+  if (selector === CONTENTHASH_SELECTOR) {
+    const contenthash = await registryContract.contenthash(node, overrides);
+    return {
+      resolvedData: ethers.AbiCoder.defaultAbiCoder().encode(
+        ['bytes'],
+        [contenthash || '0x'],
+      ),
+      resolverAddress: nameSystem.contractAddress,
+    };
+  }
+
+  if (selector === ADDR_SELECTOR) {
+    const address = await registryContract.addr(node, overrides);
+    return {
+      resolvedData: ethers.AbiCoder.defaultAbiCoder().encode(
+        ['address'],
+        [address || ethers.ZeroAddress],
+      ),
+      resolverAddress: nameSystem.contractAddress,
+    };
+  }
+
+  throw new Error(`Unsupported ${nameSystem.label} resolver selector: ${selector}`);
+}
+
 // Reverse counterpart: call the UR's reverse(bytes, uint256). The UR
 // verifies the claimed primary name forward-resolves back to the input
 // address inside the contract — a successful return is already
@@ -662,7 +753,15 @@ function hostOf(url) {
 //
 // `cancelToken.cleanups` lets a caller (runConsensusWave) forcibly destroy
 // this leg's provider when early-quorum agreement makes the leg redundant.
-async function runQuorumLeg(url, name, callData, blockHash, timeoutMs, cancelToken) {
+async function runQuorumLeg(
+  url,
+  name,
+  callData,
+  blockHash,
+  timeoutMs,
+  cancelToken,
+  callResolver = universalResolverCall,
+) {
   let provider;
   const cleanup = () => {
     if (provider) {
@@ -673,7 +772,7 @@ async function runQuorumLeg(url, name, callData, blockHash, timeoutMs, cancelTok
   if (cancelToken) cancelToken.cleanups.add(cleanup);
   try {
     provider = new ethers.JsonRpcProvider(url);
-    const urCall = universalResolverCall(provider, name, callData, { blockTag: blockHash });
+    const urCall = callResolver(provider, name, callData, { blockTag: blockHash });
     const result = await withTimeout(urCall, timeoutMs, cleanup);
     markProviderSuccess(url);
     return { url, status: 'data', resolvedData: result.resolvedData, resolverAddress: result.resolverAddress };
@@ -703,6 +802,7 @@ async function runQuorumLeg(url, name, callData, blockHash, timeoutMs, cancelTok
 // forge a "verified not-found".
 async function runConsensusWave({
   providers, name, callData, blockHash, timeoutMs, m, onFirstData,
+  callResolver = universalResolverCall,
 }) {
   const results = new Map();    // url → leg result
   const byData = new Map();     // resolvedData bytes → Set<url>
@@ -751,7 +851,15 @@ async function runConsensusWave({
   };
 
   const legPromises = providers.map((url) =>
-    runQuorumLeg(url, name, callData, blockHash, timeoutMs, cancelToken).then((r) => {
+    runQuorumLeg(
+      url,
+      name,
+      callData,
+      blockHash,
+      timeoutMs,
+      cancelToken,
+      callResolver,
+    ).then((r) => {
       results.set(url, r);
       if (r.status === 'data') {
         kickOffPrefetch(r.resolvedData);
@@ -791,9 +899,10 @@ async function runConsensusWave({
 }
 
 // Build the trust metadata object the renderer surfaces on the shield.
-function buildTrust({ level, agreed, dissented, queried, k, m, block }) {
+function buildTrust({ level, system = 'ens', agreed, dissented, queried, k, m, block }) {
   return {
     level,
+    system,
     block,
     agreed: agreed.slice(),
     dissented: dissented.slice(),
@@ -858,21 +967,26 @@ function classifyNoAgreement({ results }) {
 //
 // Throws on proof-verification failure / network error / prover outage so
 // the orchestrator can fall through to the always-on quorum fallback.
-async function tryColibriPath(name, callData) {
+async function tryColibriPath(
+  name,
+  callData,
+  callResolver = universalResolverCall,
+  nameSystem = NAME_SYSTEMS.ens,
+) {
   // Lazy require avoids a load-time cycle: colibri-resolver imports
   // universalResolverCall + hostOf from this module.
-  const { resolveViaColibri } = require('./ens/colibri-resolver');
+  const { resolveCallViaColibri } = require('./ens/colibri-resolver');
   const proverHost = colibriProverHost();
 
   let result;
   try {
-    result = await resolveViaColibri(name, callData);
+    result = await resolveCallViaColibri(name, callData, callResolver);
   } catch (err) {
     if (isResolverNotFoundError(err)) {
       return {
         outcome: 'not_found',
         reason: 'NO_RESOLVER',
-        trust: buildColibriTrust(proverHost),
+        trust: buildColibriTrust(proverHost, nameSystem),
         block: null,
       };
     }
@@ -884,7 +998,7 @@ async function tryColibriPath(name, callData) {
         outcome: 'not_found',
         reason: 'NO_CONTENTHASH',
         error: err.message,
-        trust: buildColibriTrust(proverHost),
+        trust: buildColibriTrust(proverHost, nameSystem),
         block: null,
       };
     }
@@ -895,7 +1009,7 @@ async function tryColibriPath(name, callData) {
     outcome: 'data',
     resolvedData: result.resolvedData,
     resolverAddress: result.resolverAddress,
-    trust: buildColibriTrust(proverHost),
+    trust: buildColibriTrust(proverHost, nameSystem),
     block: null,
   };
 }
@@ -914,9 +1028,10 @@ function colibriProofLabel() {
     : 'ZK sync-committee proof';
 }
 
-function buildColibriTrust(proverHost) {
+function buildColibriTrust(proverHost, nameSystem = NAME_SYSTEMS.ens) {
   return {
     level: 'verified',
+    system: nameSystem.id,
     method: 'colibri',
     prover: proverHost,
     proof: colibriProofLabel(),
@@ -935,7 +1050,14 @@ function buildColibriTrust(proverHost) {
 // failure, return null so the caller falls back to the public quorum path.
 // Pinned block is fetched from the same RPC — we don't want to send
 // user-node requests to public RPCs behind their back.
-async function tryDirectResolve(rpcUrl, name, callData, userConfigured) {
+async function tryDirectResolve(
+  rpcUrl,
+  name,
+  callData,
+  userConfigured,
+  callResolver = universalResolverCall,
+  nameSystem = NAME_SYSTEMS.ens,
+) {
   const { quorum } = registry.getNetwork(1);
   const anchor = quorum.anchor || 'latest';
   const timeoutMs = Number(quorum.timeoutMs) || 5000;
@@ -947,7 +1069,15 @@ async function tryDirectResolve(rpcUrl, name, callData, userConfigured) {
     return null;
   }
 
-  const leg = await runQuorumLeg(rpcUrl, name, callData, block.hash, timeoutMs);
+  const leg = await runQuorumLeg(
+    rpcUrl,
+    name,
+    callData,
+    block.hash,
+    timeoutMs,
+    null,
+    callResolver,
+  );
   if (leg.status === 'error') {
     log.warn(`[ens] direct RPC leg failed (${hostOf(rpcUrl)}): ${leg.error?.message}`);
     return null;
@@ -955,6 +1085,7 @@ async function tryDirectResolve(rpcUrl, name, callData, userConfigured) {
 
   const trust = buildTrust({
     level: userConfigured ? 'user-configured' : 'unverified',
+    system: nameSystem.id,
     agreed: [hostOf(rpcUrl)],
     dissented: [],
     queried: [hostOf(rpcUrl)],
@@ -984,16 +1115,33 @@ async function tryDirectResolve(rpcUrl, name, callData, userConfigured) {
 // paths and the runtime "anchor corroboration infeasible" fallback so
 // both produce the same `unverified` shape. Throws only when the single
 // provider itself errors.
-async function resolveSingleSourceUnverified(url, name, callData, anchor, timeoutMs) {
+async function resolveSingleSourceUnverified(
+  url,
+  name,
+  callData,
+  anchor,
+  timeoutMs,
+  callResolver = universalResolverCall,
+  nameSystem = NAME_SYSTEMS.ens,
+) {
   let block;
   try {
     block = await fetchSingleSourceAnchor(url, anchor, timeoutMs);
   } catch (err) {
     throw new Error(`Single-provider anchor fetch failed: ${err.message}`, { cause: err });
   }
-  const legResult = await runQuorumLeg(url, name, callData, block.hash, timeoutMs);
+  const legResult = await runQuorumLeg(
+    url,
+    name,
+    callData,
+    block.hash,
+    timeoutMs,
+    null,
+    callResolver,
+  );
   const trust = buildTrust({
     level: 'unverified',
+    system: nameSystem.id,
     agreed: [hostOf(url)],
     dissented: [],
     queried: [hostOf(url)],
@@ -1047,6 +1195,8 @@ function getDirectRpcCandidate(chainId) {
 async function consensusResolve(normalizedName, callData, kind = 'content', options = {}) {
   const network = registry.getNetwork(1);
   const strategy = network.verification.primary;
+  const callResolver = options.callResolver || universalResolverCall;
+  const nameSystem = options.nameSystem || NAME_SYSTEMS.ens;
 
   // Colibri primary: cryptographic verification via the sync committee
   // (or zk sync proof). On verification failure or network/prover error
@@ -1056,7 +1206,7 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   // (rare) "active attack" signal.
   if (strategy === 'colibri') {
     try {
-      return await tryColibriPath(normalizedName, callData);
+      return await tryColibriPath(normalizedName, callData, callResolver, nameSystem);
     } catch (err) {
       log.warn(
         `[ens] colibri-fallback name=${normalizedName} kind=${kind} ` +
@@ -1075,7 +1225,12 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
     const direct = getDirectRpcCandidate(1);
     if (direct.url) {
       const directResult = await tryDirectResolve(
-        direct.url, normalizedName, callData, direct.userConfigured
+        direct.url,
+        normalizedName,
+        callData,
+        direct.userConfigured,
+        callResolver,
+        nameSystem,
       );
       if (directResult) return directResult;
     }
@@ -1104,7 +1259,15 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   const quorumUnderpowered =
     desiredK < MIN_QUORUM_PROVIDERS || desiredM < 2;
   if (available.length < MIN_QUORUM_PROVIDERS || quorumUnderpowered) {
-    return resolveSingleSourceUnverified(available[0], normalizedName, callData, anchor, timeoutMs);
+    return resolveSingleSourceUnverified(
+      available[0],
+      normalizedName,
+      callData,
+      anchor,
+      timeoutMs,
+      callResolver,
+      nameSystem,
+    );
   }
 
   // Corroborated anchor required before the quorum wave — a malicious
@@ -1116,7 +1279,15 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   if (!block) {
     const freshAvailable = getAvailableProviders();
     const fallbackUrl = freshAvailable[0] || available[0];
-    return resolveSingleSourceUnverified(fallbackUrl, normalizedName, callData, anchor, timeoutMs);
+    return resolveSingleSourceUnverified(
+      fallbackUrl,
+      normalizedName,
+      callData,
+      anchor,
+      timeoutMs,
+      callResolver,
+      nameSystem,
+    );
   }
 
   // Refresh the available pool — anchor corroboration may have quarantined
@@ -1129,7 +1300,12 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   if (waveAvailable.length < MIN_QUORUM_PROVIDERS) {
     return resolveSingleSourceUnverified(
       waveAvailable[0] || available[0],
-      normalizedName, callData, anchor, timeoutMs
+      normalizedName,
+      callData,
+      anchor,
+      timeoutMs,
+      callResolver,
+      nameSystem,
     );
   }
 
@@ -1151,6 +1327,7 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
     timeoutMs,
     m: effectiveM,
     onFirstData: options.onFirstData,
+    callResolver,
   });
 
   // First-wave settled without agreement → escalate once to remaining
@@ -1184,6 +1361,7 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
           timeoutMs,
           m: Math.min(desiredM, secondK),
           onFirstData: options.onFirstData,
+          callResolver,
         });
         const secondAgreed =
           secondWave.outcome.kind === 'agreed_data' ||
@@ -1200,7 +1378,10 @@ async function consensusResolve(normalizedName, callData, kind = 'content', opti
   // fewer providers remain; using the caller's effectiveM here would
   // report an impossible k=2, m=3, achieved=true on those paths).
   const trustFor = (level, agreed, dissented = []) => buildTrust({
-    level, agreed, dissented,
+    level,
+    system: nameSystem.id,
+    agreed,
+    dissented,
     queried: wave.queried,
     k: wave.queried.length,
     m: wave.mUsed,
@@ -1297,9 +1478,12 @@ function prefetchOnFirstData(resolvedData) {
 async function doResolveEnsContent(normalized) {
   const node = ethers.namehash(normalized);
   const callData = CONTENTHASH_SELECTOR + node.slice(2);
+  const nameSystem = nameSystemForName(normalized);
 
   const consensus = await consensusResolve(normalized, callData, 'content', {
     onFirstData: prefetchOnFirstData,
+    callResolver: nameSystem.contractAddress ? nameNftResolverCall : universalResolverCall,
+    nameSystem,
   });
   const { trust } = consensus;
 
@@ -1307,6 +1491,7 @@ async function doResolveEnsContent(normalized) {
     return cacheContentResult(normalized, {
       type: 'conflict',
       name: normalized,
+      system: nameSystem.id,
       trust,
       groups: consensus.groups,
     });
@@ -1317,6 +1502,7 @@ async function doResolveEnsContent(normalized) {
       type: 'not_found',
       reason: consensus.reason || 'NO_RESOLVER',
       name: normalized,
+      system: nameSystem.id,
       trust,
     };
     if (consensus.error) out.error = consensus.error;
@@ -1339,6 +1525,7 @@ async function doResolveEnsContent(normalized) {
       type: 'unsupported',
       reason: 'UNSUPPORTED_CONTENTHASH_FORMAT',
       name: normalized,
+      system: nameSystem.id,
       contentHash: consensus.resolvedData,
       trust,
     });
@@ -1349,6 +1536,7 @@ async function doResolveEnsContent(normalized) {
       type: 'not_found',
       reason: 'EMPTY_CONTENTHASH',
       name: normalized,
+      system: nameSystem.id,
       trust,
     });
   }
@@ -1360,12 +1548,19 @@ async function doResolveEnsContent(normalized) {
       type: 'unsupported',
       reason: 'UNSUPPORTED_CONTENTHASH_FORMAT',
       name: normalized,
+      system: nameSystem.id,
       contentHash: innerBytes,
       trust,
     });
   }
 
-  return cacheContentResult(normalized, { type: 'ok', name: normalized, ...parsed, trust });
+  return cacheContentResult(normalized, {
+    type: 'ok',
+    name: normalized,
+    system: nameSystem.id,
+    ...parsed,
+    trust,
+  });
 }
 
 // Decode raw ENS contenthash bytes into our result shape. Mirrors ethers'
@@ -1374,16 +1569,40 @@ async function doResolveEnsContent(normalized) {
 // history/bookmark matching on names users already visited.
 // Returns null for any format we don't support.
 function parseContentHashBytes(hex0x) {
-  const ipfs = hex0x.match(IPFS_CONTENTHASH_RE);
-  if (ipfs) {
-    const { codecPrefix, multihash, mhLen, digest } = ipfs.groups;
+  const dagPb = hex0x.match(IPFS_DAG_PB_CONTENTHASH_RE);
+  if (dagPb) {
+    const { multihash, mhLen, digest } = dagPb.groups;
     if (digest.length === parseInt(mhLen, 16) * 2) {
-      const scheme = codecPrefix === 'e3010170' ? 'ipfs' : 'ipns';
       const decoded = ethers.encodeBase58('0x' + multihash);
       return {
-        codec: `${scheme}-ns`,
-        protocol: scheme,
-        uri: `${scheme}://${decoded}`,
+        codec: 'ipfs-ns',
+        protocol: 'ipfs',
+        uri: `ipfs://${decoded}`,
+        decoded,
+      };
+    }
+  }
+  const ipfsCidV1 = hex0x.match(IPFS_CIDV1_CONTENTHASH_RE);
+  if (ipfsCidV1) {
+    const decoded = cidV1BytesToBase32(ethers.getBytes('0x' + ipfsCidV1.groups.cid));
+    if (decoded) {
+      return {
+        codec: 'ipfs-ns',
+        protocol: 'ipfs',
+        uri: `ipfs://${decoded}`,
+        decoded,
+      };
+    }
+  }
+  const ipns = hex0x.match(IPNS_CONTENTHASH_RE);
+  if (ipns) {
+    const { multihash, mhLen, digest } = ipns.groups;
+    if (digest.length === parseInt(mhLen, 16) * 2) {
+      const decoded = ethers.encodeBase58('0x' + multihash);
+      return {
+        codec: 'ipns-ns',
+        protocol: 'ipns',
+        uri: `ipns://${decoded}`,
         decoded,
       };
     }
@@ -1500,14 +1719,19 @@ async function resolveWithCache(name, cache, doResolve, label) {
 async function doResolveEnsAddress(normalized) {
   const node = ethers.namehash(normalized);
   const callData = ADDR_SELECTOR + node.slice(2);
+  const nameSystem = nameSystemForName(normalized);
 
-  const consensus = await consensusResolve(normalized, callData, 'addr');
+  const consensus = await consensusResolve(normalized, callData, 'addr', {
+    callResolver: nameSystem.contractAddress ? nameNftResolverCall : universalResolverCall,
+    nameSystem,
+  });
   const { trust } = consensus;
 
   if (consensus.outcome === 'conflict') {
     return cacheAddressResult(normalized, {
       success: false,
       name: normalized,
+      system: nameSystem.id,
       reason: 'CONFLICT',
       trust,
       groups: consensus.groups,
@@ -1524,18 +1748,27 @@ async function doResolveEnsAddress(normalized) {
       return cacheAddressResult(normalized, {
         success: false,
         name: normalized,
+        system: nameSystem.id,
         reason: 'RESOLUTION_ERROR',
         error: consensus.error,
         trust,
       });
     }
-    return cacheAddressResult(normalized, { ...noAddressResult(normalized), trust });
+    return cacheAddressResult(normalized, {
+      ...noAddressResult(normalized),
+      system: nameSystem.id,
+      trust,
+    });
   }
 
   // outcome === 'data' — addr() returns a plain 32-byte ABI-encoded address
   // (static type, not bytes-wrapped).
   if (!consensus.resolvedData || consensus.resolvedData === '0x') {
-    return cacheAddressResult(normalized, { ...noAddressResult(normalized), trust });
+    return cacheAddressResult(normalized, {
+      ...noAddressResult(normalized),
+      system: nameSystem.id,
+      trust,
+    });
   }
 
   let address;
@@ -1546,6 +1779,7 @@ async function doResolveEnsAddress(normalized) {
     return cacheAddressResult(normalized, {
       success: false,
       name: normalized,
+      system: nameSystem.id,
       reason: 'RESOLUTION_ERROR',
       error: err.message,
       trust,
@@ -1553,12 +1787,17 @@ async function doResolveEnsAddress(normalized) {
   }
 
   if (address === ethers.ZeroAddress) {
-    return cacheAddressResult(normalized, { ...noAddressResult(normalized), trust });
+    return cacheAddressResult(normalized, {
+      ...noAddressResult(normalized),
+      system: nameSystem.id,
+      trust,
+    });
   }
 
   return cacheAddressResult(normalized, {
     success: true,
     name: normalized,
+    system: nameSystem.id,
     address,
     trust,
   });
@@ -1630,6 +1869,7 @@ async function tryColibriReverse(normalizedAddress) {
       return {
         success: false,
         address: normalizedAddress,
+        system: 'ens',
         reason: 'UNVERIFIED',
         claimedName: decodeReverseMismatchClaimedName(err),
         error: `Reverse record for ${normalizedAddress} does not forward-verify`,
@@ -1640,7 +1880,102 @@ async function tryColibriReverse(normalizedAddress) {
   }
 
   if (!name) return { ...noReverseResult(normalizedAddress), trust };
-  return { success: true, address: normalizedAddress, name, trust };
+  return { success: true, address: normalizedAddress, name, system: 'ens', trust };
+}
+
+const CONTRACT_BACKED_REVERSE_SYSTEMS = [NAME_SYSTEMS.wns, NAME_SYSTEMS.gns];
+
+function unverifiedReverseResult(normalizedAddress, nameSystem, claimedName, detail, trust = undefined) {
+  return {
+    success: false,
+    address: normalizedAddress,
+    system: nameSystem.id,
+    reason: 'UNVERIFIED',
+    claimedName: claimedName || null,
+    error: detail || `Reverse record for ${normalizedAddress} does not forward-verify`,
+    ...(trust ? { trust } : {}),
+  };
+}
+
+async function verifyContractBackedReverseName(normalizedAddress, nameSystem, claimedName) {
+  if (!claimedName) return null;
+  const claimedSystem = nameSystemForName(claimedName);
+  if (claimedSystem.id !== nameSystem.id) {
+    return unverifiedReverseResult(
+      normalizedAddress,
+      nameSystem,
+      claimedName,
+      `Reverse record for ${normalizedAddress} claims a non-${nameSystem.label} name`
+    );
+  }
+
+  let forwardResult;
+  try {
+    forwardResult = await resolveEnsAddress(claimedName);
+  } catch (err) {
+    return unverifiedReverseResult(
+      normalizedAddress,
+      nameSystem,
+      claimedName,
+      `Reverse record for ${normalizedAddress} could not be forward-verified: ${err.message}`
+    );
+  }
+
+  const forwardAddress = String(forwardResult?.address || '').toLowerCase();
+  if (forwardResult?.success && forwardAddress === normalizedAddress) {
+    return {
+      success: true,
+      address: normalizedAddress,
+      name: forwardResult.name || claimedName,
+      system: nameSystem.id,
+      trust: forwardResult.trust,
+    };
+  }
+
+  return unverifiedReverseResult(
+    normalizedAddress,
+    nameSystem,
+    claimedName,
+    `Reverse record for ${normalizedAddress} does not forward-verify`,
+    forwardResult?.trust
+  );
+}
+
+async function withContractBackedReverseFallback(normalizedAddress, ensResult) {
+  if (ensResult?.reason !== 'NO_REVERSE') return ensResult;
+
+  let provider;
+  try {
+    provider = await getWorkingProvider();
+    // Return the first forward-verified name across systems. A claim that
+    // doesn't forward-verify shouldn't stop us from checking the next system
+    // (an address can have a stale/spoofed .wei record but a valid .gwei
+    // primary), so keep the first unverified claim only as a fallback so its
+    // warning still surfaces when no system verifies.
+    let firstUnverified = null;
+    for (const nameSystem of CONTRACT_BACKED_REVERSE_SYSTEMS) {
+      try {
+        const registryContract = new ethers.Contract(
+          nameSystem.contractAddress,
+          NAME_NFT_ABI,
+          provider
+        );
+        const name = await registryContract.reverseResolve(normalizedAddress);
+        if (!name) continue;
+        const verified = await verifyContractBackedReverseName(normalizedAddress, nameSystem, name);
+        if (verified?.success) return verified;
+        if (!firstUnverified) firstUnverified = verified;
+      } catch (err) {
+        if (isProviderError(err)) throw err;
+        log.info(`[${nameSystem.id}] reverse failed for ${normalizedAddress}: ${err.message}`);
+      }
+    }
+    return firstUnverified || ensResult;
+  } catch (err) {
+    if (isProviderError(err)) throw err;
+    log.info(`[ens] contract-backed reverse fallback failed for ${normalizedAddress}: ${err.message}`);
+    return ensResult;
+  }
 }
 
 async function doResolveEnsReverse(normalizedAddress) {
@@ -1648,9 +1983,10 @@ async function doResolveEnsReverse(normalizedAddress) {
 
   if (strategy === 'colibri') {
     try {
+      const ensResult = await tryColibriReverse(normalizedAddress);
       return cacheReverseResult(
         normalizedAddress,
-        await tryColibriReverse(normalizedAddress)
+        await withContractBackedReverseFallback(normalizedAddress, ensResult)
       );
     } catch (err) {
       log.warn(
@@ -1670,12 +2006,16 @@ async function doResolveEnsReverse(normalizedAddress) {
   } catch (err) {
     if (isProviderError(err)) throw err;
     if (isResolverNotFoundError(err)) {
-      return cacheReverseResult(normalizedAddress, noReverseResult(normalizedAddress));
+      return cacheReverseResult(
+        normalizedAddress,
+        await withContractBackedReverseFallback(normalizedAddress, noReverseResult(normalizedAddress))
+      );
     }
     if (isReverseAddressMismatchError(err)) {
       return cacheReverseResult(normalizedAddress, {
         success: false,
         address: normalizedAddress,
+        system: 'ens',
         reason: 'UNVERIFIED',
         claimedName: decodeReverseMismatchClaimedName(err),
         error: `Reverse record for ${normalizedAddress} does not forward-verify`,
@@ -1685,19 +2025,24 @@ async function doResolveEnsReverse(normalizedAddress) {
     return cacheReverseResult(normalizedAddress, {
       success: false,
       address: normalizedAddress,
+      system: 'ens',
       reason: 'RESOLUTION_ERROR',
       error: err.message,
     });
   }
 
   if (!claimedName) {
-    return cacheReverseResult(normalizedAddress, noReverseResult(normalizedAddress));
+    return cacheReverseResult(
+      normalizedAddress,
+      await withContractBackedReverseFallback(normalizedAddress, noReverseResult(normalizedAddress))
+    );
   }
 
   return cacheReverseResult(normalizedAddress, {
     success: true,
     address: normalizedAddress,
     name: claimedName,
+    system: 'ens',
   });
 }
 

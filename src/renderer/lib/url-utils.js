@@ -3,7 +3,7 @@ import { cidV0ToV1Base32, cidV1B58btcToBase32, ipnsMhToCidV1Base36 } from './cid
 
 export const ensureTrailingSlash = (value = '') => (value.endsWith('/') ? value : `${value}/`);
 
-// Set of transports an ENS contenthash can resolve to that the renderer
+// Set of transports an Ethereum name contenthash can resolve to that the renderer
 // knows how to dispatch. Anything outside this set is treated as
 // "unsupported transport" — the navigation surface alerts and aborts
 // rather than synthesising a URL we can't load. Single source of truth
@@ -240,23 +240,23 @@ export const formatBzzUrl = (input, bzzRoutePrefix) => {
 };
 
 /**
- * Build a transport-aware ENS display URI.
+ * Build a transport-aware name display URI.
  *
- * Given a resolved transport ('bzz' | 'ipfs' | 'ipns') and an ENS name + path
- * suffix, returns a display URL whose host is the ENS name and whose scheme
+ * Given a resolved transport ('bzz' | 'ipfs' | 'ipns') and a name + path
+ * suffix, returns a display URL whose host is the name and whose scheme
  * matches the resolved transport. Used in two places:
  *
- *   - When ENS resolution succeeds, navigation derives the address-bar value
+ *   - When name resolution succeeds, navigation derives the address-bar value
  *     from this helper instead of always emitting `ens://<name>`.
- *   - View-source on ENS-backed content reuses the same shape with a
+ *   - View-source on name-backed content reuses the same shape with a
  *     `view-source:` prefix added by the caller.
  *
  * The legacy `ens://<name>` form is intentionally NOT produced here — it
  * stays parseable for compatibility with existing bookmarks, but is no
  * longer the canonical display.
  *
- * @param {'bzz'|'ipfs'|'ipns'} protocol - resolved ENS contenthash transport
- * @param {string} name - ENS name (already normalized/lowercased upstream)
+ * @param {'bzz'|'ipfs'|'ipns'} protocol - resolved contenthash transport
+ * @param {string} name - name (already normalized/lowercased upstream)
  * @param {string} [suffix] - optional path/query/fragment, including any leading '/'
  * @returns {string|null} display URI, or null when protocol is unsupported
  */
@@ -267,13 +267,13 @@ export const buildEnsDisplayUri = (protocol, name, suffix = '') => {
 };
 
 /**
- * True when `displayUrl` is an ENS-backed display value the address bar
- * should treat as an ENS resolution. Recognises the bare-name form
+ * True when `displayUrl` is a name-backed display value the address bar
+ * should treat as name resolution. Recognises the bare-name form
  * (`vitalik.eth/path`), the legacy `ens://` form, and the transport-aware
- * `bzz://`/`ipfs://`/`ipns://` forms whose host ends in `.eth`/`.box`.
+ * `bzz://`/`ipfs://`/`ipns://` forms whose host is a supported Ethereum name.
  *
- * Used to gate the "clear known ENS mappings on direct navigation" branches
- * in `loadTarget`, so that transport ENS URLs (post-resolution display) do
+ * Used to gate the "clear known name mappings on direct navigation" branches
+ * in `loadTarget`, so that transport name URLs (post-resolution display) do
  * not delete the hash→name mapping that the new display relies on.
  *
  * Mirrors what `parseEnsInput` accepts, but kept here as a window-free
@@ -300,7 +300,7 @@ export const isEnsBackedDisplay = (displayUrl) => {
 /**
  * Convert a legacy `ens://name.eth[/path]` bookmark target to the bare-name
  * form (`name.eth[/path]`) so it enters the same navigation flow as a typed
- * ENS name. Non-ENS inputs are returned unchanged.
+ * name. Non-name inputs are returned unchanged.
  *
  * The migration plan keeps `ens://` parseable for compatibility but moves
  * the canonical address-bar form to the resolved transport
@@ -309,7 +309,7 @@ export const isEnsBackedDisplay = (displayUrl) => {
  * avoids re-displaying the legacy form after resolution lands.
  *
  * @param {string} url
- * @returns {string} bare-ENS form, or original input if not a legacy ens:// URL
+ * @returns {string} bare-name form, or original input if not a legacy ens:// URL
  */
 export const normalizeLegacyEnsBookmarkUrl = (url) => {
   if (typeof url !== 'string') return url;
@@ -320,23 +320,23 @@ export const normalizeLegacyEnsBookmarkUrl = (url) => {
 };
 
 /**
- * Apply ENS name preservation to a display URL.
- * If the URL is a bzz/ipfs/ipns URL with a hash/CID that has a known ENS name,
- * substitute the ENS name as the host, preserving the resolved transport
+ * Apply name preservation to a display URL.
+ * If the URL is a bzz/ipfs/ipns URL with a hash/CID that has a known name,
+ * substitute the name as the host, preserving the resolved transport
  * scheme (e.g. `bzz://<hash>/path` → `bzz://<name>/path`). The legacy
  * `ens://<name>` form is intentionally not produced here — see
  * `buildEnsDisplayUri` and the ENS link migration notes.
  *
  * @param {string} displayUrl - Display URL like "bzz://abc123/path" or "ipfs://QmHash/path"
- * @param {Map} knownEnsNames - Map of hash/CID -> ENS name
- * @returns {string} Display URL with ENS name substituted if applicable
+ * @param {Map} knownEnsNames - Map of hash/CID -> name
+ * @returns {string} Display URL with name substituted if applicable
  */
 export const applyEnsNamePreservation = (displayUrl, knownEnsNames) => {
   if (!displayUrl || !knownEnsNames || knownEnsNames.size === 0) {
     return displayUrl;
   }
 
-  // Handle view-source: prefix - apply ENS preservation to inner URL and prepend view-source:
+  // Handle view-source: prefix - apply name preservation to inner URL and prepend view-source:
   if (displayUrl.startsWith('view-source:')) {
     const innerUrl = displayUrl.slice(12); // 'view-source:'.length === 12
     const innerResult = applyEnsNamePreservation(innerUrl, knownEnsNames);
@@ -448,7 +448,7 @@ export const deriveDisplayValue = (
 //
 // Returns true for the embedded ref of a gateway-form path that we'll
 // rewrite to the canonical `<scheme>://<ref>/...` form. Stricter than
-// the full IPNS-host shape: ENS names are excluded here because their
+// the full IPNS-host shape: Ethereum names are excluded here because their
 // gateway-form embedded representation is vanishingly rare and ambiguous
 // with arbitrary DNSLink subpaths.
 const looksLikeContentKey = (ref) => {

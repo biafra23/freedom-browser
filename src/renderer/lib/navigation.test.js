@@ -239,7 +239,12 @@ const loadNavigationModule = async (options = {}) => {
       if (lower.startsWith('ens://')) return true;
       const transportMatch = lower.match(/^(?:bzz|ipfs|ipns):\/\/([^/?#]+)/);
       const host = transportMatch ? transportMatch[1] : trimmed.split(/[/?#]/)[0].toLowerCase();
-      return host.endsWith('.eth') || host.endsWith('.box');
+      return (
+        host.endsWith('.eth') ||
+        host.endsWith('.box') ||
+        host.endsWith('.wei') ||
+        host.endsWith('.gwei')
+      );
     }),
     isSupportedEnsTransport: jest.fn(
       (protocol) => protocol === 'bzz' || protocol === 'ipfs' || protocol === 'ipns'
@@ -1163,7 +1168,7 @@ describe('navigation', () => {
       const ctx = await loadNavigationModule(options);
       // Mirrors the real parseEnsInput in page-urls.js: accepts bare names,
       // legacy ens://, and the transport-prefixed forms (bzz://, ipfs://,
-      // ipns://) when the host ends in .eth/.box. Hash/CID hosts return
+      // ipns://) when the host is a supported Ethereum name. Hash/CID hosts return
       // null so the caller falls through to direct content navigation.
       ctx.pageUrlsMocks.parseEnsInput.mockImplementation((value) => {
         const prefixMatch = value.match(/^(ens|bzz|ipfs|ipns):\/\//i);
@@ -1175,7 +1180,14 @@ describe('navigation', () => {
         const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
         if (!m) return null;
         const host = m[1].toLowerCase();
-        if (!host.endsWith('.eth') && !host.endsWith('.box')) return null;
+        if (
+          !host.endsWith('.eth') &&
+          !host.endsWith('.box') &&
+          !host.endsWith('.wei') &&
+          !host.endsWith('.gwei')
+        ) {
+          return null;
+        }
         return { name: host, suffix: m[2] || '', assertedTransport };
       });
       await ctx.mod.initNavigation();
@@ -1719,7 +1731,12 @@ describe('navigation', () => {
         const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
         if (!m) return null;
         const name = m[1].toLowerCase();
-        return name.endsWith('.eth') || name.endsWith('.box')
+        return (
+          name.endsWith('.eth') ||
+          name.endsWith('.box') ||
+          name.endsWith('.wei') ||
+          name.endsWith('.gwei')
+        )
           ? { name, suffix: m[2] || '', assertedTransport }
           : null;
       });
@@ -1957,7 +1974,12 @@ describe('navigation', () => {
         const m = value.match(/^(?:(?:ens|bzz|ipfs|ipns):\/\/)?([^?/]+)(.*)?$/i);
         if (!m) return null;
         const name = m[1].toLowerCase();
-        return name.endsWith('.eth') || name.endsWith('.box')
+        return (
+          name.endsWith('.eth') ||
+          name.endsWith('.box') ||
+          name.endsWith('.wei') ||
+          name.endsWith('.gwei')
+        )
           ? { name, suffix: m[2] || '', assertedTransport }
           : null;
       });

@@ -116,6 +116,7 @@ jest.mock('./networks/network-registry', () => {
 const mockResolveViaColibri = jest.fn();
 const mockResolveReverseViaColibri = jest.fn();
 jest.mock('./ens/colibri-resolver', () => ({
+  resolveCallViaColibri: (...args) => mockResolveViaColibri(...args),
   resolveViaColibri: (...args) => mockResolveViaColibri(...args),
   resolveReverseViaColibri: (...args) => mockResolveReverseViaColibri(...args),
 }));
@@ -132,6 +133,12 @@ const mockGetResolver = jest.fn();
 const mockResolveName = jest.fn();
 const mockUrResolve = jest.fn();
 const mockUrReverse = jest.fn();
+const mockWnsContenthash = jest.fn();
+const mockWnsAddr = jest.fn();
+const mockWnsReverseResolve = jest.fn();
+const mockGnsContenthash = jest.fn();
+const mockGnsAddr = jest.fn();
+const mockGnsReverseResolve = jest.fn();
 
 // Last URL passed to JsonRpcProvider — lets per-provider test helpers know
 // which URL they're being called on during the current ur.resolve invocation.
@@ -148,6 +155,9 @@ let mockProviderRouteMap = null;
 // headNumber can be a number or an Error (rejects). getBlock is a function
 // the provider.getBlock proxy delegates to — typically returns {number, hash}.
 let mockProviderAnchorMap = null;
+
+const WNS_ADDRESS = '0x0000000000696760e15f265e828db644a0c242eb';
+const GNS_ADDRESS = '0x9d51d507bc7264d4fe8ad1cf7fe191933a0a81d6';
 
 jest.mock('ethers', () => {
   const actual = jest.requireActual('ethers').ethers;
@@ -182,7 +192,7 @@ jest.mock('ethers', () => {
           destroy: mockDestroy,
         };
       }),
-      Contract: jest.fn().mockImplementation((_addr, _abi, provider) => ({
+      Contract: jest.fn().mockImplementation((addr, _abi, provider) => ({
         resolve: (...args) => {
           // Per-URL routing takes precedence; otherwise the shared mock.
           if (mockProviderRouteMap) {
@@ -195,6 +205,24 @@ jest.mock('ethers', () => {
           return mockUrResolve(...args);
         },
         reverse: (...args) => mockUrReverse(...args),
+        contenthash: (...args) => {
+          const lower = String(addr || '').toLowerCase();
+          if (lower === GNS_ADDRESS) return mockGnsContenthash(...args);
+          if (lower === WNS_ADDRESS) return mockWnsContenthash(...args);
+          return mockWnsContenthash(...args);
+        },
+        addr: (...args) => {
+          const lower = String(addr || '').toLowerCase();
+          if (lower === GNS_ADDRESS) return mockGnsAddr(...args);
+          if (lower === WNS_ADDRESS) return mockWnsAddr(...args);
+          return mockWnsAddr(...args);
+        },
+        reverseResolve: (...args) => {
+          const lower = String(addr || '').toLowerCase();
+          if (lower === GNS_ADDRESS) return mockGnsReverseResolve(...args);
+          if (lower === WNS_ADDRESS) return mockWnsReverseResolve(...args);
+          return mockWnsReverseResolve(...args);
+        },
       })),
       // Pure helpers — use the real implementations so the UR helper's
       // encoding and the inline contenthash decoder are actually exercised.
@@ -234,6 +262,12 @@ beforeEach(() => {
   mockGetBlock.mockResolvedValue(FAKE_BLOCK);
   mockGetResolver.mockResolvedValue(null);
   mockResolveName.mockResolvedValue(null);
+  mockWnsContenthash.mockResolvedValue('0x');
+  mockWnsAddr.mockResolvedValue('0x0000000000000000000000000000000000000000');
+  mockWnsReverseResolve.mockResolvedValue('');
+  mockGnsContenthash.mockResolvedValue('0x');
+  mockGnsAddr.mockResolvedValue('0x0000000000000000000000000000000000000000');
+  mockGnsReverseResolve.mockResolvedValue('');
   mockLoadSettings.mockReturnValue({
     enableEnsCustomRpc: false,
     ensRpcUrl: '',
@@ -301,6 +335,9 @@ describe('ens-resolver', () => {
     // Real IPFS v0 hash (34 bytes: 0x12 0x20 + 32-byte digest). Using a known
     // valid CID here so encodeBase58 round-trips cleanly.
     const IPFS_V0 = 'QmW81r84Aihiqqi2Jw6nM1LnpeMfRCenRxtjwHNkXVkZYa';
+    const WNS_WEI_RAW_CONTENTHASH =
+      '0xe30101551220178009fb926120f294c60ebc3ae54de9dccaace22db785445f6f54a807b322fd';
+    const WNS_WEI_CIDV1 = 'bafkreiaxqae7xetbedzjjrqoxq5oktpj3tfkzyrnw6cuix3pksuapmzc7u';
 
     test('decodes ipfs contenthash and returns CIDv0 base58 URI', async () => {
       mockUrResolve.mockResolvedValue(urReturnsBytes(ipfsContenthashFor(IPFS_V0)));
@@ -317,6 +354,64 @@ describe('ens-resolver', () => {
       });
       expect(result.trust.level).toBe('verified');
       expect(result.trust.quorum).toEqual({ k: 3, m: 2, achieved: true });
+    });
+
+    test('resolves .wei contenthash through the WNS contract', async () => {
+      mockWnsContenthash.mockResolvedValue(ipfsContenthashFor(IPFS_V0));
+
+      const result = await resolveEnsContent('alice.wei');
+
+      expect(result).toMatchObject({
+        type: 'ok',
+        name: 'alice.wei',
+        system: 'wns',
+        codec: 'ipfs-ns',
+        protocol: 'ipfs',
+        uri: `ipfs://${IPFS_V0}`,
+        decoded: IPFS_V0,
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'wns' });
+      expect(mockWnsContenthash).toHaveBeenCalledTimes(3);
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
+    test('decodes .wei CIDv1 raw contenthash through the WNS contract', async () => {
+      mockWnsContenthash.mockResolvedValue(WNS_WEI_RAW_CONTENTHASH);
+
+      const result = await resolveEnsContent('wns.wei');
+
+      expect(result).toMatchObject({
+        type: 'ok',
+        name: 'wns.wei',
+        system: 'wns',
+        codec: 'ipfs-ns',
+        protocol: 'ipfs',
+        uri: `ipfs://${WNS_WEI_CIDV1}`,
+        decoded: WNS_WEI_CIDV1,
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'wns' });
+      expect(mockWnsContenthash).toHaveBeenCalledTimes(3);
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
+    test('resolves .gwei contenthash through the GNS contract', async () => {
+      mockGnsContenthash.mockResolvedValue(ipfsContenthashFor(IPFS_V0));
+
+      const result = await resolveEnsContent('apoorv.gwei');
+
+      expect(result).toMatchObject({
+        type: 'ok',
+        name: 'apoorv.gwei',
+        system: 'gns',
+        codec: 'ipfs-ns',
+        protocol: 'ipfs',
+        uri: `ipfs://${IPFS_V0}`,
+        decoded: IPFS_V0,
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'gns' });
+      expect(mockGnsContenthash).toHaveBeenCalledTimes(3);
+      expect(mockWnsContenthash).not.toHaveBeenCalled();
+      expect(mockUrResolve).not.toHaveBeenCalled();
     });
 
     test('decodes swarm contenthash', async () => {
@@ -383,6 +478,20 @@ describe('ens-resolver', () => {
         name: 'empty.box',
       });
       expect(result.trust.level).toBe('verified');
+    });
+
+    test('returns EMPTY_CONTENTHASH for .wei names with no WNS contenthash', async () => {
+      mockWnsContenthash.mockResolvedValue('0x');
+
+      const result = await resolveEnsContent('empty.wei');
+
+      expect(result).toMatchObject({
+        type: 'not_found',
+        reason: 'EMPTY_CONTENTHASH',
+        name: 'empty.wei',
+        system: 'wns',
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'wns' });
     });
 
     test('returns UNSUPPORTED_CONTENTHASH_FORMAT for unknown bytes', async () => {
@@ -575,6 +684,39 @@ describe('ens-resolver', () => {
       expect(result.trust.level).toBe('verified');
     });
 
+    test('resolves .wei name to its WNS addr record', async () => {
+      mockWnsAddr.mockResolvedValue('0x1111111111111111111111111111111111111111');
+
+      const result = await resolveEnsAddress('alice.wei');
+
+      expect(result).toMatchObject({
+        success: true,
+        name: 'alice.wei',
+        system: 'wns',
+        address: '0x1111111111111111111111111111111111111111',
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'wns' });
+      expect(mockWnsAddr).toHaveBeenCalledTimes(3);
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
+    test('resolves .gwei name to its GNS addr record', async () => {
+      mockGnsAddr.mockResolvedValue('0x2222222222222222222222222222222222222222');
+
+      const result = await resolveEnsAddress('apoorv.gwei');
+
+      expect(result).toMatchObject({
+        success: true,
+        name: 'apoorv.gwei',
+        system: 'gns',
+        address: '0x2222222222222222222222222222222222222222',
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'gns' });
+      expect(mockGnsAddr).toHaveBeenCalledTimes(3);
+      expect(mockWnsAddr).not.toHaveBeenCalled();
+      expect(mockUrResolve).not.toHaveBeenCalled();
+    });
+
     test('normalizes mixed-case input to lowercase', async () => {
       mockUrResolve.mockResolvedValue(
         urReturnsAddress('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
@@ -698,7 +840,115 @@ describe('ens-resolver', () => {
         success: true,
         address: input.toLowerCase(),
         name: 'verified1.eth',
+        system: 'ens',
       });
+    });
+
+    test('falls back to WNS reverse when ENS has no primary name', async () => {
+      const input = addr('1003');
+      mockUrReverse.mockResolvedValue(['', RESOLVER, RESOLVER]);
+      mockWnsReverseResolve.mockResolvedValue('alice.wei');
+      mockWnsAddr.mockResolvedValue(input);
+
+      const result = await resolveEnsReverse(input);
+
+      expect(result).toMatchObject({
+        success: true,
+        address: input.toLowerCase(),
+        name: 'alice.wei',
+        system: 'wns',
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'wns' });
+      expect(mockUrReverse).toHaveBeenCalledTimes(1);
+      expect(mockWnsReverseResolve).toHaveBeenCalledTimes(1);
+      expect(mockWnsAddr).toHaveBeenCalledTimes(3);
+    });
+
+    test('falls back to GNS reverse after empty WNS reverse', async () => {
+      const input = addr('1004');
+      mockUrReverse.mockResolvedValue(['', RESOLVER, RESOLVER]);
+      mockWnsReverseResolve.mockResolvedValue('');
+      mockGnsReverseResolve.mockResolvedValue('apoorv.gwei');
+      mockGnsAddr.mockResolvedValue(input);
+
+      const result = await resolveEnsReverse(input);
+
+      expect(result).toMatchObject({
+        success: true,
+        address: input.toLowerCase(),
+        name: 'apoorv.gwei',
+        system: 'gns',
+      });
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'gns' });
+      expect(mockUrReverse).toHaveBeenCalledTimes(1);
+      expect(mockWnsReverseResolve).toHaveBeenCalledTimes(1);
+      expect(mockGnsReverseResolve).toHaveBeenCalledTimes(1);
+      expect(mockGnsAddr).toHaveBeenCalledTimes(3);
+    });
+
+    test('returns UNVERIFIED when WNS reverse does not forward-resolve to the address', async () => {
+      const input = addr('1010');
+      mockUrReverse.mockResolvedValue(['', RESOLVER, RESOLVER]);
+      mockWnsReverseResolve.mockResolvedValue('spoof.wei');
+      mockWnsAddr.mockResolvedValue(addr('9999'));
+
+      const result = await resolveEnsReverse(input);
+
+      expect(result).toMatchObject({
+        success: false,
+        address: input.toLowerCase(),
+        system: 'wns',
+        reason: 'UNVERIFIED',
+        claimedName: 'spoof.wei',
+      });
+      expect(result.name).toBeUndefined();
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'wns' });
+      expect(mockWnsReverseResolve).toHaveBeenCalledTimes(1);
+      expect(mockWnsAddr).toHaveBeenCalledTimes(3);
+    });
+
+    test('returns UNVERIFIED when GNS reverse does not forward-resolve to the address', async () => {
+      const input = addr('1011');
+      mockUrReverse.mockResolvedValue(['', RESOLVER, RESOLVER]);
+      mockWnsReverseResolve.mockResolvedValue('');
+      mockGnsReverseResolve.mockResolvedValue('spoof.gwei');
+      mockGnsAddr.mockResolvedValue(addr('9998'));
+
+      const result = await resolveEnsReverse(input);
+
+      expect(result).toMatchObject({
+        success: false,
+        address: input.toLowerCase(),
+        system: 'gns',
+        reason: 'UNVERIFIED',
+        claimedName: 'spoof.gwei',
+      });
+      expect(result.name).toBeUndefined();
+      expect(result.trust).toMatchObject({ level: 'verified', system: 'gns' });
+      expect(mockGnsReverseResolve).toHaveBeenCalledTimes(1);
+      expect(mockGnsAddr).toHaveBeenCalledTimes(3);
+    });
+
+    test('short-caches unverified contract-backed reverse claims', async () => {
+      const input = addr('1012');
+      const now = jest.spyOn(Date, 'now');
+      now.mockReturnValue(1_000_000);
+      mockUrReverse.mockResolvedValue(['', RESOLVER, RESOLVER]);
+      mockWnsReverseResolve.mockResolvedValue('stale.wei');
+      mockWnsAddr.mockResolvedValue(addr('9997'));
+
+      try {
+        await resolveEnsReverse(input);
+        await resolveEnsReverse(input);
+        expect(mockWnsReverseResolve).toHaveBeenCalledTimes(1);
+
+        now.mockReturnValue(1_061_000);
+        await resolveEnsReverse(input);
+
+        expect(mockWnsReverseResolve).toHaveBeenCalledTimes(2);
+      } finally {
+        now.mockRestore();
+      }
     });
 
     test('UNVERIFIED when UR reverts with ReverseAddressMismatch', async () => {
@@ -711,9 +961,7 @@ describe('ens-resolver', () => {
 
       expect(result.success).toBe(false);
       expect(result.reason).toBe('UNVERIFIED');
-      // No claimed-name field — keeps spoofed names out of the return shape
-      // entirely so no caller can accidentally surface them.
-      expect(result.claimedUnverifiedName).toBeUndefined();
+      expect(result.claimedName).toBeNull();
     });
 
     test('NO_REVERSE when UR returns empty name', async () => {

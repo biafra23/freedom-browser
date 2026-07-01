@@ -75,12 +75,13 @@ export const getInternalPageName = (url) => {
   return null;
 };
 
-// Parse ENS input. Accepts:
-//   - bare ENS names (vitalik.eth, name.box, with optional path/query/fragment)
+// Parse Ethereum name input. Accepts:
+//   - bare names (vitalik.eth, name.box, name.wei, name.gwei, with optional path/query/fragment)
 //   - legacy ens:// URLs (kept for bookmark + history compatibility)
 //   - transport-aware ENS URLs (bzz://name.eth/, ipfs://name.eth/, ipns://name.eth/)
 //
-// Transport URLs whose host is NOT an ENS name (e.g. bzz://<hash>, ipfs://<cid>)
+// Transport URLs whose host is NOT a supported Ethereum name
+// (e.g. bzz://<hash>, ipfs://<cid>)
 // are returned as null so the caller can fall through to direct content
 // navigation. This is what makes `bzz://meinhard.eth/` work the same way as
 // `ens://meinhard.eth/` while leaving raw-hash navigation untouched.

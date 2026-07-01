@@ -36,7 +36,7 @@ const DEFAULT_SETTINGS = {
   startRadicleAtLaunch: false,
   autoUpdate: true,
   showBookmarkBar: false,
-  // When true, navigating to an ENS name that resolved with trust.level =
+  // When true, navigating to an Ethereum name that resolved with trust.level =
   // 'unverified' is gated behind an interstitial with a single-use
   // "Continue once" option. ENS network config (resolution strategy, RPC
   // endpoints, prover, quorum params) lives in the network registry —

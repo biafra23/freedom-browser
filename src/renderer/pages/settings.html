@@ -718,7 +718,7 @@
               <polygon points="12 2 4 12 12 16 20 12 12 2"></polygon>
               <polygon points="4 14 12 22 20 14 12 18 4 14"></polygon>
             </svg>
-            ENS Resolution
+            Name Resolution
           </button>
           <button type="button" class="nav-item" data-target="experimental" id="nav-experimental">
             <svg
@@ -875,12 +875,13 @@
           <p id="rpc-status" class="rpc-status"></p>
         </section>
 
-        <!-- ENS Resolution — a focused lens on the Ethereum network -->
+        <!-- Ethereum Name Resolution — a focused lens on the Ethereum network -->
         <section class="section" id="ens">
-          <h2 class="section-title">ENS Resolution</h2>
+          <h2 class="section-title">Ethereum Name Resolution</h2>
           <p class="row-help" style="margin-bottom: 16px">
-            How Freedom resolves <code>.eth</code> and <code>.box</code> names. ENS lives on
-            Ethereum — manage its RPC endpoints under <a href="#chains">Chains settings</a>.
+            How Freedom resolves <code>.eth</code>, <code>.box</code>, <code>.wei</code>,
+            and <code>.gwei</code> names. These records live on Ethereum — manage RPC
+            endpoints under <a href="#chains">Chains settings</a>.
           </p>
           <div class="card">
             <div class="row">
@@ -916,9 +917,9 @@
             </div>
             <div class="row">
               <div class="row-body">
-                <p class="row-label">Block unverified ENS navigation</p>
+                <p class="row-label">Block unverified name navigation</p>
                 <p class="row-help">
-                  Show a warning page before navigating to an ENS name that resolved without
+                  Show a warning page before navigating to a name that resolved without
                   verification (for example, when only one RPC answered). Turn off to navigate
                   straight through with only the amber shield indicator.
                 </p>
@@ -2179,7 +2180,7 @@
         reload();
       })();
 
-      // ── ENS Resolution lens ─────────────────────────────────────────
+      // ── Name Resolution lens ────────────────────────────────────────
       // A focused view of the Ethereum (chain 1) network for the #ens
       // section: the verification strategy and, for Colibri, the prover.
       // RPC endpoints live under Chains settings.
