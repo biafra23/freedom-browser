@@ -18,6 +18,16 @@ const {
 } = require('./profile-catalog');
 const { isProfileLocked } = require('./profile-lock');
 
+// Pre-profile dev builds wrote node/identity data directly into the repo
+// checkout (`<repoRoot>/bee-data`, `identity-data`, etc.). The profile system
+// moved dev data to `Freedom Dev/<checkout>/Profiles/<id>/`. By design we do
+// NOT auto-migrate this legacy repo-root data into the new default profile:
+// dev data is disposable/regenerable and re-onboarding is cheap, so on upgrade
+// the app boots a fresh default profile and only *warns* about the stranded
+// dirs (see warnAboutLegacyDevData). Developers who want to keep old dev state
+// can point FREEDOM_DEV_HOME (or explicit data-path overrides) at it. This is
+// deliberately weaker than the packaged upgrade path, which adopts existing
+// userData in place and runs the bee->ant migration.
 const LEGACY_DEV_DATA_DIRS = ['identity-data', 'bee-data', 'ant-data', 'ipfs-data', 'radicle-data'];
 const LEGACY_DEV_DATA_WARNING_FILE = 'legacy-dev-data-warning.json';
 

@@ -44,6 +44,35 @@ jobs:
           path: coverage/
           if-no-files-found: error
 
+  # v0.8.0 upgrade / profile-migration coverage on all three desktop platforms.
+  # The bee->ant carry has OS-specific filesystem semantics (Windows EPERM on
+  # locked handles, rename-vs-copy fallbacks), so the migration + profile
+  # resolver/paths suites must be green on Windows and macOS too — not just the
+  # ubuntu-only `test` job. Pure jest, no display or native nodes required.
+  migration-cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run migration + profile suites
+        run: npm run test:migration
+
   # freedom-ipfs native addon smoke for every desktop addon target currently
   # published in the pinned prebuilt manifest. This downloads the real release
   # artifact, loads it in Node, starts native freedom-ipfs, and retrieves a real

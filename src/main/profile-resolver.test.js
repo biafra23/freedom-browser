@@ -266,6 +266,45 @@ describe('profile resolver', () => {
     expect(logger.warn).toHaveBeenCalledTimes(2);
   });
 
+  // Warn-only is the accepted behavior for dev pre-profile data. Legacy
+  // repo-root dirs must be left untouched (not moved) and must NOT be copied
+  // into the new default profile — the dev boots a fresh default profile.
+  test('does not auto-migrate legacy dev repo-root data into the default profile', () => {
+    const appDataDir = track(makeTempDir());
+    const repoRoot = track(makeRepoRoot());
+    const legacyBeeData = path.join(repoRoot, 'bee-data');
+    fs.mkdirSync(legacyBeeData);
+    fs.writeFileSync(path.join(legacyBeeData, 'swarm.key'), 'legacy-secret');
+    const app = createAppMock({
+      isPackaged: false,
+      appPaths: { appData: appDataDir },
+    });
+    const {
+      LEGACY_DEV_DATA_DIRS,
+      resolveProfile,
+      warnAboutLegacyDevData,
+    } = require('./profile-resolver');
+
+    const profile = resolveProfile(app, {
+      argv: ['electron', '.'],
+      env: {},
+      repoRoot,
+      now: '2026-05-25T00:00:00.000Z',
+    });
+    warnAboutLegacyDevData(profile, { logger: { warn: jest.fn() } });
+
+    // Legacy data stays exactly where it was — nothing moved or deleted.
+    expect(fs.existsSync(path.join(legacyBeeData, 'swarm.key'))).toBe(true);
+    expect(fs.readFileSync(path.join(legacyBeeData, 'swarm.key'), 'utf-8')).toBe('legacy-secret');
+
+    // The new default profile is fresh — none of the legacy node dirs were
+    // copied in.
+    expect(profile.userDataDir).not.toBe(fs.realpathSync(repoRoot));
+    for (const dirName of LEGACY_DEV_DATA_DIRS) {
+      expect(fs.existsSync(path.join(profile.userDataDir, dirName))).toBe(false);
+    }
+  });
+
   test('persists active profile node updates to metadata and catalog', () => {
     const userDataDir = track(makeTempDir());
     const app = createAppMock({ isPackaged: true, userDataDir });
