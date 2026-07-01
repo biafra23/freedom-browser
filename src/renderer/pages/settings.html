@@ -1431,7 +1431,7 @@
       const applyFormState = (settings) => {
         if (!settings) return;
         fields.themeMode.value = settings.theme || 'system';
-        fields.tabsInTitlebar.checked = settings.tabsInTitlebar !== false;
+        fields.tabsInTitlebar.checked = settings.tabsInTitlebar === true;
         fields.startAnt.checked = settings.startAntAtLaunch !== false;
         fields.startIpfs.checked = settings.startIpfsAtLaunch !== false;
         fields.enableRadicle.checked = settings.enableRadicleIntegration === true;

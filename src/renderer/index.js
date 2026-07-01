@@ -134,10 +134,10 @@ async function initPlatformUI() {
     // traffic-light gap to 12px), so it applies to Linux regardless of framing.
     document.body.classList.add('platform-linux');
 
-    // The window is only frameless when the user keeps tabs-in-titlebar on; with
-    // the OS frame the system provides the controls, so skip the custom ones.
+    // The window is only frameless when the user opts in to tabs-in-titlebar;
+    // with the OS frame the system provides the controls, so skip the custom ones.
     const settings = await electronAPI.getSettings().catch(() => ({}));
-    if (settings.tabsInTitlebar === false) return;
+    if (settings.tabsInTitlebar !== true) return;
 
     // Frameless on Linux: show + wire the in-app window controls
     document.getElementById('window-controls')?.classList.add('visible');

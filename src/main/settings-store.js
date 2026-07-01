@@ -51,7 +51,8 @@ const DEFAULT_SETTINGS = {
   sidebarOpen: false,
   sidebarWidth: 320,
   // Linux only: render the tab strip as the window titlebar (frameless window).
-  tabsInTitlebar: true,
+  // Off by default so Linux users get the native OS frame; opt in via Settings.
+  tabsInTitlebar: false,
 };
 
 let cachedSettings = null;
