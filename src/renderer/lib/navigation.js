@@ -21,6 +21,7 @@ import {
   formatBzzUrl,
   formatIpfsUrl,
   formatRadicleUrl,
+  looksLikeBzzInput,
   deriveDisplayValue,
   deriveBzzBaseFromUrl,
   deriveRadBaseFromUrl,
@@ -124,6 +125,27 @@ const buildErrorPageUrl = (errorCode, targetUrl, extras = {}) => {
   if (extras.protocol) errorUrl.searchParams.set('protocol', extras.protocol);
   if (extras.retry) errorUrl.searchParams.set('retry', extras.retry);
   return errorUrl.toString();
+};
+
+// True when the IPFS node can't currently serve content — disabled for this
+// profile, or stopped/errored. Used to route ipfs:// / ipns:// navigations to
+// the friendly error page instead of letting the ipfs: protocol handler return
+// a raw JSON 503 body that Chromium would render verbatim. `starting` and
+// `running` are allowed through (the load proceeds normally).
+const isIpfsNodeUnavailable = () => {
+  // The Nodes-menu switch sets `ipfsDesiredRunning` synchronously, but the
+  // actual `window.ipfs.stop()` and the resulting `stopped` status event lag
+  // behind (see ipfs-ui.js reconcileIpfsToggle). A navigation fired immediately
+  // after flipping the switch off would otherwise still see `currentIpfsStatus:
+  // 'running'` and let the load hit the ipfs: handler's raw 503. Honor the
+  // just-set intent so the friendly page shows right away. `null` means no
+  // pending toggle — fall through to the committed mode/status below.
+  if (state.ipfsDesiredRunning === false) return true;
+  return (
+    state.registry?.ipfs?.mode === 'disabled' ||
+    state.currentIpfsStatus === 'stopped' ||
+    state.currentIpfsStatus === 'error'
+  );
 };
 
 // Cancel any pending Swarm content probe on the given navState and clear it.
@@ -1314,6 +1336,40 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
   // Try IPFS (ipfs://, ipns://, or raw CID)
   const ipfsTarget = formatIpfsUrl(value, state.ipfsRoutePrefix);
   if (ipfsTarget) {
+    // Node disabled or not running: surface the friendly "node not running"
+    // page rather than letting webview.loadURL hit the ipfs: handler, which
+    // returns a raw JSON 503 body Chromium renders verbatim. Reuses error.html
+    // via the same ERR_CONNECTION_REFUSED path the Swarm probe uses, and the
+    // Radicle disabled gate above. Unlike Swarm, `state.ipfsRoutePrefix` keeps
+    // a native fallback even when disabled, so `formatIpfsUrl` still resolves —
+    // hence the explicit availability check here.
+    if (isIpfsNodeUnavailable()) {
+      // Prefer the ENS-named load URL when the resolver supplied one, so the
+      // error page's display + retry preserve the ENS host (ipfs://name.eth)
+      // rather than the resolved CID — the ipfs: handler re-resolves the host
+      // per request, so the named form is loadable. See buildErrorPageUrl's
+      // note on ENS-backed retries.
+      const ipfsErrorUrl = options.ipfsLoadUrl || ipfsTarget.displayValue;
+      const protocol = ipfsErrorUrl.toLowerCase().startsWith('ipns://') ? 'ipns' : 'ipfs';
+      pushDebug(`[AddressBar] IPFS node unavailable — error page for ${ipfsErrorUrl}`);
+      // Route through the per-tab helper (not a raw `addressInput.value` write):
+      // a background ENS/dweb navigation carries a specific `targetWebview`, so a
+      // direct write would clobber the foreground tab's address bar and skip
+      // storing the snapshot on the target tab. Mirror the normal IPFS path's
+      // `displayOverride || ipfsTarget.displayValue` so an ENS-backed target keeps
+      // its ENS host in the display.
+      setAddressDisplayForTab(displayOverride || ipfsTarget.displayValue, targetTabId);
+      const errorUrl = buildErrorPageUrl('ERR_CONNECTION_REFUSED', ipfsErrorUrl, {
+        protocol,
+        retry: ipfsErrorUrl,
+      });
+      navState.pendingNavigationUrl = errorUrl;
+      navState.hasNavigatedDuringCurrentLoad = false;
+      webview.loadURL(errorUrl);
+      syncBzzBase(null);
+      syncRadBase(null);
+      return;
+    }
     const cidMatch = ipfsTarget.displayValue.match(/^ipfs:\/\/([A-Za-z0-9]+)/);
     const ipnsMatch = ipfsTarget.displayValue.match(/^ipns:\/\/([A-Za-z0-9.-]+)/);
     // Load via the native `ipfs:`/`ipns:` schemes so the main-process
@@ -1332,6 +1388,40 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     pushDebug(`[AddressBar] Loading IPFS target, set to: ${ipfsDisplayValue}`);
     webview.loadURL(ipfsLoadUrl);
     pushDebug(`Loading ${ipfsTarget.displayValue} via ${ipfsLoadUrl}`);
+    syncBzzBase(null);
+    syncRadBase(null);
+    return;
+  }
+
+  // Swarm node disabled or not running: `state.bzzRoutePrefix` is null, so
+  // `formatBzzUrl` below returns null and the navigation would otherwise fall
+  // through to "Ignoring empty input or invalid URL" — a silent failure. Detect
+  // the Swarm intent from the raw input and show the same friendly "node not
+  // running" page the probe produces for an unreachable node (see
+  // startBzzNavigationWithProbe / error.html). Mirrors the Radicle disabled gate
+  // above.
+  if (!state.bzzRoutePrefix && looksLikeBzzInput(value)) {
+    const trimmed = value.trim();
+    const bzzForm = /^bzz:/i.test(trimmed) ? trimmed : `bzz://${trimmed}`;
+    // Preserve the ENS host on the retry URL when the resolver supplied one
+    // (`bzz://name.eth`), mirroring the probe path (startBzzNavigationWithProbe):
+    // the bzz: handler re-resolves the host per request, so "Try Again" keeps the
+    // ENS name and origin rather than the resolved hash. Non-ENS input keeps the
+    // bare bzz form.
+    const retry = options.bzzLoadUrl || bzzForm;
+    const displayValue = displayOverride || bzzForm;
+    pushDebug(`[AddressBar] Swarm node unavailable — error page for ${displayValue}`);
+    // Per-tab helper (not a raw `addressInput.value` write) so a background
+    // ENS/dweb navigation with an explicit `targetWebview` updates the target
+    // tab's snapshot instead of clobbering the foreground address bar.
+    setAddressDisplayForTab(displayValue, targetTabId);
+    const errorUrl = buildErrorPageUrl('ERR_CONNECTION_REFUSED', displayValue, {
+      protocol: 'swarm',
+      retry,
+    });
+    navState.pendingNavigationUrl = errorUrl;
+    navState.hasNavigatedDuringCurrentLoad = false;
+    webview.loadURL(errorUrl);
     syncBzzBase(null);
     syncRadBase(null);
     return;
@@ -1502,6 +1592,25 @@ const retryErrorPageOrReload = (webview, hard) => {
     pushDebug(`${hard ? 'Hard reload' : 'Reload'} re-resolving ENS: ${committedDisplay}`);
     loadTarget(committedDisplay);
     return;
+  }
+
+  // A committed dweb URL (`ipfs://<cid>`, `ipns://<name>`, `bzz://<hash>`) whose
+  // node has since been disabled/stopped must reload through `loadTarget` so the
+  // navigation-layer gate routes it to the friendly error page. A raw
+  // `webview.reload()` would re-hit the `ipfs:`/`bzz:` protocol handler and
+  // render its 503 JSON body verbatim. When the node is still available we keep
+  // the plain reload — no re-probe, preserving the happy-path behaviour.
+  const dwebScheme = committedDisplay.match(/^(ipfs|ipns|bzz):\/\//i)?.[1]?.toLowerCase();
+  if (dwebScheme) {
+    const nodeUnavailable =
+      dwebScheme === 'bzz' ? !state.bzzRoutePrefix : isIpfsNodeUnavailable();
+    if (nodeUnavailable) {
+      pushDebug(
+        `${hard ? 'Hard reload' : 'Reload'} dweb node unavailable — routing ${committedDisplay} to error page`
+      );
+      loadTarget(committedDisplay);
+      return;
+    }
   }
 
   if (hard) {

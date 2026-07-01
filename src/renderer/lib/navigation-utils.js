@@ -417,7 +417,13 @@ export const deriveSwitchedTabDisplay = ({
     return addressBarSnapshot;
   }
 
-  const urlToDerive = url.startsWith('view-source:') ? url.slice(12) : url;
+  const strippedUrl = url.startsWith('view-source:') ? url.slice(12) : url;
+  // A tab parked on `pages/error.html?...&url=<original>` should restore the
+  // friendly original target (e.g. `ipfs://vitalik.eth`), not the raw
+  // `file://.../error.html?...` URL Chromium actually committed. Mirrors the
+  // active-tab did-navigate handler, which derives the address bar from the
+  // error page's `url` param.
+  const urlToDerive = getOriginalUrlFromErrorPage(strippedUrl) || strippedUrl;
   const internalPageName = getInternalPageName(urlToDerive);
   if (internalPageName && internalPageName !== 'home') {
     return `freedom://${internalPageName}`;

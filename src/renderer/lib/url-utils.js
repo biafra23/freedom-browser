@@ -166,6 +166,19 @@ export const deriveBzzBaseFromUrl = (input) => {
   return null;
 };
 
+// True when `input` is intended as a Swarm/bzz navigation target — either the
+// `bzz:` / `bzz://` scheme or a bare Swarm hash. `formatBzzUrl` returns null
+// when the route prefix is unavailable (node disabled/stopped), so callers use
+// this to detect Swarm intent and surface a friendly "node not running" page
+// instead of dropping the navigation silently. Mirrors the hash/scheme
+// detection `formatBzzUrl` itself performs.
+export const looksLikeBzzInput = (input) => {
+  const raw = (input || '').trim();
+  if (!raw) return false;
+  if (/^bzz:/i.test(raw)) return true;
+  return isValidSwarmHash(raw.split('/')[0]);
+};
+
 export const formatBzzUrl = (input, bzzRoutePrefix) => {
   const raw = (input || '').trim();
   if (!raw) {

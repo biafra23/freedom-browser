@@ -4,6 +4,7 @@ import {
   deriveBzzBaseFromUrl,
   parseHashInput,
   formatBzzUrl,
+  looksLikeBzzInput,
   deriveDisplayValue,
   isValidCid,
   parseIpfsInput,
@@ -160,6 +161,32 @@ describe('url-utils', () => {
     test('returns null for bzz path without hash', () => {
       const url = 'http://127.0.0.1:1633/bzz/';
       expect(deriveBzzBaseFromUrl(url)).toBeNull();
+    });
+  });
+
+  describe('looksLikeBzzInput', () => {
+    const HASH = 'a'.repeat(64);
+
+    test('detects bzz:// and bzz: scheme inputs', () => {
+      expect(looksLikeBzzInput(`bzz://${HASH}`)).toBe(true);
+      expect(looksLikeBzzInput(`bzz://${HASH}/index.html`)).toBe(true);
+      expect(looksLikeBzzInput(`bzz:${HASH}`)).toBe(true);
+      expect(looksLikeBzzInput('  BZZ://name.eth  ')).toBe(true);
+    });
+
+    test('detects bare Swarm hashes (with or without a path)', () => {
+      expect(looksLikeBzzInput(HASH)).toBe(true);
+      expect(looksLikeBzzInput(`${HASH}/page.html`)).toBe(true);
+      expect(looksLikeBzzInput('a'.repeat(128))).toBe(true);
+    });
+
+    test('rejects non-Swarm inputs', () => {
+      expect(looksLikeBzzInput('')).toBe(false);
+      expect(looksLikeBzzInput(null)).toBe(false);
+      expect(looksLikeBzzInput('example.com')).toBe(false);
+      expect(looksLikeBzzInput('ipfs://QmTest')).toBe(false);
+      expect(looksLikeBzzInput('https://example.com')).toBe(false);
+      expect(looksLikeBzzInput('a'.repeat(63))).toBe(false);
     });
   });
 
