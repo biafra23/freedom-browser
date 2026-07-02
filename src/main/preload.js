@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openUrlInNewWindow: (url) => ipcRenderer.send('window:new-with-url', url),
   showAbout: () => ipcRenderer.send('app:show-about'),
   getPlatform: () => ipcRenderer.invoke('window:get-platform'),
+  getWindowButtonLayout: () => ipcRenderer.invoke('window:get-button-layout'),
   getActiveProfile: () => ipcRenderer.invoke('profile:get-active'),
   listProfiles: () => ipcRenderer.invoke('profile:list'),
   createProfile: (input) => ipcRenderer.invoke('profile:create', input),
@@ -52,6 +53,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event, profile) => callback(profile);
     ipcRenderer.on('profile:updated', handler);
     return () => ipcRenderer.removeListener('profile:updated', handler);
+  },
+  onShowCreateProfileModal: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('profile:show-create-modal', handler);
+    return () => ipcRenderer.removeListener('profile:show-create-modal', handler);
   },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),

@@ -3,10 +3,7 @@ const path = require('path');
 const internalPages = require('../shared/internal-pages.json');
 const IPC = require('../shared/ipc-channels');
 const { failure, success } = require('./ipc-contract');
-const {
-  createIpcMainMock,
-  loadMainModule,
-} = require('../../test/helpers/main-process-test-utils');
+const { createIpcMainMock, loadMainModule } = require('../../test/helpers/main-process-test-utils');
 
 function createWindowMock() {
   return {
@@ -60,12 +57,12 @@ function loadIpcHandlersModule(options = {}) {
   const activeProfile = Object.prototype.hasOwnProperty.call(options, 'activeProfile')
     ? options.activeProfile
     : {
-      id: 'default',
-      displayName: 'Default',
-      source: 'catalog',
-      isDev: false,
-      userDataDir: '/tmp/freedom-user-data',
-    };
+        id: 'default',
+        displayName: 'Default',
+        source: 'catalog',
+        isDev: false,
+        userDataDir: '/tmp/freedom-user-data',
+      };
   const updateActiveProfileNodeConfig =
     options.updateActiveProfileNodeConfig ||
     jest.fn((protocol, updates) => {
@@ -80,17 +77,20 @@ function loadIpcHandlersModule(options = {}) {
     });
   const listProfilesForActiveApp =
     options.listProfilesForActiveApp ||
-    jest.fn(() => options.profiles || [
-      {
-        id: activeProfile?.id || 'default',
-        displayName: activeProfile?.displayName || 'Default',
-        slot: activeProfile?.metadata?.slot ?? 0,
-        createdAt: activeProfile?.metadata?.createdAt || null,
-        lastOpenedAt: activeProfile?.metadata?.lastOpenedAt || null,
-        nodes: activeProfile?.metadata?.nodes || null,
-        isActive: true,
-      },
-    ]);
+    jest.fn(
+      () =>
+        options.profiles || [
+          {
+            id: activeProfile?.id || 'default',
+            displayName: activeProfile?.displayName || 'Default',
+            slot: activeProfile?.metadata?.slot ?? 0,
+            createdAt: activeProfile?.metadata?.createdAt || null,
+            lastOpenedAt: activeProfile?.metadata?.lastOpenedAt || null,
+            nodes: activeProfile?.metadata?.nodes || null,
+            isActive: true,
+          },
+        ]
+    );
   const createProfileForActiveApp =
     options.createProfileForActiveApp ||
     jest.fn((profile) => ({
@@ -136,11 +136,11 @@ function loadIpcHandlersModule(options = {}) {
         nodes: {},
       },
     }));
-  const launchProfile =
-    options.launchProfile ||
+  const openOrFocusProfile =
+    options.openOrFocusProfile ||
     jest.fn((_activeProfile, profileId) => ({
-      command: '/electron',
-      args: [`--profile=${profileId}`],
+      focused: false,
+      launch: { command: '/electron', args: [`--profile=${profileId}`] },
     }));
   const deleteProfileForActiveApp =
     options.deleteProfileForActiveApp ||
@@ -152,6 +152,12 @@ function loadIpcHandlersModule(options = {}) {
         nodes: {},
       },
     }));
+  const getProfileFocusTargetForActiveApp =
+    options.getProfileFocusTargetForActiveApp || jest.fn(() => null);
+  const validateProfileDeletionForActiveApp =
+    options.validateProfileDeletionForActiveApp || jest.fn(() => true);
+  const requestProfileQuitAsync = options.requestProfileQuitAsync || jest.fn(() => ({ ok: true }));
+  const isProfileLocked = options.isProfileLocked || jest.fn(() => false);
 
   const { mod, app, webContents } = loadMainModule(require.resolve('./ipc-handlers'), {
     ipcMain,
@@ -171,13 +177,21 @@ function loadIpcHandlersModule(options = {}) {
         createProfileForActiveApp,
         deleteProfileForActiveApp,
         getActiveProfile: jest.fn(() => activeProfile),
+        getProfileFocusTargetForActiveApp,
         importProfileForActiveApp,
         listProfilesForActiveApp,
         renameProfileForActiveApp,
         updateActiveProfileNodeConfig,
+        validateProfileDeletionForActiveApp,
       }),
       [require.resolve('./profile-launcher')]: () => ({
-        launchProfile,
+        openOrFocusProfile,
+      }),
+      [require.resolve('./profile-focus-handoff')]: () => ({
+        requestProfileQuitAsync,
+      }),
+      [require.resolve('./profile-lock')]: () => ({
+        isProfileLocked,
       }),
       ...(options.swarmProbeMock
         ? { [require.resolve('./swarm/swarm-probe')]: () => options.swarmProbeMock }
@@ -204,9 +218,13 @@ function loadIpcHandlersModule(options = {}) {
     webContents,
     createProfileForActiveApp,
     deleteProfileForActiveApp,
+    getProfileFocusTargetForActiveApp,
+    validateProfileDeletionForActiveApp,
+    requestProfileQuitAsync,
+    isProfileLocked,
     importProfileForActiveApp,
     listProfilesForActiveApp,
-    launchProfile,
+    openOrFocusProfile,
     invokeProfileMutation: (channel, payload = {}, url = SETTINGS_PAGE_URL) =>
       Promise.resolve(ipcMain.handlers.get(channel)(createIpcEvent(url), payload)),
     renameProfileForActiveApp,
@@ -581,9 +599,87 @@ describe('ipc-handlers', () => {
         },
       })
     );
-    expect(ctx.launchProfile).toHaveBeenCalledWith(
+    expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'default' }),
-      'work'
+      'work',
+      { openSettings: false }
+    );
+  });
+
+  test('reports focused (no launch) when the profile is already running', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      openOrFocusProfile: jest.fn(() => ({ focused: true })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work' },
+      HOST_RENDERER_URL
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.focused).toBe(true);
+    expect(result.launch).toBeUndefined();
+    expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'default' }),
+      'work',
+      { openSettings: false }
+    );
+  });
+
+  test('reports PROFILE_FOCUS_FAILED when a running profile does not respond', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      openOrFocusProfile: jest.fn(() => ({
+        focused: false,
+        error: 'The running profile did not respond',
+      })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work' },
+      HOST_RENDERER_URL
+    );
+
+    expect(result).toEqual(
+      failure('PROFILE_FOCUS_FAILED', 'The running profile did not respond')
+    );
+  });
+
+  test('forwards openSettings (edit button) to openOrFocusProfile', async () => {
+    const ctx = loadIpcHandlersModule({
+      profiles: [
+        { id: 'default', displayName: 'Default', slot: 0, nodes: {}, isActive: true },
+        { id: 'work', displayName: 'Work', slot: 1, nodes: {}, isActive: false },
+      ],
+      openOrFocusProfile: jest.fn(() => ({ focused: true })),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.invokeProfileMutation(
+      IPC.PROFILE_OPEN,
+      { id: 'work', openSettings: true },
+      HOST_RENDERER_URL
+    );
+
+    expect(result.success).toBe(true);
+    expect(ctx.openOrFocusProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'default' }),
+      'work',
+      { openSettings: true }
     );
   });
 
@@ -593,18 +689,35 @@ describe('ipc-handlers', () => {
     ctx.mod.registerBaseIpcHandlers();
 
     await expect(
-      ctx.invokeProfileMutation(
-        IPC.PROFILE_CREATE,
-        { displayName: 'Work' },
-        HISTORY_PAGE_URL
-      )
+      ctx.invokeProfileMutation(IPC.PROFILE_CREATE, { displayName: 'Work' }, HISTORY_PAGE_URL)
     ).resolves.toEqual(
-      failure(
-        'PROFILE_IPC_FORBIDDEN',
-        'Profile changes are only available from trusted profile UI'
-      )
+      failure('PROFILE_IPC_FORBIDDEN', 'Profile changes are only available from trusted profile UI')
     );
     expect(ctx.createProfileForActiveApp).not.toHaveBeenCalled();
+  });
+
+  test('shows the create-profile modal only for trusted senders', () => {
+    const ctx = loadIpcHandlersModule();
+    ctx.mod.registerBaseIpcHandlers();
+
+    const makeEvent = (url) => {
+      const win = { isDestroyed: () => false, webContents: { send: jest.fn() } };
+      return {
+        win,
+        senderFrame: { url },
+        sender: { getURL: () => url, getOwnerBrowserWindow: () => win },
+      };
+    };
+
+    // A hostile page loaded in a webview must not be able to pop the modal.
+    const untrusted = makeEvent('file:///app/src/renderer/pages/history.html');
+    ctx.ipcMain.emit(IPC.PROFILE_REQUEST_CREATE_MODAL, untrusted);
+    expect(untrusted.win.webContents.send).not.toHaveBeenCalled();
+
+    // The trusted profiles manager page may.
+    const trusted = makeEvent('file:///app/src/renderer/pages/profiles.html');
+    ctx.ipcMain.emit(IPC.PROFILE_REQUEST_CREATE_MODAL, trusted);
+    expect(trusted.win.webContents.send).toHaveBeenCalledWith(IPC.PROFILE_SHOW_CREATE_MODAL);
   });
 
   test('imports unregistered profile directories through profile IPC', async () => {
@@ -636,7 +749,7 @@ describe('ipc-handlers', () => {
     await expect(ctx.invokeProfileMutation(IPC.PROFILE_OPEN, { id: 'default' })).resolves.toEqual(
       failure('PROFILE_ALREADY_OPEN', 'This profile is already open')
     );
-    expect(ctx.launchProfile).not.toHaveBeenCalled();
+    expect(ctx.openOrFocusProfile).not.toHaveBeenCalled();
   });
 
   test('deletes inactive profiles through typed confirmation IPC', async () => {
@@ -663,6 +776,134 @@ describe('ipc-handlers', () => {
       })
     );
     expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
+  });
+
+  test('closes a running profile before deleting it', async () => {
+    const ctx = loadIpcHandlersModule({
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        displayName: 'Work',
+        userDataDir: '/tmp/freedom-user-data/Profiles/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      // Lock has already released by the time we poll.
+      isProfileLocked: jest.fn(() => false),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    await expect(
+      ctx.invokeProfileMutation(IPC.PROFILE_DELETE, {
+        id: 'work',
+        confirmDisplayName: 'Work',
+      })
+    ).resolves.toEqual(expect.objectContaining({ success: true }));
+
+    expect(ctx.requestProfileQuitAsync).toHaveBeenCalledTimes(1);
+    expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
+  });
+
+  test('validates the request before closing a running profile', async () => {
+    // A stale/mismatched confirmation must be rejected up front — BEFORE we ask
+    // a running profile to quit. Otherwise an invalid delete would close a live
+    // window only to fail validation afterwards.
+    const ctx = loadIpcHandlersModule({
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        displayName: 'Work',
+        userDataDir: '/tmp/freedom-user-data/Profiles/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      validateProfileDeletionForActiveApp: jest.fn(() => {
+        throw new Error('Profile display name confirmation did not match');
+      }),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    const result = await ctx.mod.deleteProfileFromIpc({ id: 'work', confirmDisplayName: 'Wrong' });
+
+    expect(result).toEqual(
+      failure('PROFILE_DELETE_FAILED', 'Profile display name confirmation did not match')
+    );
+    // The running profile must NOT have been asked to quit, and no delete ran.
+    expect(ctx.requestProfileQuitAsync).not.toHaveBeenCalled();
+    expect(ctx.deleteProfileForActiveApp).not.toHaveBeenCalled();
+  });
+
+  test('waits for the holder process to exit before deleting (not just lock release)', async () => {
+    const ctx = loadIpcHandlersModule({
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        displayName: 'Work',
+        userDataDir: '/tmp/freedom-user-data/Profiles/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      requestProfileQuitAsync: jest.fn(() => ({ ok: true, nonce: 'quit-nonce' })),
+      // The lock reads as free immediately (e.g. went stale during a slow
+      // shutdown), but the holder process is still alive and touching data.
+      isProfileLocked: jest.fn(() => false),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    let alive = true;
+    const isProcessAlive = jest.fn(() => alive);
+    // Holder acks the quit with its pid; it exits on the third poll.
+    const readProfileFocusAck = jest.fn(() => ({ nonce: 'quit-nonce', ok: true, pid: 4321 }));
+    setTimeout(() => {
+      alive = false;
+    }, 5);
+
+    const result = await ctx.mod.deleteProfileFromIpc(
+      { id: 'work', confirmDisplayName: 'Work' },
+      { timeoutMs: 200, intervalMs: 1, isProcessAlive, readProfileFocusAck }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ success: true }));
+    expect(isProcessAlive).toHaveBeenCalledWith(4321);
+    expect(ctx.deleteProfileForActiveApp).toHaveBeenCalledWith('work', 'Work');
+  });
+
+  test('refuses to delete a running profile that will not close', async () => {
+    const ctx = loadIpcHandlersModule({
+      getProfileFocusTargetForActiveApp: jest.fn(() => ({
+        id: 'work',
+        displayName: 'Work',
+        userDataDir: '/tmp/freedom-user-data/Profiles/work',
+        isDev: false,
+        isLocked: true,
+      })),
+      // Stays locked forever — the close attempt times out.
+      isProfileLocked: jest.fn(() => true),
+    });
+
+    ctx.mod.registerBaseIpcHandlers();
+
+    // Call the handler directly with fast timing so the close attempt times out
+    // quickly instead of waiting the full default window.
+    const result = await ctx.mod.deleteProfileFromIpc(
+      { id: 'work', confirmDisplayName: 'Work' },
+      { timeoutMs: 10, intervalMs: 1 }
+    );
+
+    expect(result).toEqual(
+      failure(
+        'PROFILE_CLOSE_FAILED',
+        'This profile is open and could not be closed automatically. Close its window and try again.'
+      )
+    );
+    expect(ctx.deleteProfileForActiveApp).not.toHaveBeenCalled();
+    // The no-ack fallback must probe the lock with an effectively-infinite
+    // stale window, so a still-held lock can't read as released merely because
+    // its heartbeat lapsed (dev profiles have a 5s stale < the delete wait).
+    expect(ctx.isProfileLocked).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'work' }),
+      { staleMs: Number.MAX_SAFE_INTEGER }
+    );
   });
 
   test('updates active profile node config through validated IPC', async () => {
@@ -784,9 +1025,7 @@ describe('ipc-handlers', () => {
         protocol: 'bee',
         config: { mode: 'disabled' },
       })
-    ).resolves.toEqual(
-      failure('PROFILE_NOT_EDITABLE', 'The active profile cannot be edited')
-    );
+    ).resolves.toEqual(failure('PROFILE_NOT_EDITABLE', 'The active profile cannot be edited'));
   });
 
   test('saves images through the dialog workflow', async () => {
@@ -838,7 +1077,10 @@ describe('ipc-handlers', () => {
         defaultPath: 'logo.png',
       })
     );
-    expect(ctx.fetchToFile).toHaveBeenCalledWith('https://example.com/assets/logo.png', '/tmp/logo.png');
+    expect(ctx.fetchToFile).toHaveBeenCalledWith(
+      'https://example.com/assets/logo.png',
+      '/tmp/logo.png'
+    );
   });
 
   test('copies text and images to the clipboard with error handling', async () => {
@@ -956,9 +1198,9 @@ describe('ipc-handlers', () => {
     await expect(awaitPromise).resolves.toEqual(success({ outcome: { ok: true } }));
 
     // Once consumed, awaiting again reports unknown probe.
-    await expect(
-      ctx.ipcMain.invoke(IPC.BZZ_AWAIT_PROBE, { id: 'probe-abc' })
-    ).resolves.toEqual(failure('UNKNOWN_PROBE', 'Unknown probe id', { id: 'probe-abc' }));
+    await expect(ctx.ipcMain.invoke(IPC.BZZ_AWAIT_PROBE, { id: 'probe-abc' })).resolves.toEqual(
+      failure('UNKNOWN_PROBE', 'Unknown probe id', { id: 'probe-abc' })
+    );
 
     // Race: a fast probe that settles before the renderer's await-probe IPC
     // arrives must still deliver its outcome — the entry survives until
@@ -975,13 +1217,13 @@ describe('ipc-handlers', () => {
     // Let the probe promise microtask-settle before we await.
     await Promise.resolve();
     await Promise.resolve();
-    await expect(
-      ctx.ipcMain.invoke(IPC.BZZ_AWAIT_PROBE, { id: 'probe-fast' })
-    ).resolves.toEqual(success({ outcome: { ok: true } }));
+    await expect(ctx.ipcMain.invoke(IPC.BZZ_AWAIT_PROBE, { id: 'probe-fast' })).resolves.toEqual(
+      success({ outcome: { ok: true } })
+    );
 
-    await expect(
-      ctx.ipcMain.invoke(IPC.BZZ_CANCEL_PROBE, { id: 'probe-abc' })
-    ).resolves.toEqual(success({ cancelled: true }));
+    await expect(ctx.ipcMain.invoke(IPC.BZZ_CANCEL_PROBE, { id: 'probe-abc' })).resolves.toEqual(
+      success({ cancelled: true })
+    );
     expect(cancelProbe).toHaveBeenCalledWith('probe-abc');
   });
 });

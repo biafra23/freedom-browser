@@ -1,5 +1,5 @@
 const log = require('./logger');
-const { BrowserWindow, Menu, app, ipcMain } = require('electron');
+const { BrowserWindow, Menu, app, dialog, ipcMain } = require('electron');
 const { isMainBrowserWindow, getMainWindows, createMainWindow } = require('./windows/mainWindow');
 const {
   checkForUpdates,
@@ -7,6 +7,9 @@ const {
   isUpdateReady,
   installUpdate,
 } = require('./updater');
+const { getActiveProfile, listProfilesForActiveApp } = require('./profile-resolver');
+const { openOrFocusProfile } = require('./profile-launcher');
+const IPC = require('../shared/ipc-channels');
 
 // Helper to get the best target window for tab operations
 // Only returns main browser windows we created (not DevTools or other system windows)
@@ -22,17 +25,106 @@ function getTargetWindow() {
 function openProfilesManager() {
   const win = getTargetWindow();
   if (win) {
-    win.webContents.send('tab:new-with-url', 'freedom://settings/profiles');
+    win.webContents.send('tab:new-with-url', 'freedom://profiles');
     return;
   }
-  createMainWindow('freedom://settings/profiles');
+  createMainWindow('freedom://profiles');
+}
+
+// Switch to another profile, mirroring the renderer's PROFILE_OPEN handler:
+// focus the profile's window if it's already running, otherwise launch it.
+async function switchToProfile(profileId) {
+  const activeProfile = getActiveProfile();
+  if (!activeProfile || activeProfile.source !== 'catalog') return;
+  if (!profileId || profileId === activeProfile.id) return;
+  try {
+    // openOrFocusProfile resolves with { error } (it does NOT throw) when the
+    // profile is running but never acknowledged the focus request. The native
+    // menu has no status line like the hamburger flyout, so surface it with a
+    // dialog instead of failing silently — mirrors the renderer's
+    // PROFILE_FOCUS_FAILED handling.
+    const result = await openOrFocusProfile(activeProfile, profileId);
+    if (result?.error) {
+      log.warn('[menu] Profile switch did not complete:', result.error);
+      dialog.showErrorBox('Could not switch profile', result.error);
+    }
+  } catch (err) {
+    log.error('[menu] Failed to switch profile:', err?.message || err);
+    dialog.showErrorBox(
+      'Could not switch profile',
+      err?.message || 'The profile could not be opened.'
+    );
+  }
+}
+
+// Build the Profiles menu dynamically from the catalog, mirroring the
+// hamburger flyout: profile list (current checked + disabled) → separator →
+// Create Profile… → Manage Profiles….
+function buildProfilesSubmenu() {
+  const submenu = [];
+  let profiles;
+  try {
+    profiles = listProfilesForActiveApp() || [];
+  } catch {
+    profiles = [];
+  }
+  const activeProfile = getActiveProfile();
+  const registered = profiles.filter((profile) => profile?.isUnregistered !== true);
+
+  for (const profile of registered) {
+    const isCurrent = profile.isActive === true || profile.id === activeProfile?.id;
+    if (isCurrent) {
+      // The current profile is a checked, disabled checkbox.
+      submenu.push({
+        label: profile.displayName || profile.id,
+        type: 'checkbox',
+        checked: true,
+        enabled: false,
+      });
+    } else {
+      // Other profiles are plain items. Deliberately NOT checkboxes: macOS
+      // auto-toggles a checkbox item's checkmark on click, and switching opens
+      // a new profile process without rebuilding this menu — a checkbox here
+      // would be left showing a phantom second checkmark next to the current
+      // profile.
+      submenu.push({
+        label: profile.displayName || profile.id,
+        click: () => switchToProfile(profile.id),
+      });
+    }
+  }
+
+  if (submenu.length) {
+    submenu.push({ type: 'separator' });
+  }
+
+  submenu.push(
+    {
+      label: 'Create Profile...',
+      click: () => {
+        // Open the shared chrome create-modal in the focused window.
+        const win = getTargetWindow();
+        if (win) {
+          win.webContents.send(IPC.PROFILE_SHOW_CREATE_MODAL);
+        }
+      },
+    },
+    {
+      label: 'Manage Profiles...',
+      click: () => {
+        log.info('[menu] Manage Profiles clicked');
+        openProfilesManager();
+      },
+    }
+  );
+
+  return submenu;
 }
 
 let newTabMenuItem = null;
 let closeTabMenuItem = null;
 let toggleBookmarkBarMenuItem = null;
 let isFullScreen = false;
-
 
 function updateTabMenuItems() {
   const hasWindows = BrowserWindow.getAllWindows().length > 0;
@@ -118,13 +210,6 @@ function buildFileSubmenu(isMac) {
       click: () => {
         log.info('[menu] New Window clicked');
         createMainWindow();
-      },
-    },
-    {
-      label: 'Manage Profiles...',
-      click: () => {
-        log.info('[menu] Manage Profiles clicked');
-        openProfilesManager();
       },
     },
     { type: 'separator' },
@@ -326,6 +411,7 @@ function buildSharedMenuEntries(ctx) {
       }),
     },
     { label: 'History', submenu: buildHistorySubmenu(isMac) },
+    { label: 'Profiles', submenu: buildProfilesSubmenu() },
   ];
 }
 

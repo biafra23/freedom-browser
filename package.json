@@ -1,6 +1,6 @@
 {
   "name": "freedom-browser",
-  "version": "0.7.5-dev",
+  "version": "0.8.0-dev",
   "license": "MPL-2.0",
   "description": "Freedom – A browser for the decentralized web, with Swarm, IPFS, and ENS as first-class protocols.",
   "author": {
@@ -21,6 +21,7 @@
     "test": "npm run test:unit",
     "test:unit": "jest",
     "test:coverage": "jest --coverage --runInBand --forceExit",
+    "test:migration": "jest --runInBand src/main/migrate-user-data.test.js src/main/__tests__/integration/v08-upgrade.test.js src/main/profile-resolver.test.js src/main/profile-paths.test.js src/main/profile-catalog.test.js src/main/identity/__tests__/integration/postage-publisher-continuity.test.js",
     "test:e2e": "playwright test --project=harness",
     "test:e2e:live": "playwright test --project=live",
     "test:e2e:onboarding": "playwright test --project=live test-e2e/live/onboarding-identity.spec.js",
@@ -35,8 +36,8 @@
     "dist:mac:notary-status": "dotenv -- node scripts/macos-notary.js status",
     "dist:mac:notary-log": "dotenv -- node scripts/macos-notary.js log",
     "dist:mac:staple-notary": "dotenv -- node scripts/macos-notary.js staple",
-    "dist:linux:arm64:docker": "docker run --rm -v \"$PWD\":/app -v /app/node_modules -v \"${ELECTRON_CACHE:-$HOME/Library/Caches/electron}\":/root/.cache/electron -w /app -e USE_SYSTEM_FPM=true --platform linux/arm64 node:20 bash -c \"apt-get update && apt-get install -y ruby ruby-dev build-essential xz-utils && gem install fpm --no-document && npm ci && npm run radicle:download && npm run dist -- --linux --arm64\"",
-    "dist:linux:x64:docker": "docker run --rm -v \"$PWD\":/app -v /app/node_modules -v \"${ELECTRON_CACHE:-$HOME/Library/Caches/electron}\":/root/.cache/electron -w /app --platform linux/amd64 electronuserland/builder:20 bash -c \"npm ci && npm run radicle:download && npm run dist -- --linux --x64\"",
+    "dist:linux:arm64:docker": "docker run --rm -v \"$PWD\":/app -v /app/node_modules -v \"${ELECTRON_CACHE:-$HOME/Library/Caches/electron}\":/root/.cache/electron -w /app -e USE_SYSTEM_FPM=true --platform linux/arm64 node:20 bash -c \"apt-get update && apt-get install -y ruby ruby-dev build-essential xz-utils && gem install fpm --no-document && npm ci && npm run radicle:download && npm run ipfs:download && npm run dist -- --linux --arm64\"",
+    "dist:linux:x64:docker": "docker run --rm -v \"$PWD\":/app -v /app/node_modules -v \"${ELECTRON_CACHE:-$HOME/Library/Caches/electron}\":/root/.cache/electron -w /app --platform linux/amd64 electronuserland/builder:20 bash -c \"npm ci && npm run radicle:download && npm run ipfs:download && npm run dist -- --linux --x64\"",
     "ant:download": "node scripts/fetch-ant.js",
     "ant:init": "node scripts/init-ant.js",
     "ant:start": "echo 'ant:start is a legacy alias for system-ant:start (repo-root ant-data on ecosystem port 1633).'; npm run system-ant:start",
@@ -107,6 +108,11 @@
       "icon": "assets/icons",
       "category": "Network;WebBrowser",
       "executableName": "freedom",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "freedom-browser"
+        }
+      },
       "mimeTypes": [
         "x-scheme-handler/ipfs",
         "x-scheme-handler/ipns",
@@ -190,7 +196,7 @@
   },
   "dependencies": {
     "@adraffy/ens-normalize": "^1.11.1",
-    "@corpus-core/colibri-stateless": "^1.1.26",
+    "@corpus-core/colibri-stateless": "^1.1.30",
     "@ensdomains/content-hash": "^3.0.0",
     "@ethersphere/bee-js": "^12.2.1",
     "@metamask/browser-passworder": "^6.0.0",

@@ -4,6 +4,7 @@ import {
   deriveBzzBaseFromUrl,
   parseHashInput,
   formatBzzUrl,
+  looksLikeBzzInput,
   deriveDisplayValue,
   isValidCid,
   parseIpfsInput,
@@ -160,6 +161,32 @@ describe('url-utils', () => {
     test('returns null for bzz path without hash', () => {
       const url = 'http://127.0.0.1:1633/bzz/';
       expect(deriveBzzBaseFromUrl(url)).toBeNull();
+    });
+  });
+
+  describe('looksLikeBzzInput', () => {
+    const HASH = 'a'.repeat(64);
+
+    test('detects bzz:// and bzz: scheme inputs', () => {
+      expect(looksLikeBzzInput(`bzz://${HASH}`)).toBe(true);
+      expect(looksLikeBzzInput(`bzz://${HASH}/index.html`)).toBe(true);
+      expect(looksLikeBzzInput(`bzz:${HASH}`)).toBe(true);
+      expect(looksLikeBzzInput('  BZZ://name.eth  ')).toBe(true);
+    });
+
+    test('detects bare Swarm hashes (with or without a path)', () => {
+      expect(looksLikeBzzInput(HASH)).toBe(true);
+      expect(looksLikeBzzInput(`${HASH}/page.html`)).toBe(true);
+      expect(looksLikeBzzInput('a'.repeat(128))).toBe(true);
+    });
+
+    test('rejects non-Swarm inputs', () => {
+      expect(looksLikeBzzInput('')).toBe(false);
+      expect(looksLikeBzzInput(null)).toBe(false);
+      expect(looksLikeBzzInput('example.com')).toBe(false);
+      expect(looksLikeBzzInput('ipfs://QmTest')).toBe(false);
+      expect(looksLikeBzzInput('https://example.com')).toBe(false);
+      expect(looksLikeBzzInput('a'.repeat(63))).toBe(false);
     });
   });
 
@@ -1034,10 +1061,12 @@ describe('url-utils', () => {
   });
 
   describe('isEnsBackedDisplay', () => {
-    test('recognises bare ENS names with .eth or .box', () => {
+    test('recognises bare Ethereum names with .eth, .box, .wei, or .gwei', () => {
       expect(isEnsBackedDisplay('vitalik.eth')).toBe(true);
       expect(isEnsBackedDisplay('vitalik.eth/docs')).toBe(true);
       expect(isEnsBackedDisplay('myapp.box')).toBe(true);
+      expect(isEnsBackedDisplay('alice.wei')).toBe(true);
+      expect(isEnsBackedDisplay('apoorv.gwei')).toBe(true);
     });
 
     test('recognises legacy ens:// form', () => {
@@ -1049,6 +1078,8 @@ describe('url-utils', () => {
       expect(isEnsBackedDisplay('bzz://meinhard.eth')).toBe(true);
       expect(isEnsBackedDisplay('ipfs://vitalik.eth/docs')).toBe(true);
       expect(isEnsBackedDisplay('ipns://app.box/page')).toBe(true);
+      expect(isEnsBackedDisplay('ipfs://alice.wei/page')).toBe(true);
+      expect(isEnsBackedDisplay('ipfs://apoorv.gwei/page')).toBe(true);
     });
 
     test('rejects raw transport URLs (hash/CID hosts) and other schemes', () => {

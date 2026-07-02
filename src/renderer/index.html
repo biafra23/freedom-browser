@@ -42,43 +42,7 @@
           </svg>
         </button>
       </div>
-      <div class="title-bar-drag">
-        <button
-          id="profile-indicator"
-          class="profile-indicator"
-          type="button"
-          aria-label="Active profile"
-          aria-haspopup="menu"
-          aria-expanded="false"
-          hidden
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 21a8 8 0 0 0-16 0" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-          <span id="profile-indicator-name" class="profile-indicator-name"></span>
-        </button>
-        <div id="profile-menu" class="profile-menu" role="menu" hidden>
-          <div class="profile-menu-header">
-            <span class="profile-menu-kicker">Profile</span>
-            <span id="profile-menu-name" class="profile-menu-name"></span>
-            <span id="profile-menu-meta" class="profile-menu-meta"></span>
-          </div>
-          <div class="profile-menu-divider"></div>
-          <div class="profile-menu-section-label">Profiles</div>
-          <div id="profile-menu-list" class="profile-menu-list">
-            <div class="profile-menu-empty">Loading...</div>
-          </div>
-          <div class="profile-menu-divider"></div>
-          <button id="profile-create-btn" class="profile-menu-item" type="button" role="menuitem">
-            Create Profile...
-          </button>
-          <button id="profile-manage-btn" class="profile-menu-item" type="button" role="menuitem">
-            Manage Profiles...
-          </button>
-          <div id="profile-menu-status" class="profile-menu-status" aria-live="polite"></div>
-        </div>
-      </div>
+      <div class="title-bar-drag"></div>
       <!-- Window controls for Linux (hidden by default, shown via JS) -->
       <div class="window-controls" id="window-controls">
         <button class="window-control-btn" id="minimize-btn" aria-label="Minimize">
@@ -537,7 +501,7 @@
               <span id="ipfs-active-requests-count">--</span>
             </div>
             <div class="ipfs-info-row">
-              <span class="ipfs-info-label">Data Read:</span>
+              <span class="ipfs-info-label">Session Download:</span>
               <span id="ipfs-data-read"></span>
             </div>
             <div class="ipfs-info-row">
@@ -618,6 +582,35 @@
           </svg>
         </button>
         <div id="menu-dropdown" class="menu-dropdown" role="menu">
+          <!-- Group 0: Profiles -->
+          <div class="menu-item-has-flyout" id="profile-menu-wrap">
+            <button id="profile-menu-btn" class="menu-item" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="menu-item-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 21a8 8 0 0 0-16 0" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              </span>
+              <span class="menu-item-label" id="profile-current-name">Profile</span>
+              <span class="menu-item-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="profile-menu" class="menu-dropdown menu-flyout" role="menu" hidden>
+              <div id="profile-menu-list" class="menu-flyout-list">
+                <div class="menu-flyout-empty">Loading...</div>
+              </div>
+              <div class="menu-divider"></div>
+              <button id="profile-create-btn" class="menu-item" type="button" role="menuitem">
+                <span class="menu-item-label">Create Profile...</span>
+              </button>
+              <button id="profile-manage-btn" class="menu-item" type="button" role="menuitem">
+                <span class="menu-item-label">Manage Profiles...</span>
+              </button>
+              <div id="profile-menu-status" class="menu-flyout-status" aria-live="polite" hidden></div>
+            </div>
+          </div>
+
+          <div class="menu-divider"></div>
+
           <!-- Group 1: Tab & Window Actions -->
           <button id="new-tab-menu-btn" class="menu-item" type="button">
             <span class="menu-item-label">New Tab</span>
@@ -1388,7 +1381,7 @@
                 <!-- Recipient input (first) -->
                 <div class="send-field">
                   <label class="send-label">Recipient</label>
-                  <input type="text" class="send-input" id="send-recipient" placeholder="Address or ENS name" autocomplete="off" spellcheck="false">
+                  <input type="text" class="send-input" id="send-recipient" placeholder="Address or Ethereum name" autocomplete="off" spellcheck="false">
                   <div class="send-field-error hidden" id="send-recipient-error"></div>
                 </div>
 
@@ -2594,7 +2587,7 @@
               type="text"
               id="profile-create-name"
               class="form-input"
-              placeholder="Work"
+              placeholder="e.g. Personal"
               autocomplete="off"
               spellcheck="false"
               required
@@ -2603,7 +2596,7 @@
           <p id="profile-create-status" class="modal-status" aria-live="polite" hidden></p>
           <div class="modal-actions">
             <button type="button" id="profile-create-cancel" class="secondary-btn">Cancel</button>
-            <button type="submit" id="profile-create-submit" class="primary-btn">Create and Open</button>
+            <button type="submit" id="profile-create-submit" class="primary-btn">Create</button>
           </div>
         </form>
       </div>

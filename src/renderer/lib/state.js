@@ -96,7 +96,10 @@ export const state = {
   ipfsInfoInterval: null,
   ipfsVersionFetched: false,
   ipfsVersionValue: '',
-  suppressIpfsRunningStatus: false,
+  // null = no toggle in flight; true/false = the running state the user just
+  // requested but which the backend hasn't confirmed yet. Lets the switch hold
+  // the user's intent through transient backend states (see ipfs-ui.js).
+  ipfsDesiredRunning: null,
 
   // Radicle state
   currentRadicleStatus: 'stopped',

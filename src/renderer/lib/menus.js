@@ -64,8 +64,15 @@ export const setMenuOpen = (open) => {
     hideOverflowMenu();
     onMenuOpening?.();
     showMenuBackdrop();
-  } else if (!state.antMenuOpen) {
-    hideMenuBackdrop();
+  } else {
+    // Collapse the Profiles flyout when the hamburger closes (the flyout is a
+    // child of #menu-dropdown, so its lifecycle is governed by the hamburger).
+    const profileFlyout = document.getElementById('profile-menu');
+    if (profileFlyout) profileFlyout.hidden = true;
+    document.getElementById('profile-menu-btn')?.setAttribute('aria-expanded', 'false');
+    if (!state.antMenuOpen) {
+      hideMenuBackdrop();
+    }
   }
 };
 

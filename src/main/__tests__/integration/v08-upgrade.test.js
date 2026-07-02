@@ -321,4 +321,86 @@ describe('v0.8.0 upgrade path (end-to-end, in place)', () => {
     expect(fs.existsSync(path.join(userDataDir, 'ipfs-data', 'config'))).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'ipfs-data', 'blocks', 'CIQ.data'))).toBe(true);
   });
+
+  // A crash mid bee→ant migration must be recoverable on the next launch —
+  // no lost keystore, no duplicated/corrupted data. This drives the merge path
+  // (ant-data already present because antd self-generated a throwaway identity),
+  // injects a Windows-EPERM-style failure part way through the carry, then
+  // relaunches and asserts the identity + postage stamps land intact.
+  test('recovers a crash-interrupted bee→ant migration on the next launch', () => {
+    writeLegacyInstall(userDataDir);
+    // antd already ran once and self-generated a throwaway identity into
+    // ant-data/ — forcing the item-by-item carry (not the whole-dir rename).
+    const antData = path.join(userDataDir, 'ant-data');
+    fs.mkdirSync(antData, { recursive: true });
+    fs.writeFileSync(path.join(antData, 'identity.json'), JSON.stringify({ throwaway: true }));
+
+    const beeAnt = loadModule('../../migrate-user-data', userDataDir);
+
+    // Interrupt the carry on the stamperstore move — before the keystore, which
+    // moves LAST, is committed (see BEE_CARRY_ITEMS ordering in the migrator).
+    const realRename = fs.renameSync.bind(fs);
+    const spy = jest.spyOn(fs, 'renameSync').mockImplementation((src, dest) => {
+      if (String(dest).endsWith(`${path.sep}stamperstore`)) {
+        const err = new Error('EPERM: operation not permitted');
+        err.code = 'EPERM';
+        throw err;
+      }
+      return realRename(src, dest);
+    });
+
+    // First launch crashes part way: it reports failure and stays pending.
+    expect(beeAnt.mod.migrateBeeDataToAntData()).toBe(false);
+    expect(beeAnt.mod.isBeeDataMigrationPending()).toBe(true);
+    // The keystore never moved, so it's still safe in bee-data (nothing to lose).
+    expect(fs.existsSync(path.join(antData, 'keys', 'swarm.key'))).toBe(false);
+    expect(
+      fs.readFileSync(path.join(userDataDir, 'bee-data', 'keys', 'swarm.key'), 'utf-8')
+    ).toBe(SWARM_KEYSTORE);
+
+    spy.mockRestore();
+
+    // Relaunch: the migration finishes and no data is lost or duplicated.
+    expect(beeAnt.mod.migrateBeeDataToAntData()).toBe(true);
+    expect(beeAnt.mod.isBeeDataMigrationPending()).toBe(false);
+    expect(fs.readFileSync(path.join(antData, 'keys', 'swarm.key'), 'utf-8')).toBe(SWARM_KEYSTORE);
+    expect(fs.readFileSync(path.join(antData, 'stamperstore', 'batch'), 'utf-8')).toBe(
+      'postage-batch-data'
+    );
+    expect(fs.readFileSync(path.join(antData, 'config.yaml'), 'utf-8')).toContain(BEE_PASSWORD);
+    // antd's throwaway identity was dropped — it must not win over the migrated key.
+    expect(fs.existsSync(path.join(antData, 'identity.json'))).toBe(false);
+  });
+
+  // A v0.7.x install kept its Radicle identity in a profile-local
+  // radicle-data/. On upgrade the default profile is catalog-managed, so the
+  // Radicle home moves to the short, app-owned <appRoot>/R/<slot> (radicle-node
+  // canonicalizes RAD_HOME before binding its control.sock, which has a hard
+  // sockaddr_un length limit). This exercises copyProfileRadicleDataIfNeeded on
+  // the full upgrade path — the pre-upgrade identity must be carried across.
+  test('carries the Radicle identity to the short Radicle home on the full upgrade path', () => {
+    writeLegacyInstall(userDataDir);
+    const legacyRadicle = path.join(userDataDir, 'radicle-data');
+    fs.mkdirSync(path.join(legacyRadicle, 'keys'), { recursive: true });
+    fs.writeFileSync(path.join(legacyRadicle, 'keys', 'radicle.pub'), 'radicle-public-key');
+
+    // Load profile-paths and resolve the default profile in the SAME module
+    // graph so getRadicleDataDir() sees the active catalog profile.
+    const paths = loadModule('../../profile-paths', userDataDir);
+    const resolver = require('../../profile-resolver');
+    resolver.initializeProfile(paths.app, { argv: ['electron', '.'], env: {}, now: NOW });
+
+    const radicleDir = paths.mod.getRadicleDataDir();
+
+    // The default profile (slot 0) uses the short app-owned Radicle home, which
+    // is shorter than the profile-local radicle-data/ it replaces.
+    expect(radicleDir).toBe(path.join(userDataDir, 'R', '0'));
+    expect(radicleDir.length).toBeLessThan(legacyRadicle.length);
+    // The pre-upgrade Radicle identity is carried into the short home...
+    expect(fs.readFileSync(path.join(radicleDir, 'keys', 'radicle.pub'), 'utf-8')).toBe(
+      'radicle-public-key'
+    );
+    // ...by copy, not move: the original profile-local data is left in place.
+    expect(fs.existsSync(path.join(legacyRadicle, 'keys', 'radicle.pub'))).toBe(true);
+  });
 });

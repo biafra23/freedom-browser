@@ -36,14 +36,23 @@ const DEFAULT_SETTINGS = {
   startRadicleAtLaunch: false,
   autoUpdate: true,
   showBookmarkBar: false,
-  // When true, navigating to an ENS name that resolved with trust.level =
+  // When true, navigating to an Ethereum name that resolved with trust.level =
   // 'unverified' is gated behind an interstitial with a single-use
   // "Continue once" option. ENS network config (resolution strategy, RPC
   // endpoints, prover, quorum params) lives in the network registry —
   // this is the one ENS-navigation setting kept here.
   blockUnverifiedEns: true,
+  // Experimental: when true, IPFS request progress phases ("Finding
+  // providers…", "Searching the DHT…", etc.) are surfaced in the link
+  // hover preview bar during ipfs:// / ipns:// loads. Off by default so the
+  // preview bar stays a pure hover-URL surface; opt in via Settings →
+  // Experimental. A follow-up will generalize this to other protocols.
+  showIpfsProgressStatus: false,
   sidebarOpen: false,
   sidebarWidth: 320,
+  // Linux only: render the tab strip as the window titlebar (frameless window).
+  // Off by default so Linux users get the native OS frame; opt in via Settings.
+  tabsInTitlebar: false,
 };
 
 let cachedSettings = null;

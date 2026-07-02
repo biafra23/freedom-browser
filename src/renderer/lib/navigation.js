@@ -21,6 +21,7 @@ import {
   formatBzzUrl,
   formatIpfsUrl,
   formatRadicleUrl,
+  looksLikeBzzInput,
   deriveDisplayValue,
   deriveBzzBaseFromUrl,
   deriveRadBaseFromUrl,
@@ -58,6 +59,7 @@ import { openSendFlow } from './wallet-ui.js';
 import { walletState } from './wallet/wallet-state.js';
 import { formatWeiToDecimal } from './wallet/send.js';
 import { startIpfsProgressStatus, stopIpfsProgressStatus } from './ipfs-progress-status.js';
+import { TOOLTIP_HOVER_DELAY_MS } from './hover-tooltip.js';
 
 // Helper to get active tab's navigation state (with fallback to empty object)
 const getNavState = () => getActiveTabState() || {};
@@ -67,7 +69,21 @@ const isIpfsProgressUrl = (value) => {
   return normalized.startsWith('ipfs://') || normalized.startsWith('ipns://');
 };
 
+const nameSystemLabelForName = (name = '') => {
+  const lower = String(name).toLowerCase();
+  if (lower.endsWith('.wei')) return 'WNS';
+  if (lower.endsWith('.gwei')) return 'GNS';
+  return 'ENS';
+};
+
+// Experimental opt-in (Settings → Experimental, default off). Mirrors the
+// `showIpfsProgressStatus` setting, seeded in initNavigation and kept live via
+// the `settings:updated` broadcast. While off, the IPFS progress poller never
+// starts, so the link bar stays a pure hover-URL surface.
+let ipfsProgressStatusEnabled = false;
+
 const shouldShowIpfsProgress = ({ data = {}, tab = null, navState = null } = {}) => {
+  if (!ipfsProgressStatusEnabled) return false;
   const candidates = [
     data.url,
     data.pendingNavigationUrl,
@@ -116,6 +132,27 @@ const buildErrorPageUrl = (errorCode, targetUrl, extras = {}) => {
   if (extras.protocol) errorUrl.searchParams.set('protocol', extras.protocol);
   if (extras.retry) errorUrl.searchParams.set('retry', extras.retry);
   return errorUrl.toString();
+};
+
+// True when the IPFS node can't currently serve content — disabled for this
+// profile, or stopped/errored. Used to route ipfs:// / ipns:// navigations to
+// the friendly error page instead of letting the ipfs: protocol handler return
+// a raw JSON 503 body that Chromium would render verbatim. `starting` and
+// `running` are allowed through (the load proceeds normally).
+const isIpfsNodeUnavailable = () => {
+  // The Nodes-menu switch sets `ipfsDesiredRunning` synchronously, but the
+  // actual `window.ipfs.stop()` and the resulting `stopped` status event lag
+  // behind (see ipfs-ui.js reconcileIpfsToggle). A navigation fired immediately
+  // after flipping the switch off would otherwise still see `currentIpfsStatus:
+  // 'running'` and let the load hit the ipfs: handler's raw 503. Honor the
+  // just-set intent so the friendly page shows right away. `null` means no
+  // pending toggle — fall through to the committed mode/status below.
+  if (state.ipfsDesiredRunning === false) return true;
+  return (
+    state.registry?.ipfs?.mode === 'disabled' ||
+    state.currentIpfsStatus === 'stopped' ||
+    state.currentIpfsStatus === 'error'
+  );
 };
 
 // Cancel any pending Swarm content probe on the given navState and clear it.
@@ -267,10 +304,10 @@ let currentPageSecure = false;
 // Screen-reader label for the shield button, keyed on trust level. Updated
 // alongside the data-trust attribute so assistive tech announces the state.
 const TRUST_ARIA_LABEL = {
-  verified: 'ENS resolution trust: verified',
-  'user-configured': 'ENS resolution trust: user-configured',
-  unverified: 'ENS resolution trust: unverified',
-  conflict: 'ENS resolution trust: conflict',
+  verified: 'Ethereum name resolution trust: verified',
+  'user-configured': 'Ethereum name resolution trust: user-configured',
+  unverified: 'Ethereum name resolution trust: unverified',
+  conflict: 'Ethereum name resolution trust: conflict',
 };
 
 // Shrink a long value to fit on a single line in the popover by
@@ -320,7 +357,9 @@ let trustTooltipShowTimer = null;
 let trustTooltipCopiedTimer = null;
 let trustTooltipCopiedActive = false;
 
-const TRUST_TOOLTIP_HOVER_DELAY_MS = 250;
+// Appear delay is shared app-wide (see hover-tooltip.js); the "Copied" hold is
+// specific to this copy-confirmation tooltip.
+const TRUST_TOOLTIP_HOVER_DELAY_MS = TOOLTIP_HOVER_DELAY_MS;
 const TRUST_TOOLTIP_COPIED_HOLD_MS = 1200;
 
 const resetTrustTooltip = () => {
@@ -575,12 +614,12 @@ const updateProtocolIcon = () => {
       trustShield.setAttribute('data-trust', badge.level);
       trustShield.setAttribute(
         'aria-label',
-        TRUST_ARIA_LABEL[badge.level] || 'ENS resolution trust status'
+        TRUST_ARIA_LABEL[badge.level] || 'Ethereum name resolution trust status'
       );
       trustShield.hidden = false;
     } else {
       trustShield.removeAttribute('data-trust');
-      trustShield.setAttribute('aria-label', 'ENS resolution trust status');
+      trustShield.setAttribute('aria-label', 'Ethereum name resolution trust status');
       trustShield.hidden = true;
     }
 
@@ -833,7 +872,7 @@ const startBzzNavigationWithProbe = (webview, target, navState, displayUrl) => {
       // `aborted` aren't content failures — leave the cache alone.
       const ensNameForInvalidation = (() => {
         const match = (target.bzzLoadUrl || '').match(/^bzz:\/\/([^/?#]+)/i);
-        return match && (match[1].toLowerCase().endsWith('.eth') || match[1].toLowerCase().endsWith('.box'))
+        return match && parseEnsInput(`bzz://${match[1]}`)
           ? match[1].toLowerCase()
           : null;
       })();
@@ -950,6 +989,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     // Check for ENS
     const ens = parseEnsInput(innerUrl);
     if (ens && electronAPI?.resolveEns) {
+      const systemLabel = nameSystemLabelForName(ens.name);
       const capturedWebview = webview;
       // Tab id pinned for the duration of this async resolution so a tab
       // switch can't redirect the spinner to the wrong tab when the
@@ -973,7 +1013,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           setLoading(false, capturedTabId);
           if (!result || result.type !== 'ok') {
             if (isActiveTab(capturedTabId)) {
-              alert(`ENS resolution failed for ${ens.name}: ${result?.reason || 'no response'}`);
+              alert(`${systemLabel} resolution failed for ${ens.name}: ${result?.reason || 'no response'}`);
             }
             return;
           }
@@ -1009,7 +1049,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
         .catch((err) => {
           setLoading(false, capturedTabId);
           if (isActiveTab(capturedTabId)) {
-            alert(`ENS resolution error: ${err.message}`);
+            alert(`${systemLabel} resolution error: ${err.message}`);
           }
         });
       return;
@@ -1062,9 +1102,10 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     return;
   }
 
-  // Try ENS first (ens:// or .eth/.box addresses)
+  // Try Ethereum names first (legacy ens:// plus supported name suffixes)
   const ens = parseEnsInput(value);
   if (ens && electronAPI?.resolveEns) {
+    const systemLabel = nameSystemLabelForName(ens.name);
     // Capture the webview reference before async operation to prevent loading in wrong tab
     const capturedWebview = webview;
     // Capture the tab id too so async callbacks can route per-tab UI
@@ -1089,7 +1130,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     // time. Backgrounded-tab routing and protocol-icon refresh are
     // handled inside `setAddressDisplayForTab`.
     setAddressDisplayForTab(displayOverride || value, capturedTabId);
-    pushDebug(`Resolving ENS name: ${ens.name}`);
+    pushDebug(`Resolving ${systemLabel} name: ${ens.name}`);
     // Surface a resolution failure: log the structured trail unconditionally
     // (so devtools / the in-browser debug console always see it), but only
     // pop the modal alert if the originating tab is still in the foreground.
@@ -1107,8 +1148,8 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
         setLoading(false, capturedTabId);
         if (!result) {
           failEnsResolution(
-            `ENS resolution failed for ${ens.name}: no response`,
-            'ENS resolution failed: no response'
+            `${systemLabel} resolution failed for ${ens.name}: no response`,
+            `${systemLabel} resolution failed: no response`
           );
           return;
         }
@@ -1127,7 +1168,7 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           // Defensive cap: the resolver already bounds groups by K (≤9),
           // but a malformed payload shouldn't be able to explode the URL.
           const groups = (result.groups || []).slice(0, 10);
-          pushDebug(`ENS conflict for ${ens.name}: ${groups.length} groups`);
+          pushDebug(`${systemLabel} conflict for ${ens.name}: ${groups.length} groups`);
           capturedWebview.loadURL(
             buildInternalPageUrl('ens-conflict.html', {
               name: ens.name,
@@ -1141,16 +1182,16 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
         if (result.type !== 'ok') {
           const reason = result.reason || 'Unknown error';
           failEnsResolution(
-            `ENS resolution failed for ${ens.name}: ${reason}`,
-            `ENS resolution failed for ${ens.name}: ${reason}`
+            `${systemLabel} resolution failed for ${ens.name}: ${reason}`,
+            `${systemLabel} resolution failed for ${ens.name}: ${reason}`
           );
           return;
         }
 
         if (!isSupportedEnsTransport(result.protocol)) {
           failEnsResolution(
-            `ENS content for ${ens.name} uses unsupported protocol ${result.protocol}`,
-            `ENS content uses unsupported protocol "${result.protocol}". Supported: Swarm (bzz), IPFS, IPNS.`
+            `${systemLabel} content for ${ens.name} uses unsupported protocol ${result.protocol}`,
+            `${systemLabel} content uses unsupported protocol "${result.protocol}". Supported: Swarm (bzz), IPFS, IPNS.`
           );
           return;
         }
@@ -1163,8 +1204,8 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
         // signal to retry with the correct scheme.
         if (assertedTransport && assertedTransport !== result.protocol) {
           failEnsResolution(
-            `ENS transport mismatch for ${ens.name}: asserted ${assertedTransport}, got ${result.protocol}`,
-            `ENS name ${ens.name} resolves to ${result.protocol}, not ${assertedTransport}. ` +
+            `${systemLabel} transport mismatch for ${ens.name}: asserted ${assertedTransport}, got ${result.protocol}`,
+            `${systemLabel} name ${ens.name} resolves to ${result.protocol}, not ${assertedTransport}. ` +
               `Try ${result.protocol}://${ens.name} instead.`
           );
           return;
@@ -1179,14 +1220,14 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
           && state.blockUnverifiedEns
           && !options.allowUnverifiedOnce
         ) {
-          pushDebug(`ENS unverified for ${ens.name} → interstitial`);
+          pushDebug(`${systemLabel} unverified for ${ens.name} → interstitial`);
           capturedWebview.loadURL(
             buildInternalPageUrl('ens-unverified.html', { name: ens.name, uri: targetUri })
           );
           return;
         }
 
-        pushDebug(`ENS resolved: ${ens.name} -> ${targetUri}`);
+        pushDebug(`${systemLabel} resolved: ${ens.name} -> ${targetUri}`);
 
         storeEnsResolutionMetadata(targetUri, ens.name);
 
@@ -1225,8 +1266,8 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
         // unrelated current page with a stale alert is more confusing
         // than informative. Console log + debug entry preserve the trail.
         failEnsResolution(
-          `ENS resolution error for ${ens.name}: ${err.message}`,
-          `ENS resolution error for ${ens.name}: ${err.message}`
+          `${systemLabel} resolution error for ${ens.name}: ${err.message}`,
+          `${systemLabel} resolution error for ${ens.name}: ${err.message}`
         );
       });
     return;
@@ -1304,6 +1345,40 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
   // Try IPFS (ipfs://, ipns://, or raw CID)
   const ipfsTarget = formatIpfsUrl(value, state.ipfsRoutePrefix);
   if (ipfsTarget) {
+    // Node disabled or not running: surface the friendly "node not running"
+    // page rather than letting webview.loadURL hit the ipfs: handler, which
+    // returns a raw JSON 503 body Chromium renders verbatim. Reuses error.html
+    // via the same ERR_CONNECTION_REFUSED path the Swarm probe uses, and the
+    // Radicle disabled gate above. Unlike Swarm, `state.ipfsRoutePrefix` keeps
+    // a native fallback even when disabled, so `formatIpfsUrl` still resolves —
+    // hence the explicit availability check here.
+    if (isIpfsNodeUnavailable()) {
+      // Prefer the ENS-named load URL when the resolver supplied one, so the
+      // error page's display + retry preserve the ENS host (ipfs://name.eth)
+      // rather than the resolved CID — the ipfs: handler re-resolves the host
+      // per request, so the named form is loadable. See buildErrorPageUrl's
+      // note on ENS-backed retries.
+      const ipfsErrorUrl = options.ipfsLoadUrl || ipfsTarget.displayValue;
+      const protocol = ipfsErrorUrl.toLowerCase().startsWith('ipns://') ? 'ipns' : 'ipfs';
+      pushDebug(`[AddressBar] IPFS node unavailable — error page for ${ipfsErrorUrl}`);
+      // Route through the per-tab helper (not a raw `addressInput.value` write):
+      // a background ENS/dweb navigation carries a specific `targetWebview`, so a
+      // direct write would clobber the foreground tab's address bar and skip
+      // storing the snapshot on the target tab. Mirror the normal IPFS path's
+      // `displayOverride || ipfsTarget.displayValue` so an ENS-backed target keeps
+      // its ENS host in the display.
+      setAddressDisplayForTab(displayOverride || ipfsTarget.displayValue, targetTabId);
+      const errorUrl = buildErrorPageUrl('ERR_CONNECTION_REFUSED', ipfsErrorUrl, {
+        protocol,
+        retry: ipfsErrorUrl,
+      });
+      navState.pendingNavigationUrl = errorUrl;
+      navState.hasNavigatedDuringCurrentLoad = false;
+      webview.loadURL(errorUrl);
+      syncBzzBase(null);
+      syncRadBase(null);
+      return;
+    }
     const cidMatch = ipfsTarget.displayValue.match(/^ipfs:\/\/([A-Za-z0-9]+)/);
     const ipnsMatch = ipfsTarget.displayValue.match(/^ipns:\/\/([A-Za-z0-9.-]+)/);
     // Load via the native `ipfs:`/`ipns:` schemes so the main-process
@@ -1322,6 +1397,40 @@ export const loadTarget = (value, displayOverride = null, targetWebview = null, 
     pushDebug(`[AddressBar] Loading IPFS target, set to: ${ipfsDisplayValue}`);
     webview.loadURL(ipfsLoadUrl);
     pushDebug(`Loading ${ipfsTarget.displayValue} via ${ipfsLoadUrl}`);
+    syncBzzBase(null);
+    syncRadBase(null);
+    return;
+  }
+
+  // Swarm node disabled or not running: `state.bzzRoutePrefix` is null, so
+  // `formatBzzUrl` below returns null and the navigation would otherwise fall
+  // through to "Ignoring empty input or invalid URL" — a silent failure. Detect
+  // the Swarm intent from the raw input and show the same friendly "node not
+  // running" page the probe produces for an unreachable node (see
+  // startBzzNavigationWithProbe / error.html). Mirrors the Radicle disabled gate
+  // above.
+  if (!state.bzzRoutePrefix && looksLikeBzzInput(value)) {
+    const trimmed = value.trim();
+    const bzzForm = /^bzz:/i.test(trimmed) ? trimmed : `bzz://${trimmed}`;
+    // Preserve the ENS host on the retry URL when the resolver supplied one
+    // (`bzz://name.eth`), mirroring the probe path (startBzzNavigationWithProbe):
+    // the bzz: handler re-resolves the host per request, so "Try Again" keeps the
+    // ENS name and origin rather than the resolved hash. Non-ENS input keeps the
+    // bare bzz form.
+    const retry = options.bzzLoadUrl || bzzForm;
+    const displayValue = displayOverride || bzzForm;
+    pushDebug(`[AddressBar] Swarm node unavailable — error page for ${displayValue}`);
+    // Per-tab helper (not a raw `addressInput.value` write) so a background
+    // ENS/dweb navigation with an explicit `targetWebview` updates the target
+    // tab's snapshot instead of clobbering the foreground address bar.
+    setAddressDisplayForTab(displayValue, targetTabId);
+    const errorUrl = buildErrorPageUrl('ERR_CONNECTION_REFUSED', displayValue, {
+      protocol: 'swarm',
+      retry,
+    });
+    navState.pendingNavigationUrl = errorUrl;
+    navState.hasNavigatedDuringCurrentLoad = false;
+    webview.loadURL(errorUrl);
     syncBzzBase(null);
     syncRadBase(null);
     return;
@@ -1492,6 +1601,25 @@ const retryErrorPageOrReload = (webview, hard) => {
     pushDebug(`${hard ? 'Hard reload' : 'Reload'} re-resolving ENS: ${committedDisplay}`);
     loadTarget(committedDisplay);
     return;
+  }
+
+  // A committed dweb URL (`ipfs://<cid>`, `ipns://<name>`, `bzz://<hash>`) whose
+  // node has since been disabled/stopped must reload through `loadTarget` so the
+  // navigation-layer gate routes it to the friendly error page. A raw
+  // `webview.reload()` would re-hit the `ipfs:`/`bzz:` protocol handler and
+  // render its 503 JSON body verbatim. When the node is still available we keep
+  // the plain reload — no re-probe, preserving the happy-path behaviour.
+  const dwebScheme = committedDisplay.match(/^(ipfs|ipns|bzz):\/\//i)?.[1]?.toLowerCase();
+  if (dwebScheme) {
+    const nodeUnavailable =
+      dwebScheme === 'bzz' ? !state.bzzRoutePrefix : isIpfsNodeUnavailable();
+    if (nodeUnavailable) {
+      pushDebug(
+        `${hard ? 'Hard reload' : 'Reload'} dweb node unavailable — routing ${committedDisplay} to error page`
+      );
+      loadTarget(committedDisplay);
+      return;
+    }
   }
 
   if (hard) {
@@ -1789,6 +1917,16 @@ export const initNavigation = () => {
       bookmarkBarOverride = settings.showBookmarkBar;
       electronAPI?.setBookmarkBarChecked?.(bookmarkBarOverride);
     }
+    ipfsProgressStatusEnabled = settings?.showIpfsProgressStatus === true;
+  });
+
+  // Keep the IPFS-progress opt-in live. When it's switched off mid-load, stop
+  // any running poller so the link bar reverts to hover URLs immediately.
+  window.addEventListener('settings:updated', (event) => {
+    const next = event.detail?.showIpfsProgressStatus === true;
+    if (next === ipfsProgressStatusEnabled) return;
+    ipfsProgressStatusEnabled = next;
+    if (!next) stopIpfsProgressStatus({ immediate: true });
   });
 
   // Address bar events

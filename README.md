@@ -32,7 +32,7 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
    npm start
    ```
 
-5. Swarm and IPFS nodes start automatically by default. To use `rad://`, first enable **Settings → Experimental → Enable Radicle integration (Beta)**. Enter a Swarm hash, IPFS CID, Radicle ID, `bzz://` URL, `ipfs://` URL, `rad://` URL, or `.eth`/`.box` domain in the address bar.
+5. Swarm and IPFS nodes start automatically by default. To use `rad://`, first enable **Settings → Experimental → Enable Radicle integration (Beta)**. Enter a Swarm hash, IPFS CID, Radicle ID, `bzz://` URL, `ipfs://` URL, `rad://` URL, or `.eth`/`.box`/`.wei`/`.gwei` domain in the address bar.
 
 ---
 
@@ -54,7 +54,7 @@ Freedom mitigates this in two layers:
 
 2. **Custom `bzz:` scheme** (`src/main/swarm/bzz-protocol.js`) — `bzz` is registered as a privileged standard scheme, so `bzz://<hash>/` becomes the page origin in Chromium. Every `bzz://` request (top-level, sub-resources, `fetch`, media `Range`, CSS descendants, service workers) routes through a main-process handler that proxies to the local node's gateway, always sets `Swarm-Chunk-Retrieval-Timeout` + `Swarm-Redundancy-Strategy: 3` + `Swarm-Redundancy-Fallback-Mode: true`, retries transient `5xx` on idempotent methods with bounded exponential backoff (~50 s total) with a 30 s per-attempt deadline, and streams the response back. `404` responses are surfaced immediately so SPAs that feature-detect missing endpoints don't stall — the cold-start case that 404 retries used to absorb is now handled upstream by the navigation probe. Because `bzz://<hash>/` is the origin, same-origin relative paths (`/foo.js`, `url(/bg.png)`) resolve naturally with no URL rewriting.
 
-The handler also accepts ENS-named hosts: `bzz://swarm.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after address-bar resolution) and proxies the same way. The page's URL/origin stays `bzz://<name>/` rather than the resolved hash, so DevTools, `window.location`, storage, and subresource fetches like `fetch('bzz://swarm.eth/data')` see the ENS name. Cross-transport mismatches (e.g. `bzz://name.eth` whose contenthash is IPFS) return `404` with an explanatory body — the typed scheme is treated as an assertion. The renderer's address-bar pipeline applies the same assertion before navigating, so both layers agree.
+The handler also accepts Ethereum-named hosts: `bzz://swarm.eth/...`, `bzz://site.wei/...`, and `bzz://apoorv.gwei/...` resolve the contenthash via the in-process name resolver (cache hit after address-bar resolution) and proxy the same way. The page's URL/origin stays `bzz://<name>/` rather than the resolved hash, so DevTools, `window.location`, storage, and subresource fetches like `fetch('bzz://swarm.eth/data')` see the name. Cross-transport mismatches (e.g. `bzz://name.eth`, `bzz://name.wei`, or `bzz://name.gwei` whose contenthash is IPFS) return `404` with an explanatory body — the typed scheme is treated as an assertion. The renderer's address-bar pipeline applies the same assertion before navigating, so both layers agree.
 
 > **Origin model.** `bzz://swarm.eth` and `bzz://<resolved-hash>` are different origins from Chromium's perspective — cookies, localStorage, IndexedDB, and service workers are not shared between them. This mirrors HTTPS, where `https://example.com` and `https://192.0.2.1` are also different origins even when they resolve to the same server. Pinning storage to the ENS name keeps state stable across contenthash updates.
 
@@ -248,21 +248,21 @@ Enter any of the following in the address bar:
 | IPFS URL    | `ipfs://QmHash.../path`                         |
 | IPNS URL    | `ipns://k51...` or `ipns://domain.eth`          |
 | Radicle ID  | `rad://z3gqc...`                                |
-| ENS Domain  | `vitalik.eth`, `mysite.box`, `mysite.eth/about` |
+| Ethereum Name | `vitalik.eth`, `mysite.box`, `alice.wei`, `apoorv.gwei`, `mysite.eth/about` |
 | HTTP(S) URL | `https://example.com`                           |
 | Domain      | `example.com` (auto-prefixes `https://`)        |
 
 The address bar also provides **autocomplete suggestions** from browsing history as you type.
 
-### ENS Resolution
+### Ethereum Name Resolution
 
-- **Automatic Resolution**: `.eth` and `.box` domains resolve to their Swarm, IPFS, or IPNS content.
+- **Automatic Resolution**: `.eth`, `.box`, `.wei`, and `.gwei` domains resolve to their Swarm, IPFS, or IPNS content. `.eth` and `.box` use ENS; `.wei` uses Wei Name Service (WNS); `.gwei` uses Gwei Name Service (GNS).
 - **CCIP-Read Support**: `.box` domains resolve via offchain CCIP-Read (EIP-3668) through 3dns.xyz.
 - **Protocol Detection**: Automatically detects and routes to Swarm (`bzz://`), IPFS (`ipfs://`), or IPNS (`ipns://`) content.
-- **Transport-Aware Address Bar**: After resolution, the address bar shows the resolved transport with the ENS name as the host — e.g. `vitalik.eth` resolves and displays as `ipfs://vitalik.eth`, a Swarm-backed `mysite.eth` displays as `bzz://mysite.eth`. The legacy `ens://` form is still accepted as input (and stored bookmarks keep working) but is no longer the canonical display.
-- **Typed Scheme Is an Assertion**: Typing `bzz://name.eth`, `ipfs://name.eth`, or `ipns://name.eth` only resolves if the contenthash matches the typed transport. Mismatches surface as a "resolves to X, not Y" message rather than silently switching transports — same rule the `bzz://` protocol handler enforces for subresource fetches. Bare names and the legacy `ens://` form make no assertion and accept any supported transport.
-- **Path Forwarding**: Paths appended to ENS names (e.g., `mysite.eth/docs`) are preserved after resolution.
-- **In-HTML Links**: ENS links inside web pages must carry a scheme — `ens://name.eth`, `bzz://name.eth`, `ipfs://name.eth`, or `ipns://name.eth`. Bare hrefs like `<a href="vitalik.eth">` are relative URLs by HTML/URL-spec rules and resolve against the page's base before any of our handlers see them; bare names are only resolved as ENS in the address bar, where input is always absolute.
+- **Transport-Aware Address Bar**: After resolution, the address bar shows the resolved transport with the name as the host — e.g. `vitalik.eth` resolves and displays as `ipfs://vitalik.eth`, a Swarm-backed `mysite.eth` displays as `bzz://mysite.eth`, a WNS-backed `alice.wei` displays as `ipfs://alice.wei`, and a GNS-backed `apoorv.gwei` displays as `ipfs://apoorv.gwei`. The legacy `ens://` form is still accepted as input (and stored bookmarks keep working) but is no longer the canonical display.
+- **Typed Scheme Is an Assertion**: Typing `bzz://name.eth`, `ipfs://name.eth`, `ipns://name.eth`, or the equivalent `.wei`/`.gwei` forms only resolves if the contenthash matches the typed transport. Mismatches surface as a "resolves to X, not Y" message rather than silently switching transports — same rule the `bzz://` protocol handler enforces for subresource fetches. Bare names and the legacy `ens://` form make no assertion and accept any supported transport.
+- **Path Forwarding**: Paths appended to names (e.g., `mysite.eth/docs`, `alice.wei/docs`, `apoorv.gwei/docs`) are preserved after resolution.
+- **In-HTML Links**: Ethereum name links inside web pages must carry a scheme — `ens://name.eth`, `bzz://name.eth`, `ipfs://name.eth`, `ipns://name.eth`, `bzz://name.wei`, `ipfs://name.wei`, `ipns://name.wei`, `bzz://name.gwei`, `ipfs://name.gwei`, or `ipns://name.gwei`. Bare hrefs like `<a href="vitalik.eth">` are relative URLs by HTML/URL-spec rules and resolve against the page's base before any of our handlers see them; bare names are only resolved in the address bar, where input is always absolute.
 
 ### Tabbed Browsing
 
@@ -392,9 +392,9 @@ npm start
 
 Inside Freedom, `bzz://`, `ipfs://`, `ipns://`, and `rad://` URLs always resolve through the active profile's node settings and storage. OS-level protocol launches from other apps are a v1 limitation: they are not profile-aware and should not be used when a link must open in a specific profile. Open the target profile first and paste or navigate to the URL inside that window.
 
-### ENS Resolution (Ethereum)
+### Ethereum Name Resolution
 
-ENS domains are resolved using Ethereum JSON-RPC. The browser tries multiple public RPC providers in sequence (see `src/main/ens-resolver.js` for the current list). You can prepend your own endpoint by setting the `ETH_RPC` environment variable.
+ENS, WNS, and GNS domains are resolved using Ethereum JSON-RPC. ENS uses the ENS Universal Resolver; WNS reads the Wei Name Service contract directly; GNS reads the Gwei Name Service contract directly. The browser tries multiple public RPC providers in sequence (see `src/main/ens-resolver.js` for the current list). You can prepend your own endpoint by setting the `ETH_RPC` environment variable.
 
 **Recommended: Helios Light Client**
 

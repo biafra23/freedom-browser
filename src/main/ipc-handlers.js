@@ -1,6 +1,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const log = require('./logger');
+
+const execFileAsync = promisify(execFile);
 const { ipcMain, app, dialog, clipboard, nativeImage, webContents } = require('electron');
 const { URL } = require('url');
 const path = require('path');
@@ -9,17 +13,24 @@ const { loadSettings } = require('./settings-store');
 const { fetchBuffer, fetchToFile } = require('./http-fetch');
 const { success, failure, validateWebContentsId } = require('./ipc-contract');
 const IPC = require('../shared/ipc-channels');
-const { startProbe: startSwarmProbe, cancelProbe: cancelSwarmProbe } = require('./swarm/swarm-probe');
+const {
+  startProbe: startSwarmProbe,
+  cancelProbe: cancelSwarmProbe,
+} = require('./swarm/swarm-probe');
 const {
   createProfileForActiveApp,
   deleteProfileForActiveApp,
   getActiveProfile,
+  getProfileFocusTargetForActiveApp,
   importProfileForActiveApp,
   listProfilesForActiveApp,
   renameProfileForActiveApp,
   updateActiveProfileNodeConfig,
+  validateProfileDeletionForActiveApp,
 } = require('./profile-resolver');
-const { launchProfile } = require('./profile-launcher');
+const { openOrFocusProfile } = require('./profile-launcher');
+const { readProfileFocusAck, requestProfileQuitAsync } = require('./profile-focus-handoff');
+const { isProfileLocked } = require('./profile-lock');
 
 // Bzz content probes, keyed by probe id. Each entry exposes a promise that
 // resolves to the probe outcome. Entries survive until BZZ_AWAIT_PROBE
@@ -109,8 +120,11 @@ function isTrustedProfileMutationSender(event) {
   const pathname = normalizeFileUrlPath(getIpcSenderUrl(event));
   if (!pathname) return false;
 
-  return pathname.endsWith('/src/renderer/index.html')
-    || pathname.endsWith('/src/renderer/pages/settings.html');
+  return (
+    pathname.endsWith('/src/renderer/index.html') ||
+    pathname.endsWith('/src/renderer/pages/settings.html') ||
+    pathname.endsWith('/src/renderer/pages/profiles.html')
+  );
 }
 
 function withTrustedProfileMutationSender(event, fn) {
@@ -211,9 +225,7 @@ function normalizeProfileNodeEndpoint(rawValue) {
   const trimmed = String(rawValue).trim();
   if (!trimmed) return null;
 
-  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
-    ? trimmed
-    : `http://${trimmed}`;
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 
   try {
     const parsed = new URL(withProtocol);
@@ -289,9 +301,13 @@ function validateProfileNodeConfigUpdate(protocol, patch = {}) {
     if (missing.length) {
       return {
         ok: false,
-        response: failure('MISSING_PROFILE_NODE_ENDPOINT', 'External node mode requires endpoints', {
-          fields: missing,
-        }),
+        response: failure(
+          'MISSING_PROFILE_NODE_ENDPOINT',
+          'External node mode requires endpoints',
+          {
+            fields: missing,
+          }
+        ),
       };
     }
   }
@@ -325,7 +341,10 @@ function updateProfileNodeConfigFromIpc(protocol, patch) {
 function listProfilesFromIpc() {
   const profiles = listProfilesForActiveApp();
   if (!profiles) {
-    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    return failure(
+      'PROFILE_CATALOG_UNAVAILABLE',
+      'Profiles are not available for this launch mode'
+    );
   }
   return success({ profiles: profiles.map(serializeProfileSummary) });
 }
@@ -337,8 +356,15 @@ function createProfileFromIpc(payload = {}) {
       id: payload.id,
     });
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
+    // No direct broadcast/menu rebuild here: writing the registry trips the
+    // profile-registry watcher in *every* process (including this one), and its
+    // onChange both rebuilds the native Profiles menu and re-broadcasts. Firing
+    // here too would just duplicate that work in the originating process.
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
     return failure('PROFILE_CREATE_FAILED', err.message || 'Profile could not be created');
@@ -349,7 +375,10 @@ function importProfileFromIpc(payload = {}) {
   try {
     const result = importProfileForActiveApp(payload.id);
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
     return success({ profile: serializeProfileMutationResult(result) });
   } catch (err) {
@@ -361,9 +390,19 @@ function renameProfileFromIpc(payload = {}) {
   try {
     const result = renameProfileForActiveApp(payload.id, payload.displayName);
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
     const activeProfile = serializeActiveProfile();
+    // Unlike create/delete (which let the registry watcher rebuild the menu and
+    // re-broadcast), rename keeps a direct broadcast on purpose: renaming the
+    // active profile changes its display name in this window's UI, and we want
+    // that reflected immediately rather than on the next watcher tick. It's also
+    // the only sync path under TEST_MODE, where the watcher is disabled — the
+    // E2E rename assertion relies on it. In production this overlaps the
+    // watcher's broadcast; the duplicate is harmless.
     broadcastProfileUpdated(activeProfile);
     return success({
       profile: serializeProfileMutationResult(result),
@@ -374,14 +413,17 @@ function renameProfileFromIpc(payload = {}) {
   }
 }
 
-function openProfileFromIpc(payload = {}) {
+async function openProfileFromIpc(payload = {}) {
   const activeProfile = getActiveProfile();
   const profileId = payload.id;
   if (!profileId || typeof profileId !== 'string') {
     return failure('INVALID_PROFILE_ID', 'Missing profile id');
   }
   if (!activeProfile || activeProfile.source !== 'catalog') {
-    return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+    return failure(
+      'PROFILE_CATALOG_UNAVAILABLE',
+      'Profiles are not available for this launch mode'
+    );
   }
   if (profileId === activeProfile.id) {
     return failure('PROFILE_ALREADY_OPEN', 'This profile is already open');
@@ -394,10 +436,21 @@ function openProfileFromIpc(payload = {}) {
   }
 
   try {
-    const launch = launchProfile(activeProfile, profileId);
+    // Focuses an already-running profile (fast) or cold-starts it. Shared with
+    // the native Profiles menu so both paths behave identically. `openSettings`
+    // (from the profile manager's edit button) lands the opened window on its
+    // Profile settings page.
+    const opened = await openOrFocusProfile(activeProfile, profileId, {
+      openSettings: payload.openSettings === true,
+    });
+    // The profile is running but didn't acknowledge the focus request — report
+    // it so the UI can show an error instead of falsely claiming success.
+    if (opened.error) {
+      return failure('PROFILE_FOCUS_FAILED', opened.error);
+    }
     return success({
       profile: serializeProfileSummary(target),
-      launch,
+      ...(opened.focused ? { focused: true } : { launch: opened.launch }),
     });
   } catch (err) {
     log.error('[profile] Failed to open profile:', err);
@@ -405,12 +458,129 @@ function openProfileFromIpc(payload = {}) {
   }
 }
 
-function deleteProfileFromIpc(payload = {}) {
+// Liveness probe: signal 0 tests for the process without delivering a signal.
+// ESRCH → the process is gone; EPERM → it's alive but owned by another user.
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+// Ask a running profile to close and wait until its data is safe to remove, so
+// a delete can proceed. Returns true once the profile is closed (or was never
+// open).
+//
+// A released lock alone is NOT a safe signal: the profile lock can read as free
+// while the holder is still winding down — its heartbeat lapses during a slow
+// shutdown and `isProfileLocked` honours the stale timeout, so we could delete
+// node/vault data the process is still touching. When the target acks our quit
+// request it includes its pid; we wait for that process to actually exit, which
+// (per the will-quit ordering in index.js) only happens after it has finished
+// closing databases and stopping its nodes. We fall back to the lock signal
+// when no usable ack is available (older build, crash before ack).
+async function ensureProfileClosedForDelete(profileId, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const intervalMs = options.intervalMs ?? 200;
+  const processAlive = options.isProcessAlive || isProcessAlive;
+  const readAck = options.readProfileFocusAck || readProfileFocusAck;
+
+  const target = getProfileFocusTargetForActiveApp(profileId);
+  if (!target || !target.isLocked) {
+    return true;
+  }
+
+  const quit = requestProfileQuitAsync(target);
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+
+    // Prefer the definitive signal: the acking process has actually exited.
+    let ack;
+    try {
+      ack = readAck(target);
+    } catch {
+      ack = null;
+    }
+    const holderPid =
+      ack && ack.nonce === quit?.nonce && Number.isInteger(ack.pid) ? ack.pid : null;
+    if (holderPid != null) {
+      if (!processAlive(holderPid)) return true;
+      continue;
+    }
+
+    // No usable ack (older build, crash before ack, unreadable) — fall back to
+    // the lock-release signal. Use an effectively-infinite stale window so a
+    // still-held lock can't read as "released" merely because its heartbeat
+    // lapsed mid-shutdown. This matters for dev profiles, whose stale timeout
+    // (5s) is shorter than this wait (15s): without it, a slow dev shutdown
+    // could look closed while the process is still touching profile data. An
+    // already-dead, genuinely-stale lock from a crash is handled earlier by the
+    // target.isLocked gate (and resolves on a retry), so here we only accept a
+    // real release — the lock dir actually going away.
+    let stillLocked;
+    try {
+      stillLocked = isProfileLocked(target, { staleMs: Number.MAX_SAFE_INTEGER });
+    } catch {
+      stillLocked = false;
+    }
+    if (!stillLocked) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function deleteProfileFromIpc(payload = {}, options = {}) {
+  try {
+    // Test seam (E2E): simulate a delete outcome (e.g. PROFILE_CLOSE_FAILED for
+    // a profile open in another window) without a second process, so the
+    // manager's failure handling — card restore + error toast — can be
+    // exercised end-to-end. Inert in production (global undefined).
+    const deleteSim = globalThis.__FREEDOM_TEST_DELETE_SIM__;
+    if (typeof deleteSim === 'function') {
+      const simulated = deleteSim(payload.id);
+      if (simulated) return simulated;
+    }
+
+    const activeProfile = getActiveProfile();
+    if (payload.id && activeProfile && payload.id === activeProfile.id) {
+      return failure('PROFILE_ACTIVE', 'The active profile cannot be deleted');
+    }
+
+    // Validate the request (existence, confirmation, path safety) BEFORE closing
+    // anything. ensureProfileClosedForDelete asks a running profile to quit; if
+    // we ran it first, a stale or mismatched confirmation would quit a live
+    // window and only then fail the delete. deleteProfile re-validates under the
+    // catalog write lock — this pre-flight just gates the quit request.
+    // (Returns null in non-catalog launch modes, where the delete below also
+    // no-ops into PROFILE_CATALOG_UNAVAILABLE.)
+    validateProfileDeletionForActiveApp(payload.id, payload.confirmDisplayName);
+
+    // If the profile is open in another window, close it first so its data is
+    // not in use when we remove it.
+    const closed = await ensureProfileClosedForDelete(payload.id, options);
+    if (!closed) {
+      return failure(
+        'PROFILE_CLOSE_FAILED',
+        'This profile is open and could not be closed automatically. Close its window and try again.'
+      );
+    }
+
     const result = deleteProfileForActiveApp(payload.id, payload.confirmDisplayName);
     if (!result) {
-      return failure('PROFILE_CATALOG_UNAVAILABLE', 'Profiles are not available for this launch mode');
+      return failure(
+        'PROFILE_CATALOG_UNAVAILABLE',
+        'Profiles are not available for this launch mode'
+      );
     }
+    // The registry write trips the profile-registry watcher (in this and every
+    // other process), which rebuilds the native menu and re-broadcasts — no
+    // need to duplicate that here. See createProfileFromIpc.
     return success({
       profile: serializeProfileSummary({
         id: result.record.id,
@@ -578,6 +748,35 @@ function registerBaseIpcHandlers(callbacks = {}) {
     return process.platform;
   });
 
+  // Which window-manager buttons the desktop expects (GNOME defaults to
+  // close-only). Returns null off-GNOME/non-Linux so the caller shows all three.
+  ipcMain.handle(IPC.WINDOW_GET_BUTTON_LAYOUT, async () => {
+    if (process.platform !== 'linux') return null;
+    try {
+      const { stdout } = await execFileAsync(
+        'gsettings',
+        ['get', 'org.gnome.desktop.wm.preferences', 'button-layout'],
+        { timeout: 2000 }
+      );
+      const tokens = stdout
+        .replace(/['"\n]/g, '')
+        .replace(':', ',')
+        .split(',');
+      return {
+        minimize: tokens.includes('minimize'),
+        maximize: tokens.includes('maximize'),
+        close: tokens.includes('close'),
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.on(IPC.APP_RELAUNCH, () => {
+    app.relaunch();
+    app.quit();
+  });
+
   ipcMain.on(IPC.WINDOW_TOGGLE_FULLSCREEN, (event) => {
     const win = event.sender.getOwnerBrowserWindow();
     if (win) {
@@ -624,6 +823,19 @@ function registerBaseIpcHandlers(callbacks = {}) {
       updateProfileNodeConfigFromIpc(payload.protocol, payload.config)
     )
   );
+
+  // A manager page (webview) requests the chrome's create-profile modal.
+  // Resolve the webview's owning BrowserWindow and tell it to show the modal.
+  // Gate on the same trust boundary as the profile-mutation IPC: only the
+  // trusted profile UI may pop the create modal, so a hostile page loaded in a
+  // webview can't drive the chrome into showing it.
+  ipcMain.on(IPC.PROFILE_REQUEST_CREATE_MODAL, (event) => {
+    if (!isTrustedProfileMutationSender(event)) return;
+    const win = event.sender.getOwnerBrowserWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC.PROFILE_SHOW_CREATE_MODAL);
+    }
+  });
 
   ipcMain.handle(IPC.GET_WEBVIEW_PRELOAD_PATH, () => {
     return webviewPreloadPath;

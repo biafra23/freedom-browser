@@ -13,12 +13,15 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
   const platform = options.platform || process.platform;
   const execPath = options.execPath || process.execPath;
   const profileArg = `--profile=${profileId}`;
+  // Intent flag only — the cold-started process maps it to the internal
+  // settings deep-link, so no URL travels on the command line.
+  const extraArgs = options.openSettings ? ['--open-settings'] : [];
 
   if (activeProfile?.isDev) {
     const repoRoot = activeProfile.repoRoot || path.join(__dirname, '..', '..');
     return {
       command: execPath,
-      args: [repoRoot, profileArg],
+      args: [repoRoot, profileArg, ...extraArgs],
       cwd: repoRoot,
     };
   }
@@ -28,7 +31,7 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
     if (appBundlePath) {
       return {
         command: 'open',
-        args: ['-n', appBundlePath, '--args', profileArg],
+        args: ['-n', appBundlePath, '--args', profileArg, ...extraArgs],
         cwd: undefined,
       };
     }
@@ -36,14 +39,26 @@ function buildProfileLaunchCommand(activeProfile, profileId, options = {}) {
 
   return {
     command: execPath,
-    args: [profileArg],
+    args: [profileArg, ...extraArgs],
     cwd: undefined,
   };
 }
 
 function launchProfile(activeProfile, profileId, options = {}) {
-  const spawnImpl = options.spawn || spawn;
   const command = buildProfileLaunchCommand(activeProfile, profileId, options);
+
+  // E2E test mode: the harness installs a recorder so "open profile" doesn't
+  // cold-start a real second Electron instance against the shared dev-home —
+  // it records the intended launch for the spec to assert on instead. Mirrors
+  // how the harness stubs ant/ipfs spawns (see src/main/test-harness.js). An
+  // explicitly-injected `options.spawn` (unit tests) always wins over the hook.
+  const recorder = !options.spawn && globalThis.__FREEDOM_TEST_PROFILE_LAUNCH__;
+  if (typeof recorder === 'function') {
+    recorder({ profileId, command, openSettings: options.openSettings === true });
+    return command;
+  }
+
+  const spawnImpl = options.spawn || spawn;
   const child = spawnImpl(command.command, command.args, {
     cwd: command.cwd,
     detached: true,
@@ -58,8 +73,66 @@ function launchProfile(activeProfile, profileId, options = {}) {
   return command;
 }
 
+// Open a profile, shared by the renderer IPC path and the native menu so both
+// behave identically. If the target profile is already running, focus its
+// window (fast — no new process); otherwise cold-start it. Deps are injectable
+// for testing.
+//
+// Returns one of:
+//   { focused: true }              — a running profile acknowledged the focus
+//   { focused: false, launch }     — cold-started a new process
+//   { focused: false, error }      — the profile is running but did not respond
+//                                    to the focus request (we don't cold-start a
+//                                    duplicate against its live lock)
+//
+// The ack round-trip is what lets callers report a *confirmed* focus instead of
+// merely "the request was written" — see requestProfileFocusAsyncAwait.
+async function openOrFocusProfile(activeProfile, profileId, options = {}) {
+  // Test seam (E2E): simulate a profile that is already running, so the
+  // focus-fast-path can be exercised without spawning a real second process.
+  // When the harness has registered a simulated result for this id we return it
+  // verbatim ({ focused: true } or { focused: false, error }) and never reach
+  // launchProfile — mirroring the launch-recorder global used below. Inert in
+  // production, where the global is undefined.
+  const focusSim = globalThis.__FREEDOM_TEST_FOCUS_SIM__;
+  if (typeof focusSim === 'function') {
+    const simulated = focusSim(profileId, { openSettings: options.openSettings === true });
+    if (simulated) return simulated;
+  }
+
+  // Lazy-required so this module stays loadable in isolation (and to avoid any
+  // load-order coupling with profile-resolver).
+  const resolveFocusTarget =
+    options.getFocusTarget || require('./profile-resolver').getProfileFocusTargetForActiveApp;
+  const requestFocus =
+    options.requestFocus || require('./profile-focus-handoff').requestProfileFocusAsyncAwait;
+
+  const target = resolveFocusTarget(profileId);
+  if (target?.isLocked) {
+    const focus = await requestFocus(target, { openSettings: options.openSettings === true });
+    if (focus?.ok) {
+      return { focused: true };
+    }
+    // Cold-start ONLY when the focus request could not even be written (e.g. the
+    // profile's data dir is gone) — there is no live process to focus, so a fresh
+    // launch is correct. In every other failure mode the request reached a
+    // running process that holds the lock: it may have acked a failure (its focus
+    // handler isn't ready yet) or never acked in time (focus.timedOut). Launching
+    // then would just spawn a duplicate that bounces off ELOCKED, so surface the
+    // failure instead of falling through.
+    if (focus?.requestWritten !== false) {
+      return { focused: false, error: focus?.error || 'The running profile did not respond' };
+    }
+    // requestWritten === false: fall through and cold-start.
+  }
+
+  const launch = launchProfile(activeProfile, profileId, options);
+  return { focused: false, launch };
+}
+
 module.exports = {
   buildProfileLaunchCommand,
   getMacAppBundlePath,
   launchProfile,
+  openOrFocusProfile,
 };

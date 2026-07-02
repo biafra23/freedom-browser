@@ -2,6 +2,7 @@ const log = require('../logger');
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { loadSettings } = require('../settings-store');
 
 let currentWindowTitle = 'Freedom';
 
@@ -26,6 +27,10 @@ function getIconPath() {
 
 function createMainWindow(initialUrl = null) {
   const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
+  // Linux only: tab strip doubles as the titlebar when the user opts in.
+  // `frame` can't change on a live window, so this is read once at creation.
+  const linuxFrameless = isLinux && loadSettings().tabsInTitlebar === true;
 
   // Headless E2E: keep the window hidden so a local test run doesn't pop a
   // window or steal focus. The renderer still loads and is fully driveable via
@@ -49,6 +54,8 @@ function createMainWindow(initialUrl = null) {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 14, y: 14 },
     }),
+    // Linux: drop the OS frame so the in-app tab strip is the titlebar
+    ...(linuxFrameless && { frame: false }),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
@@ -71,6 +78,17 @@ function createMainWindow(initialUrl = null) {
 
   window.on('ready-to-show', () => {
     window.setTitle(currentWindowTitle);
+
+    // Linux cold start: a freshly-spawned profile process has no valid
+    // startup-activation token, so Mutter denies focus to the new window and
+    // posts a "'Freedom' is ready" notification instead of raising it. Nudge
+    // focus with the always-on-top toggle, which bypasses focus-stealing
+    // prevention. Skip the headless test path, which deliberately stays hidden.
+    if (isLinux && !hideWindow) {
+      window.setAlwaysOnTop(true);
+      window.focus();
+      window.setAlwaysOnTop(false);
+    }
   });
 
   window.on('page-title-updated', (event) => {
@@ -132,6 +150,11 @@ function focusOrCreateMainWindow(initialUrl = null) {
   let window = [...mainWindows].find((candidate) => !candidate.isDestroyed());
   if (!window) {
     window = createMainWindow(initialUrl);
+  } else if (initialUrl) {
+    // A window already exists, so createMainWindow's initialUrl path doesn't
+    // run — open the target in a new tab on the existing window instead (e.g.
+    // the Profiles manager's edit button focusing an already-running profile).
+    window.webContents.send('tab:new-with-url', initialUrl);
   }
   focusBrowserWindow(window);
   return window;
