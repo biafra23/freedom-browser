@@ -32,6 +32,11 @@ beforeAll(() => {
     electronAPI: { ...mockElectronAPI, getSettings: jest.fn(() => Promise.resolve({})) },
     location: { href: 'file:///app/index.html' },
     addEventListener: jest.fn(),
+    // Lets page-urls.js build the internal-page map used to dedupe
+    // freedom://<page> tabs.
+    internalPages: {
+      routable: { profiles: 'profiles.html', history: 'history.html', settings: 'settings.html' },
+    },
   };
 
   global.document = {
@@ -249,9 +254,7 @@ describe('Tab Navigation State Isolation', () => {
       tab.webview.getURL.mockReturnValue('view-source:https://example.com/');
       tab.webview._eventHandlers['did-navigate']({ url: 'https://example.com/' });
 
-      expect(tab.navigationState.committedDisplayUrl).toBe(
-        'view-source:https://example.com/'
-      );
+      expect(tab.navigationState.committedDisplayUrl).toBe('view-source:https://example.com/');
     });
   });
 
@@ -279,5 +282,107 @@ describe('Tab Navigation State Isolation', () => {
       // Either returns null or a default state object
       expect(state === null || typeof state === 'object').toBe(true);
     });
+  });
+});
+
+describe('openOrFocusInternalPage', () => {
+  test('opens a new tab the first time and focuses the same tab afterwards', async () => {
+    const { openOrFocusInternalPage, createTab, getTabs, getActiveTab } = await import('./tabs.js');
+
+    const before = getTabs().length;
+
+    const first = openOrFocusInternalPage('profiles');
+    expect(first).toBeTruthy();
+    expect(first.url).toBe('freedom://profiles');
+    expect(getTabs().length).toBe(before + 1);
+
+    // Open a different tab so 'profiles' is no longer active.
+    createTab('http://example.com/');
+
+    const second = openOrFocusInternalPage('profiles');
+    expect(second.id).toBe(first.id); // reused, not duplicated
+    expect(getTabs().length).toBe(before + 2); // only the example.com tab was added
+    expect(getActiveTab().id).toBe(first.id); // switched back to it
+  });
+
+  test('openInNewTabWithTarget focuses an existing internal page (system menu path)', async () => {
+    const { openInNewTabWithTarget, openOrFocusInternalPage, getTabs } = await import('./tabs.js');
+
+    // Ensure a profiles tab exists, then simulate the native "Manage Profiles"
+    // menu item, which routes through tab:new-with-url → openInNewTabWithTarget.
+    const existing = openOrFocusInternalPage('profiles');
+    const before = getTabs().length;
+
+    const reused = openInNewTabWithTarget('freedom://profiles', null);
+    expect(reused.id).toBe(existing.id); // focused, not duplicated
+    expect(getTabs().length).toBe(before); // no new tab opened
+  });
+
+  // Runs before any bare `freedom://settings` tab is created below — a
+  // `settings/profile` URL only reuses a base `settings` tab, and none exists
+  // yet, so this must open a fresh deep-link tab.
+  test('openInNewTabWithTarget opens a deep-link tab when no settings tab exists', async () => {
+    const { openInNewTabWithTarget, getTabs } = await import('./tabs.js');
+
+    const before = getTabs().length;
+    const opened = openInNewTabWithTarget('freedom://settings/profile', null);
+
+    expect(getTabs().length).toBe(before + 1); // a new tab, since none to reuse
+    expect(opened.url).toBe('freedom://settings/profile'); // tab.url keeps the friendly form
+
+    // A trusted internal page is resolved to its real file:// URL and loaded as
+    // the webview's initial src — NOT parked on about:blank first. Parking left a
+    // blank entry in the back history, so the toolbar Back button went blank.
+    const srcCalls = opened.webview.setAttribute.mock.calls.filter(([attr]) => attr === 'src');
+    const srcValue = srcCalls.at(-1)?.[1];
+    expect(srcValue).toBe('file:///app/pages/settings.html#profile');
+    expect(srcValue).not.toBe('about:blank');
+  });
+
+  test('openInNewTabWithTarget reuses a settings tab for a settings sub-path', async () => {
+    jest.useFakeTimers();
+    try {
+      const { openInNewTabWithTarget, openOrFocusInternalPage, getTabs, setLoadTargetHandler } =
+        await import('./tabs.js');
+
+      const onLoadTarget = jest.fn();
+      setLoadTargetHandler(onLoadTarget);
+
+      // A plain settings tab is open; the profile-manager edit pencil opens
+      // freedom://settings/profile, which must reuse it (not open a duplicate)
+      // and route the reused tab to the profile section.
+      const existing = openOrFocusInternalPage('settings');
+      const before = getTabs().length;
+
+      const reused = openInNewTabWithTarget('freedom://settings/profile', null);
+      expect(reused.id).toBe(existing.id); // focused, not duplicated
+      expect(getTabs().length).toBe(before); // no new tab opened
+
+      jest.runOnlyPendingTimers();
+      expect(onLoadTarget).toHaveBeenCalledWith('freedom://settings/profile'); // routed to section
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('reuses a still-resolving sub-path tab instead of racing it to a duplicate', async () => {
+    const { openOrFocusInternalPage, getTabs } = await import('./tabs.js');
+
+    // First open lands a tab whose url is still the unresolved
+    // freedom://history/recent form (not yet loaded to file://…/history.html).
+    const first = openOrFocusInternalPage('history', 'recent');
+    expect(first.url).toBe('freedom://history/recent');
+    const after = getTabs().length;
+
+    // A rapid second open (before the tab resolves) must reuse it. The matcher
+    // recognises the freedom://<page>/<sub> form, so no duplicate is created.
+    const second = openOrFocusInternalPage('history', 'recent');
+    expect(second.id).toBe(first.id);
+    expect(getTabs().length).toBe(after);
+
+    // The bare-page open also reuses the resolving sub-path tab.
+    const third = openOrFocusInternalPage('history');
+    expect(third.id).toBe(first.id);
+    expect(getTabs().length).toBe(after);
   });
 });

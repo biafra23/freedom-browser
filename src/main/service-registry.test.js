@@ -135,6 +135,20 @@ describe('service-registry', () => {
       tempMessage: null,
       tempMessageTimeout: null,
     });
+
+    mod.updateService('tor', {
+      socks: '127.0.0.1:19150',
+      mode: mod.MODE.BUNDLED,
+    });
+    mod.clearService('tor');
+
+    expect(mod.getService('tor')).toEqual({
+      socks: null,
+      mode: mod.MODE.NONE,
+      statusMessage: null,
+      tempMessage: null,
+      tempMessageTimeout: null,
+    });
   });
 
   test('registers an IPC handler that returns the current registry state', async () => {

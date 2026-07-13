@@ -218,6 +218,8 @@ function loadRadicleManagerModule(options = {}) {
     warn: jest.fn(),
     error: jest.fn(),
   };
+  const promptForDefaultExternalCandidateProtocol =
+    options.promptForDefaultExternalCandidateProtocol || jest.fn().mockResolvedValue([]);
   const updateService = jest.fn();
   const setStatusMessage = jest.fn();
   const setErrorState = jest.fn();
@@ -322,6 +324,9 @@ function loadRadicleManagerModule(options = {}) {
         getReservedProfilePorts: jest.fn(() => new Set(options.reservedPorts || [])),
         updateActiveProfileNodeConfig,
       }),
+      [require.resolve('./profile-external-candidates')]: () => ({
+        promptForDefaultExternalCandidateProtocol,
+      }),
       [require.resolve('./service-registry')]: () => ({
         MODE: {
           BUNDLED: 'bundled',
@@ -362,6 +367,7 @@ function loadRadicleManagerModule(options = {}) {
     loadSettings,
     log,
     mod,
+    promptForDefaultExternalCandidateProtocol,
     setErrorState,
     setStatusMessage,
     spawn,
@@ -935,6 +941,65 @@ describe('radicle-manager', () => {
 
     expect(clearIntervalSpy).toHaveBeenCalledWith(987);
     expect(ctx.clearService).toHaveBeenCalledWith('radicle');
+  });
+
+  test('manual IPC start prompts for a default external Radicle node before managed start', async () => {
+    const activeProfile = {
+      source: 'catalog',
+      metadata: {
+        nodes: {
+          radicle: {
+            mode: 'managed',
+            httpPort: 18780,
+            p2pPort: 18776,
+          },
+        },
+      },
+    };
+    const promptForDefaultExternalCandidateProtocol = jest.fn(async () => {
+      activeProfile.metadata.nodes.radicle = {
+        mode: 'external',
+        externalHttp: 'http://127.0.0.1:8780',
+      };
+      return [
+        {
+          protocol: 'radicle',
+          choice: 'external',
+          endpoints: ['http://127.0.0.1:8780'],
+        },
+      ];
+    });
+    const ctx = loadRadicleManagerModule({
+      activeProfile,
+      promptForDefaultExternalCandidateProtocol,
+      httpResponse: (url) => {
+        if (url === 'http://127.0.0.1:8780/') {
+          return { statusCode: 200, body: { version: '0.1.0' } };
+        }
+        return { statusCode: 404, body: '' };
+      },
+    });
+
+    ctx.mod.registerRadicleIpc();
+    await ctx.ipcMain.invoke(IPC.RADICLE_START);
+    await new Promise((resolve) => setImmediate(resolve));
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(promptForDefaultExternalCandidateProtocol).toHaveBeenCalledWith(
+      activeProfile,
+      'radicle',
+      expect.objectContaining({ logger: ctx.log, window: null })
+    );
+    expect(ctx.spawn).not.toHaveBeenCalled();
+    expect(ctx.mod.getActivePort()).toBe(8780);
+    expect(ctx.updateService).toHaveBeenCalledWith('radicle', {
+      api: 'http://127.0.0.1:8780',
+      gateway: 'http://127.0.0.1:8780',
+      mode: 'external',
+    });
+
+    await ctx.mod.stopRadicle();
   });
 
   test('marks a disabled profile Radicle node without probing or spawning', async () => {

@@ -6,6 +6,7 @@ const {
   deleteProfile,
   ensureProfile,
   getCatalogLockPaths,
+  validateProfileDeletion,
   withCatalogWriteLock,
 } = require('./profile-catalog');
 
@@ -167,6 +168,14 @@ describe('profile catalog', () => {
     );
     expect(catalog.profiles[0].nodes.bee.p2pPort).toBe(12633);
     expect(metadata.nodes.bee.p2pPort).toBe(12633);
+    expect(catalog.profiles[0].nodes.tor).toMatchObject({
+      mode: 'managed',
+      socksPort: 19150,
+    });
+    expect(metadata.nodes.tor).toMatchObject({
+      mode: 'managed',
+      socksPort: 19150,
+    });
   });
 
   test('adopts an existing profile directory with metadata instead of assigning a fresh slot', () => {
@@ -212,6 +221,10 @@ describe('profile catalog', () => {
       apiPort: 11640,
       p2pPort: 12640,
       externalApi: 'http://127.0.0.1:1633',
+    });
+    expect(result.metadata.nodes.tor).toMatchObject({
+      mode: 'managed',
+      socksPort: 19157,
     });
 
     const catalog = JSON.parse(
@@ -261,5 +274,49 @@ describe('profile catalog', () => {
 
     expect(fs.existsSync(record.dir)).toBe(false);
     expect(fs.existsSync(radicleDir)).toBe(false);
+  });
+
+  describe('validateProfileDeletion', () => {
+    function seedWorkProfile() {
+      const appRoot = track(makeTempDir());
+      const defaultProfileDir = path.join(appRoot, 'Profiles', 'default');
+      fs.mkdirSync(defaultProfileDir, { recursive: true });
+      ensureProfile(appRoot, 'default', { defaultProfileDir });
+      ensureProfile(appRoot, 'work', { defaultProfileDir });
+      return appRoot;
+    }
+
+    test('passes for a registered profile with a matching display name', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'work', 'Work')).not.toThrow();
+    });
+
+    test('rejects a mismatched display-name confirmation', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'work', 'Wrong')).toThrow(
+        'Profile display name confirmation did not match'
+      );
+    });
+
+    test('rejects an unknown profile id', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'ghost', 'Ghost')).toThrow(
+        'Profile not found: ghost'
+      );
+    });
+
+    test('rejects deleting the default profile', () => {
+      const appRoot = seedWorkProfile();
+      expect(() => validateProfileDeletion(appRoot, 'default', 'Default')).toThrow(
+        'The default profile cannot be deleted'
+      );
+    });
+
+    test('does not remove anything (pure validation)', () => {
+      const appRoot = seedWorkProfile();
+      const workDir = path.join(appRoot, 'Profiles', 'work');
+      validateProfileDeletion(appRoot, 'work', 'Work');
+      expect(fs.existsSync(workDir)).toBe(true);
+    });
   });
 });

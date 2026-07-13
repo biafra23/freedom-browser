@@ -8,28 +8,29 @@
  *
  * Rules (security-critical, locked down in swarm-publishing-research.md):
  *
- *   ens://myapp.eth/#/path  → myapp.eth       (ENS name, lowercased)
- *   myapp.eth/blog          → myapp.eth        (bare ENS)
+ *   ens://myapp.eth/#/path  → myapp.eth       (name, lowercased)
+ *   myapp.eth/blog          → myapp.eth        (bare name)
  *   bzz://abc123/page       → bzz://abc123     (root ref, path-insensitive)
- *   bzz://myapp.eth/page    → myapp.eth        (transport-aware ENS, name-keyed)
+ *   bzz://myapp.eth/page    → myapp.eth        (transport name-keyed)
  *   ipfs://QmABC/docs       → ipfs://QmABC     (root CID, path-insensitive)
- *   ipfs://myapp.eth/docs   → myapp.eth        (transport-aware ENS, name-keyed)
+ *   ipfs://myapp.eth/docs   → myapp.eth        (transport name-keyed)
  *   ipns://host/guide       → ipns://host      (hostname, path-insensitive)
- *   ipns://myapp.eth/guide  → myapp.eth        (transport-aware ENS, name-keyed)
+ *   ipns://myapp.eth/guide  → myapp.eth        (transport name-keyed)
  *   rad://z123/tree         → rad://z123       (RID, path-insensitive)
  *   https://app.example.com → https://app.example.com
  *
- * The ENS-host carve-out for transport URLs keeps permissions stable across
+ * The name-host carve-out for transport URLs keeps permissions stable across
  * the legacy `ens://` form and the new transport-aware display: a user who
  * granted a permission to `myapp.eth` via `ens://myapp.eth` still has it
  * after the address bar starts displaying the same site as `bzz://myapp.eth`.
  */
 
 /**
- * True when `host` looks like an ENS name (ends in `.eth` or `.box`).
+ * True when `host` looks like a supported Ethereum name
+ * (`.eth`, `.box`, `.wei`, or `.gwei`).
  * Used by the carve-out below and (via the renderer mirror) by every other
- * ENS-host-classifier in the codebase. Centralising the predicate keeps a
- * single source of truth for the ENS TLD set.
+ * name-host classifier in the codebase. Centralising the predicate keeps a
+ * single source of truth for supported name suffixes.
  *
  * @param {string} host
  * @returns {boolean}
@@ -37,7 +38,12 @@
 function isEnsHost(host) {
   if (!host || typeof host !== 'string') return false;
   const lower = host.toLowerCase();
-  return lower.endsWith('.eth') || lower.endsWith('.box');
+  return (
+    lower.endsWith('.eth') ||
+    lower.endsWith('.box') ||
+    lower.endsWith('.wei') ||
+    lower.endsWith('.gwei')
+  );
 }
 
 /**
@@ -53,22 +59,22 @@ function getPermissionKey(displayUrl) {
   const trimmed = displayUrl.trim();
   if (!trimmed) return null;
 
-  // ENS name without protocol (e.g., 1inch.eth/path).
+  // Supported Ethereum name without protocol (e.g., 1inch.eth/path).
   // Split on /, ?, and # so that hash-routed SPAs (`name.eth#/swap`) and
   // share-link queries (`name.eth?ref=...`) collapse to the same key as
   // the canonical bare name.
-  if (/^[a-z0-9-]+\.(eth|box)/i.test(trimmed)) {
+  if (/^[a-z0-9-]+\.(eth|box|wei|gwei)/i.test(trimmed)) {
     return trimmed.split(/[/?#]/, 1)[0].toLowerCase();
   }
 
-  // ens:// protocol → extract ENS name (e.g., ens://1inch.eth/#/path → 1inch.eth)
+  // ens:// protocol → extract name (e.g., ens://1inch.eth/#/path → 1inch.eth)
   const ensMatch = trimmed.match(/^ens:\/\/([^/?#]+)/i);
   if (ensMatch) {
     return ensMatch[1].toLowerCase();
   }
 
   // dweb protocols: ipfs://CID/path → ipfs://CID
-  // ENS-host carve-out: bzz://name.eth/path → name.eth (same key as the
+  // Name-host carve-out: bzz://name.eth/path → name.eth (same key as the
   // legacy ens://name.eth form, so permissions don't fork across transport
   // and legacy displays of the same site). The host pattern excludes
   // ?, # and / so query/fragment components don't fork the key per route.

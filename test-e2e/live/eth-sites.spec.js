@@ -9,6 +9,10 @@
 //      shaped element exists in the active <webview>.
 //   5. Navigate to `vitalik.eth` (IPFS-hosted blog), assert an <h1>
 //      mentioning "Vitalik" exists in the active <webview>.
+//   6. Navigate to `wns.wei` (WNS-hosted site), assert it resolves through a
+//      supported name transport and the rendered page contains WNS/Wei content.
+//   7. Navigate to `apoorv.gwei` (GNS-hosted site), assert it resolves through
+//      a supported name transport and renders the live portfolio content.
 
 const {
   test,
@@ -63,6 +67,38 @@ const VITALIK_H1_SNIFFER = `
   })()
 `;
 
+const WNS_WEI_PAGE_SNIFFER = `
+  (() => {
+    const hostOk = window.location.hostname === 'wns.wei' || window.location.hostname === 'zfi.wei.is';
+    if (!hostOk) return false;
+    const protocolOk = ['bzz:', 'ipfs:', 'ipns:', 'https:'].includes(window.location.protocol);
+    if (!protocolOk) return false;
+    const text = (document.body?.innerText || document.body?.textContent || '').trim();
+    if (!text) return false;
+    if (/invalid|not found|has no contenthash|resolver error|resolution failed/i.test(text)) {
+      return false;
+    }
+    return /\\b(wns|wei name|wei names|wei name service)\\b/i.test(text);
+  })()
+`;
+
+const GNS_GWEI_PAGE_SNIFFER = `
+  (() => {
+    const hostOk = window.location.hostname === 'apoorv.gwei' || window.location.hostname === 'apoorv.xyz';
+    if (!hostOk) return false;
+    const protocolOk = ['bzz:', 'ipfs:', 'ipns:', 'https:'].includes(window.location.protocol);
+    if (!protocolOk) return false;
+    const text = (document.body?.innerText || document.body?.textContent || '').trim();
+    if (!text) return false;
+    if (/invalid|not found|has no contenthash|resolver error|resolution failed/i.test(text)) {
+      return false;
+    }
+    return /Apoorv Lathey|Smart Contracts|Full-Stack Developer/i.test(
+      (document.title || '') + '\\n' + text
+    );
+  })()
+`;
+
 // Read the textContent of a peer-count <span> and parse it as an int.
 // Returns -1 for "--" / non-numeric placeholders so the polling
 // comparator never accidentally satisfies `> PEER_TARGET`.
@@ -100,6 +136,19 @@ const navigateTo = async (window, ensName, expectedScheme) => {
   const escapedHost = ensName.replace(/\./g, '\\.');
   await expect(input).toHaveValue(
     new RegExp(`^${expectedScheme}://${escapedHost}(/.*)?$`),
+    { timeout: NAVIGATION_TIMEOUT_MS }
+  );
+};
+
+const navigateToAnyNameTransport = async (window, name) => {
+  const input = window.locator('[data-test="address-input"]');
+  await input.click();
+  await input.fill(name);
+  await input.press('Enter');
+
+  const escapedHost = name.replace(/\./g, '\\.');
+  await expect(input).toHaveValue(
+    new RegExp(`^(?:bzz|ipfs|ipns)://${escapedHost}(/.*)?$`),
     { timeout: NAVIGATION_TIMEOUT_MS }
   );
 };
@@ -144,7 +193,7 @@ test.describe('live cold-start sites', () => {
     `Live E2E needs the freedom-ipfs native addon at ${IPFS_NATIVE_ADDON_PATH}. Run \`npm run ipfs:download\` to fetch it.`
   );
 
-  test('cold-start: Bee reaches peers, native IPFS starts, meinhard.eth & vitalik.eth render', async ({
+  test('cold-start: Bee reaches peers, native IPFS starts, ENS, WNS, and GNS sites render', async ({
     window,
   }) => {
     const beeMenuButton = window.locator('#bee-menu-button');
@@ -187,6 +236,29 @@ test.describe('live cold-start sites', () => {
       window,
       VITALIK_H1_SNIFFER,
       'Waiting for an <h1> mentioning "Vitalik" on vitalik.eth'
+    );
+
+    // (6) wns.wei — WNS-backed page. The exact transport is owned by the live
+    // WNS contenthash, so assert any supported name transport first. The site
+    // currently redirects from its IPFS-hosted entrypoint to zfi.wei.is; after
+    // that, verify the guest webview rendered WNS/Wei content rather than a
+    // resolver/protocol error.
+    await navigateToAnyNameTransport(window, 'wns.wei');
+    await waitForWebviewCondition(
+      window,
+      WNS_WEI_PAGE_SNIFFER,
+      'Waiting for WNS/Wei content on wns.wei'
+    );
+
+    // (7) apoorv.gwei — GNS-backed page. The live GNS contenthash currently
+    // points at an IPFS-hosted portfolio, so assert any supported transport
+    // first and then verify page content that should only appear after the
+    // name has resolved and the site has rendered.
+    await navigateToAnyNameTransport(window, 'apoorv.gwei');
+    await waitForWebviewCondition(
+      window,
+      GNS_GWEI_PAGE_SNIFFER,
+      'Waiting for Apoorv portfolio content on apoorv.gwei'
     );
   });
 });

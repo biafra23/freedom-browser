@@ -278,6 +278,48 @@ describe('ipfs-manager', () => {
     expect(ctx.clearErrorState).toHaveBeenCalledWith('ipfs');
   });
 
+  test('a start requested mid-stop queues behind the stop and resolves once running', async () => {
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const ctx = loadIpfsManagerModule();
+    ctx.mod.registerIpfsIpc();
+
+    // Bring the node up.
+    await ctx.ipcMain.invoke(IPC.IPFS_START);
+    expect(ctx.nativeInstances).toHaveLength(1);
+
+    // Make the stop hang so a start can be requested while the node is STOPPING.
+    let releaseStop;
+    ctx.nativeInstances[0].stop.mockImplementation(
+      () => new Promise((resolve) => {
+        releaseStop = resolve;
+      })
+    );
+
+    const stopResult = ctx.ipcMain.invoke(IPC.IPFS_STOP);
+    await flush();
+
+    // Mid-stop the user flips back on. The start must queue behind the in-flight
+    // stop rather than be dropped or run concurrently.
+    const startResult = ctx.ipcMain.invoke(IPC.IPFS_START);
+    await flush();
+
+    // Still stopping: the queued start hasn't spun up a new node yet, and the
+    // reported status is the live transitional state.
+    expect(ctx.nativeInstances).toHaveLength(1);
+    await expect(ctx.ipcMain.invoke(IPC.IPFS_GET_STATUS)).resolves.toMatchObject({
+      status: 'stopping',
+    });
+
+    // Let the stop finish; the queued start then runs to completion.
+    releaseStop();
+
+    // The stop IPC settles to 'stopped', and crucially the start IPC resolves
+    // only once the node is actually back up — not with the transient 'stopping'.
+    expect((await stopResult).status).toBe('stopped');
+    expect((await startResult).status).toBe('running');
+    expect(ctx.nativeInstances).toHaveLength(2);
+  });
+
   test('moves to error and cleans up when the native node reports failure', async () => {
     const window = createWindowMock();
     const ctx = loadIpfsManagerModule({ windows: [window] });

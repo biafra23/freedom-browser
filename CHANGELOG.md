@@ -4,18 +4,70 @@ All notable changes to Freedom will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Updated bundled [Ant](https://github.com/solardev-xyz/ant) to 0.5.36: fixes the ~250 MiB upload stall, adds upload-side Reed-Solomon encoding, end-to-end Swarm content encryption, local pinning, and ACT access control
+- The Swarm node's API now comes up instantly on start, so the node menu shows peers counting up live instead of sitting at 0 during startup
+
+## [0.8.0] - 2026-07-02
+
 ### Added
 
-- Native `freedom-ipfs` IPFS runtime:
-  - `ipfs://` and `ipns://` pages load through the embedded native request API
-  - Node panels show ephemeral IPFS identity mode and native request diagnostics
+- In-house Rust implementations of the bundled Swarm and IPFS nodes, built for the upcoming mobile apps:
+  - Reasoning: mobile needs small binaries and bounded memory; every platform gains speed and room for specialised node features
+- [Ant](https://github.com/solardev-xyz/ant) 0.5.33, a lean Swarm light node, replaces bundled Bee:
+  - Full Bee parity: retrieval, feeds, stamp purchase, publishing, and chequebook payments
+  - Instant publishing setup (no more lengthy Gnosis chain-state download)
+  - Node data and Swarm identity migrate in place on first launch
+- [freedom-ipfs](https://github.com/solardev-xyz/freedom-ipfs) 0.4.3, a retrieval-only IPFS implementation, replaces bundled Kubo:
+  - The node runs inside the browser process instead of as a separate daemon
+  - No standing peer connections — the node connects instantly when IPFS content loads
+  - IPFS load progress in the status bar (Settings > Experimental)
+- Support for multiple profiles with separate tabs, history, settings, wallet, identities, and nodes, running side by side in separate windows:
+  - Profiles flyout in the browser menu, a native Profiles menu, and a `freedom://profiles` manager page
+  - Existing data carries over as the first profile on upgrade
+- Prompt to adopt system Swarm or Radicle nodes found on their default ports as external nodes
+- `.wei` and `.gwei` name resolution alongside ENS, for navigation and wallet recipients
+- `Tabs in title bar` setting on Linux, off by default (thanks @agazso!)
 
 ### Changed
 
-- Bundled Swarm node switched from Bee to Ant (antd), a bee-compatible light node — node status, menus, and wallet copy now read "Ant"
-- Existing Bee node data is migrated to Ant on first launch after upgrading, so the injected Swarm identity (overlay address, postage stamps, chequebook) is preserved
-- Updated the bundled Ant node to v0.5.21; runtime postage-batch management (added in v0.5.8) means publishing to Swarm (buying stamps, uploading data/files/sites) works end-to-end in light mode, and the Bee-compatible `/wallet` and stamp-purchase behavior (v0.5.19) means balance checks and feed/post retrieval work without Ant-specific browser logic
-- Bundled IPFS runtime moves from Kubo 0.41.0 to `freedom-ipfs` 0.4.1 native addons for macOS, Linux, and Windows
+- Freedom-managed nodes use dedicated ports (Ant 11633, Radicle 18780), leaving the ecosystem defaults (1633, 8780) to system nodes
+- Internal `freedom://` pages (History, Settings, Profiles) open as singleton tabs, focusing the existing tab instead of duplicating it
+
+### Removed
+
+- Local Kubo API and gateway ports (5001, 8080) — the embedded IPFS node exposes no local endpoints
+
+### Fixed
+
+- Opening an `ipfs://` or `ipns://` page with the IPFS node stopped now shows a friendly error page instead of a raw JSON error
+- Swarm publishing setup: the Swap xDAI to xBZZ action opens the swap flow again instead of the wallet receive screen
+- ENS resolution falls back to the public-RPC quorum during Colibri prover or network outages instead of failing to resolve
+- Radicle peer discovery follows the community seeds' move to radicle.network, updating existing configurations
+- The Linux taskbar and dock now show the Freedom icon instead of a generic placeholder (also @agazso)
+
+### Security
+
+- Updated runtime dependencies:
+  - Electron 41.7.1 to 43.0.0 (Chromium 146.0.7680.216 to 150.0.7871.46, Node 24.15.0 to 24.17.0)
+  - `better-sqlite3` 12.10.0 to 12.11.1
+  - `ethers` 6.16.0 to 6.17.0
+  - `@x402/core` 2.14.0 to 2.17.0
+  - `@x402/evm` 2.14.0 to 2.17.0
+  - `@ethersphere/bee-js` 12.2.1 to 12.2.2
+  - `@ensdomains/content-hash` 3.0.0 to 3.1.1
+  - `@corpus-core/colibri-stateless` 1.1.28 to 1.1.30
+  - `micro-key-producer` 0.8.6 to 0.9.0
+  - `electron-updater` 6.8.3 to 6.8.9
+- Override `ws` to ^8.21.0 under `viem` to clear `GHSA-96hv-2xvq-fx4p` (memory-exhaustion DoS); the auto-fix would have downgraded `@x402/evm` across a major
+- Updated dev dependencies:
+  - `@babel/preset-env` 7.29.7 to 8.0.2 (with `@babel/core` 8)
+  - `@playwright/test` 1.60.0 to 1.61.1
+  - `electron-builder` 26.8.1 to 26.15.3
+  - `eslint` 10.4.1 to 10.6.0
+  - `prettier` 3.8.3 to 3.9.4
+  - `globals` 17.6.0 to 17.7.0
 
 ## [0.7.4] - 2026-06-01
 

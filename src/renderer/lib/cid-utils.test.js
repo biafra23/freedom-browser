@@ -1,4 +1,9 @@
-import { cidV0ToV1Base32, cidV1B58btcToBase32, ipnsMhToCidV1Base36 } from './cid-utils.js';
+import {
+  cidV0ToV1Base32,
+  cidV1B58btcToBase32,
+  cidV1BytesToBase32,
+  ipnsMhToCidV1Base36,
+} from './cid-utils.js';
 const shared = require('../../shared/cid-utils');
 
 describe('cidV0ToV1Base32', () => {
@@ -87,6 +92,27 @@ describe('cidV1B58btcToBase32', () => {
     // Uppercase Z prefix — base58btc multibase prefix is lowercase z;
     // uppercase Z denotes z-base-32 (rarely used, not handled here).
     expect(cidV1B58btcToBase32('ZB2RHE5P4GXFTAWVA4EXQ5HJWSER2OWDYS9SKAQRRVQPN93BA')).toBeNull();
+  });
+});
+
+describe('cidV1BytesToBase32', () => {
+  test('converts CIDv1 raw bytes to base32', () => {
+    const bytes = new Uint8Array([
+      0x01, 0x55, 0x12, 0x20, 0x17, 0x80, 0x09, 0xfb, 0x92, 0x61, 0x20, 0xf2, 0x94,
+      0xc6, 0x0e, 0xbc, 0x3a, 0xe5, 0x4d, 0xe9, 0xdc, 0xca, 0xac, 0xe2, 0x2d, 0xb7,
+      0x85, 0x44, 0x5f, 0x6f, 0x54, 0xa8, 0x07, 0xb3, 0x22, 0xfd,
+    ]);
+
+    expect(cidV1BytesToBase32(bytes)).toBe(
+      'bafkreiaxqae7xetbedzjjrqoxq5oktpj3tfkzyrnw6cuix3pksuapmzc7u'
+    );
+  });
+
+  test('returns null for malformed CID bytes', () => {
+    expect(cidV1BytesToBase32(null)).toBeNull();
+    expect(cidV1BytesToBase32(new Uint8Array())).toBeNull();
+    expect(cidV1BytesToBase32(new Uint8Array([0x00, 0x55, 0x12, 0x20]))).toBeNull();
+    expect(cidV1BytesToBase32(new Uint8Array([0x01, 0x55, 0x12, 0x20, 0xff]))).toBeNull();
   });
 });
 
@@ -197,6 +223,24 @@ describe('renderer ↔ shared parity', () => {
   test('cidV1B58btcToBase32 matches shared for every input', () => {
     for (const input of CIDV1_B58_INPUTS) {
       expect(cidV1B58btcToBase32(input)).toBe(shared.cidV1B58btcToBase32(input));
+    }
+  });
+
+  test('cidV1BytesToBase32 matches shared for every input', () => {
+    const inputs = [
+      null,
+      new Uint8Array(),
+      new Uint8Array([0x00, 0x55, 0x12, 0x20]),
+      new Uint8Array([0x01, 0x55, 0x12, 0x20, 0xff]),
+      new Uint8Array([
+        0x01, 0x55, 0x12, 0x20, 0x17, 0x80, 0x09, 0xfb, 0x92, 0x61, 0x20, 0xf2, 0x94,
+        0xc6, 0x0e, 0xbc, 0x3a, 0xe5, 0x4d, 0xe9, 0xdc, 0xca, 0xac, 0xe2, 0x2d, 0xb7,
+        0x85, 0x44, 0x5f, 0x6f, 0x54, 0xa8, 0x07, 0xb3, 0x22, 0xfd,
+      ]),
+    ];
+
+    for (const input of inputs) {
+      expect(cidV1BytesToBase32(input)).toBe(shared.cidV1BytesToBase32(input));
     }
   });
 });

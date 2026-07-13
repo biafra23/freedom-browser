@@ -33,6 +33,14 @@ module.exports = {
   RADICLE_GET_REPO_PAYLOAD: 'radicle:getRepoPayload',
   RADICLE_SYNC_REPO: 'radicle:syncRepo',
 
+  // Tor (Arti) node management — routes .onion traffic via a local SOCKS proxy
+  TOR_START: 'tor:start',
+  TOR_STOP: 'tor:stop',
+  TOR_GET_STATUS: 'tor:getStatus',
+  TOR_STATUS_UPDATE: 'tor:statusUpdate',
+  TOR_CHECK_BINARY: 'tor:checkBinary',
+  TOR_GET_VERSION: 'tor:getVersion',
+
   // ENS resolution
   ENS_RESOLVE: 'ens:resolve',
   ENS_RESOLVE_ADDRESS: 'ens:resolve-address',
@@ -64,9 +72,11 @@ module.exports = {
   WINDOW_TOGGLE_FULLSCREEN: 'window:toggle-fullscreen',
   WINDOW_NEW: 'window:new',
   WINDOW_GET_PLATFORM: 'window:get-platform',
+  WINDOW_GET_BUTTON_LAYOUT: 'window:get-button-layout',
 
   // App
   APP_SHOW_ABOUT: 'app:show-about',
+  APP_RELAUNCH: 'app:relaunch',
 
   // Profiles
   PROFILE_GET_ACTIVE: 'profile:get-active',
@@ -80,6 +90,11 @@ module.exports = {
   PROFILE_EXTERNAL_CANDIDATES: 'profile:external-candidates',
   PROFILE_EXTERNAL_CANDIDATES_DECISION: 'profile:external-candidates-decision',
   PROFILE_UPDATED: 'profile:updated',
+  // Create-modal round trip: a page/menu requests the chrome's create modal
+  // (renderer→main), main relays a show command to the owning/focused window
+  // (main→renderer) which opens the shared #profile-create-modal.
+  PROFILE_REQUEST_CREATE_MODAL: 'profile:request-create-modal',
+  PROFILE_SHOW_CREATE_MODAL: 'profile:show-create-modal',
 
   // History
   HISTORY_GET: 'history:get',
@@ -119,7 +134,6 @@ module.exports = {
 
   // Bookmarks bar
   BOOKMARKS_TOGGLE_BAR: 'bookmarks:toggle-bar',
-
 
   // GitHub Bridge
   GITHUB_BRIDGE_IMPORT: 'github-bridge:import',

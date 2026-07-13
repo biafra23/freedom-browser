@@ -190,6 +190,18 @@ describe('navigation-utils extracted helpers', () => {
         homeUrlNormalized: 'file:///app/pages/home.html',
       })
     ).toBe('');
+
+    // A tab parked on an error page restores the friendly target from the
+    // `url` param, not the raw file:// error.html URL.
+    expect(
+      mod.deriveSwitchedTabDisplay({
+        url: 'file:///app/pages/error.html?error=ERR_CONNECTION_REFUSED&url=ipfs%3A%2F%2Fvitalik.eth&protocol=ipfs&retry=ipfs%3A%2F%2Fvitalik.eth',
+        bzzRoutePrefix: 'http://127.0.0.1:1633/bzz/',
+        homeUrlNormalized: 'file:///app/pages/home.html',
+        ipfsRoutePrefix: 'http://127.0.0.1:8080/ipfs/',
+        ipnsRoutePrefix: 'http://127.0.0.1:8080/ipns/',
+      })
+    ).toBe('ipfs://vitalik.eth');
   });
 
   test('computes bookmark bar state and extracts original urls from error pages', async () => {

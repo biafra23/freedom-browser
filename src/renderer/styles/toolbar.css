@@ -306,6 +306,25 @@
   display: none !important;
 }
 
+/* Generic hover tooltip (see lib/hover-tooltip.js) — same chrome and placement
+   as the trust "Copy" hint, reused for clipped profile names in the menu. */
+.hover-tooltip {
+  position: fixed;
+  pointer-events: none;
+  padding: 2px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 10001;
+}
+
+.hover-tooltip[hidden] {
+  display: none !important;
+}
+
 /* When the shield is visible (ENS pages), hide the address-bar protocol
    icon entirely — the popover surfaces the network as a "Network: IPFS /
    Swarm" text row, so a duplicate SVG next to the shield would be noise.

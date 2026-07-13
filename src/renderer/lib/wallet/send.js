@@ -8,10 +8,11 @@ import { walletState, registerScreenHider } from './wallet-state.js';
 import { escapeHtml } from './wallet-utils.js';
 import { refreshBalances, getTokensWithBalance, getChainsWithBalance, sortTokens } from './balance-display.js';
 import {
-  TRUST_STATUS_SENTENCE,
+  getTrustStatusSentence,
   describeUnverifiedForward,
   describeUnverifiedReverse,
 } from '../navigation-utils.js';
+import { isEnsHost } from '../origin-utils.js';
 import { createTab } from '../tabs.js';
 
 // DOM references
@@ -685,8 +686,8 @@ export function formatWeiToDecimal(wei, decimals = 18) {
   return `${integerPart}.${trimmed}`;
 }
 
-// ENS-like only matches .eth/.box — mainnet resolution decides whether the
-// name actually has an addr record.
+// Supported Ethereum names (.eth/.box ENS, .wei WNS, .gwei GNS) are resolved on mainnet;
+// resolution decides whether the name actually has an addr record.
 function classifyRecipient() {
   const recipient = sendRecipientInput?.value?.trim() || '';
 
@@ -703,7 +704,7 @@ function classifyRecipient() {
     return { ok: true, type: 'ens', value: recipient.toLowerCase() };
   }
 
-  showSendError('recipient', 'Invalid Ethereum address or ENS name');
+  showSendError('recipient', 'Invalid Ethereum address or supported Ethereum name');
   return { ok: false };
 }
 
@@ -712,7 +713,8 @@ function isValidEthereumAddress(address) {
 }
 
 function isEnsLikeName(value) {
-  return /^[a-z0-9-]+(\.[a-z0-9-]+)*\.(eth|box)$/i.test(value);
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z0-9-]+$/i.test(value)) return false;
+  return isEnsHost(value);
 }
 
 function validateAmount() {
@@ -797,7 +799,7 @@ async function handleSendContinue() {
   try {
     let reverseLookup = Promise.resolve(null);
     if (recipientClass.type === 'ens') {
-      if (sendContinueBtn) sendContinueBtn.textContent = 'Resolving ENS…';
+      if (sendContinueBtn) sendContinueBtn.textContent = 'Resolving name...';
       const resolved = await resolveRecipientEns(recipientClass.value);
       if (!resolved) return; // error already surfaced on the recipient field
       sendTxState.recipient = resolved.address;
@@ -805,7 +807,7 @@ async function handleSendContinue() {
     } else {
       sendTxState.recipient = recipientClass.value;
       // Best-effort reverse lookup so the review screen can show the
-      // recipient's primary ENS name alongside the address when one is
+      // recipient's primary Ethereum name alongside the address when one is
       // verifiably set. Fire in parallel with gas estimation so it
       // doesn't add latency to the Continue → Review transition; a
       // failure here doesn't block the send.
@@ -831,7 +833,7 @@ async function handleSendContinue() {
   }
 }
 
-// Ask main for the primary ENS name set for an address. Returns one of:
+// Ask main for the primary Ethereum name set for an address. Returns one of:
 //   { name, trust }                          forward-verified primary name
 //   { warning: 'unverified', claimedName }   primary claim doesn't forward-verify
 //   null                                     no reverse record / hard error
@@ -856,7 +858,7 @@ async function lookupPrimaryNameForAddress(address) {
 async function resolveRecipientEns(name) {
   const api = window.electronAPI;
   if (!api?.resolveEnsAddress) {
-    showSendError('recipient', 'ENS resolution unavailable');
+    showSendError('recipient', 'Name resolution unavailable');
     return null;
   }
 
@@ -864,7 +866,7 @@ async function resolveRecipientEns(name) {
   try {
     result = await api.resolveEnsAddress(name);
   } catch (err) {
-    showSendError('recipient', err.message || 'ENS resolution failed');
+    showSendError('recipient', err.message || 'Name resolution failed');
     return null;
   }
 
@@ -872,7 +874,7 @@ async function resolveRecipientEns(name) {
     const message =
       result?.reason === 'NO_ADDRESS'
         ? `No address set for ${name}`
-        : result?.error || 'ENS resolution failed';
+        : result?.error || 'Name resolution failed';
     showSendError('recipient', message);
     return null;
   }
@@ -1005,7 +1007,7 @@ function renderRecipientReview(container, address, resolution) {
 }
 
 // Render path for the rare case where the recipient address has a primary
-// ENS name set, but that name doesn't forward-resolve back to the address.
+// Ethereum name set, but that name doesn't forward-resolve back to the address.
 // The claim is untrusted, so we don't display it as text — only as a
 // tooltip on the warning glyph, so a phisher can't slip a misleading
 // name onto the review screen.
@@ -1029,7 +1031,7 @@ function buildRecipientWarning(detail) {
 
 // Verified checkmark for the recipient cell when trust is verifiable.
 // Tooltip copy is sourced from the address-bar popover's status table
-// (TRUST_STATUS_SENTENCE) so the two surfaces can't drift; for Colibri
+// so the two surfaces can't drift; for Colibri
 // the prover host is appended as the one inline detail this surface adds.
 function buildRecipientVerifiedBadge(trust) {
   if (!trust) return null;
@@ -1037,7 +1039,7 @@ function buildRecipientVerifiedBadge(trust) {
 
   const isColibri = trust.level === 'verified' && trust.method === 'colibri';
   const key = isColibri ? 'verified-colibri' : trust.level;
-  let title = TRUST_STATUS_SENTENCE[key];
+  let title = getTrustStatusSentence(key, trust);
   if (!title) return null;
   if (isColibri && trust.prover) title += ` (${trust.prover})`;
 
@@ -1204,3 +1206,8 @@ async function handleSendConfirm() {
     showSendErrorView(err.message || 'Transaction failed');
   }
 }
+
+export const __test__ = {
+  lookupPrimaryNameForAddress,
+  renderRecipientReview,
+};

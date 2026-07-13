@@ -13,6 +13,7 @@ const { universalResolverCall, universalResolverReverse, hostOf } = require('../
 // threat model legible.
 const PRIVACY_MODE = 'basic';
 const CHAIN_ID = 1;
+const MAX_LATEST_AGE_SECONDS = 60;
 
 let cachedClient = null;
 let cachedClientKey = null;
@@ -77,6 +78,7 @@ async function buildClient({ key, proverUrl, zkProof, generation }) {
     zk_proof: zkProof,
     privacy_mode: PRIVACY_MODE,
     proofStrategy: Strategy.VerifiedOnly,
+    max_latest_age_seconds: MAX_LATEST_AGE_SECONDS,
   });
 
   if (generation !== buildGeneration) {
@@ -125,9 +127,13 @@ async function getClient() {
 // across multiple public RPCs. No blockTag override — Colibri's verifier
 // pins to head − 1 by construction (sync committee signatures for block N
 // live in block N+1).
-async function resolveViaColibri(name, callData) {
+async function resolveCallViaColibri(name, callData, callResolver = universalResolverCall) {
   await getClient();
-  return universalResolverCall(cachedProvider, name, callData);
+  return callResolver(cachedProvider, name, callData);
+}
+
+async function resolveViaColibri(name, callData) {
+  return resolveCallViaColibri(name, callData, universalResolverCall);
 }
 
 // Reverse counterpart: cryptographically-verified `ur.reverse` for an
@@ -151,6 +157,7 @@ function clearColibriClientForTest() {
 }
 
 module.exports = {
+  resolveCallViaColibri,
   resolveViaColibri,
   resolveReverseViaColibri,
   clearColibriClientForTest,

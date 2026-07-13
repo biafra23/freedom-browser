@@ -48,7 +48,7 @@ test('typing a bare HTTPS domain auto-prefixes the scheme and stays inside the h
   await input.fill('example.com');
   await input.press('Enter');
 
-  await expect(input).toHaveValue('https://example.com');
+  await expect(input).toHaveValue('https://example.com/');
 
   // Prove the navigation actually went through the harness stub
   // (`makeHttpStubHandler` in src/main/test-harness.js) rather than

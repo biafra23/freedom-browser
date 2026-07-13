@@ -14,6 +14,14 @@ describe('origin-utils', () => {
       expect(getPermissionKey('myapp.box/page')).toBe('myapp.box');
     });
 
+    test('bare WNS with .wei TLD', () => {
+      expect(getPermissionKey('alice.wei/page')).toBe('alice.wei');
+    });
+
+    test('bare GNS with .gwei TLD', () => {
+      expect(getPermissionKey('apoorv.gwei/page')).toBe('apoorv.gwei');
+    });
+
     test('bare ENS mixed case is lowercased', () => {
       expect(getPermissionKey('Vitalik.ETH/blog')).toBe('vitalik.eth');
     });
@@ -93,6 +101,8 @@ describe('origin-utils', () => {
       expect(getPermissionKey('ipns://app.eth/guide')).toBe('app.eth');
       expect(getPermissionKey('bzz://Meinhard.ETH')).toBe('meinhard.eth');
       expect(getPermissionKey('ipfs://myapp.box/path')).toBe('myapp.box');
+      expect(getPermissionKey('ipfs://alice.wei/path')).toBe('alice.wei');
+      expect(getPermissionKey('ipfs://apoorv.gwei/path')).toBe('apoorv.gwei');
     });
 
     test('query and fragment components do not fork the permission key', () => {

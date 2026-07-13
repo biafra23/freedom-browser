@@ -308,4 +308,36 @@ describe('migrateBeeDataToAntData (bee → ant upgrade)', () => {
     // Bee-only state is never carried by the item list.
     expect(fs.existsSync(path.join(antData, 'statestore'))).toBe(false);
   });
+
+  test('moves the keystore LAST on the merge path so an interrupt is always retryable', () => {
+    writeBeeData(userDataDir, { extras: ['stamperstore'] });
+    // Force the merge path: ant-data already exists (antd self-initialized),
+    // so the whole-directory fast rename is skipped and items are carried
+    // one by one in BEE_CARRY_ITEMS order.
+    const antData = path.join(userDataDir, 'ant-data');
+    fs.mkdirSync(antData, { recursive: true });
+    fs.writeFileSync(path.join(antData, 'identity.json'), '{}');
+
+    const mod = loadMigrationModule(userDataDir);
+
+    const moveOrder = [];
+    const realRename = fs.renameSync.bind(fs);
+    const spy = jest.spyOn(fs, 'renameSync').mockImplementation((src, dest) => {
+      if (String(src).includes(`${path.sep}bee-data${path.sep}`)) {
+        moveOrder.push(path.basename(String(src)));
+      }
+      return realRename(src, dest);
+    });
+
+    expect(mod.migrateBeeDataToAntData()).toBe(true);
+    spy.mockRestore();
+
+    // keys/ is the commit point that clears isBeeDataMigrationPending(): it
+    // MUST move after config.yaml and stamperstore. If a refactor reordered
+    // BEE_CARRY_ITEMS so keys moved earlier, an interrupted carry could strand
+    // a keystore in ant-data whose password is still in bee-data, with no
+    // retry — silently abandoning a funded identity. This locks the ordering.
+    expect(moveOrder).toEqual(['config.yaml', 'stamperstore', 'keys']);
+    expect(moveOrder[moveOrder.length - 1]).toBe('keys');
+  });
 });

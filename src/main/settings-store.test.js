@@ -43,11 +43,14 @@ describe('settings-store', () => {
         startAntAtLaunch: true,
         startIpfsAtLaunch: true,
         startRadicleAtLaunch: false,
+        enableTorIntegration: false,
+        startTorAtLaunch: false,
         autoUpdate: true,
         showBookmarkBar: false,
         sidebarOpen: false,
         sidebarWidth: 320,
         blockUnverifiedEns: true,
+        showIpfsProgressStatus: false,
       })
     );
     expect(nativeTheme.themeSource).toBe('system');

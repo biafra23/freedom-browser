@@ -4,7 +4,7 @@ import { closeMenus } from './menus.js';
 import { hideBookmarkContextMenu } from './bookmarks-ui.js';
 import { showMenuBackdrop, hideMenuBackdrop } from './menu-backdrop.js';
 import { setupWebviewContextMenu } from './page-context-menu.js';
-import { homeUrl } from './page-urls.js';
+import { homeUrl, getInternalPageName, internalPages } from './page-urls.js';
 import { setupWebviewProvider, setActiveWebview } from './dapp-provider.js';
 import { setupSwarmProvider } from './swarm-provider.js';
 import {
@@ -388,11 +388,7 @@ const createWebview = (tabId, initialUrl) => {
         // unconditionally calls `setLoading(false)` and resets the
         // reload button — both wrong for the phantom abort.
         const abortedUrl = event.validatedURL || event.url || null;
-        if (
-          event.errorCode === -3 &&
-          tab.pendingAbortUrl &&
-          abortedUrl === tab.pendingAbortUrl
-        ) {
+        if (event.errorCode === -3 && tab.pendingAbortUrl && abortedUrl === tab.pendingAbortUrl) {
           tab.pendingAbortUrl = null;
           if (tab.pendingAbortTimer) {
             clearTimeout(tab.pendingAbortTimer);
@@ -895,6 +891,23 @@ const isDirectLoadUrl = (url) => {
   return /^https?:\/\//i.test(url);
 };
 
+// Resolve a trusted `freedom://<page>[/<sub>]` URL to the real internal page URL
+// (file://…/pages/<page>.html[#<sub>]) it ultimately loads, or null if `url`
+// isn't a recognised internal page. This mirrors loadTarget's freedom://
+// handling, but lets `createTab` load the resolved URL as the webview's *initial*
+// src — so a freshly opened internal-page tab never parks on about:blank first.
+// Parking it (the generic non-direct path) left an about:blank entry in the
+// webview's back history, so the toolbar Back button landed on a blank page.
+// Only URLs derived from the known internalPages map resolve here; arbitrary
+// file:// stays excluded and keeps flowing through about:blank + loadTarget.
+const resolveInternalPageUrl = (url) => {
+  const target = freedomInternalPageTarget(url);
+  if (!target) return null;
+  const pageUrl = internalPages[target.pageName];
+  if (!pageUrl) return null;
+  return target.subPath ? `${pageUrl}#${target.subPath}` : pageUrl;
+};
+
 // Create a new tab
 export const createTab = (url = null) => {
   const tabId = tabState.nextTabId++;
@@ -905,8 +918,14 @@ export const createTab = (url = null) => {
   // ~50 ms) without producing the GUEST_VIEW_MANAGER_CALL log noise
   // that pointing the webview at homeUrl first did, and prevents
   // hostile schemes from ever becoming a direct webview navigation.
-  const isDirect = isDirectLoadUrl(url);
-  const webviewUrl = isDirect ? (url || homeUrl) : 'about:blank';
+  // Trusted internal freedom:// pages resolve to their real file://…/pages URL up
+  // front and load directly — no about:blank parking step (which otherwise leaves
+  // a blank entry in the back history; see resolveInternalPageUrl). tab.url keeps
+  // the friendly freedom:// form so the address bar and singleton-tab reuse still
+  // match on it while the page loads.
+  const resolvedInternalUrl = resolveInternalPageUrl(url);
+  const isDirect = resolvedInternalUrl != null || isDirectLoadUrl(url);
+  const webviewUrl = resolvedInternalUrl || (isDirect ? url || homeUrl : 'about:blank');
   const webview = createWebview(tabId, webviewUrl);
 
   const tab = {
@@ -926,12 +945,15 @@ export const createTab = (url = null) => {
 
   // Anything that isn't a direct-load URL flows through the resolution
   // pipeline. For routed schemes (bzz://, ipfs://, ens://, rad:,
-  // freedom://, ethereum:, view-source:, bare ENS names) loadTarget
-  // performs the real navigation; for unrecognised inputs (file://,
-  // data:, javascript:, etc.) it falls through to a debug-log no-op,
-  // leaving the tab on about:blank.
+  // ethereum:, view-source:, bare ENS names, and freedom:// pages that
+  // aren't recognised internal pages) loadTarget performs the real
+  // navigation; for unrecognised inputs (file://, data:, javascript:,
+  // etc.) it falls through to a debug-log no-op, leaving the tab on
+  // about:blank. Recognised freedom:// pages took the direct path above.
   if (!isDirect) {
-    setTimeout(() => { if (onLoadTarget) onLoadTarget(url); }, 50);
+    setTimeout(() => {
+      if (onLoadTarget) onLoadTarget(url);
+    }, 50);
   }
 
   pushDebug(`Created tab ${tabId}`);
@@ -1248,8 +1270,33 @@ export const switchTab = (tabId, options = {}) => {
  * @param {string|null} targetName - HTML `target` attribute, if any
  * @returns {object|null} the (possibly new) tab, or null on noop
  */
+// Parse a `freedom://<page>[/<sub>]` URL into `{ pageName, subPath }` when
+// `<page>` is a recognised internal page, else null. A single sub-path segment
+// is accepted (e.g. `freedom://settings/profile`) so deep links still resolve
+// to the page's singleton tab — the sub-path routes the (possibly reused) tab
+// to the right section. Anything deeper or unrecognised returns null.
+const freedomInternalPageTarget = (url) => {
+  const match = /^freedom:\/\/([a-z0-9-]+)(?:\/([a-z0-9-]+))?\/?$/i.exec(url || '');
+  if (!match || !internalPages) return null;
+  const pageName = match[1].toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(internalPages, pageName)) return null;
+  return { pageName, subPath: match[2] ? match[2].toLowerCase() : null };
+};
+
 export const openInNewTabWithTarget = (url, targetName) => {
   if (!url) return null;
+
+  // EVERY freedom:// internal page (profiles, history, settings, …) is treated
+  // as a singleton: an untargeted open focuses the existing tab instead of
+  // opening a duplicate — same behaviour as the hamburger menu, and deliberately
+  // applied to all internal pages, not just profiles. (Trade-off: you can no
+  // longer open two history/settings tabs via a link or tab:new-with-url; use a
+  // named target to keep the explicit reuse semantics below.) A sub-path
+  // (settings/profile) reuses the base page's tab and routes it to that section.
+  if (!targetName) {
+    const internal = freedomInternalPageTarget(url);
+    if (internal) return openOrFocusInternalPage(internal.pageName, internal.subPath);
+  }
 
   if (targetName && namedTargets.has(targetName)) {
     const existingTabId = namedTargets.get(targetName);
@@ -1267,9 +1314,7 @@ export const openInNewTabWithTarget = (url, targetName) => {
     namedTargets.delete(targetName);
   }
 
-  pushDebug(
-    `Opening new tab with URL: ${url}${targetName ? ` (target: ${targetName})` : ''}`
-  );
+  pushDebug(`Opening new tab with URL: ${url}${targetName ? ` (target: ${targetName})` : ''}`);
 
   // Pass the target URL through to createTab (not homeUrl). createTab
   // already does the right thing for both shapes: direct URLs load
@@ -1286,6 +1331,55 @@ export const openInNewTabWithTarget = (url, targetName) => {
   }
 
   return newTab;
+};
+
+/**
+ * Open an internal page (e.g. 'profiles', 'settings') in its own tab. If a tab
+ * already has that page open, switch to it instead of opening a duplicate.
+ *
+ * `tab.url` holds the resolved `file://…/pages/<page>.html` form once loaded,
+ * but the `freedom://<page>` form while the tab is still resolving — match both.
+ *
+ * An optional `subPath` (e.g. 'profile' for `freedom://settings/profile`)
+ * routes the page to a section: a reused tab is navigated there, and a freshly
+ * opened tab is created on the deep link. Tab matching is always by base page,
+ * so the edit pencil's `settings/profile` reuses a plain `settings` tab.
+ *
+ * @param {string} pageName - internal page name, e.g. 'profiles'
+ * @param {string|null} [subPath] - optional section within the page
+ * @returns {object|null} the focused or newly created tab, or null on noop
+ */
+export const openOrFocusInternalPage = (pageName, subPath = null) => {
+  if (!pageName) return null;
+
+  const fullUrl = subPath ? `freedom://${pageName}/${subPath}` : `freedom://${pageName}`;
+
+  const existingTab = tabState.tabs.find((tab) => {
+    if (!tab.url) return false;
+    // Resolved file://…/pages/<page>.html form (page already loaded).
+    if ((getInternalPageName(tab.url) || '').split('/')[0] === pageName) return true;
+    // Unresolved freedom://<page>[/<sub>] form while the tab is still resolving.
+    // Matching by base page (sub-path and all) lets a rapid second open of
+    // e.g. freedom://settings/profile reuse the in-flight tab instead of
+    // racing it to a duplicate. getInternalPageName only recognises the
+    // resolved file:// form, so this arm is what covers the resolving window.
+    return freedomInternalPageTarget(tab.url)?.pageName === pageName;
+  });
+
+  if (existingTab) {
+    pushDebug(`Focusing existing ${pageName} tab ${existingTab.id}`);
+    switchTab(existingTab.id);
+    // Route the reused tab to the requested section. switchTab makes it active,
+    // so onLoadTarget lands in its webview. (Same switch-then-load handoff the
+    // named-target reuse path above uses.) Bare pages need no re-navigation.
+    if (subPath && onLoadTarget) {
+      setTimeout(() => onLoadTarget(fullUrl), 50);
+    }
+    return existingTab;
+  }
+
+  pushDebug(`Opening ${pageName} in a new tab`);
+  return createTab(fullUrl);
 };
 
 // Initialize tabs module

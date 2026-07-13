@@ -16,7 +16,7 @@
  * subdomain redirect to `<cidv1>.ipfs.localhost:8080`, so DevTools,
  * `window.location`, cookies, localStorage, IndexedDB, and service workers
  * all saw the gateway origin. Pinning the page origin to `ipfs://<cid>/`
- * (or `ipfs://<name>/` for ENS-backed sites) requires Chromium to never see
+ * (or `ipfs://<name>/` for Ethereum-name-backed sites) requires Chromium to never see
  * a gateway URL.
  *
  * Production now keeps the `ipfs://` / `ipns://` origin and calls the native
@@ -72,9 +72,9 @@ const {
 const CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|ba[a-z2-7]{49,}|z[1-9A-HJ-NP-Za-km-z]{40,})$/i;
 
 // IPNS host: libp2p key (k51..., 12D3..., Qm...) or DNSLink name. Same
-// shape accepted by the `/ipns/<host>` gateway path. ENS hosts (.eth/.box)
+// shape accepted by the `/ipns/<host>` gateway path. Ethereum name hosts
 // match this pattern too — the buildGatewayUrl branch order routes them to the
-// ENS resolver instead of the raw IPNS branch.
+// name resolver instead of the raw IPNS branch.
 const IPNS_HOST_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$/;
 
 // Per-attempt deadline for tests that inject fetchImpl. Production native
@@ -119,11 +119,11 @@ function sanitizeRequestHeaders(requestHeaders) {
  * `namespace` is `'ipfs'` or `'ipns'`. `<host>` is either:
  *  - a CID (ipfs) / IPNS key or DNSLink name (ipns), routed to the raw
  *    `/ipfs/...` or `/ipns/...` path, OR
- *  - an ENS name (.eth/.box), resolved via the in-process ens-resolver
+ *  - a supported Ethereum name, resolved via the in-process ens-resolver
  *    cache. Resolving here (not just in the renderer's address-bar
  *    pipeline) is what makes `ipfs://name.eth/` survive as the URL
  *    Chromium loads — DevTools, `window.location`, storage origin, and
- *    subresource fetches all see the ENS name rather than the resolved
+ *    subresource fetches all see the name rather than the resolved
  *    CID.
  *
  * Returns one of:
@@ -174,8 +174,8 @@ async function buildGatewayUrl(namespace, sourceUrl) {
       // For /ipfs/, the embedded ref must be a CID (looksLikeContentKey).
       // For /ipns/, also accept DNSLink-shaped names so e.g.
       // `ipfs://dweb.link/ipns/docs.ipfs.tech/install` rewrites to
-      // `ipns://docs.ipfs.tech/install`. ENS-style names (`*.eth`,
-      // `*.box`) are valid DNSLink targets too and route through the
+      // `ipns://docs.ipfs.tech/install`. Ethereum-name-style hosts are valid
+      // DNSLink targets too and route through the
       // resolver branch below.
       const refOk = looksLikeContentKey(ref) || (innerNs === 'ipns' && isLikelyDnsLinkName(ref));
       if (refOk) {
@@ -309,9 +309,9 @@ async function buildGatewayUrl(namespace, sourceUrl) {
 //
 // Returns true for the embedded ref of a gateway-form path that we'll
 // rewrite to the canonical `<scheme>://<ref>/...` form. Stricter than the
-// full IPNS-host shape: ENS names are excluded here because their
+// full IPNS-host shape: Ethereum names are excluded here because their
 // gateway-form embedded representation is vanishingly rare and ambiguous
-// with arbitrary DNSLink subpaths; ENS routing happens at the outer host.
+// with arbitrary DNSLink subpaths; name routing happens at the outer host.
 function looksLikeContentKey(ref) {
   if (typeof ref !== 'string' || !ref) return false;
   if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/i.test(ref)) return true;
@@ -380,29 +380,54 @@ function hasEmptyLabel(host) {
   return host.split('.').some((label) => label.length === 0);
 }
 
+function nameSystemLabelForHost(host) {
+  const lower = String(host || '').toLowerCase();
+  if (lower.endsWith('.wei')) return 'WNS';
+  if (lower.endsWith('.gwei')) return 'GNS';
+  return 'ENS';
+}
+
+function nameSystemLabelForResult(result, host) {
+  if (result?.system === 'wns') return 'WNS';
+  if (result?.system === 'gns') return 'GNS';
+  return nameSystemLabelForHost(host);
+}
+
 // Second arg is destructured to `{ pathname, search }` so both the
 // non-rewritten path (top-level `ipfs://name.eth/...`) and the rewritten
 // path (sub-resource `ipfs://localhost/ipfs/<cid>/...` → effectively
 // `ipfs://<cid>/...`) flow in cleanly.
 async function resolveEnsToGatewayUrl(namespace, host, parsed, gw) {
   let result;
+  const fallbackSystemLabel = nameSystemLabelForHost(host);
   try {
     result = await resolveEnsContent(host);
   } catch (err) {
-    log.warn(`[${namespace}-protocol] ENS resolver threw for ${host}: ${err.message}`);
-    return { ok: false, status: 502, message: `ENS resolver error: ${err.message}` };
+    log.warn(
+      `[${namespace}-protocol] ${fallbackSystemLabel} resolver threw for ${host}: ${err.message}`
+    );
+    return {
+      ok: false,
+      status: 502,
+      message: `${fallbackSystemLabel} resolver error: ${err.message}`,
+    };
   }
 
   if (!result) {
-    return { ok: false, status: 502, message: `ENS resolver returned no result for ${host}` };
+    return {
+      ok: false,
+      status: 502,
+      message: `${fallbackSystemLabel} resolver returned no result for ${host}`,
+    };
   }
 
   if (result.type === 'ok') {
+    const systemLabel = nameSystemLabelForResult(result, host);
     if (result.protocol !== namespace) {
       return {
         ok: false,
         status: 404,
-        message: `ENS name ${host} resolves to ${result.protocol}, not ${namespace.toUpperCase()}`,
+        message: `${systemLabel} name ${host} resolves to ${result.protocol}, not ${namespace.toUpperCase()}`,
       };
     }
     return {
@@ -412,29 +437,32 @@ async function resolveEnsToGatewayUrl(namespace, host, parsed, gw) {
   }
 
   if (result.type === 'not_found') {
+    const systemLabel = nameSystemLabelForResult(result, host);
     return {
       ok: false,
       status: 404,
-      message: `ENS name ${host} has no contenthash (${result.reason || 'unknown'})`,
+      message: `${systemLabel} name ${host} has no contenthash (${result.reason || 'unknown'})`,
     };
   }
 
   if (result.type === 'unsupported') {
+    const systemLabel = nameSystemLabelForResult(result, host);
     return {
       ok: false,
       status: 415,
-      message: `ENS name ${host} contenthash format unsupported`,
+      message: `${systemLabel} name ${host} contenthash format unsupported`,
     };
   }
 
   if (result.type === 'conflict') {
-    return { ok: false, status: 502, message: `ENS providers disagree on ${host}` };
+    const systemLabel = nameSystemLabelForResult(result, host);
+    return { ok: false, status: 502, message: `${systemLabel} providers disagree on ${host}` };
   }
 
   return {
     ok: false,
     status: 502,
-    message: `ENS resolution failed for ${host}: ${result.error || result.reason || 'unknown'}`,
+    message: `${nameSystemLabelForResult(result, host)} resolution failed for ${host}: ${result.error || result.reason || 'unknown'}`,
   };
 }
 

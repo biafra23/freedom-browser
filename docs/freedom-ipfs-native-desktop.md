@@ -69,6 +69,14 @@ The packaged app includes the `.node` addon via Electron Builder
   they are not part of this branch's runtime path.
 - Native node data is stored under `ipfs-data/freedom-ipfs/` in development (or
   the `freedom-ipfs/` child of `FREEDOM_IPFS_DATA` when that override is set).
+- **Upgrade behavior (Kubo → freedom-ipfs).** A pre-v0.8.0 install carries a
+  Kubo-shaped `ipfs-data/` repo (`config`, `blocks/`, pins). On upgrade this
+  repo is **not** migrated: the native node uses its own `ipfs-data/freedom-ipfs/`
+  subdirectory, so no Kubo identity (PeerID), blocks, or pins carry over —
+  native IPFS identity is ephemeral and content reloads from the network on
+  demand. The old Kubo repo is left orphaned on disk (its dedicated cleanup is
+  tracked in issue #101). The app starts cleanly with the old repo present;
+  this isolation is verified by `src/main/__tests__/integration/v08-upgrade.test.js`.
 - IPFS identity status is reported as ephemeral. Native `freedom-ipfs` does not
   consume or expose a durable vault-derived PeerID for read-only retrieval in
   this release.

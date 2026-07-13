@@ -204,7 +204,7 @@ Cross-built artifacts have **never been run** by the time §5 finishes. The Linu
 
 ### Transferring artifacts to test machines
 
-For a one-off transfer across the local network, the lowest-friction path is Python's built-in HTTP server on the build host — zero setup on the test side, no SSH server required, doesn't bounce the unreleased build off any third party:
+**Default step: as soon as the §5 artifacts are complete, launch Python's built-in HTTP server over `dist/` on the build host** — zero setup on the test side, no SSH server required, doesn't bounce the unreleased build off any third party. It serves an auto-generated directory index, so on each test machine you just browse to the URL and click the artifact you need:
 
 ```
 python3 -m http.server 8000 --directory dist/

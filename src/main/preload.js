@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openUrlInNewWindow: (url) => ipcRenderer.send('window:new-with-url', url),
   showAbout: () => ipcRenderer.send('app:show-about'),
   getPlatform: () => ipcRenderer.invoke('window:get-platform'),
+  getWindowButtonLayout: () => ipcRenderer.invoke('window:get-button-layout'),
   getActiveProfile: () => ipcRenderer.invoke('profile:get-active'),
   listProfiles: () => ipcRenderer.invoke('profile:list'),
   createProfile: (input) => ipcRenderer.invoke('profile:create', input),
@@ -52,6 +53,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event, profile) => callback(profile);
     ipcRenderer.on('profile:updated', handler);
     return () => ipcRenderer.removeListener('profile:updated', handler);
+  },
+  onShowCreateProfileModal: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('profile:show-create-modal', handler);
+    return () => ipcRenderer.removeListener('profile:show-create-modal', handler);
   },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
@@ -310,6 +316,20 @@ contextBridge.exposeInMainWorld('radicle', {
     ipcRenderer.on('radicle:statusUpdate', handler);
     ipcRenderer.invoke('radicle:getStatus').then(callback);
     return () => ipcRenderer.removeListener('radicle:statusUpdate', handler);
+  },
+});
+
+contextBridge.exposeInMainWorld('tor', {
+  start: () => ipcRenderer.invoke('tor:start'),
+  stop: () => ipcRenderer.invoke('tor:stop'),
+  getStatus: () => ipcRenderer.invoke('tor:getStatus'),
+  checkBinary: () => ipcRenderer.invoke('tor:checkBinary'),
+  getVersion: () => ipcRenderer.invoke('tor:getVersion'),
+  onStatusUpdate: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('tor:statusUpdate', handler);
+    ipcRenderer.invoke('tor:getStatus').then(callback);
+    return () => ipcRenderer.removeListener('tor:statusUpdate', handler);
   },
 });
 

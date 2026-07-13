@@ -32,15 +32,15 @@ It ships with integrated Swarm, IPFS, and Radicle nodes, enabling direct peer-to
    npm start
    ```
 
-5. Swarm and IPFS nodes start automatically by default. To use `rad://`, first enable **Settings → Experimental → Enable Radicle integration (Beta)**. Enter a Swarm hash, IPFS CID, Radicle ID, `bzz://` URL, `ipfs://` URL, `rad://` URL, or `.eth`/`.box` domain in the address bar.
+5. Swarm and IPFS nodes start automatically by default. To use `rad://`, first enable **Settings → Experimental → Enable Radicle integration (Beta)**. Enter a Swarm hash, IPFS CID, Radicle ID, `bzz://` URL, `ipfs://` URL, `rad://` URL, or `.eth`/`.box`/`.wei`/`.gwei` domain in the address bar.
 
 ---
 
 ## Architecture
 
-Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`ant-manager.js`, `ipfs-manager.js`, `radicle-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
+Freedom Browser is an Electron application. Protocol logic lives in the main process; the renderer is a modular UI layer that talks to it over IPC (channels defined in `src/shared/ipc-channels.js`). The main process manages node lifecycles (`ant-manager.js`, `ipfs-manager.js`, `radicle-manager.js`, `tor-manager.js`), URL rewriting (`request-rewriter.js`), and persistent data (settings, bookmarks, history). A central `service-registry.js` tracks node endpoints, modes, and status, and broadcasts state to all windows — both node managers and the request rewriter read from it.
 
-When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, or rewrites the URL to the active gateway URL via the registry (`rad`). `rad://` handling is gated by the Radicle integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the native IPFS protocol handler, so no renderer warm-up probe is needed.
+When a user enters a `bzz://`, `ipfs://`, `ipns://`, `rad://`, `.onion`, or ENS URL, the main process either dispatches to a custom protocol handler (`bzz`, `ipfs`, `ipns`) that proxies to the local node, rewrites the URL to the active gateway URL via the registry (`rad`), or routes `.onion` hosts through the active profile's Tor SOCKS5 endpoint. `rad://` handling is gated by the Radicle integration setting, and `.onion` routing is gated by the Tor integration setting. `bzz://` navigation is additionally gated by a cold-start probe (see next section). `ipfs://` / `ipns://` navigation goes straight to the native IPFS protocol handler, so no renderer warm-up probe is needed.
 
 ---
 
@@ -54,7 +54,7 @@ Freedom mitigates this in two layers:
 
 2. **Custom `bzz:` scheme** (`src/main/swarm/bzz-protocol.js`) — `bzz` is registered as a privileged standard scheme, so `bzz://<hash>/` becomes the page origin in Chromium. Every `bzz://` request (top-level, sub-resources, `fetch`, media `Range`, CSS descendants, service workers) routes through a main-process handler that proxies to the local node's gateway, always sets `Swarm-Chunk-Retrieval-Timeout` + `Swarm-Redundancy-Strategy: 3` + `Swarm-Redundancy-Fallback-Mode: true`, retries transient `5xx` on idempotent methods with bounded exponential backoff (~50 s total) with a 30 s per-attempt deadline, and streams the response back. `404` responses are surfaced immediately so SPAs that feature-detect missing endpoints don't stall — the cold-start case that 404 retries used to absorb is now handled upstream by the navigation probe. Because `bzz://<hash>/` is the origin, same-origin relative paths (`/foo.js`, `url(/bg.png)`) resolve naturally with no URL rewriting.
 
-The handler also accepts ENS-named hosts: `bzz://swarm.eth/...` resolves the contenthash via the in-process ENS resolver (cache hit after address-bar resolution) and proxies the same way. The page's URL/origin stays `bzz://<name>/` rather than the resolved hash, so DevTools, `window.location`, storage, and subresource fetches like `fetch('bzz://swarm.eth/data')` see the ENS name. Cross-transport mismatches (e.g. `bzz://name.eth` whose contenthash is IPFS) return `404` with an explanatory body — the typed scheme is treated as an assertion. The renderer's address-bar pipeline applies the same assertion before navigating, so both layers agree.
+The handler also accepts Ethereum-named hosts: `bzz://swarm.eth/...`, `bzz://site.wei/...`, and `bzz://apoorv.gwei/...` resolve the contenthash via the in-process name resolver (cache hit after address-bar resolution) and proxy the same way. The page's URL/origin stays `bzz://<name>/` rather than the resolved hash, so DevTools, `window.location`, storage, and subresource fetches like `fetch('bzz://swarm.eth/data')` see the name. Cross-transport mismatches (e.g. `bzz://name.eth`, `bzz://name.wei`, or `bzz://name.gwei` whose contenthash is IPFS) return `404` with an explanatory body — the typed scheme is treated as an assertion. The renderer's address-bar pipeline applies the same assertion before navigating, so both layers agree.
 
 > **Origin model.** `bzz://swarm.eth` and `bzz://<resolved-hash>` are different origins from Chromium's perspective — cookies, localStorage, IndexedDB, and service workers are not shared between them. This mirrors HTTPS, where `https://example.com` and `https://192.0.2.1` are also different origins even when they resolve to the same server. Pinning storage to the ENS name keeps state stable across contenthash updates.
 
@@ -178,27 +178,28 @@ Don't hardcode `http://localhost:8080` — Freedom no longer exposes a desktop I
 
 ### Triple Node Architecture
 
-Freedom runs Swarm, IPFS, and Radicle nodes, giving you access to three major decentralized networks from a single interface.
+Freedom runs Swarm, IPFS, Radicle, and Tor nodes, giving you access to decentralized and onion networks from a single interface.
 
-|                      | Swarm          | IPFS                                  | Radicle                        |
-| -------------------- | -------------- | ------------------------------------- | ------------------------------ |
-| **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       |
-| **Node Software**    | Ant (antd, bee-compatible) | freedom-ipfs native      | radicle-node + radicle-httpd   |
-| **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         |
-| **Managed Gateway Port** | 11633+     | internal native handler               | 18780+                         |
-| **Managed API Port** | 11633+         | internal native handler               | 18780+                         |
-| **Managed P2P Port** | 12633+         | internal native handler               | 18776+                         |
-| **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         |
-| **Data Directory**   | `<profile>/ant-data/` | `<profile>/ipfs-data/freedom-ipfs/` | profile-scoped short Radicle home |
-| **Binary Directory** | `ant-bin/`     | `native/freedom-ipfs-node/`           | `radicle-bin/`                 |
+|                      | Swarm          | IPFS                                  | Radicle                        | Tor (.onion)                  |
+| -------------------- | -------------- | ------------------------------------- | ------------------------------ | ----------------------------- |
+| **Protocol**         | `bzz://`       | `ipfs://`, `ipns://`                  | `rad://`                       | `http(s)://*.onion`           |
+| **Node Software**    | Ant (antd, bee-compatible) | freedom-ipfs native      | radicle-node + radicle-httpd   | Arti SOCKS5 proxy             |
+| **Hash Format**      | 64 or 128-char hex (encrypted refs supported) | CIDv0 (`Qm...`) or CIDv1 (`bafy...`) | Repository ID (`z...`)         | Onion service hostname        |
+| **Managed Gateway Port** | 11633+     | internal native handler               | 18780+                         | n/a                           |
+| **Managed API Port** | 11633+         | internal native handler               | 18780+                         | n/a                           |
+| **Managed P2P Port** | 12633+         | internal native handler               | 18776+                         | n/a                           |
+| **Managed SOCKS Port** | n/a         | n/a                                   | n/a                            | 19150+                        |
+| **Route Prefix**     | `/bzz/{hash}/` | `/ipfs/{cid}/`, `/ipns/{name}/`       | `/api/v1/repos/{rid}/`         | SOCKS5 for `.onion` hosts     |
+| **Data Directory**   | `<profile>/ant-data/` | `<profile>/ipfs-data/freedom-ipfs/` | profile-scoped short Radicle home | `<profile>/tor-data/`         |
+| **Binary Directory** | `ant-bin/`     | `native/freedom-ipfs-node/`           | `radicle-bin/`                 | `arti-bin/`                   |
 
 ### Smart Node Connection
 
 Freedom manages nodes per browser profile:
 
-1. **Independent Managed Nodes**: By default, each profile starts its own Ant, native IPFS, and Radicle data directories. Ant and Radicle use profile-specific non-default ports; IPFS uses the embedded native handler without loopback API or gateway ports.
-2. **Explicit External Nodes**: Profiles can opt into external Swarm/Radicle endpoints in profile settings. External node identity and storage are shared outside that profile. IPFS always uses the embedded `freedom-ipfs` native node.
-3. **Port Conflict Handling**: If a managed Ant or Radicle profile port is busy, Freedom picks a free profile port and persists the reassignment.
+1. **Independent Managed Nodes**: By default, each profile starts its own Ant, native IPFS, Radicle, and Arti data directories. Ant, Radicle, and Tor use profile-specific non-default ports; IPFS uses the embedded native handler without loopback API or gateway ports.
+2. **Explicit External Nodes**: Profiles can opt into external Swarm/Radicle endpoints or an external Tor SOCKS5 endpoint in profile settings. External node identity, storage, and circuit state are shared outside that profile. IPFS always uses the embedded `freedom-ipfs` native node.
+3. **Port Conflict Handling**: If a managed Ant, Radicle, or Tor profile port is busy, Freedom picks a free profile port and persists the reassignment.
 4. **Visual Feedback**: The Nodes panel and profile settings show whether a node is managed, external/shared, or disabled.
 
 This means Freedom works seamlessly whether you:
@@ -248,21 +249,21 @@ Enter any of the following in the address bar:
 | IPFS URL    | `ipfs://QmHash.../path`                         |
 | IPNS URL    | `ipns://k51...` or `ipns://domain.eth`          |
 | Radicle ID  | `rad://z3gqc...`                                |
-| ENS Domain  | `vitalik.eth`, `mysite.box`, `mysite.eth/about` |
+| Ethereum Name | `vitalik.eth`, `mysite.box`, `alice.wei`, `apoorv.gwei`, `mysite.eth/about` |
 | HTTP(S) URL | `https://example.com`                           |
 | Domain      | `example.com` (auto-prefixes `https://`)        |
 
 The address bar also provides **autocomplete suggestions** from browsing history as you type.
 
-### ENS Resolution
+### Ethereum Name Resolution
 
-- **Automatic Resolution**: `.eth` and `.box` domains resolve to their Swarm, IPFS, or IPNS content.
+- **Automatic Resolution**: `.eth`, `.box`, `.wei`, and `.gwei` domains resolve to their Swarm, IPFS, or IPNS content. `.eth` and `.box` use ENS; `.wei` uses Wei Name Service (WNS); `.gwei` uses Gwei Name Service (GNS).
 - **CCIP-Read Support**: `.box` domains resolve via offchain CCIP-Read (EIP-3668) through 3dns.xyz.
 - **Protocol Detection**: Automatically detects and routes to Swarm (`bzz://`), IPFS (`ipfs://`), or IPNS (`ipns://`) content.
-- **Transport-Aware Address Bar**: After resolution, the address bar shows the resolved transport with the ENS name as the host — e.g. `vitalik.eth` resolves and displays as `ipfs://vitalik.eth`, a Swarm-backed `mysite.eth` displays as `bzz://mysite.eth`. The legacy `ens://` form is still accepted as input (and stored bookmarks keep working) but is no longer the canonical display.
-- **Typed Scheme Is an Assertion**: Typing `bzz://name.eth`, `ipfs://name.eth`, or `ipns://name.eth` only resolves if the contenthash matches the typed transport. Mismatches surface as a "resolves to X, not Y" message rather than silently switching transports — same rule the `bzz://` protocol handler enforces for subresource fetches. Bare names and the legacy `ens://` form make no assertion and accept any supported transport.
-- **Path Forwarding**: Paths appended to ENS names (e.g., `mysite.eth/docs`) are preserved after resolution.
-- **In-HTML Links**: ENS links inside web pages must carry a scheme — `ens://name.eth`, `bzz://name.eth`, `ipfs://name.eth`, or `ipns://name.eth`. Bare hrefs like `<a href="vitalik.eth">` are relative URLs by HTML/URL-spec rules and resolve against the page's base before any of our handlers see them; bare names are only resolved as ENS in the address bar, where input is always absolute.
+- **Transport-Aware Address Bar**: After resolution, the address bar shows the resolved transport with the name as the host — e.g. `vitalik.eth` resolves and displays as `ipfs://vitalik.eth`, a Swarm-backed `mysite.eth` displays as `bzz://mysite.eth`, a WNS-backed `alice.wei` displays as `ipfs://alice.wei`, and a GNS-backed `apoorv.gwei` displays as `ipfs://apoorv.gwei`. The legacy `ens://` form is still accepted as input (and stored bookmarks keep working) but is no longer the canonical display.
+- **Typed Scheme Is an Assertion**: Typing `bzz://name.eth`, `ipfs://name.eth`, `ipns://name.eth`, or the equivalent `.wei`/`.gwei` forms only resolves if the contenthash matches the typed transport. Mismatches surface as a "resolves to X, not Y" message rather than silently switching transports — same rule the `bzz://` protocol handler enforces for subresource fetches. Bare names and the legacy `ens://` form make no assertion and accept any supported transport.
+- **Path Forwarding**: Paths appended to names (e.g., `mysite.eth/docs`, `alice.wei/docs`, `apoorv.gwei/docs`) are preserved after resolution.
+- **In-HTML Links**: Ethereum name links inside web pages must carry a scheme — `ens://name.eth`, `bzz://name.eth`, `ipfs://name.eth`, `ipns://name.eth`, `bzz://name.wei`, `ipfs://name.wei`, `ipns://name.wei`, `bzz://name.gwei`, `ipfs://name.gwei`, or `ipns://name.gwei`. Bare hrefs like `<a href="vitalik.eth">` are relative URLs by HTML/URL-spec rules and resolve against the page's base before any of our handlers see them; bare names are only resolved in the address bar, where input is always absolute.
 
 ### Tabbed Browsing
 
@@ -374,12 +375,13 @@ Freedom automatically manages node connections per profile. The default profile'
 - **Swarm Ant**: `http://127.0.0.1:11633`
 - **IPFS**: embedded native `freedom-ipfs` handler; no desktop loopback gateway/API port is started
 - **Radicle httpd**: `http://127.0.0.1:18780`
+- **Tor Arti SOCKS5**: `127.0.0.1:19150`
 
-Named profiles use the next profile slot for Ant and Radicle (`11634`, `18781`, and so on). The ecosystem default Swarm/Radicle ports (`1633`, `8780`) are treated as external/system-node endpoints, not Freedom-managed defaults. IPFS is native-only and does not expose or reuse Kubo API/gateway ports.
+Named profiles use the next profile slot for Ant, Radicle, and Tor (`11634`, `18781`, `19151`, and so on). The ecosystem default Swarm/Radicle/Tor ports (`1633`, `8780`, `9150`) are treated as external/system-node endpoints, not Freedom-managed defaults. IPFS is native-only and does not expose or reuse Kubo API/gateway ports.
 
-If Freedom detects a compatible Swarm or Radicle daemon on an ecosystem default port for a protocol that would start at launch, it asks whether that profile should use the existing external node or keep an independent managed node.
+If Freedom detects a compatible Swarm, Radicle, or Tor daemon on an ecosystem default port while that protocol is starting, it asks whether that profile should use the existing external node or keep an independent managed node. This check runs both during profile startup and when a managed node is started manually from the Nodes menu.
 
-For advanced users who need to connect a profile to a remote or system Bee/Radicle node, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
+For advanced users who need to connect a profile to a remote or system Bee/Radicle node, or to an external Tor SOCKS5 endpoint, use **Settings → Profiles → Node endpoints** and switch the relevant protocol to external mode. Development-only renderer gateway overrides are still available via environment variables:
 
 ```bash
 # Connect to a remote Swarm node
@@ -390,11 +392,11 @@ npm start
 
 ### External Protocol Links And Profiles
 
-Inside Freedom, `bzz://`, `ipfs://`, `ipns://`, and `rad://` URLs always resolve through the active profile's node settings and storage. OS-level protocol launches from other apps are a v1 limitation: they are not profile-aware and should not be used when a link must open in a specific profile. Open the target profile first and paste or navigate to the URL inside that window.
+Inside Freedom, `bzz://`, `ipfs://`, `ipns://`, `rad://`, and `.onion` URLs always resolve through the active profile's node settings and storage. OS-level protocol launches from other apps are a v1 limitation: they are not profile-aware and should not be used when a link must open in a specific profile. Open the target profile first and paste or navigate to the URL inside that window.
 
-### ENS Resolution (Ethereum)
+### Ethereum Name Resolution
 
-ENS domains are resolved using Ethereum JSON-RPC. The browser tries multiple public RPC providers in sequence (see `src/main/ens-resolver.js` for the current list). You can prepend your own endpoint by setting the `ETH_RPC` environment variable.
+ENS, WNS, and GNS domains are resolved using Ethereum JSON-RPC. ENS uses the ENS Universal Resolver; WNS reads the Wei Name Service contract directly; GNS reads the Gwei Name Service contract directly. The browser tries multiple public RPC providers in sequence (see `src/main/ens-resolver.js` for the current list). You can prepend your own endpoint by setting the `ETH_RPC` environment variable.
 
 **Recommended: Helios Light Client**
 
@@ -427,6 +429,7 @@ Edit `src/renderer/pages/home.html` to customize the welcome view shown on start
 | `npm test`                                                    | Run unit tests (Jest)                                       |
 | `npm run test:e2e`                                            | Run the harness E2E suite (stubbed nodes; fast, no network) |
 | `npm run test:e2e:live`                                       | Run the live E2E suite (real Ant + IPFS + ENS; manual only) |
+| `npm run test:e2e:tor`                                        | Run the live Tor `.onion` E2E suite (real Arti; manual only) |
 | `npm run ant:download`                                        | Download the Ant (antd) binary for your platform            |
 | `npm run ant:status`                                          | Check the default profile's Freedom-managed Ant (`11633`)   |
 | `npm run system-ant:start` / `system-ant:status` / `system-ant:stop` | Run or inspect a repo-root system Ant on the ecosystem default port (`1633`) |
@@ -460,6 +463,53 @@ profile-managed dev data.
 | `npm run radicle:init` | Initialize Radicle identity and configuration |
 | `npm run radicle:status` | Check the default profile's Radicle httpd root endpoint |
 | `npm run radicle:reset` | Delete all Radicle data and start fresh |
+
+### Tor Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run tor:download` | Build the Arti (Rust Tor client) binary for your platform |
+| `npm run test:e2e:tor` | Start real Arti and load a live `.onion` service |
+| `npm run tor:reset` | Delete legacy repo-root Tor data from earlier dev builds |
+
+---
+
+## Tor (.onion) Access
+
+Freedom can reach Tor `.onion` services using [Arti](https://arti.torproject.org/),
+the Tor Project's pure-Rust Tor client. It is **off by default** and gated behind
+**Settings → Experimental → Enable Tor (.onion access) (Beta)**.
+
+- **Scope is `.onion`-only.** When enabled, only `*.onion` hostnames are routed
+  through Tor; clearnet and the decentralized protocols (bzz/ipfs/ipns/rad) keep
+  connecting directly. Routing is done with a PAC script on the Electron session
+  (`src/main/tor-proxy.js`) that returns the active profile's SOCKS5 endpoint for `.onion` and
+  `DIRECT` for everything else. SOCKS5 does remote DNS, so the onion name resolves
+  at Tor — no custom scheme is needed; `.onion` is just an ordinary http(s) host
+  (defaulted to `http://` since most onion services are http-only).
+- **Lifecycle.** `src/main/tor-manager.js` spawns the bundled `arti` binary as a
+  profile-scoped local SOCKS5 proxy (`arti proxy -c <arti.toml>`), waits for Arti
+  to report that it is sufficiently bootstrapped, health-checks the SOCKS5
+  endpoint, applies/clears the proxy, and reports status through the service
+  registry — the same pattern as the Bee / Radicle managers.
+- **Profiles.** Managed Tor uses `127.0.0.1:19150` for the default profile, then
+  the next slot for named profiles (`19151`, `19152`, and so on). The conventional
+  Tor Browser SOCKS port `9150` is treated as an external/system endpoint; a
+  profile can opt into it with **Settings → Profiles → Node endpoints**.
+- **Status readout.** The node-status menu's Tor section shows the SOCKS endpoint
+  and the Arti software version (`arti --version`, via `getArtiVersion`). Exit-node
+  details are intentionally not shown: `.onion` connections have no exit node, so
+  an exit indicator only becomes meaningful once clearnet-over-Tor lands.
+- **Binary.** Arti has no clean prebuilt-binary distribution, so `npm run
+  tor:download` builds it from crates.io via `cargo install` (requires a Rust
+  toolchain). The binary lands in `arti-bin/<platform>-<arch>/arti` and is bundled
+  via electron-builder `extraResources`. Bundling is **optional**: if `arti-bin`
+  hasn't been built, `npm run build/dist` still succeeds (a non-fatal warning from
+  `check-binaries.js`) and simply ships without Tor — the in-app toggle stays
+  disabled until the binary is present. Like Radicle, Tor is macOS/Linux-only for
+  now; the toggle is hidden on Windows.
+- **Data.** Arti state/cache live under `<profile>/tor-data` (override with
+  `FREEDOM_TOR_DATA`).
 
 ---
 
@@ -504,7 +554,7 @@ Two Playwright projects live under `test-e2e/`. The harness suite is run manuall
 | Suite | Command | Files | What it does |
 | --- | --- | --- | --- |
 | `harness` | `npm run test:e2e` | `test-e2e/*.spec.js` | Launches Electron with `FREEDOM_TEST_MODE=1`. The in-process harness in `src/main/test-harness.js` stubs Ant/IPFS startup, ENS resolution, the Swarm probe, and the `bzz:` / `ipfs:` / `ipns:` protocol handlers, so specs are fast (~15 s end-to-end), deterministic, and require no network or downloaded binaries. Covers address-bar normalisation, tabs, bookmarks, settings persistence, and the error-page flow. |
-| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). Requires `npm run ant:download` and `npm run ipfs:download` first; missing binaries/addons skip before Electron launches. |
+| `live` | `npm run test:e2e:live` | `test-e2e/live/*.spec.js` | Launches Electron without the harness — actual Ant + native IPFS startup, live ENS resolution, real `bzz://` / `ipfs://` protocol handlers. The live smoke waits for Swarm peers and for native IPFS to report running, then navigates to `meinhard.eth` (Swarm) and `vitalik.eth` (IPFS). `npm run test:e2e:tor` runs the Tor-only live smoke against real Arti and a live `.onion` service. Requires the matching binary download/build first; missing binaries/addons skip before Electron launches. |
 
 Both suites use a per-run temp `userData` directory (`FREEDOM_TEST_USER_DATA`) so they never touch your real settings, bookmarks, or history. Sequential runs only (`workers: 1`) — Electron + protocol-scheme registration and Ant port detection don't tolerate parallel app instances.
 
@@ -708,7 +758,7 @@ npm run start:test-updater
 - **Context Isolation**: Uses `contextIsolation: true` and `nodeIntegration: false`.
 - **Remote Module Disabled**: The remote module is not available.
 - **Minimal API Surface**: Only necessary IPC methods are exposed to the renderer. The `freedomAPI` (history, bookmarks, etc.) is restricted to internal `freedom://` pages — external websites cannot call it.
-- **Local Nodes**: Ant, IPFS, and Radicle run locally; no external services required for basic operation.
+- **Local Nodes**: Ant, IPFS, Radicle, and Tor run locally when their integrations are enabled; no external services required for basic operation.
 - **Permission Handling**: Pointer lock and fullscreen permissions are granted for better UX in Swarm/IPFS apps.
 - **Public RPC Fallback**: ENS resolution uses public RPCs by default. For trustless verification, use a local Helios client.
 
@@ -738,7 +788,7 @@ npm run start:test-updater
 
 ### Using an external node
 
-- If you have a system-wide Swarm or Radicle daemon running, configure external mode in **Settings → Profiles → Node endpoints**
+- If you have a system-wide Swarm/Radicle daemon or Tor SOCKS5 endpoint running, configure external mode in **Settings → Profiles → Node endpoints**
 - External mode is per profile and per protocol
 - The Nodes panel shows external/shared status when connected to an external node
 - Freedom does not stop external nodes on quit

@@ -16,13 +16,31 @@ const addonPath = path.join(outDir, ADDON_FILENAME);
 const rustRepo = process.env.FREEDOM_IPFS_RUST_REPO
   ? path.resolve(process.env.FREEDOM_IPFS_RUST_REPO)
   : path.resolve(projectRoot, '..', 'nodes', 'freedom-ipfs');
-const releaseTag = process.env.FREEDOM_IPFS_RELEASE_TAG || 'v0.4.2';
+const releaseTag = process.env.FREEDOM_IPFS_RELEASE_TAG || 'v0.4.3';
 const releaseBaseUrl = `https://github.com/solardev-xyz/freedom-ipfs/releases/download/${releaseTag}`;
 const REQUEST_TIMEOUT_MS = 60000;
 const MAX_DOWNLOAD_ATTEMPTS = 4;
 const MAX_REDIRECTS = 5;
 
 const prebuiltAssets = {
+  'v0.4.3': {
+    'darwin-arm64': {
+      name: 'freedom-ipfs-node-electron41-darwin-arm64.tar.gz',
+      sha256: '3ec5165ea9e84c6236e8d1a2034610054d4c1814d7d76730fbf3760665d32066',
+    },
+    'linux-arm64': {
+      name: 'freedom-ipfs-node-electron41-linux-arm64.tar.gz',
+      sha256: 'f26cdd2ed627636d291b37735d8c55a1c0baad182fa11086a10d93008dcd1485',
+    },
+    'linux-x64': {
+      name: 'freedom-ipfs-node-electron41-linux-x64.tar.gz',
+      sha256: '44f87875c66431c6cc654b45e022ae2826e521b94c19c880d595a6f060cf3934',
+    },
+    'win32-x64': {
+      name: 'freedom-ipfs-node-electron41-win32-x64.tar.gz',
+      sha256: '4e94247becb968bb67ff9b44e3a74ba8494a1ae89b2c60e5b7636a4dcd34ad57',
+    },
+  },
   'v0.4.2': {
     'darwin-arm64': {
       name: 'freedom-ipfs-node-electron41-darwin-arm64.tar.gz',
@@ -98,6 +116,18 @@ function currentPackageTarget() {
   return arch ? `${osName}-${arch}` : null;
 }
 
+function requestedPlatformKey() {
+  const idx = process.argv.indexOf('--target');
+  return idx !== -1 && process.argv[idx + 1] ? process.argv[idx + 1] : null;
+}
+
+function packageTargetForPlatformKey(platformKey) {
+  const [platform, arch] = platformKey.split('-');
+  const osName = packagePlatformByNodePlatform[platform];
+  if (!osName || !['x64', 'arm64'].includes(arch)) return null;
+  return `${osName}-${arch}`;
+}
+
 function releaseManifest() {
   const manifest = prebuiltAssets[releaseTag];
   if (!manifest) {
@@ -106,10 +136,6 @@ function releaseManifest() {
     );
   }
   return manifest;
-}
-
-function currentAsset() {
-  return releaseManifest()[currentPlatformKey()] || null;
 }
 
 function sha256(file) {
@@ -191,11 +217,12 @@ function copyAddon(source, destination) {
 }
 
 async function installPrebuilt() {
-  const target = currentPackageTarget();
-  const asset = currentAsset();
+  const platformKey = requestedPlatformKey() || currentPlatformKey();
+  const target = packageTargetForPlatformKey(platformKey);
+  const asset = releaseManifest()[platformKey] || null;
   if (!asset || !target) {
     console.warn(
-      `[freedom-ipfs-native] no pinned ${releaseTag} addon for ${currentPlatformKey()}; skipping prebuilt download`
+      `[freedom-ipfs-native] no pinned ${releaseTag} addon for ${platformKey}; skipping prebuilt download`
     );
     console.warn('[freedom-ipfs-native] set FREEDOM_IPFS_NATIVE_FROM_SOURCE=1 to build locally');
     return;
@@ -221,9 +248,11 @@ async function installPrebuilt() {
     fs.mkdirSync(prebuildDir, { recursive: true });
     run('tar', ['-xzf', archive, '-C', prebuildDir, ADDON_FILENAME]);
     const prebuildAddon = path.join(prebuildDir, ADDON_FILENAME);
-    copyAddon(prebuildAddon, addonPath);
     console.log(`[freedom-ipfs-native] installed packaged addon ${prebuildAddon}`);
-    console.log(`[freedom-ipfs-native] installed development addon ${addonPath}`);
+    if (platformKey === currentPlatformKey()) {
+      copyAddon(prebuildAddon, addonPath);
+      console.log(`[freedom-ipfs-native] installed development addon ${addonPath}`);
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

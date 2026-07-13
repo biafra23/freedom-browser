@@ -218,4 +218,23 @@ const cidV1B58btcToBase32 = (cid) => {
   return 'b' + base32Encode(bytes);
 };
 
-module.exports = { cidV0ToV1Base32, ipnsMhToCidV1Base36, cidV1B58btcToBase32 };
+const cidV1BytesToBase32 = (bytes) => {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 4) return null;
+  if (bytes[0] !== 0x01) return null;
+  const codec = readUvarint(bytes, 1);
+  if (!codec) return null;
+  const mhCode = readUvarint(bytes, 1 + codec.length);
+  if (!mhCode) return null;
+  const mhLen = readUvarint(bytes, 1 + codec.length + mhCode.length);
+  if (!mhLen) return null;
+  const expectedTotal = 1 + codec.length + mhCode.length + mhLen.length + mhLen.value;
+  if (bytes.length !== expectedTotal) return null;
+  return 'b' + base32Encode(bytes);
+};
+
+module.exports = {
+  cidV0ToV1Base32,
+  ipnsMhToCidV1Base36,
+  cidV1B58btcToBase32,
+  cidV1BytesToBase32,
+};

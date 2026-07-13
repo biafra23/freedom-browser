@@ -69,6 +69,7 @@ If a sub-bullet runs past 20 words, opens with the same noun phrase as a sibling
 - **Drop internal commentary.** `(already latest)` next to a version, `(precautionary)` qualifiers, project-internal context: noise.
 - **Migration guidance points to README**, doesn't duplicate it. Use a conversational pointer like `(see README for site-author migration)` rather than inlining the migration content.
 - **Click paths use `Settings > Submenu > Item`.** Space-separated `>` matches the project's prior changelogs (e.g. `Settings > Experimental` from `0.7.0`). Do not use arrows (`→`) or breadcrumb glyphs, and don't backtick the path. The bare `Settings > …` form reads as a UI location, not a code identifier.
+- **Contributor credits are inline, on the entry.** Credit external contributors as `(thanks @handle!)` on their most significant entry; further entries from the same contributor in the same release use the shorter `(also @handle)`. No separate thanks section, no credits for maintainers.
 - **No decorative Unicode glyphs in entry prose.** Symbols like `✓`, `⚠`, `↳`, `→`, or emoji don't belong inline as visual emphasis. Describe UI affordances in plain words (`verification mark`, `warning`, `spinner`) and let the user encounter the glyph in the app. For version transitions, write `Bee 2.7.0 to 2.7.1`, not `Bee 2.7.0 → 2.7.1` — even technical from-to arrows count as decorative here.
 
 ### Per-section voice

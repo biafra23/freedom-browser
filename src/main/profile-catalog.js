@@ -22,6 +22,7 @@ const PACKAGED_PORT_BASE = {
   beeP2p: 12633,
   radicleHttp: 18780,
   radicleP2p: 18776,
+  torSocks: 19150,
 };
 
 const DEV_PORT_BASE = {
@@ -29,6 +30,7 @@ const DEV_PORT_BASE = {
   beeP2p: 22633,
   radicleHttp: 28780,
   radicleP2p: 28776,
+  torSocks: 29150,
 };
 
 function sanitizeProfileId(value) {
@@ -50,7 +52,7 @@ function sanitizeProfileId(value) {
 }
 
 function displayNameFromId(profileId) {
-  if (profileId === DEFAULT_PROFILE_ID) return 'Default';
+  if (profileId === DEFAULT_PROFILE_ID) return 'My Profile';
   return profileId
     .split(/[-_]+/)
     .filter(Boolean)
@@ -80,6 +82,7 @@ function getManagedPorts(slot, options = {}) {
     beeP2p: base.beeP2p + offset + slot,
     radicleHttp: base.radicleHttp + offset + slot,
     radicleP2p: base.radicleP2p + offset + slot,
+    torSocks: base.torSocks + offset + slot,
   };
 }
 
@@ -101,6 +104,11 @@ function buildNodeConfig(ports) {
       p2pPort: ports.radicleP2p,
       externalHttp: null,
     },
+    tor: {
+      mode: 'managed',
+      socksPort: ports.torSocks,
+      externalSocks: null,
+    },
   };
 }
 
@@ -121,6 +129,11 @@ function rebaseNodeConfig(nodes = {}, ports) {
       ...defaults.radicle,
       mode: nodes.radicle?.mode || defaults.radicle.mode,
       externalHttp: nodes.radicle?.externalHttp || null,
+    },
+    tor: {
+      ...defaults.tor,
+      mode: nodes.tor?.mode || defaults.tor.mode,
+      externalSocks: nodes.tor?.externalSocks || null,
     },
   };
 }
@@ -156,6 +169,15 @@ function fillMissingNodeConfig(nodes = {}, ports) {
         ? nodes.radicle.p2pPort
         : defaults.radicle.p2pPort,
       externalHttp: nodes.radicle?.externalHttp || null,
+    },
+    tor: {
+      ...defaults.tor,
+      ...(nodes.tor || {}),
+      mode: nodes.tor?.mode || defaults.tor.mode,
+      socksPort: Number.isInteger(nodes.tor?.socksPort)
+        ? nodes.tor.socksPort
+        : defaults.tor.socksPort,
+      externalSocks: nodes.tor?.externalSocks || null,
     },
   };
 }
@@ -196,6 +218,7 @@ function getReservedManagedPorts(appRoot, options = {}) {
     addIntegerPort(reservedPorts, nodes.bee?.p2pPort);
     addIntegerPort(reservedPorts, nodes.radicle?.httpPort);
     addIntegerPort(reservedPorts, nodes.radicle?.p2pPort);
+    addIntegerPort(reservedPorts, nodes.tor?.socksPort);
   }
 
   return reservedPorts;
@@ -604,6 +627,55 @@ function renameProfile(appRoot, profileId, displayName) {
   });
 }
 
+// Validate that a delete request is well-formed against the given catalog: the
+// profile exists, the supplied display name matches, and its dir is safely
+// inside the app data root. Returns the resolved record details for the caller
+// to act on. Throws (never returns falsy) on any mismatch. This deliberately
+// excludes the lock check and any mutation, so it can run as a pre-flight —
+// before a running profile is asked to quit — without side effects.
+function assertProfileDeletable(appRoot, catalog, id) {
+  const recordIndex = catalog.profiles.findIndex((profile) => profile.id === id);
+  if (recordIndex === -1) {
+    throw new Error(`Profile not found: ${id}`);
+  }
+
+  const record = catalog.profiles[recordIndex];
+  const displayName = record.displayName || displayNameFromId(record.id);
+
+  const resolvedAppRoot = path.resolve(appRoot);
+  const resolvedProfileDir = path.resolve(record.dir);
+  if (
+    resolvedProfileDir === resolvedAppRoot ||
+    !resolvedProfileDir.startsWith(`${resolvedAppRoot}${path.sep}`)
+  ) {
+    throw new Error('Refusing to delete a profile outside the app data root');
+  }
+
+  return { recordIndex, record, displayName, resolvedProfileDir };
+}
+
+function assertDisplayNameConfirmation(expectedDisplayName, displayName) {
+  if (String(expectedDisplayName || '') !== displayName) {
+    throw new Error('Profile display name confirmation did not match');
+  }
+}
+
+// Pre-flight validation for a profile deletion, run WITHOUT touching the lock or
+// removing anything. Callers use this before asking a running profile to quit so
+// an invalid request (wrong id, mismatched confirmation, unsafe dir) is rejected
+// up front instead of after a live window has already been closed. The real
+// delete re-validates under the catalog write lock — this only gates the quit.
+function validateProfileDeletion(appRoot, profileId, expectedDisplayName) {
+  const id = sanitizeProfileId(profileId);
+  if (id === DEFAULT_PROFILE_ID) {
+    throw new Error('The default profile cannot be deleted');
+  }
+
+  const catalog = loadCatalog(appRoot);
+  const { displayName } = assertProfileDeletable(appRoot, catalog, id);
+  assertDisplayNameConfirmation(expectedDisplayName, displayName);
+}
+
 function deleteProfile(appRoot, profileId, expectedDisplayName, options = {}) {
   const id = sanitizeProfileId(profileId);
   if (id === DEFAULT_PROFILE_ID) {
@@ -612,25 +684,12 @@ function deleteProfile(appRoot, profileId, expectedDisplayName, options = {}) {
 
   return withCatalogWriteLock(appRoot, () => {
     const catalog = loadCatalog(appRoot);
-    const recordIndex = catalog.profiles.findIndex((profile) => profile.id === id);
-    if (recordIndex === -1) {
-      throw new Error(`Profile not found: ${id}`);
-    }
-
-    const record = catalog.profiles[recordIndex];
-    const displayName = record.displayName || displayNameFromId(record.id);
-    if (String(expectedDisplayName || '') !== displayName) {
-      throw new Error('Profile display name confirmation did not match');
-    }
-
-    const resolvedAppRoot = path.resolve(appRoot);
-    const resolvedProfileDir = path.resolve(record.dir);
-    if (
-      resolvedProfileDir === resolvedAppRoot ||
-      !resolvedProfileDir.startsWith(`${resolvedAppRoot}${path.sep}`)
-    ) {
-      throw new Error('Refusing to delete a profile outside the app data root');
-    }
+    const { recordIndex, record, displayName, resolvedProfileDir } = assertProfileDeletable(
+      appRoot,
+      catalog,
+      id
+    );
+    assertDisplayNameConfirmation(expectedDisplayName, displayName);
     if (options.isProfileLocked?.(record)) {
       throw new Error(`Profile is currently open: ${displayName}`);
     }
@@ -729,7 +788,7 @@ function updateProfileNodeConfig(profile, protocol, updates) {
     return null;
   }
 
-  if (!['bee', 'ipfs', 'radicle'].includes(protocol)) {
+  if (!['bee', 'ipfs', 'radicle', 'tor'].includes(protocol)) {
     throw new Error(`Unsupported profile node protocol: ${protocol}`);
   }
 
@@ -902,6 +961,7 @@ module.exports = {
   sanitizeProfileId,
   saveCatalog,
   updateProfileNodeConfig,
+  validateProfileDeletion,
   writeProfileMetadata,
   withCatalogWriteLock,
 };

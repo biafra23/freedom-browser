@@ -35,6 +35,12 @@ export const state = {
       statusMessage: null,
       tempMessage: null,
     },
+    tor: {
+      socks: null,
+      mode: 'none',
+      statusMessage: null,
+      tempMessage: null,
+    },
   },
 
   // Swarm Gateway config (from env override or registry)
@@ -96,7 +102,10 @@ export const state = {
   ipfsInfoInterval: null,
   ipfsVersionFetched: false,
   ipfsVersionValue: '',
-  suppressIpfsRunningStatus: false,
+  // null = no toggle in flight; true/false = the running state the user just
+  // requested but which the backend hasn't confirmed yet. Lets the switch hold
+  // the user's intent through transient backend states (see ipfs-ui.js).
+  ipfsDesiredRunning: null,
 
   // Radicle state
   currentRadicleStatus: 'stopped',
@@ -114,8 +123,13 @@ export const state = {
   // Navigation state for Radicle
   currentRadBase: null,
 
+  // Tor (.onion) state
+  currentTorStatus: 'stopped',
+  suppressTorRunningStatus: false,
+
   // Feature flags
   enableRadicleIntegration: false,
+  enableTorIntegration: false,
   blockUnverifiedEns: true, // When true, unverified ENS resolutions route through an interstitial
 };
 
@@ -156,6 +170,10 @@ export const updateRegistry = (newRegistry) => {
 
 export const setRadicleIntegrationEnabled = (enabled) => {
   state.enableRadicleIntegration = enabled === true;
+};
+
+export const setTorIntegrationEnabled = (enabled) => {
+  state.enableTorIntegration = enabled === true;
 };
 
 export const setBlockUnverifiedEns = (enabled) => {
