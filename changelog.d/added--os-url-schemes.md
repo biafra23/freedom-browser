@@ -1,0 +1,1 @@
+- `ens://`, `bzz://`, `ipfs://` and `ipns://` links clicked in other apps now open in Freedom on macOS, and `ens://` links on Linux too

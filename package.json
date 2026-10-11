@@ -104,6 +104,30 @@
       "url": "https://freedom.baby/downloads",
       "channel": "latest"
     },
+    "protocols": [
+      {
+        "name": "ENS URL",
+        "role": "Viewer",
+        "schemes": [
+          "ens"
+        ]
+      },
+      {
+        "name": "Swarm URL",
+        "role": "Viewer",
+        "schemes": [
+          "bzz"
+        ]
+      },
+      {
+        "name": "IPFS URL",
+        "role": "Viewer",
+        "schemes": [
+          "ipfs",
+          "ipns"
+        ]
+      }
+    ],
     "mac": {
       "target": [
         "dmg",
@@ -166,11 +190,6 @@
       "category": "Network;WebBrowser",
       "executableName": "freedom",
       "syncDesktopName": true,
-      "mimeTypes": [
-        "x-scheme-handler/ipfs",
-        "x-scheme-handler/ipns",
-        "x-scheme-handler/bzz"
-      ],
       "files": [
         "src/**/*",
         "package.json",

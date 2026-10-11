@@ -1,4 +1,5 @@
 const {
+  LAUNCH_URL_PROTOCOLS,
   MAX_LAUNCH_URLS,
   MAX_LAUNCH_URL_LENGTH,
   buildColdStartUrls,
@@ -8,6 +9,7 @@ const {
   relaunchArgs,
   sanitizeLaunchUrls,
 } = require('./launch-urls');
+const pkg = require('../../package.json');
 
 describe('launch URLs (#597)', () => {
   describe('isAcceptedLaunchUrl', () => {
@@ -231,6 +233,28 @@ describe('launch URLs (#597)', () => {
           pendingOpenUrls: queue.drainForFirstWindow(),
         })
       ).toEqual(['https://first.example/', 'https://second.example/']);
+    });
+  });
+
+  // `build.protocols` is what electron-builder turns into the macOS bundle's
+  // CFBundleURLTypes and the Linux .desktop entry's x-scheme-handler MimeTypes:
+  // the schemes the OS hands to Freedom when such a link is clicked elsewhere.
+  describe('schemes registered with the OS (package.json build.protocols)', () => {
+    const registeredSchemes = pkg.build.protocols.flatMap((protocol) => protocol.schemes);
+
+    test('registers the dweb schemes', () => {
+      expect([...registeredSchemes].sort()).toEqual(['bzz', 'ens', 'ipfs', 'ipns']);
+    });
+
+    test('every registered scheme is one a launch URL may carry', () => {
+      for (const scheme of registeredSchemes) {
+        expect(LAUNCH_URL_PROTOCOLS.has(`${scheme}:`)).toBe(true);
+      }
+    });
+
+    test('Linux does not list the schemes a second time as mimeTypes', () => {
+      const linuxMimeTypes = pkg.build.linux.mimeTypes || [];
+      expect(linuxMimeTypes.filter((type) => type.startsWith('x-scheme-handler/'))).toEqual([]);
     });
   });
 });
